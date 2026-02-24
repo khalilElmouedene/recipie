@@ -1,0 +1,190 @@
+from __future__ import annotations
+import uuid
+from datetime import datetime
+from pydantic import BaseModel, EmailStr, Field
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    full_name: str = Field(min_length=1)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserOut(BaseModel):
+    id: uuid.UUID
+    email: str
+    full_name: str
+    role: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    full_name: str = Field(min_length=1)
+    role: str = "member"
+
+
+class UserRoleUpdate(BaseModel):
+    role: str
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(min_length=1)
+    description: str = ""
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+class ProjectOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    description: str
+    owner_id: uuid.UUID
+    created_at: datetime
+    site_count: int = 0
+    member_count: int = 0
+    recipe_count: int = 0
+    job_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class MemberAdd(BaseModel):
+    user_id: uuid.UUID
+    role: str = "member"
+
+
+class MemberOut(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    email: str
+    full_name: str
+    role: str
+
+    class Config:
+        from_attributes = True
+
+
+class CredentialSet(BaseModel):
+    key_type: str
+    value: str
+
+
+class CredentialOut(BaseModel):
+    key_type: str
+    masked_value: str
+    updated_at: datetime
+
+
+class SiteCreate(BaseModel):
+    domain: str
+    wp_url: str
+    wp_username: str
+    wp_password: str
+    sheet_name: str = ""
+    spreadsheet_id: str = ""
+
+
+class SiteUpdate(BaseModel):
+    domain: str | None = None
+    wp_url: str | None = None
+    wp_username: str | None = None
+    wp_password: str | None = None
+    sheet_name: str | None = None
+    spreadsheet_id: str | None = None
+
+
+class SiteOut(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    domain: str
+    wp_url: str
+    wp_username: str
+    sheet_name: str
+    spreadsheet_id: str
+    created_at: datetime
+    recipe_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class RecipeCreate(BaseModel):
+    image_url: str
+    recipe_text: str
+
+
+class RecipeOut(BaseModel):
+    id: uuid.UUID
+    site_id: uuid.UUID
+    created_by: uuid.UUID
+    image_url: str
+    recipe_text: str
+    status: str
+    generated_article: str | None = None
+    generated_json: str | None = None
+    generated_full_recipe: str | None = None
+    focus_keyword: str | None = None
+    meta_description: str | None = None
+    category: str | None = None
+    generated_images: str | None = None
+    wp_post_id: str | None = None
+    wp_permalink: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class JobStart(BaseModel):
+    job_type: str
+    site_id: uuid.UUID | None = None
+
+
+class JobOut(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    created_by: uuid.UUID
+    job_type: str
+    status: str
+    current_row: int | None = None
+    total_rows: int | None = None
+    error: str | None = None
+    created_at: datetime
+    finished_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class JobLogOut(BaseModel):
+    id: int
+    message: str
+    created_at: datetime
+
+
+class DashboardStats(BaseModel):
+    total_projects: int
+    total_sites: int
+    total_recipes: int
+    total_jobs: int
+    projects: list[ProjectOut]
