@@ -132,6 +132,33 @@ class RecipeCreate(BaseModel):
     recipe_text: str
 
 
+class RecipeUpdate(BaseModel):
+    recipe_text: str | None = None
+    generated_images: str | None = None
+
+
+class PinterestPinRequest(BaseModel):
+    board_id: str
+    title: str | None = None
+    description: str | None = None
+    link: str | None = None
+    image_indices: list[int] | None = None
+
+
+class PinterestPinResult(BaseModel):
+    image_url: str
+    pin_id: str | None = None
+    pin_url: str | None = None
+    error: str | None = None
+
+
+class PinterestBulkResponse(BaseModel):
+    total: int
+    created: int
+    failed: int
+    pins: list[PinterestPinResult]
+
+
 class RecipeOut(BaseModel):
     id: uuid.UUID
     site_id: uuid.UUID
@@ -188,3 +215,44 @@ class DashboardStats(BaseModel):
     total_recipes: int
     total_jobs: int
     projects: list[ProjectOut]
+
+
+# ── Pin Generator ────────────────────────────────────────
+
+class PinTemplateOut(BaseModel):
+    id: str
+    name: str
+    description: str
+    image_count: int
+    colors: list[str]
+
+
+class GeneratePinRequest(BaseModel):
+    template_id: str
+    title: str | None = None
+    ingredients: str | None = None
+    website: str | None = None
+    image_indices: list[int] | None = None
+
+
+class GeneratePinResponse(BaseModel):
+    image_base64: str
+
+
+class BulkGeneratePinsRequest(BaseModel):
+    template_id: str
+    website: str | None = None
+
+
+class BulkPinItem(BaseModel):
+    recipe_id: str
+    recipe_title: str
+    image_base64: str | None = None
+    error: str | None = None
+
+
+class BulkGeneratePinsResponse(BaseModel):
+    total: int
+    generated: int
+    failed: int
+    pins: list[BulkPinItem]

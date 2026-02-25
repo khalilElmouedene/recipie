@@ -117,8 +117,35 @@ export const api = {
   createRecipe: (siteId: string, data: { image_url: string; recipe_text: string }) =>
     request<RecipeOut>(`/api/sites/${siteId}/recipes`, { method: "POST", body: JSON.stringify(data) }),
 
+  updateRecipe: (recipeId: string, data: { recipe_text?: string; generated_images?: string }) =>
+    request<RecipeOut>(`/api/recipes/${recipeId}`, { method: "PATCH", body: JSON.stringify(data) }),
+
   deleteRecipe: (recipeId: string) =>
     request<void>(`/api/recipes/${recipeId}`, { method: "DELETE" }),
+
+  getPinterestBoards: (projectId: string) =>
+    request<PinterestBoard[]>(`/api/projects/${projectId}/pinterest/boards`),
+
+  createPinterestPins: (recipeId: string, data: PinterestPinRequest) =>
+    request<PinterestBulkResponse>(`/api/recipes/${recipeId}/pinterest`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  // ── Pin Generator ──────────────────────────────────────
+  getPinTemplates: () => request<PinTemplate[]>("/api/pin-templates"),
+
+  generatePin: (recipeId: string, data: GeneratePinRequest) =>
+    request<GeneratePinResponse>(`/api/recipes/${recipeId}/generate-pin`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  bulkGeneratePins: (siteId: string, data: BulkGeneratePinsRequest) =>
+    request<BulkGeneratePinsResponse>(`/api/sites/${siteId}/bulk-generate-pins`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   getExportUrl: (siteId: string) => {
     const token = getToken();
@@ -250,4 +277,72 @@ export interface DashboardStats {
   total_recipes: number;
   total_jobs: number;
   projects: ProjectOut[];
+}
+
+// ── Pin Generator ────────────────────────────────────────
+
+export interface PinTemplate {
+  id: string;
+  name: string;
+  description: string;
+  image_count: number;
+  colors: string[];
+}
+
+export interface GeneratePinRequest {
+  template_id: string;
+  title?: string;
+  ingredients?: string;
+  website?: string;
+  image_indices?: number[];
+}
+
+export interface GeneratePinResponse {
+  image_base64: string;
+}
+
+export interface BulkGeneratePinsRequest {
+  template_id: string;
+  website?: string;
+}
+
+export interface BulkPinItem {
+  recipe_id: string;
+  recipe_title: string;
+  image_base64?: string;
+  error?: string;
+}
+
+export interface BulkGeneratePinsResponse {
+  total: number;
+  generated: number;
+  failed: number;
+  pins: BulkPinItem[];
+}
+
+export interface PinterestBoard {
+  id: string;
+  name: string;
+}
+
+export interface PinterestPinRequest {
+  board_id: string;
+  title?: string;
+  description?: string;
+  link?: string;
+  image_indices?: number[];
+}
+
+export interface PinterestPinResult {
+  image_url: string;
+  pin_id?: string;
+  pin_url?: string;
+  error?: string;
+}
+
+export interface PinterestBulkResponse {
+  total: number;
+  created: number;
+  failed: number;
+  pins: PinterestPinResult[];
 }
