@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles } from "lucide-react";
 import { api, SiteOut, RecipeOut, PinterestBoard, PinterestBulkResponse, PinTemplate, BulkGeneratePinsResponse, BulkPinItem } from "@/lib/api";
@@ -57,6 +57,7 @@ export default function SiteDetailPage() {
   const [bulkWebsite, setBulkWebsite] = useState("");
   const [bulkGenerating, setBulkGenerating] = useState(false);
   const [bulkResult, setBulkResult] = useState<BulkGeneratePinsResponse | null>(null);
+  const [recipeJobMap, setRecipeJobMap] = useState<Record<string, string>>({});
 
   const loadRecipes = () => api.getRecipes(siteId).then(setRecipes).catch(() => {});
 
@@ -83,9 +84,72 @@ export default function SiteDetailPage() {
 
   const handleDelete = async (recipeId: string) => {
     if (!confirm("Delete this recipe?")) return;
-    await api.deleteRecipe(recipeId);
+    setRecipes((prev) => prev.filter((r) => r.id !== recipeId));
     if (expandedId === recipeId) setExpandedId(null);
+    try {
+      await api.deleteRecipe(recipeId);
+    } catch {
+      // already removed from UI
+    }
     loadRecipes();
+  };
+
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+
+  const pollRecipeStatus = useCallback((recipeId: string) => {
+    let attempts = 0;
+    const maxAttempts = 120;
+    const interval = setInterval(async () => {
+      attempts++;
+      try {
+        const r = await api.getRecipe(recipeId);
+        setRecipes((prev) => prev.map((old) => (old.id === recipeId ? r : old)));
+        if (r.status !== "generating" || attempts >= maxAttempts) {
+          clearInterval(interval);
+        }
+      } catch {
+        clearInterval(interval);
+      }
+    }, 5000);
+  }, []);
+
+  const openRecipeLogs = async (recipeId: string) => {
+    const knownJobId = recipeJobMap[recipeId];
+    if (knownJobId) {
+      router.push(`/jobs/${knownJobId}`);
+      return;
+    }
+
+    try {
+      const jobs = await api.getProjectJobs(projectId);
+      const latestArticleJob = jobs.find((j) => j.job_type === "articles");
+      if (latestArticleJob) {
+        router.push(`/jobs/${latestArticleJob.id}`);
+        return;
+      }
+      alert("No generation logs found yet for this recipe.");
+    } catch (err: any) {
+      alert(err.message || "Failed to load job logs");
+    }
+  };
+
+  const handleGenerateSingle = async (recipeId: string) => {
+    setGeneratingId(recipeId);
+    try {
+      const job = await api.startJob(projectId, {
+        job_type: "articles",
+        site_id: siteId,
+        recipe_id: recipeId,
+      });
+      setRecipeJobMap((prev) => ({ ...prev, [recipeId]: job.id }));
+      setRecipes((prev) =>
+        prev.map((r) => (r.id === recipeId ? { ...r, status: "generating", error_message: null } : r))
+      );
+      pollRecipeStatus(recipeId);
+    } catch (err: any) {
+      alert(err.message || "Failed to start generation");
+    }
+    setGeneratingId(null);
   };
 
   const handleRunJob = async (type: "articles" | "publisher") => {
@@ -389,7 +453,32 @@ export default function SiteDetailPage() {
                 </div>
                 {r.error_message && <p className="text-xs text-red-400 mt-1">{r.error_message}</p>}
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex items-center gap-1 flex-shrink-0">
+                {r.status === "pending" && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleGenerateSingle(r.id); }}
+                    disabled={generatingId === r.id}
+                    className="text-brand-400 hover:text-brand-300 p-1 disabled:opacity-50"
+                    title="Generate content for this recipe"
+                  >
+                    {generatingId === r.id ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
+                  </button>
+                )}
+                {r.status === "generating" && (
+                  <RefreshCw size={16} className="animate-spin text-blue-400 p-0 mx-1" />
+                )}
+                {(r.status === "generating" || r.status === "failed" || recipeJobMap[r.id]) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openRecipeLogs(r.id);
+                    }}
+                    className="text-cyan-400 hover:text-cyan-300 p-1"
+                    title="View generation logs"
+                  >
+                    <Eye size={16} />
+                  </button>
+                )}
                 <button onClick={(e) => { e.stopPropagation(); handleDelete(r.id); }} className="text-gray-500 hover:text-red-400 p-1">
                   <Trash2 size={16} />
                 </button>

@@ -3,7 +3,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..crypto import encrypt
@@ -69,8 +69,9 @@ async def create_site(
     )
     db.add(site)
     await db.commit()
-    await db.refresh(site)
-    return await _site_out(site, db)
+    row = await db.execute(select(Site).where(Site.id == site.id))
+    created = row.scalar_one()
+    return await _site_out(created, db)
 
 
 @router.patch("/api/sites/{site_id}", response_model=SiteOut)
@@ -101,8 +102,9 @@ async def update_site(
         site.spreadsheet_id = body.spreadsheet_id
 
     await db.commit()
-    await db.refresh(site)
-    return await _site_out(site, db)
+    row = await db.execute(select(Site).where(Site.id == site_id))
+    updated = row.scalar_one()
+    return await _site_out(updated, db)
 
 
 @router.delete("/api/sites/{site_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -117,5 +119,5 @@ async def delete_site(
         raise HTTPException(status_code=404, detail="Site not found")
 
     await check_project_access(site.project_id, user, db, require_roles=[ProjectMemberRole.admin])
-    await db.delete(site)
+    await db.execute(sql_delete(Site).where(Site.id == site_id))
     await db.commit()

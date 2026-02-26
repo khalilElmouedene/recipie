@@ -63,8 +63,15 @@ class JobManager:
     def get_running(self, job_id: str) -> RunningJob | None:
         return self._running.get(job_id)
 
-    async def start_job(self, db_job: JobModel, site_id: uuid.UUID | None, db: AsyncSession):
+    async def start_job(
+        self,
+        db_job: JobModel,
+        site_id: uuid.UUID | None,
+        recipe_id: uuid.UUID | None,
+        db: AsyncSession,
+    ):
         """Load credentials + recipes from DB and launch a background thread."""
+        main_loop = asyncio.get_running_loop()
         project_id = db_job.project_id
         job_id_str = str(db_job.id)
 
@@ -109,16 +116,23 @@ class JobManager:
         else:
             target_status = RecipeStatus.generated
 
-        recipe_rows = await db.execute(
+        recipe_query = (
             select(Recipe)
             .where(Recipe.site_id == site_id, Recipe.status == target_status)
             .order_by(Recipe.created_at.asc())
         )
+        if recipe_id:
+            recipe_query = recipe_query.where(Recipe.id == recipe_id)
+
+        recipe_rows = await db.execute(recipe_query)
         recipes_raw = recipe_rows.scalars().all()
         if not recipes_raw:
             db_job.status = JobStatus.failed
             status_label = "pending" if db_job.job_type == JobType.articles else "generated"
-            db_job.error = f"No {status_label} recipes found for this site"
+            if recipe_id:
+                db_job.error = f"Recipe not found or not in '{status_label}' status"
+            else:
+                db_job.error = f"No {status_label} recipes found for this site"
             db_job.finished_at = datetime.now(timezone.utc)
             await db.commit()
             return
@@ -154,9 +168,11 @@ class JobManager:
             from ..services.publisher import publish_recipes_from_db
 
             def _on_recipe_done(recipe_id: str, fields: dict):
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(_update_recipe(recipe_id, fields, db_job.job_type))
-                loop.close()
+                future = asyncio.run_coroutine_threadsafe(
+                    _update_recipe(recipe_id, fields, db_job.job_type),
+                    main_loop,
+                )
+                future.result()
 
             rj.log(f"Starting {db_job.job_type.value} job — {len(recipes_data)} recipes")
             try:
@@ -185,6 +201,8 @@ class JobManager:
 
                 final_status = JobStatus.stopped if rj.should_stop() else JobStatus.completed
                 rj.log("Job completed successfully" if final_status == JobStatus.completed else "Job stopped")
+                if rj.should_stop() and db_job.job_type == JobType.articles:
+                    _revert_generating(recipes_data)
                 _finalize(job_id_str, final_status, rj._logs)
 
             except Exception as e:
@@ -211,22 +229,49 @@ class JobManager:
                     recipe.status = RecipeStatus.published
                 await session.commit()
 
+        def _revert_generating(recipes_list: list[dict]):
+            """Revert any recipes still in 'generating' back to 'pending' when job is stopped."""
+            future = asyncio.run_coroutine_threadsafe(
+                _do_revert([r["id"] for r in recipes_list]),
+                main_loop,
+            )
+            try:
+                future.result(timeout=10)
+            except Exception:
+                pass
+
+        async def _do_revert(recipe_ids: list[str]):
+            async with SessionLocal() as session:
+                await session.execute(
+                    update(Recipe)
+                    .where(
+                        Recipe.id.in_([uuid.UUID(rid) for rid in recipe_ids]),
+                        Recipe.status == RecipeStatus.generating,
+                    )
+                    .values(status=RecipeStatus.pending)
+                )
+                await session.commit()
+
         def _finalize(jid: str, status: JobStatus, logs: list[str], error: str | None = None):
-            loop = asyncio.new_event_loop()
-            loop.run_until_complete(_persist_final(jid, status, logs, error))
-            loop.close()
+            future = asyncio.run_coroutine_threadsafe(
+                _persist_final(jid, status, logs, error),
+                main_loop,
+            )
+            future.result()
             self._running.pop(jid, None)
 
-        async def _persist_final(jid: str, status: JobStatus, logs: list[str], error: str | None):
+        async def _persist_final(jid: str, final_status: JobStatus, logs: list[str], error: str | None):
             async with SessionLocal() as session:
                 result = await session.execute(
                     select(JobModel).where(JobModel.id == uuid.UUID(jid))
                 )
                 job = result.scalar_one_or_none()
                 if job:
-                    job.status = status
+                    if job.status == JobStatus.stopped:
+                        final_status = JobStatus.stopped
+                    job.status = final_status
                     job.finished_at = datetime.now(timezone.utc)
-                    if error:
+                    if error and final_status != JobStatus.stopped:
                         job.error = error
                     for msg in logs:
                         session.add(JobLog(job_id=job.id, message=msg))

@@ -185,6 +185,7 @@ class RecipeOut(BaseModel):
 class JobStart(BaseModel):
     job_type: str
     site_id: uuid.UUID | None = None
+    recipe_id: uuid.UUID | None = None
 
 
 class JobOut(BaseModel):

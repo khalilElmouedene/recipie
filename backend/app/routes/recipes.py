@@ -7,11 +7,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..db_models import User, Site, Recipe, ProjectCredential
+from ..db_models import User, Site, Recipe, ProjectCredential, RecipeStatus
 from ..dependencies import get_current_user, check_project_access
 from ..crypto import decrypt
 from ..models import (
@@ -81,11 +81,12 @@ async def create_recipe(
         created_by=user.id,
         image_url=body.image_url,
         recipe_text=body.recipe_text,
+        status=RecipeStatus.pending,
     )
     db.add(recipe)
     await db.commit()
-    await db.refresh(recipe)
-    return recipe
+    created = await db.execute(select(Recipe).where(Recipe.id == recipe.id))
+    return created.scalar_one_or_none() or recipe
 
 
 @router.patch("/api/recipes/{recipe_id}", response_model=RecipeOut)
@@ -111,8 +112,8 @@ async def update_recipe(
         recipe.generated_images = body.generated_images
 
     await db.commit()
-    await db.refresh(recipe)
-    return recipe
+    row = await db.execute(select(Recipe).where(Recipe.id == recipe_id))
+    return row.scalar_one()
 
 
 @router.post("/api/recipes/{recipe_id}/pinterest", response_model=PinterestBulkResponse)
@@ -200,7 +201,7 @@ async def delete_recipe(
     if site_obj:
         await check_project_access(site_obj.project_id, user, db)
 
-    await db.delete(recipe)
+    await db.execute(sql_delete(Recipe).where(Recipe.id == recipe_id))
     await db.commit()
 
 

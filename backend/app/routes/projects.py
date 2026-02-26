@@ -3,7 +3,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -77,8 +77,9 @@ async def create_project(
     project = Project(name=body.name, description=body.description, owner_id=owner.id)
     db.add(project)
     await db.commit()
-    await db.refresh(project)
-    return await _project_out(project, db)
+    row = await db.execute(select(Project).where(Project.id == project.id))
+    created = row.scalar_one()
+    return await _project_out(created, db)
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
@@ -112,8 +113,9 @@ async def update_project(
     if body.description is not None:
         project.description = body.description
     await db.commit()
-    await db.refresh(project)
-    return await _project_out(project, db)
+    row = await db.execute(select(Project).where(Project.id == project_id))
+    updated = row.scalar_one()
+    return await _project_out(updated, db)
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -123,10 +125,9 @@ async def delete_project(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     result = await db.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if not project:
+    if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Project not found")
-    await db.delete(project)
+    await db.execute(sql_delete(Project).where(Project.id == project_id))
     await db.commit()
 
 
@@ -192,14 +193,13 @@ async def add_member(
     )
     db.add(member)
     await db.commit()
-    await db.refresh(member)
 
     return MemberOut(
         id=member.id,
         user_id=member.user_id,
         email=user_obj.email,
         full_name=user_obj.full_name,
-        role=member.role.value,
+        role=body.role,
     )
 
 
@@ -216,8 +216,12 @@ async def remove_member(
             ProjectMember.user_id == user_id,
         )
     )
-    member = result.scalar_one_or_none()
-    if not member:
+    if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Member not found")
-    await db.delete(member)
+    await db.execute(
+        sql_delete(ProjectMember).where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == user_id,
+        )
+    )
     await db.commit()

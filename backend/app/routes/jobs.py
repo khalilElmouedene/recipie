@@ -39,11 +39,14 @@ async def start_job(
     )
     db.add(job)
     await db.commit()
-    await db.refresh(job)
 
-    await job_manager.start_job(job, body.site_id, db)
-    await db.refresh(job)
-    return job
+    row = await db.execute(select(Job).where(Job.id == job.id))
+    job = row.scalar_one()
+
+    await job_manager.start_job(job, body.site_id, body.recipe_id, db)
+
+    row2 = await db.execute(select(Job).where(Job.id == job.id))
+    return row2.scalar_one()
 
 
 @router.get("/api/projects/{project_id}/jobs", response_model=list[JobOut])
@@ -106,5 +109,5 @@ async def stop_job(
     job_manager.stop_job(str(job.id))
     job.status = JobStatus.stopped
     await db.commit()
-    await db.refresh(job)
-    return job
+    row = await db.execute(select(Job).where(Job.id == job_id))
+    return row.scalar_one()

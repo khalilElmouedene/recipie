@@ -3,7 +3,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import hash_password
@@ -45,8 +45,8 @@ async def create_user(
     )
     db.add(user)
     await db.commit()
-    await db.refresh(user)
-    return user
+    row = await db.execute(select(User).where(User.id == user.id))
+    return row.scalar_one()
 
 
 @router.patch("/{user_id}", response_model=UserOut)
@@ -66,8 +66,8 @@ async def update_user_role(
 
     user.role = UserRole(body.role)
     await db.commit()
-    await db.refresh(user)
-    return user
+    row = await db.execute(select(User).where(User.id == user_id))
+    return row.scalar_one()
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -80,9 +80,8 @@ async def delete_user(
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
 
     result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
+    if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="User not found")
 
-    await db.delete(user)
+    await db.execute(sql_delete(User).where(User.id == user_id))
     await db.commit()

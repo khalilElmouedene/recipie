@@ -155,7 +155,7 @@ export const api = {
   // ── Jobs ───────────────────────────────────────────────
   getProjectJobs: (projectId: string) => request<JobOut[]>(`/api/projects/${projectId}/jobs`),
 
-  startJob: (projectId: string, data: { job_type: string; site_id?: string }) =>
+  startJob: (projectId: string, data: { job_type: string; site_id?: string; recipe_id?: string }) =>
     request<JobOut>(`/api/projects/${projectId}/jobs`, { method: "POST", body: JSON.stringify(data) }),
 
   getJob: (jobId: string) => request<JobOut>(`/api/jobs/${jobId}`),
