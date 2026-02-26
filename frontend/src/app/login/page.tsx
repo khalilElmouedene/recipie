@@ -16,8 +16,14 @@ export default function LoginPage() {
     e.preventDefault();
     setError("");
     setLoading(true);
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
+      setError("Email and password are required");
+      setLoading(false);
+      return;
+    }
     try {
-      const res = await api.login(email, password);
+      const res = await api.login(trimmedEmail, password);
       setToken(res.access_token);
       router.push("/");
     } catch (err: any) {

@@ -21,6 +21,8 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/recipebot
+    volumes:
+      - .:/workspace:ro
     depends_on:
       - db
     restart: unless-stopped

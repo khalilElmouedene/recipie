@@ -1,7 +1,7 @@
 from __future__ import annotations
 import uuid
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 class RegisterRequest(BaseModel):
@@ -11,8 +11,15 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
+    email: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_email(cls, v):
+        if isinstance(v, dict) and "email" in v and isinstance(v["email"], str):
+            v["email"] = v["email"].strip()
+        return v
 
 
 class TokenResponse(BaseModel):

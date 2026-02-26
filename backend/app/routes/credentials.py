@@ -89,9 +89,16 @@ async def set_credentials(
             )
             db.add(cred)
 
-        await db.flush()
-        await db.refresh(cred)
-        out.append(CredentialOut(key_type=cred.key_type, masked_value=_mask(item.value), updated_at=cred.updated_at))
-
     await db.commit()
-    return out
+    result = await db.execute(
+        select(ProjectCredential).where(ProjectCredential.project_id == project_id)
+    )
+    creds = result.scalars().all()
+    return [
+        CredentialOut(
+            key_type=c.key_type,
+            masked_value=_mask(decrypt(c.encrypted_value)) if c.encrypted_value else "****",
+            updated_at=c.updated_at,
+        )
+        for c in creds
+    ]
