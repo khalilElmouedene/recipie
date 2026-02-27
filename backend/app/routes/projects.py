@@ -3,6 +3,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
 from sqlalchemy import select, func, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -200,6 +201,46 @@ async def add_member(
         email=user_obj.email,
         full_name=user_obj.full_name,
         role=body.role,
+    )
+
+
+@router.get("/{project_id}/export/excel")
+async def export_project_excel(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Export all recipes for all sites in this project as an Excel file.
+    One sheet per site, matching the V1 Project structure."""
+    await check_project_access(project_id, user, db)
+
+    project_row = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_row.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    sites_row = await db.execute(
+        select(Site).where(Site.project_id == project_id).order_by(Site.created_at.asc())
+    )
+    sites = sites_row.scalars().all()
+
+    from ..services.excel_export import build_project_excel
+
+    sites_with_recipes: list[tuple] = []
+    for site in sites:
+        recipes_row = await db.execute(
+            select(Recipe).where(Recipe.site_id == site.id).order_by(Recipe.created_at.asc())
+        )
+        recipes = recipes_row.scalars().all()
+        sites_with_recipes.append((site, list(recipes)))
+
+    xlsx_bytes = build_project_excel(project.name, sites_with_recipes)
+    safe_name = project.name.replace(" ", "_").replace("/", "_")[:40]
+    filename = f"{safe_name}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

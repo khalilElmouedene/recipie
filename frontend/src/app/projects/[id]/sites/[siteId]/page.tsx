@@ -167,6 +167,10 @@ export default function SiteDetailPage() {
     window.open(`${API_URL}/api/sites/${siteId}/recipes/export`, "_blank");
   };
 
+  const handleExportExcel = () => {
+    window.open(api.getExcelExportUrl(siteId), "_blank");
+  };
+
   const handleTitleEdit = (recipe: RecipeOut) => {
     setEditingTitleId(recipe.id);
     setEditTitleValue(recipe.recipe_text);
@@ -353,7 +357,10 @@ export default function SiteDetailPage() {
         </div>
         <div className="flex gap-2">
           <button onClick={handleExport} className="btn-secondary flex items-center gap-2">
-            <Download size={16} /> Export CSV
+            <Download size={16} /> CSV
+          </button>
+          <button onClick={handleExportExcel} className="btn-secondary flex items-center gap-2 border-green-700 text-green-400 hover:text-green-300">
+            <Download size={16} /> Excel
           </button>
           <button
             onClick={handleOpenBulk}

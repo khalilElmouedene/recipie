@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Globe, Key, Users, Briefcase, Plus, Trash2, ArrowLeft } from "lucide-react";
+import { Globe, Key, Users, Briefcase, Plus, Trash2, ArrowLeft, Download } from "lucide-react";
 import { api, ProjectOut, SiteOut, CredentialOut, MemberOut, JobOut, UserOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
@@ -34,15 +34,25 @@ export default function ProjectDetailPage() {
         <ArrowLeft size={16} /> Back to Projects
       </button>
 
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">{project.name}</h1>
-        {project.description && <p className="text-sm text-gray-400 mt-1">{project.description}</p>}
-        <div className="flex gap-6 mt-3 text-sm text-gray-400">
-          <span>{project.site_count} sites</span>
-          <span>{project.member_count} members</span>
-          <span>{project.recipe_count} recipes</span>
-          <span>{project.job_count} jobs</span>
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">{project.name}</h1>
+          {project.description && <p className="text-sm text-gray-400 mt-1">{project.description}</p>}
+          <div className="flex gap-6 mt-3 text-sm text-gray-400">
+            <span>{project.site_count} sites</span>
+            <span>{project.member_count} members</span>
+            <span>{project.recipe_count} recipes</span>
+            <span>{project.job_count} jobs</span>
+          </div>
         </div>
+        <button
+          onClick={() => window.open(api.getProjectExcelExportUrl(id), "_blank")}
+          disabled={project.recipe_count === 0}
+          className="btn-secondary flex items-center gap-2 border-green-700 text-green-400 hover:text-green-300 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Export all sites as Excel — same format as V1 Project"
+        >
+          <Download size={16} /> Export All Excel
+        </button>
       </div>
 
       <div className="flex gap-1 border-b border-gray-800 mb-6">

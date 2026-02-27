@@ -1,17 +1,23 @@
 # Seed dev data
 
-Creates one project **"Winsome Dev"** with sites and API credentials so you can test generation without re-entering keys.
+Creates one project **"Winsome Dev"** with sites and API credentials so you can test generation.
 
-Keys are loaded **from your existing scripts** when you run seed (no copy-paste):
+**All keys are read from two files in the project root** (no copy-paste into .env):
 
-- **article_writ (1) (1).py** → OpenAI key + Discord/Midjourney (application id, guild, channel, version, mj id, auth token)
-- **Articles_Publishing_Winsome (1).py** → WordPress URL, domain, first WP account (user/pass), spreadsheet ID, sheet name
+| File | Keys extracted |
+|------|-----------------|
+| **article_writ (1) (1).py** | OpenAI `api_key`, Discord/Midjourney: `application_id`, `guild_id`, `channel_id`, `version`, `cmd_id`, `authorization` |
+| **Articles_Publishing_Winsome (1).py** | `WORDPRESS_URL`, `WORDPRESS_DOMAIN`, `SPREADSHEET_ID`, `SHEET_NAME`, first entry in `WP_ACCOUNTS` (user + password) |
 
-The project root (Va1) is mounted into the backend container as `/workspace`, so the seed script can read those two files. If a key is also in `.env`, `.env` wins.
+Place both files in the project root (same folder as `backend/`). With Docker, the repo is mounted at `/workspace`, so the seed reads them from there.
 
 ## 1. Ensure `ENCRYPTION_KEY` is set
 
-In `backend/.env` set `ENCRYPTION_KEY` (e.g. run `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and paste in .env). Other keys can come from the two Python files above.
+Credentials are stored encrypted. Set `ENCRYPTION_KEY` (e.g. in `backend/.env` or in the shell):
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
 ## 2. Run the seed
 

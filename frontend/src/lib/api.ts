@@ -156,6 +156,16 @@ export const api = {
     return `${API_URL}/api/sites/${siteId}/recipes/export?token=${token}`;
   },
 
+  getExcelExportUrl: (siteId: string) => {
+    const token = getToken();
+    return `${API_URL}/api/sites/${siteId}/export/excel?token=${token}`;
+  },
+
+  getProjectExcelExportUrl: (projectId: string) => {
+    const token = getToken();
+    return `${API_URL}/api/projects/${projectId}/export/excel?token=${token}`;
+  },
+
   // ── Jobs ───────────────────────────────────────────────
   getProjectJobs: (projectId: string) => request<JobOut[]>(`/api/projects/${projectId}/jobs`),
 

@@ -178,7 +178,10 @@ class JobManager:
             try:
                 if db_job.job_type == JobType.articles:
                     if not credentials.get("openai"):
-                        raise ValueError("OpenAI API key not configured. Go to project Credentials tab and set it.")
+                        raise ValueError(
+                            "OpenAI API key not configured. Put article_writ (1) (1).py in the project root and run "
+                            "seed (docker compose exec backend python -m app.scripts.seed_dev_data), or set it in the project Credentials tab."
+                        )
 
                     process_recipes_from_db(
                         recipes=recipes_data,

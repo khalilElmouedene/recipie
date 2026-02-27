@@ -6,7 +6,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -364,6 +364,37 @@ async def list_pinterest_boards(
     from ..services.pinterest import get_boards
     boards = get_boards(pinterest_token)
     return boards
+
+
+@router.get("/api/sites/{site_id}/export/excel")
+async def export_site_excel(
+    site_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Export all recipes for a single site as Excel, same structure as V1 Project."""
+    result = await db.execute(select(Site).where(Site.id == site_id))
+    site = result.scalar_one_or_none()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    await check_project_access(site.project_id, user, db)
+
+    recipes_row = await db.execute(
+        select(Recipe).where(Recipe.site_id == site_id).order_by(Recipe.created_at.asc())
+    )
+    recipes = recipes_row.scalars().all()
+
+    from ..services.excel_export import build_site_excel
+    xlsx_bytes = build_site_excel(site, list(recipes))
+
+    domain = site.domain.replace("https://", "").replace("http://", "").rstrip("/")
+    filename = f"{domain}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/api/sites/{site_id}/recipes/export")

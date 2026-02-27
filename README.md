@@ -27,23 +27,34 @@ docker-compose up --build
 - Backend API: http://localhost:8000
 - Default login: `admin` / `admin`
 
-### Option 2: Run Locally
+### Option 2: Run without Docker
 
-**Backend:**
+You need **PostgreSQL** running locally (or a remote URL). Default backend expects: `postgres:postgres@localhost:5432`, database `recipebot`.
+
+**1. Create the database** (if using local PostgreSQL):
+```bash
+# PostgreSQL CLI or pgAdmin: create database recipebot;
+psql -U postgres -c "CREATE DATABASE recipebot;"
+```
+
+**2. Backend** (terminal 1):
 ```bash
 cd backend
 pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with your credentials
 uvicorn main:app --reload --port 8000
 ```
+No `.env` required; defaults use `localhost:5432`. To override, set env vars or create `backend/.env`.
 
-**Frontend:**
+**3. Frontend** (terminal 2):
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
+Frontend uses `http://localhost:8000` by default. Set `NEXT_PUBLIC_API_URL` only if the API is elsewhere.
+
+- App: http://localhost:3000  
+- API: http://localhost:8000
 
 ## Deployment
 

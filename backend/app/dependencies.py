@@ -3,7 +3,7 @@ import uuid
 from functools import wraps
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from sqlalchemy import select
@@ -13,14 +13,10 @@ from .config import settings
 from .database import get_db
 from .db_models import User, UserRole, ProjectMember, ProjectMemberRole
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> User:
-    token = credentials.credentials
+async def _decode_token(token: str, db: AsyncSession) -> User:
     try:
         payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
         user_id: str | None = payload.get("sub")
@@ -34,6 +30,22 @@ async def get_current_user(
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
+
+
+async def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    token: str | None = Query(default=None),
+) -> User:
+    # Accept token from header OR ?token= query param (for file downloads via window.open)
+    raw = None
+    if credentials:
+        raw = credentials.credentials
+    elif token:
+        raw = token
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return await _decode_token(raw, db)
 
 
 def require_owner(user: Annotated[User, Depends(get_current_user)]) -> User:

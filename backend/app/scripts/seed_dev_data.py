@@ -1,40 +1,44 @@
 """
 Seed the database with one project, sites, and credentials.
-Keys are taken from article_writ (1) (1).py and Articles_Publishing_Winsome (1).py.
-If files not found, uses hardcoded local fallback (local project only).
+All keys are read from:
+  - article_writ (1) (1).py  → OpenAI API key, Discord/Midjourney (app id, guild, channel, version, mj id, auth)
+  - Articles_Publishing_Winsome (1).py → WordPress URL/domain, spreadsheet/sheet, WP accounts
+
+Place both files in the project root (same folder as backend/). Fallbacks used only if a file is missing.
 
 Run: docker compose exec backend python -m app.scripts.seed_dev_data
+  or: cd backend && python -m app.scripts.seed_dev_data
 """
 from __future__ import annotations
 import asyncio
+import glob
 import os
 import re
 
-# Load .env only for ENCRYPTION_KEY / DATABASE_URL (required to run)
+# Load .env only for ENCRYPTION_KEY / DATABASE_URL (optional)
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 env_path = os.path.join(backend_dir, ".env")
 if os.path.isfile(env_path):
     from dotenv import load_dotenv
     load_dotenv(env_path)
 
-# LOCAL FALLBACK: keys from article_writ (1) (1).py & Articles_Publishing_Winsome (1).py
-# Used when file extraction fails. Project is local-only.
+# Fallback when key files are not found; openai used directly so seed always has a key
 _LOCAL_KEYS = {
-    "openai": "sk-proj-7stnlpiDcC2ikLMzBBYdSzsPaSlyl65ExXOotRI-R66A4n58nrJKNVBk78mwm_CbznVMUYFpi-T3BlbkFJg8Yeud1x-4APcsVylOS7mVkr57fIU7-bgNMK9ZOsBEiZoSrFUKZiWqCsjdP_SSkd2O90",
-    "discord_app_id": "936929561302675458",
-    "discord_guild": "1409256842495922158",
-    "discord_channel": "1409256843506614346",
-    "mj_version": "12378764154715546233",
-    "mj_id": "938956540159881230",
-    "discord_auth": "ODA4MzU0MzI4MDM2MjQ1NTA1.GKTXhZ.2Tq-c2-C90v58LBfChxTNRB0GpBtwa4kQgcOTM",
+    "openai": "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",
+    "discord_app_id": "",
+    "discord_guild": "",
+    "discord_channel": "",
+    "mj_version": "",
+    "mj_id": "",
+    "discord_auth": "",
 }
 _LOCAL_WINSOME = {
-    "wp_url": "https://www.winsomerecipes.com/xmlrpc.php",
-    "wp_domain": "https://www.winsomerecipes.com",
-    "wp_user": "John",
-    "wp_pass": "eZHg 9mv0 YeS2 ebMw PB0U vqME",
-    "spreadsheet_id": "1BswVAS_pUuB1pkF6_iNHuQ5yOZbBRSQInFN_YEFflLE",
-    "sheet_name": "wordpress",
+    "wp_url": "",
+    "wp_domain": "",
+    "wp_user": "",
+    "wp_pass": "",
+    "spreadsheet_id": "",
+    "sheet_name": "",
 }
 
 from sqlalchemy import select
@@ -50,29 +54,67 @@ from app.crypto import encrypt
 def _workspace_root() -> str | None:
     if os.path.isdir("/workspace"):
         return "/workspace"
-    parent = os.path.dirname(os.path.dirname(backend_dir))
+    # backend_dir = .../backend; parent = repo root
+    parent = os.path.dirname(backend_dir)
     if os.path.isdir(parent):
         return parent
     return None
 
 
+def _find_article_writ_path(root: str) -> str | None:
+    for name in [
+        "article_writ (1) (1).py",
+        "article_writ (1)(1).py",
+        "article_writ(1)(1).py",
+    ]:
+        p = os.path.join(root, name)
+        if os.path.isfile(p):
+            return p
+    for p in glob.glob(os.path.join(root, "article_writ*.py")):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _find_winsome_path(root: str) -> str | None:
+    for name in [
+        "Articles_Publishing_Winsome (1).py",
+        "Articles_Publishing_Winsome(1).py",
+    ]:
+        p = os.path.join(root, name)
+        if os.path.isfile(p):
+            return p
+    for p in glob.glob(os.path.join(root, "Articles_Publishing*.py")):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
 def _extract_from_article_writ(root: str) -> dict[str, str]:
-    path = os.path.join(root, "article_writ (1) (1).py")
+    path = _find_article_writ_path(root)
     out = {}
-    if not os.path.isfile(path):
+    if not path:
         return out
     try:
         text = open(path, "r", encoding="utf-8", errors="ignore").read()
+        # OpenAI: client = OpenAI(api_key="sk-...") or OpenAI(api_key='sk-...')
         for pat in [
             r'OpenAI\s*\(\s*api_key\s*=\s*["\']([^"\']+)["\']',
+            r'client\s*=\s*OpenAI\s*\(\s*api_key\s*=\s*["\']([^"\']+)["\']',
             r'api_key\s*=\s*["\'](sk-[^"\']+)["\']',
-            r'api_key\s*=\s*["\']([a-zA-Z0-9_-]{20,})["\']',
         ]:
             m = re.search(pat, text)
-            if m and m.group(1).startswith("sk-"):
-                out["openai"] = m.group(1).strip()
-                break
-        block = re.search(r'MidjourneyApi\s*\((.*?)\)\s*(?:\n\s*for\s+|\n\s*mj\.)', text, re.DOTALL)
+            if m:
+                val = m.group(1).strip()
+                if val.startswith("sk-"):
+                    out["openai"] = val
+                    break
+        # MidjourneyApi(prompt, app_id, guild_id, channel_id, version, cmd_id, auth) — 6 quoted strings after first arg
+        block = re.search(
+            r'MidjourneyApi\s*\(\s*(?:[^,]+,)\s*([^)]+)\)',
+            text,
+            re.DOTALL,
+        )
         if block:
             inner = block.group(1)
             quoted = re.findall(r'["\']([^"\']+)["\']', inner)
@@ -84,14 +126,14 @@ def _extract_from_article_writ(root: str) -> dict[str, str]:
                 out["mj_id"] = quoted[4].strip()
                 out["discord_auth"] = quoted[5].strip()
     except Exception as e:
-        print(f"Note: could not read article_writ (1) (1).py: {e}")
+        print(f"Note: could not read article_writ file: {e}")
     return out
 
 
 def _extract_from_winsome(root: str) -> dict[str, str]:
-    path = os.path.join(root, "Articles_Publishing_Winsome (1).py")
+    path = _find_winsome_path(root)
     out = {}
-    if not os.path.isfile(path):
+    if not path:
         return out
     try:
         text = open(path, "r", encoding="utf-8", errors="ignore").read()
@@ -107,35 +149,40 @@ def _extract_from_winsome(root: str) -> dict[str, str]:
         m = re.search(r'SHEET_NAME\s*=\s*["\']([^"\']+)["\']', text)
         if m:
             out["sheet_name"] = m.group(1).strip()
+        # First WP account: ("John", "eZHg ...") or ('user', 'pass')
         accounts = re.search(
             r'WP_ACCOUNTS\s*=\s*\[\s*(.*?)\s*\]',
             text,
             re.DOTALL,
         )
         if accounts:
-            first = re.search(r'\(\s*["\']([^"\']*)["\']\s*,\s*"([^"]*)"', accounts.group(1))
+            first = re.search(
+                r'\(\s*["\']([^"\']*)["\']\s*,\s*["\']([^"\']*)["\']\s*\)',
+                accounts.group(1),
+            )
             if first:
                 out["wp_user"] = first.group(1).strip()
                 out["wp_pass"] = first.group(2).strip()
     except Exception as e:
-        print(f"Note: could not read Articles_Publishing_Winsome (1).py: {e}")
+        print(f"Note: could not read Articles_Publishing file: {e}")
     return out
 
 
 def _get_sites_config(workspace: str | None, spreadsheet_id: str) -> list[dict]:
-    winsome = (_extract_from_winsome(workspace) if workspace else {}) or _LOCAL_WINSOME
+    winsome = _extract_from_winsome(workspace) if workspace else {}
+    # Use extracted values; fall back to _LOCAL_WINSOME only for missing keys
+    wp_url = winsome.get("wp_url") or _LOCAL_WINSOME.get("wp_url")
+    wp_domain = winsome.get("wp_domain") or _LOCAL_WINSOME.get("wp_domain")
     sites = []
-    wp_url = winsome.get("wp_url") or _LOCAL_WINSOME["wp_url"]
-    wp_domain = winsome.get("wp_domain") or _LOCAL_WINSOME["wp_domain"]
     if wp_url and wp_domain:
         domain = wp_domain.replace("https://", "").replace("http://", "").split("/")[0]
         sites.append({
             "domain": domain,
             "wp_url": wp_url,
-            "wp_user": winsome.get("wp_user") or _LOCAL_WINSOME["wp_user"],
-            "wp_pass": winsome.get("wp_pass") or _LOCAL_WINSOME["wp_pass"],
-            "sheet_name": winsome.get("sheet_name") or _LOCAL_WINSOME["sheet_name"],
-            "spreadsheet_id": winsome.get("spreadsheet_id") or spreadsheet_id,
+            "wp_user": winsome.get("wp_user") or _LOCAL_WINSOME.get("wp_user", ""),
+            "wp_pass": winsome.get("wp_pass") or _LOCAL_WINSOME.get("wp_pass", ""),
+            "sheet_name": winsome.get("sheet_name") or _LOCAL_WINSOME.get("sheet_name", ""),
+            "spreadsheet_id": winsome.get("spreadsheet_id") or spreadsheet_id or _LOCAL_WINSOME.get("spreadsheet_id", ""),
         })
     return sites
 
@@ -151,27 +198,27 @@ async def seed():
     from_article = _extract_from_article_writ(workspace) if workspace else {}
     from_winsome = _extract_from_winsome(workspace) if workspace else {}
 
-    def _get(key: str, from_file: dict, default: str = "") -> str:
-        return from_file.get(key) or _LOCAL_KEYS.get(key, default)
+    def _get(key: str, from_file: dict) -> str:
+        return (from_file.get(key) or _LOCAL_KEYS.get(key) or "").strip()
 
-    openai_key = _get("openai", from_article) or _LOCAL_KEYS["openai"]
-    discord_auth = _get("discord_auth", from_article) or _LOCAL_KEYS["discord_auth"]
-    discord_app_id = _get("discord_app_id", from_article) or _LOCAL_KEYS["discord_app_id"]
-    discord_guild = _get("discord_guild", from_article) or _LOCAL_KEYS["discord_guild"]
-    discord_channel = _get("discord_channel", from_article) or _LOCAL_KEYS["discord_channel"]
-    mj_version = _get("mj_version", from_article) or _LOCAL_KEYS["mj_version"]
-    mj_id = _get("mj_id", from_article) or _LOCAL_KEYS["mj_id"]
+    openai_key = _get("openai", from_article)
+    discord_auth = _get("discord_auth", from_article)
+    discord_app_id = _get("discord_app_id", from_article)
+    discord_guild = _get("discord_guild", from_article)
+    discord_channel = _get("discord_channel", from_article)
+    mj_version = _get("mj_version", from_article)
+    mj_id = _get("mj_id", from_article)
 
-    spreadsheet_id = from_winsome.get("spreadsheet_id") or _LOCAL_WINSOME["spreadsheet_id"]
+    spreadsheet_id = (from_winsome.get("spreadsheet_id") or _LOCAL_WINSOME.get("spreadsheet_id") or "").strip()
 
     if from_article:
-        print("Loaded API keys from article_writ (1) (1).py")
+        print("Loaded OpenAI + Discord/Midjourney keys from article_writ (1) (1).py")
     else:
-        print("Using local fallback keys (no .env)")
+        print("Warning: article_writ (1) (1).py not found in project root — no API keys will be seeded.")
     if from_winsome:
-        print("Loaded site from Articles_Publishing_Winsome (1).py")
+        print("Loaded WordPress + Sheets config from Articles_Publishing_Winsome (1).py")
     else:
-        print("Using local fallback Winsome config")
+        print("Warning: Articles_Publishing_Winsome (1).py not found in project root — no site will be seeded.")
 
     async with SessionLocal() as db:
         r = await db.execute(select(User).limit(1))
