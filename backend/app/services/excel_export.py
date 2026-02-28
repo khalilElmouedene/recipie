@@ -46,16 +46,22 @@ _WRAP        = Alignment(wrap_text=True, vertical="top")
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _first_image(recipe: Any) -> str:
-    """Use first generated image URL, or fallback to original image_url."""
+def _images_four(recipe: Any) -> list[str]:
+    """Return up to 4 image URLs: generated images first, then image_url, then empty strings."""
+    out: list[str] = []
     if recipe.generated_images:
         try:
             imgs = json.loads(recipe.generated_images)
-            if imgs and isinstance(imgs, list) and imgs[0]:
-                return imgs[0]
+            if imgs and isinstance(imgs, list):
+                out = [str(u) for u in imgs[:4] if u]
         except Exception:
             pass
-    return recipe.image_url or ""
+    while len(out) < 4:
+        if len(out) == 0 and recipe.image_url:
+            out.append(recipe.image_url)
+        else:
+            out.append("")
+    return out[:4]
 
 
 def _publish_date(recipe: Any) -> str:
@@ -82,8 +88,10 @@ def _pin_title(recipe: Any) -> str:
 
 
 def _recipe_row(recipe: Any, sitemap_url: str) -> list[str]:
+    imgs = _images_four(recipe)
+    featured = ",".join(u for u in imgs if u)  # First column: 4 images separated by ,
     return [
-        _first_image(recipe),                    # Featured Image
+        featured,                                # Featured Image (url1,url2,url3,url4)
         recipe.generated_article or "",          # Articles
         recipe.generated_json or "",             # Recipe JSON
         recipe.category or "",                   # Category

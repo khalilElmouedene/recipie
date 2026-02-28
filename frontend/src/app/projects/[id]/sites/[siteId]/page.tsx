@@ -363,6 +363,12 @@ export default function SiteDetailPage() {
             <Download size={16} /> Excel
           </button>
           <button
+            onClick={() => router.push(`/projects/${projectId}/sites/${siteId}/designer`)}
+            className="btn-secondary flex items-center gap-2 border-green-700 text-green-400 hover:text-green-300"
+          >
+            <LayoutGrid size={16} /> Pin Designer
+          </button>
+          <button
             onClick={handleOpenBulk}
             disabled={recipes.filter((r) => r.generated_images).length === 0}
             className="btn-secondary flex items-center gap-2"
