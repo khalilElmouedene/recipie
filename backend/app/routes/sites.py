@@ -20,6 +20,8 @@ router = APIRouter(tags=["sites"])
 class MediaUploadResponse(BaseModel):
     media_id: str
     media_url: str
+    post_id: str | None = None
+    post_url: str | None = None
 
 
 async def _site_out(site: Site, db: AsyncSession) -> dict:
@@ -135,10 +137,11 @@ async def upload_media_to_wordpress(
     site_id: uuid.UUID,
     file: UploadFile = File(...),
     title: str = Query("Pin Design"),
+    create_post: bool = Query(False, description="Create a blog post with the image as featured image"),
     user: Annotated[User, Depends(get_current_user)] = None,
     db: Annotated[AsyncSession, Depends(get_db)] = None,
 ):
-    """Upload an image to WordPress media library."""
+    """Upload an image to WordPress media library. Optionally create a blog post."""
     result = await db.execute(select(Site).where(Site.id == site_id))
     site = result.scalar_one_or_none()
     if not site:
@@ -160,9 +163,27 @@ async def upload_media_to_wordpress(
             file_content=file_content,
             title=title,
         )
+        media_id = media_result.get("id", "")
+        media_url = media_result.get("url", "")
+        
+        post_id = None
+        post_url = None
+        if create_post and media_id:
+            post_result = wp_service.create_pin_post(
+                wp_url=site.wp_url,
+                username=site.wp_username,
+                password=wp_password,
+                title=title,
+                media_id=int(media_id) if isinstance(media_id, str) else media_id,
+            )
+            post_id = str(post_result.get("post_id", ""))
+            post_url = post_result.get("post_url", "")
+        
         return MediaUploadResponse(
-            media_id=str(media_result.get("id", "")),
-            media_url=media_result.get("url", ""),
+            media_id=str(media_id),
+            media_url=media_url,
+            post_id=post_id,
+            post_url=post_url,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

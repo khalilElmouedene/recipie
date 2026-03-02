@@ -295,6 +295,7 @@ export default function PinDesigner({
   // WordPress state
   const [showWpModal, setShowWpModal] = useState(false);
   const [wpTitle, setWpTitle] = useState(initialTitle);
+  const [wpCreatePost, setWpCreatePost] = useState(true);
   const [wpPublishing, setWpPublishing] = useState(false);
   
   // Text properties
@@ -439,7 +440,8 @@ export default function PinDesigner({
       formData.append("file", blob, `${pinName.replace(/\s+/g, "-")}.png`);
 
       const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/sites/${siteId}/upload-media?title=${encodeURIComponent(wpTitle)}`, {
+      const params = new URLSearchParams({ title: wpTitle, create_post: String(wpCreatePost) });
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/sites/${siteId}/upload-media?${params}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
@@ -447,7 +449,11 @@ export default function PinDesigner({
 
       if (res.ok) {
         const data = await res.json();
-        alert(`Uploaded to WordPress! Media ID: ${data.media_id}`);
+        if (data.post_url) {
+          alert(`Published to WordPress!\n\nPost: ${data.post_url}\n\nYou can view it on your blog.`);
+        } else {
+          alert(`Uploaded to WordPress! Media ID: ${data.media_id}\n\nFind it in Media → Library.`);
+        }
         setShowWpModal(false);
       } else {
         const err = await res.json();
@@ -1102,7 +1108,7 @@ export default function PinDesigner({
             
             <div className="space-y-4">
               <div>
-                <label className="text-xs text-gray-400 block mb-1">Image Title</label>
+                <label className="text-xs text-gray-400 block mb-1">Post Title</label>
                 <input
                   value={wpTitle}
                   onChange={(e) => setWpTitle(e.target.value)}
@@ -1111,8 +1117,20 @@ export default function PinDesigner({
                 />
               </div>
               
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={wpCreatePost}
+                  onChange={(e) => setWpCreatePost(e.target.checked)}
+                  className="rounded border-gray-600 bg-gray-800 text-brand-500"
+                />
+                <span className="text-sm text-gray-300">Create blog post (appears on your site)</span>
+              </label>
+              
               <p className="text-xs text-gray-500">
-                This will upload the pin design as a media file to your WordPress site.
+                {wpCreatePost
+                  ? "Creates a new published post with your pin as the featured image. You can find it on your blog."
+                  : "Uploads only to Media Library. Check Media → Library in WP admin."}
               </p>
             </div>
             
@@ -1128,7 +1146,7 @@ export default function PinDesigner({
                 disabled={wpPublishing}
                 className="flex-1 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                {wpPublishing ? "Uploading..." : "Upload to WordPress"}
+                {wpPublishing ? "Publishing..." : wpCreatePost ? "Publish Post" : "Upload to Media"}
               </button>
             </div>
           </div>

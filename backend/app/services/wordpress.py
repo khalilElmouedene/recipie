@@ -168,6 +168,26 @@ def upload_media(
     return {"id": attachment_id, "url": img_url}
 
 
+def create_pin_post(
+    wp_url: str,
+    username: str,
+    password: str,
+    title: str,
+    media_id: int,
+    post_status: str = "publish",
+) -> dict:
+    """Create a blog post with the pin image as featured image."""
+    wp = WPClient(wp_url, username, password)
+    post = WordPressPost()
+    post.title = title
+    post.content = ""
+    post.post_status = post_status
+    post.thumbnail = media_id
+    post_id = wp.call(NewPost(post))
+    base_url = wp_url.replace("/xmlrpc.php", "")
+    return {"post_id": post_id, "post_url": f"{base_url}/?p={post_id}"}
+
+
 def _update_alt_text(attachment_id: str, alt_text: str, site_config: dict, log: Callable):
     try:
         rest_url = site_config["wp_url"].replace("xmlrpc.php", "") + "wp-json/wp/v2"
