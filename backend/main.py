@@ -31,6 +31,7 @@ from app.routes.sites import router as sites_router
 from app.routes.recipes import router as recipes_router
 from app.routes.jobs import router as jobs_router
 from app.routes.dashboard import router as dashboard_router
+from app.routes.pinterest import router as pinterest_router
 from app.ws.logs import router as ws_router
 
 app.include_router(auth_router)
@@ -41,4 +42,5 @@ app.include_router(sites_router)
 app.include_router(recipes_router)
 app.include_router(jobs_router)
 app.include_router(dashboard_router)
+app.include_router(pinterest_router)
 app.include_router(ws_router)

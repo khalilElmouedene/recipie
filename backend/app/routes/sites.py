@@ -2,17 +2,24 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from sqlalchemy import select, func, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 
-from ..crypto import encrypt
+from ..crypto import encrypt, decrypt
 from ..database import get_db
 from ..db_models import User, Site, Recipe, Project, ProjectMemberRole
 from ..dependencies import get_current_user, check_project_access
 from ..models import SiteCreate, SiteUpdate, SiteOut
+from ..services import wordpress as wp_service
 
 router = APIRouter(tags=["sites"])
+
+
+class MediaUploadResponse(BaseModel):
+    media_id: str
+    media_url: str
 
 
 async def _site_out(site: Site, db: AsyncSession) -> dict:
@@ -121,3 +128,41 @@ async def delete_site(
     await check_project_access(site.project_id, user, db, require_roles=[ProjectMemberRole.admin])
     await db.execute(sql_delete(Site).where(Site.id == site_id))
     await db.commit()
+
+
+@router.post("/api/sites/{site_id}/upload-media", response_model=MediaUploadResponse)
+async def upload_media_to_wordpress(
+    site_id: uuid.UUID,
+    file: UploadFile = File(...),
+    title: str = Query("Pin Design"),
+    user: Annotated[User, Depends(get_current_user)] = None,
+    db: Annotated[AsyncSession, Depends(get_db)] = None,
+):
+    """Upload an image to WordPress media library."""
+    result = await db.execute(select(Site).where(Site.id == site_id))
+    site = result.scalar_one_or_none()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    await check_project_access(site.project_id, user, db)
+
+    wp_password = decrypt(site.wp_password_enc)
+    
+    file_content = await file.read()
+    filename = file.filename or "pin-design.png"
+    
+    try:
+        media_result = wp_service.upload_media(
+            wp_url=site.wp_url,
+            username=site.wp_username,
+            password=wp_password,
+            filename=filename,
+            file_content=file_content,
+            title=title,
+        )
+        return MediaUploadResponse(
+            media_id=str(media_result.get("id", "")),
+            media_url=media_result.get("url", ""),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

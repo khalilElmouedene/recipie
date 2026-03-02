@@ -123,6 +123,51 @@ def upload_image(
         return None, None
 
 
+def upload_media(
+    wp_url: str,
+    username: str,
+    password: str,
+    filename: str,
+    file_content: bytes,
+    title: str = "Pin Design",
+) -> dict:
+    """Upload media directly to WordPress and return the media info."""
+    wp = WPClient(wp_url, username, password)
+    
+    webp_data = convert_to_webp(file_content)
+    if webp_data:
+        file_content = webp_data
+        if not filename.endswith(".webp"):
+            filename = filename.rsplit(".", 1)[0] + ".webp"
+        mime_type = "image/webp"
+    else:
+        if filename.lower().endswith(".png"):
+            mime_type = "image/png"
+        elif filename.lower().endswith((".jpg", ".jpeg")):
+            mime_type = "image/jpeg"
+        else:
+            mime_type = "image/png"
+    
+    data = {
+        "name": filename,
+        "type": mime_type,
+        "bits": file_content,
+        "overwrite": True,
+    }
+    
+    res = wp.call(UploadFile(data))
+    attachment_id = res["id"]
+    img_url = res["url"]
+    
+    wp.call(EditPost(attachment_id, {
+        "post_title": title,
+        "post_excerpt": title,
+        "post_content": title,
+    }))
+    
+    return {"id": attachment_id, "url": img_url}
+
+
 def _update_alt_text(attachment_id: str, alt_text: str, site_config: dict, log: Callable):
     try:
         rest_url = site_config["wp_url"].replace("xmlrpc.php", "") + "wp-json/wp/v2"

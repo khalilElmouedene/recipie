@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 1440
     encryption_key: str = ""
     cors_origins: str = "http://localhost:3000"
+    
+    # Pinterest OAuth
+    pinterest_client_id: str = ""
+    pinterest_client_secret: str = ""
+    pinterest_redirect_uri: str = "http://localhost:3000/pinterest/callback"
 
     class Config:
         env_file = str(BASE_DIR / ".env")

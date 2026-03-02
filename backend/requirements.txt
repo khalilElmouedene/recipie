@@ -9,6 +9,7 @@ python-jose[cryptography]
 bcrypt
 openai
 requests
+httpx
 gspread
 oauth2client
 python-wordpress-xmlrpc

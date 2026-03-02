@@ -52,6 +52,8 @@ export default function PinDesignerPage() {
       templateName={title}
       initialTitle={title}
       recipeImages={allImages}
+      projectId={params.id}
+      siteId={params.siteId}
       onClose={() => router.push(`/projects/${params.id}/sites/${params.siteId}`)}
     />
   );

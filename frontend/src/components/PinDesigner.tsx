@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, Download, ZoomIn, ZoomOut, Layers, LayoutTemplate, Grid3X3, Type, Upload, Image as ImageIcon, Minus, Trash2, Square } from "lucide-react";
+import { X, Download, ZoomIn, ZoomOut, Layers, LayoutTemplate, Grid3X3, Type, Upload, Image as ImageIcon, Minus, Trash2, Square, ArrowUp, ArrowDown, Send, Globe } from "lucide-react";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
@@ -257,6 +257,8 @@ export interface PinDesignerProps {
   templateName?: string;
   initialTitle?: string;
   recipeImages?: string[];
+  projectId?: string;
+  siteId?: string;
 }
 
 export default function PinDesigner({
@@ -264,6 +266,8 @@ export default function PinDesigner({
   templateName = "My Pin",
   initialTitle = "Recipe Title",
   recipeImages = [],
+  projectId,
+  siteId,
 }: PinDesignerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricCanvasRef = useRef<any>(null);
@@ -277,6 +281,21 @@ export default function PinDesigner({
   const [pinName, setPinName] = useState(templateName);
   const [layers, setLayers] = useState<{ id: string; label: string; type: string }[]>([]);
   const [canvasReady, setCanvasReady] = useState(false);
+  
+  // Pinterest state
+  const [pinterestConnected, setPinterestConnected] = useState(false);
+  const [pinterestBoards, setPinterestBoards] = useState<{ id: string; name: string }[]>([]);
+  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [selectedBoard, setSelectedBoard] = useState("");
+  const [pinTitle, setPinTitle] = useState(initialTitle);
+  const [pinDescription, setPinDescription] = useState("");
+  const [pinLink, setPinLink] = useState("");
+  const [publishing, setPublishing] = useState(false);
+  
+  // WordPress state
+  const [showWpModal, setShowWpModal] = useState(false);
+  const [wpTitle, setWpTitle] = useState(initialTitle);
+  const [wpPublishing, setWpPublishing] = useState(false);
   
   // Text properties
   const [fontFamily, setFontFamily] = useState("Arial");
@@ -295,6 +314,152 @@ export default function PinDesigner({
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    if (projectId) {
+      checkPinterestStatus();
+    }
+  }, [projectId]);
+
+  const checkPinterestStatus = async () => {
+    if (!projectId) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/pinterest/status?project_id=${projectId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setPinterestConnected(data.connected);
+        if (data.connected) {
+          fetchPinterestBoards();
+        }
+      }
+    } catch (err) {
+      console.error("Failed to check Pinterest status:", err);
+    }
+  };
+
+  const fetchPinterestBoards = async () => {
+    if (!projectId) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/pinterest/boards?project_id=${projectId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.ok) {
+        const boards = await res.json();
+        setPinterestBoards(boards);
+        if (boards.length > 0) setSelectedBoard(boards[0].id);
+      }
+    } catch (err) {
+      console.error("Failed to fetch boards:", err);
+    }
+  };
+
+  const connectPinterest = async () => {
+    if (!projectId) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/pinterest/auth-url?project_id=${projectId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem("pinterest_oauth_project_id", projectId);
+        localStorage.setItem("pinterest_oauth_state", data.state);
+        window.location.href = data.url;
+      }
+    } catch (err) {
+      console.error("Failed to get Pinterest auth URL:", err);
+    }
+  };
+
+  const publishToPinterest = async (imageDataUrl: string) => {
+    if (!projectId || !selectedBoard) return;
+    setPublishing(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/pinterest/create-pin`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          project_id: projectId,
+          board_id: selectedBoard,
+          image_url: imageDataUrl,
+          title: pinTitle,
+          description: pinDescription,
+          link: pinLink,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Pin created! ${data.pin_url}`);
+        setShowPublishModal(false);
+      } else {
+        alert(`Failed: ${data.error}`);
+      }
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const handlePublish = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+    canvas.renderAll();
+    const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
+    canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", true));
+    canvas.renderAll();
+    publishToPinterest(dataUrl);
+  };
+
+  const handleWpPublish = async () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    
+    setWpPublishing(true);
+    try {
+      canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+      canvas.renderAll();
+      const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
+      canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", true));
+      canvas.renderAll();
+
+      const blob = await (await fetch(dataUrl)).blob();
+      const formData = new FormData();
+      formData.append("file", blob, `${pinName.replace(/\s+/g, "-")}.png`);
+
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/sites/${siteId}/upload-media?title=${encodeURIComponent(wpTitle)}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        alert(`Uploaded to WordPress! Media ID: ${data.media_id}`);
+        setShowWpModal(false);
+      } else {
+        const err = await res.json();
+        alert(`Failed: ${err.detail || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setWpPublishing(false);
+    }
+  };
+
   const loadTemplate = async (template: PinTemplate) => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
@@ -303,7 +468,7 @@ export default function PinDesigner({
     canvas.clear();
     canvas.backgroundColor = template.bgColor;
 
-    const { Rect, FabricText } = fabric;
+    const { Rect, FabricText, IText } = fabric;
 
     for (const el of template.elements) {
       if (el.type === "image") {
@@ -355,7 +520,7 @@ export default function PinDesigner({
         (band as any).__pinType = "band";
         canvas.add(band);
       } else if (el.type === "text") {
-        const text = new FabricText(el.id === "title" && initialTitle ? initialTitle : (el.defaultText || "Text"), {
+        const text = new IText(el.id === "title" && initialTitle ? initialTitle : (el.defaultText || "Text"), {
           left: el.x,
           top: el.y,
           fontSize: el.fontSize || 32,
@@ -366,6 +531,7 @@ export default function PinDesigner({
           originY: "center",
           selectable: true,
           textAlign: el.textAlign || "center",
+          editable: true,
         });
         (text as any).__pinId = el.id;
         (text as any).__pinLabel = el.label;
@@ -447,6 +613,21 @@ export default function PinDesigner({
           setEditText("");
         });
 
+        canvas.on("mouse:dblclick", (e: any) => {
+          const target = e.target;
+          if (target && target.__pinType === "text") {
+            target.enterEditing();
+            target.selectAll();
+          }
+        });
+
+        canvas.on("text:changed", (e: any) => {
+          const target = e.target;
+          if (target && target.__pinType === "text") {
+            setEditText(target.text ?? "");
+          }
+        });
+
         setCanvasReady(true);
         await loadTemplate(selectedTemplate);
       } catch (err) {
@@ -487,6 +668,50 @@ export default function PinDesigner({
       canvas.discardActiveObject();
       canvas.renderAll();
       setSelectedId(null);
+      updateLayers();
+    }
+  };
+
+  const sendToBack = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !selectedId) return;
+    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+    if (obj) {
+      canvas.sendObjectToBack(obj);
+      canvas.renderAll();
+      updateLayers();
+    }
+  };
+
+  const bringToFront = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !selectedId) return;
+    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+    if (obj) {
+      canvas.bringObjectToFront(obj);
+      canvas.renderAll();
+      updateLayers();
+    }
+  };
+
+  const moveLayerUp = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !selectedId) return;
+    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+    if (obj) {
+      canvas.bringObjectForward(obj);
+      canvas.renderAll();
+      updateLayers();
+    }
+  };
+
+  const moveLayerDown = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !selectedId) return;
+    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+    if (obj) {
+      canvas.sendObjectBackwards(obj);
+      canvas.renderAll();
       updateLayers();
     }
   };
@@ -566,7 +791,7 @@ export default function PinDesigner({
     if (!fabric || !canvas) return;
 
     const id = `text_${Date.now()}`;
-    const text = new fabric.FabricText("New Text", {
+    const text = new fabric.IText("New Text", {
       left: PIN_W / 2,
       top: PIN_H / 2,
       fontSize: 36,
@@ -577,6 +802,7 @@ export default function PinDesigner({
       originY: "center",
       selectable: true,
       textAlign: "center",
+      editable: true,
     });
     (text as any).__pinId = id;
     (text as any).__pinLabel = "Text";
@@ -774,11 +1000,140 @@ export default function PinDesigner({
           <button onClick={handleExport} className="btn-primary flex items-center gap-2 px-3 py-1.5 text-sm">
             <Download size={16} /> Export
           </button>
+          {projectId && (
+            pinterestConnected ? (
+              <button 
+                onClick={() => setShowPublishModal(true)} 
+                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition"
+              >
+                <Send size={16} /> Publish to Pinterest
+              </button>
+            ) : (
+              <button 
+                onClick={connectPinterest} 
+                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition"
+              >
+                <Send size={16} /> Connect Pinterest
+              </button>
+            )
+          )}
           <button onClick={onClose} className="p-2 text-gray-400 hover:text-white">
             <X size={20} />
           </button>
         </div>
       </header>
+
+      {/* Pinterest Publish Modal */}
+      {showPublishModal && (
+        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center">
+          <div className="bg-gray-900 rounded-xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold text-white mb-4">Publish to Pinterest</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Board</label>
+                <select
+                  value={selectedBoard}
+                  onChange={(e) => setSelectedBoard(e.target.value)}
+                  className="input-field w-full"
+                >
+                  {pinterestBoards.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Pin Title</label>
+                <input
+                  value={pinTitle}
+                  onChange={(e) => setPinTitle(e.target.value)}
+                  className="input-field w-full"
+                  maxLength={100}
+                />
+              </div>
+              
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Description</label>
+                <textarea
+                  value={pinDescription}
+                  onChange={(e) => setPinDescription(e.target.value)}
+                  className="input-field w-full"
+                  rows={3}
+                  maxLength={500}
+                />
+              </div>
+              
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Link URL (optional)</label>
+                <input
+                  value={pinLink}
+                  onChange={(e) => setPinLink(e.target.value)}
+                  className="input-field w-full"
+                  placeholder="https://..."
+                />
+              </div>
+            </div>
+            
+            <div className="flex gap-2 mt-6">
+              <button
+                onClick={() => setShowPublishModal(false)}
+                className="flex-1 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePublish}
+                disabled={publishing || !selectedBoard}
+                className="flex-1 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {publishing ? "Publishing..." : "Publish Pin"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WordPress Publish Modal */}
+      {showWpModal && (
+        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center">
+          <div className="bg-gray-900 rounded-xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold text-white mb-4">Publish to WordPress</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Image Title</label>
+                <input
+                  value={wpTitle}
+                  onChange={(e) => setWpTitle(e.target.value)}
+                  className="input-field w-full"
+                  placeholder="Pin image title..."
+                />
+              </div>
+              
+              <p className="text-xs text-gray-500">
+                This will upload the pin design as a media file to your WordPress site.
+              </p>
+            </div>
+            
+            <div className="flex gap-2 mt-6">
+              <button
+                onClick={() => setShowWpModal(false)}
+                className="flex-1 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleWpPublish}
+                disabled={wpPublishing}
+                className="flex-1 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {wpPublishing ? "Uploading..." : "Upload to WordPress"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-1 min-h-0">
         <aside className="w-64 border-r border-gray-800 flex flex-col">
@@ -1019,6 +1374,73 @@ export default function PinDesigner({
                   <Trash2 size={18} />
                 </button>
               </div>
+
+              {/* Layer Controls */}
+              <div>
+                <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Layer Order</label>
+                <div className="flex gap-1">
+                  <button
+                    onClick={sendToBack}
+                    className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs"
+                    title="Send to Back"
+                  >
+                    <ArrowDown size={14} />
+                    <ArrowDown size={14} className="-ml-2" />
+                  </button>
+                  <button
+                    onClick={moveLayerDown}
+                    className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs"
+                    title="Move Down"
+                  >
+                    <ArrowDown size={14} />
+                  </button>
+                  <button
+                    onClick={moveLayerUp}
+                    className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs"
+                    title="Move Up"
+                  >
+                    <ArrowUp size={14} />
+                  </button>
+                  <button
+                    onClick={bringToFront}
+                    className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs"
+                    title="Bring to Front"
+                  >
+                    <ArrowUp size={14} />
+                    <ArrowUp size={14} className="-ml-2" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Actions */}
+              {(projectId || siteId) && (
+                <div>
+                  <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Publish Design</label>
+                  <div className="flex gap-2">
+                    {projectId && (
+                      <button
+                        onClick={() => setShowPublishModal(true)}
+                        disabled={!pinterestConnected}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={pinterestConnected ? "Publish to Pinterest" : "Connect Pinterest first"}
+                      >
+                        <Send size={14} />
+                        Pinterest
+                      </button>
+                    )}
+                    {siteId && (
+                      <button
+                        onClick={() => setShowWpModal(true)}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs"
+                        title="Publish to WordPress"
+                      >
+                        <Globe size={14} />
+                        WordPress
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {selectedElement.type === "text" && (
                 <div className="space-y-4">
