@@ -347,12 +347,16 @@ export default function PinDesigner({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricCanvasRef = useRef<any>(null);
   const fabricLibRef = useRef<any>(null);
-  const undoHistoryRef = useRef<string[]>([]);
+  const undoHistoryRef = useRef<{ json: string; selectedId: string | null }[]>([]);
   const isRestoringRef = useRef(false);
+  const selectedIdRef = useRef<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [zoom, setZoom] = useState(35);
   const [leftTab, setLeftTab] = useState<"elements" | "layers" | "templates">("templates");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
   const [selectedTemplate, setSelectedTemplate] = useState<PinTemplate | null>(null);
   const [editText, setEditText] = useState("");
   const [pinName, setPinName] = useState(templateName);
@@ -669,6 +673,7 @@ export default function PinDesigner({
 
     canvas.renderAll();
     updateLayers();
+    saveUndoState();
   };
 
   const updateLayers = () => {
@@ -700,7 +705,7 @@ export default function PinDesigner({
     try {
       const json = JSON.stringify(canvas.toJSON(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"]));
       const history = undoHistoryRef.current;
-      history.push(json);
+      history.push({ json, selectedId: selectedIdRef.current });
       if (history.length > MAX_UNDO) history.shift();
     } catch {}
   };
@@ -708,8 +713,8 @@ export default function PinDesigner({
   const performUndo = async () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas || undoHistoryRef.current.length === 0) return;
-    const prevSelectedId = selectedId;
-    const json = undoHistoryRef.current.pop()!;
+    const entry = undoHistoryRef.current.pop()!;
+    const { json } = entry;
     isRestoringRef.current = true;
     try {
       const parsed = JSON.parse(json);
@@ -717,59 +722,26 @@ export default function PinDesigner({
 
       // Restore custom properties (__pinId, etc.) - Fabric may not restore them by default
       const customKeys = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"];
-      const serializedObjs = parsed?.objects;
+      const serializedObjs = parsed?.objects ?? [];
       const fabricObjs = canvas.getObjects();
-      if (Array.isArray(serializedObjs) && serializedObjs.length === fabricObjs.length) {
-        serializedObjs.forEach((ser: any, i: number) => {
-          const obj = fabricObjs[i] as any;
-          if (obj && ser) {
-            customKeys.forEach((k) => {
-              if (ser[k] !== undefined) obj[k] = ser[k];
-            });
-          }
-        });
+      const n = Math.min(serializedObjs.length, fabricObjs.length);
+      for (let i = 0; i < n; i++) {
+        const ser = serializedObjs[i];
+        const obj = fabricObjs[i] as any;
+        if (obj && ser) {
+          customKeys.forEach((k) => {
+            if (ser[k] !== undefined) obj[k] = ser[k];
+          });
+        }
       }
 
       canvas.discardActiveObject();
-      canvas.renderAll();
       updateLayers();
-
-      // Re-select and sync properties if the previously selected object still exists
-      if (prevSelectedId) {
-        const obj = fabricObjs.find((o: any) => o.__pinId === prevSelectedId);
-        if (obj) {
-          canvas.setActiveObject(obj);
-          setSelectedId(prevSelectedId);
-          if (obj.__pinType === "text") {
-            setEditText(obj.text ?? "");
-            setFontFamily(obj.fontFamily ?? "Arial");
-            setFontSize(obj.fontSize ?? 32);
-            setFontWeight(obj.fontWeight ?? "normal");
-            setTextAlign(obj.textAlign ?? "center");
-            setTextColor(obj.fill ?? "#333333");
-          } else if (obj.__pinType === "frame") {
-            setFrameStrokeWidth(obj.strokeWidth ?? 4);
-            setFrameStrokeColor(obj.stroke ?? "#333333");
-            setFrameStrokeStyle(obj.__strokeStyle ?? "solid");
-          } else if (obj.__pinType === "band") {
-            const fill = obj.fill;
-            if (typeof fill === "string") {
-              const match = fill.match(/rgba?\((\d+),(\d+),(\d+)(?:,([\d.]+))?\)/);
-              if (match) {
-                setBandOpacity(parseFloat(match[4] ?? "1"));
-                setBandFill(`#${parseInt(match[1], 10).toString(16).padStart(2, "0")}${parseInt(match[2], 10).toString(16).padStart(2, "0")}${parseInt(match[3], 10).toString(16).padStart(2, "0")}`);
-              } else { setBandOpacity(1); setBandFill("#ffffff"); }
-            } else { setBandOpacity(1); setBandFill("#ffffff"); }
-          }
-          canvas.renderAll();
-        } else {
-          setSelectedId(null);
-        }
-      } else {
-        setSelectedId(null);
-      }
+      setSelectedId(null);
+      setEditText("");
+      canvas.renderAll();
     } catch (e) {
-      undoHistoryRef.current.push(json);
+      undoHistoryRef.current.push(entry);
     } finally {
       isRestoringRef.current = false;
     }
@@ -797,10 +769,12 @@ export default function PinDesigner({
         fabricCanvasRef.current = canvas;
 
         canvas.on("selection:created", (e: any) => {
+          if (isRestoringRef.current) return;
           let obj = e.selected?.[0];
           if (!obj && (e.selected as any)?._objects?.length) obj = (e.selected as any)._objects[0];
           if (!obj) obj = canvas.getActiveObject() as any;
           if (obj?.__pinId) {
+            selectedIdRef.current = obj.__pinId;
             setSelectedId(obj.__pinId);
             if (obj.__pinType === "text") {
               setEditText(obj.text ?? "");
@@ -832,10 +806,12 @@ export default function PinDesigner({
           }
         });
         canvas.on("selection:updated", (e: any) => {
+          if (isRestoringRef.current) return;
           let obj = e.selected?.[0];
           if (!obj && (e.selected as any)?._objects?.length) obj = (e.selected as any)._objects[0];
           if (!obj) obj = canvas.getActiveObject() as any;
           if (obj?.__pinId) {
+            selectedIdRef.current = obj.__pinId;
             setSelectedId(obj.__pinId);
             if (obj.__pinType === "text") {
               setEditText(obj.text ?? "");
@@ -867,6 +843,8 @@ export default function PinDesigner({
           }
         });
         canvas.on("selection:cleared", () => {
+          if (isRestoringRef.current) return;
+          selectedIdRef.current = null;
           setSelectedId(null);
           setEditText("");
         });
@@ -1337,6 +1315,7 @@ export default function PinDesigner({
     if (obj) {
       canvas.setActiveObject(obj);
       canvas.renderAll();
+      selectedIdRef.current = id;
       setSelectedId(id);
       if (obj.__pinType === "text") {
         setEditText(obj.text ?? "");
