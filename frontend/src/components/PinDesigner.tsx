@@ -913,15 +913,17 @@ export default function PinDesigner({
         canvas.on("object:rotating", onTransformStart);
         canvas.on("object:resizing", onTransformStart);
 
-        // Keep text (not frames) on top when moved - frames would block clicking other elements
+        // Text on top when moved; frames to back when moved/resized so they don't block text
         canvas.on("object:modified", (e: any) => {
           transformSaveDone = false;
           const obj = e.target;
           if (obj && obj.__pinType === "text") {
             canvas.bringObjectToFront(obj);
-            canvas.renderAll();
-            updateLayers();
+          } else if (obj && obj.__pinType === "frame") {
+            canvas.sendObjectToBack(obj);
           }
+          canvas.renderAll();
+          updateLayers();
         });
 
         setCanvasReady(true);
