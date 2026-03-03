@@ -402,18 +402,6 @@ export default function PinDesigner({
     }
   }, [projectId]);
 
-  // Ctrl+Z undo
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "z" || !e.ctrlKey && !e.metaKey) return;
-      const target = e.target as HTMLElement;
-      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable) return;
-      e.preventDefault();
-      performUndo();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
 
   const checkPinterestStatus = async () => {
     if (!projectId) return;
@@ -720,6 +708,7 @@ export default function PinDesigner({
   const performUndo = async () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas || undoHistoryRef.current.length === 0) return;
+    const prevSelectedId = selectedId;
     const json = undoHistoryRef.current.pop()!;
     isRestoringRef.current = true;
     try {
@@ -743,8 +732,42 @@ export default function PinDesigner({
 
       canvas.discardActiveObject();
       canvas.renderAll();
-      setSelectedId(null);
       updateLayers();
+
+      // Re-select and sync properties if the previously selected object still exists
+      if (prevSelectedId) {
+        const obj = fabricObjs.find((o: any) => o.__pinId === prevSelectedId);
+        if (obj) {
+          canvas.setActiveObject(obj);
+          setSelectedId(prevSelectedId);
+          if (obj.__pinType === "text") {
+            setEditText(obj.text ?? "");
+            setFontFamily(obj.fontFamily ?? "Arial");
+            setFontSize(obj.fontSize ?? 32);
+            setFontWeight(obj.fontWeight ?? "normal");
+            setTextAlign(obj.textAlign ?? "center");
+            setTextColor(obj.fill ?? "#333333");
+          } else if (obj.__pinType === "frame") {
+            setFrameStrokeWidth(obj.strokeWidth ?? 4);
+            setFrameStrokeColor(obj.stroke ?? "#333333");
+            setFrameStrokeStyle(obj.__strokeStyle ?? "solid");
+          } else if (obj.__pinType === "band") {
+            const fill = obj.fill;
+            if (typeof fill === "string") {
+              const match = fill.match(/rgba?\((\d+),(\d+),(\d+)(?:,([\d.]+))?\)/);
+              if (match) {
+                setBandOpacity(parseFloat(match[4] ?? "1"));
+                setBandFill(`#${parseInt(match[1], 10).toString(16).padStart(2, "0")}${parseInt(match[2], 10).toString(16).padStart(2, "0")}${parseInt(match[3], 10).toString(16).padStart(2, "0")}`);
+              } else { setBandOpacity(1); setBandFill("#ffffff"); }
+            } else { setBandOpacity(1); setBandFill("#ffffff"); }
+          }
+          canvas.renderAll();
+        } else {
+          setSelectedId(null);
+        }
+      } else {
+        setSelectedId(null);
+      }
     } catch (e) {
       undoHistoryRef.current.push(json);
     } finally {
@@ -846,6 +869,20 @@ export default function PinDesigner({
         canvas.on("selection:cleared", () => {
           setSelectedId(null);
           setEditText("");
+        });
+
+        canvas.on("mouse:down", (e: any) => {
+          const target = e.target;
+          const obj = getSelectedObject();
+          if (obj && !target && e.pointer) {
+            saveUndoState();
+            const pt = canvas.getPointer(e.e);
+            obj.setPositionByOrigin?.({ x: pt.x, y: pt.y } as any, "center", "center");
+            if (!obj.setPositionByOrigin) obj.set({ left: pt.x, top: pt.y });
+            obj.setCoords();
+            canvas.renderAll();
+            updateLayers();
+          }
         });
 
         canvas.on("mouse:dblclick", (e: any) => {
@@ -977,23 +1014,53 @@ export default function PinDesigner({
     }
   };
 
+  const MOVE_STEP = 5;
+
+  const moveSelectedBy = (dx: number, dy: number) => {
+    const canvas = fabricCanvasRef.current;
+    const obj = getSelectedObject();
+    if (!canvas || !obj) return;
+    saveUndoState();
+    obj.set("left", (obj.left ?? 0) + dx);
+    obj.set("top", (obj.top ?? 0) + dy);
+    obj.setCoords();
+    canvas.renderAll();
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const activeElement = document.activeElement as HTMLElement;
+      const isInputFocused = activeElement?.tagName === "INPUT" || 
+                             activeElement?.tagName === "TEXTAREA" ||
+                             activeElement?.getAttribute("contenteditable") === "true";
+
+      if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
+        if (!isInputFocused) {
+          e.preventDefault();
+          performUndo();
+        }
+        return;
+      }
       if (e.key === "Delete" || e.key === "Backspace") {
-        const activeElement = document.activeElement;
-        const isInputFocused = activeElement?.tagName === "INPUT" || 
-                               activeElement?.tagName === "TEXTAREA" ||
-                               activeElement?.getAttribute("contenteditable") === "true";
         if (!isInputFocused) {
           e.preventDefault();
           deleteSelectedElement();
         }
+        return;
+      }
+      if (!isInputFocused && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+        e.preventDefault();
+        const step = e.shiftKey ? MOVE_STEP * 2 : MOVE_STEP;
+        if (e.key === "ArrowUp") moveSelectedBy(0, -step);
+        else if (e.key === "ArrowDown") moveSelectedBy(0, step);
+        else if (e.key === "ArrowLeft") moveSelectedBy(-step, 0);
+        else if (e.key === "ArrowRight") moveSelectedBy(step, 0);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [selectedId]);
 
   const setZoomPct = (pct: number) => setZoom(Math.max(20, Math.min(150, pct)));
 
