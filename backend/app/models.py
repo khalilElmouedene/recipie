@@ -101,11 +101,25 @@ class CredentialOut(BaseModel):
     updated_at: datetime
 
 
+class PromptOut(BaseModel):
+    key: str
+    value: str
+    description: str
+
+
+class PromptsUpdate(BaseModel):
+    prompts: dict[str, str]  # key -> value
+
+
+class WpUserItem(BaseModel):
+    username: str
+    password: str = ""  # empty = keep existing when updating
+
+
 class SiteCreate(BaseModel):
     domain: str
     wp_url: str
-    wp_username: str
-    wp_password: str
+    wp_users: list[WpUserItem] = Field(..., min_length=1, description="At least one WP user")
     sheet_name: str = ""
     spreadsheet_id: str = ""
 
@@ -113,10 +127,13 @@ class SiteCreate(BaseModel):
 class SiteUpdate(BaseModel):
     domain: str | None = None
     wp_url: str | None = None
-    wp_username: str | None = None
-    wp_password: str | None = None
+    wp_users: list[WpUserItem] | None = None
     sheet_name: str | None = None
     spreadsheet_id: str | None = None
+
+
+class WpUserOut(BaseModel):
+    username: str
 
 
 class SiteOut(BaseModel):
@@ -124,7 +141,7 @@ class SiteOut(BaseModel):
     project_id: uuid.UUID
     domain: str
     wp_url: str
-    wp_username: str
+    wp_users: list[WpUserOut]
     sheet_name: str
     spreadsheet_id: str
     created_at: datetime

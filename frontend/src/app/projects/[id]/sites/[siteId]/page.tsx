@@ -45,11 +45,8 @@ export default function SiteDetailPage() {
   // Pin Designer (bulk generator only - per-recipe uses same designer page)
   const [pinTemplates, setPinTemplates] = useState<PinTemplate[]>([]);
 
-  // WordPress publish
-  const [wpOpen, setWpOpen] = useState<string | null>(null);
-  const [wpTitle, setWpTitle] = useState("");
-  const [wpCreatePost, setWpCreatePost] = useState(true);
-  const [wpPublishing, setWpPublishing] = useState(false);
+  // WordPress publish (full article - per recipe)
+  const [wpPublishingId, setWpPublishingId] = useState<string | null>(null);
 
   // Saved pin design form (Pinterest tab)
   const [pinDesignTitle, setPinDesignTitle] = useState("");
@@ -299,42 +296,20 @@ export default function SiteDetailPage() {
     return r.image_url || null;
   };
 
-  const handleOpenWordPress = (r: RecipeOut) => {
-    const imgUrl = getRecipeImageUrl(r);
-    if (!imgUrl) {
-      alert("No image to publish. Generate content first.");
+  const handlePublishArticleToWordPress = async (r: RecipeOut) => {
+    if (!r.generated_article) {
+      alert("No article generated. Generate content first.");
       return;
     }
-    setWpOpen(r.id);
-    setWpTitle(r.recipe_text?.split("\n")[0] || "Recipe");
-  };
-
-  const handlePublishToWordPress = async () => {
-    if (!wpOpen || !siteId) return;
-    const r = recipes.find((rec) => rec.id === wpOpen);
-    if (!r) return;
-    const imgUrl = getRecipeImageUrl(r);
-    if (!imgUrl) {
-      alert("No image found");
-      return;
-    }
-    setWpPublishing(true);
+    setWpPublishingId(r.id);
     try {
-      const data = await api.uploadToWordPressFromUrl(siteId, {
-        image_url: imgUrl,
-        title: wpTitle,
-        create_post: wpCreatePost,
-      });
-      if (data.post_url) {
-        alert(`Published to WordPress!\n\nPost: ${data.post_url}`);
-      } else {
-        alert(`Uploaded to WordPress! Media ID: ${data.media_id}\n\nFind it in Media → Library.`);
-      }
-      setWpOpen(null);
+      const data = await api.publishRecipeArticle(r.id);
+      alert(`Published to WordPress!\n\nPost: ${data.wp_permalink}`);
+      loadRecipes();
     } catch (err: any) {
       alert(err.message || "Failed to publish to WordPress");
     }
-    setWpPublishing(false);
+    setWpPublishingId(null);
   };
 
   const handleSavePinDesign = async (recipeId: string) => {
@@ -385,6 +360,7 @@ export default function SiteDetailPage() {
   const pendingCount = recipes.filter((r) => r.status === "pending").length;
   const generatedCount = recipes.filter((r) => r.status === "generated").length;
   const publishedCount = recipes.filter((r) => r.status === "published").length;
+  const failedCount = recipes.filter((r) => r.status === "failed").length;
 
   if (!site) return <div className="text-gray-400">Loading...</div>;
 
@@ -397,7 +373,10 @@ export default function SiteDetailPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">{site.domain}</h1>
-          <p className="text-sm text-gray-400 mt-1">{recipes.length} recipes &middot; {pendingCount} pending &middot; {generatedCount} generated &middot; {publishedCount} published</p>
+          <p className="text-sm text-gray-400 mt-1">
+            {recipes.length} recipes &middot; {pendingCount} pending &middot; {generatedCount} generated &middot; {publishedCount} published
+            {failedCount > 0 && <span className="text-red-400"> &middot; {failedCount} failed</span>}
+          </p>
         </div>
         <div className="flex gap-2">
           <button onClick={handleExport} className="btn-secondary flex items-center gap-2">
@@ -511,12 +490,12 @@ export default function SiteDetailPage() {
                 {r.error_message && <p className="text-xs text-red-400 mt-1">{r.error_message}</p>}
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
-                {r.status === "pending" && (
+                {(r.status === "pending" || r.status === "failed") && (
                   <button
                     onClick={(e) => { e.stopPropagation(); handleGenerateSingle(r.id); }}
                     disabled={generatingId === r.id}
-                    className="text-brand-400 hover:text-brand-300 p-1 disabled:opacity-50"
-                    title="Generate content for this recipe"
+                    className={r.status === "failed" ? "text-amber-400 hover:text-amber-300 p-1 disabled:opacity-50" : "text-brand-400 hover:text-brand-300 p-1 disabled:opacity-50"}
+                    title={r.status === "failed" ? "Retry generation" : "Generate content for this recipe"}
                   >
                     {generatingId === r.id ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
                   </button>
@@ -536,13 +515,14 @@ export default function SiteDetailPage() {
                     <Eye size={16} />
                   </button>
                 )}
-                {getRecipeImageUrl(r) && (
+                {r.generated_article && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); handleOpenWordPress(r); }}
-                    className="text-gray-500 hover:text-blue-400 p-1"
-                    title="Publish to WordPress"
+                    onClick={(e) => { e.stopPropagation(); handlePublishArticleToWordPress(r); }}
+                    disabled={wpPublishingId === r.id}
+                    className="text-gray-500 hover:text-blue-400 p-1 disabled:opacity-50"
+                    title="Publish article to WordPress"
                   >
-                    <Globe size={16} />
+                    {wpPublishingId === r.id ? <RefreshCw size={16} className="animate-spin" /> : <Globe size={16} />}
                   </button>
                 )}
                 <button onClick={(e) => { e.stopPropagation(); handleDelete(r.id); }} className="text-gray-500 hover:text-red-400 p-1">
@@ -572,6 +552,12 @@ export default function SiteDetailPage() {
                     <div>
                       {r.generated_article ? (
                         <div className="prose prose-invert prose-sm max-w-none text-sm text-gray-300" dangerouslySetInnerHTML={{ __html: r.generated_article }} />
+                      ) : r.status === "failed" ? (
+                        <div className="text-sm">
+                          <p className="text-red-400 font-medium">Generation failed.</p>
+                          {r.error_message && <p className="text-gray-400 mt-1">{r.error_message}</p>}
+                          <p className="text-gray-500 mt-2">Click the Retry button above to try again.</p>
+                        </div>
                       ) : (
                         <p className="text-gray-500 text-sm">No article generated yet. Click "Generate" to create content.</p>
                       )}
@@ -983,52 +969,6 @@ export default function SiteDetailPage() {
         </div>
       )}
 
-      {/* WordPress Publish Modal */}
-      {wpOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center">
-          <div className="bg-gray-900 rounded-xl p-6 w-full max-w-md">
-            <h3 className="text-lg font-semibold text-white mb-4">Publish to WordPress</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">Post Title</label>
-                <input
-                  value={wpTitle}
-                  onChange={(e) => setWpTitle(e.target.value)}
-                  className="input-field w-full"
-                  placeholder="Recipe title..."
-                />
-              </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={wpCreatePost}
-                  onChange={(e) => setWpCreatePost(e.target.checked)}
-                  className="rounded border-gray-600 bg-gray-800 text-brand-500"
-                />
-                <span className="text-sm text-gray-300">Create blog post</span>
-              </label>
-              <p className="text-xs text-gray-500">
-                Uploads the recipe image and optionally creates a published post.
-              </p>
-            </div>
-            <div className="flex gap-2 mt-6">
-              <button
-                onClick={() => setWpOpen(null)}
-                className="flex-1 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-600"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handlePublishToWordPress}
-                disabled={wpPublishing}
-                className="flex-1 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {wpPublishing ? "Publishing..." : "Publish to WordPress"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -2,11 +2,11 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Globe, Key, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X } from "lucide-react";
-import { api, ProjectOut, SiteOut, CredentialOut, MemberOut, JobOut, UserOut } from "@/lib/api";
+import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus } from "lucide-react";
+import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
-type Tab = "sites" | "credentials" | "members" | "jobs";
+type Tab = "sites" | "members" | "jobs";
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -23,7 +23,6 @@ export default function ProjectDetailPage() {
 
   const tabs: { key: Tab; label: string; icon: React.ElementType }[] = [
     { key: "sites", label: "Sites", icon: Globe },
-    { key: "credentials", label: "Credentials", icon: Key },
     { key: "members", label: "Members", icon: Users },
     { key: "jobs", label: "Jobs", icon: Briefcase },
   ];
@@ -70,7 +69,6 @@ export default function ProjectDetailPage() {
       </div>
 
       {tab === "sites" && <SitesTab projectId={id} role={role} router={router} />}
-      {tab === "credentials" && <CredentialsTab projectId={id} role={role} />}
       {tab === "members" && <MembersTab projectId={id} role={role} />}
       {tab === "jobs" && <JobsTab projectId={id} />}
     </div>
@@ -79,13 +77,18 @@ export default function ProjectDetailPage() {
 
 const MAX_SITES_PER_PROJECT = 4;
 
+const emptyWpUser = () => ({ username: "", password: "" });
+
 function SitesTab({ projectId, role, router }: { projectId: string; role: string | null; router: ReturnType<typeof useRouter> }) {
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState({ domain: "", wp_url: "", wp_username: "", wp_password: "", sheet_name: "", spreadsheet_id: "" });
+  const [form, setForm] = useState({ domain: "", wp_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[], sheet_name: "", spreadsheet_id: "" });
   const [loading, setLoading] = useState(false);
   const [publishingSiteId, setPublishingSiteId] = useState<string | null>(null);
   const [detailsSite, setDetailsSite] = useState<SiteOut | null>(null);
+  const [editSite, setEditSite] = useState<SiteOut | null>(null);
+  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[], sheet_name: "", spreadsheet_id: "" });
+  const [editing, setEditing] = useState(false);
 
   const load = () => api.getSites(projectId).then(setSites).catch(() => {});
   useEffect(() => { load(); }, [projectId]);
@@ -96,10 +99,15 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
       alert(`Un projet peut contenir au maximum ${MAX_SITES_PER_PROJECT} sites.`);
       return;
     }
+    const validUsers = form.wp_users.filter((u) => u.username.trim() && u.password);
+    if (!validUsers.length) {
+      alert("Add at least one WP user with username and password.");
+      return;
+    }
     setLoading(true);
     try {
-      await api.createSite(projectId, form);
-      setForm({ domain: "", wp_url: "", wp_username: "", wp_password: "", sheet_name: "", spreadsheet_id: "" });
+      await api.createSite(projectId, { ...form, wp_users: validUsers });
+      setForm({ domain: "", wp_url: "", wp_users: [emptyWpUser()], sheet_name: "", spreadsheet_id: "" });
       setShow(false);
       load();
     } catch {}
@@ -122,6 +130,46 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
     if (!confirm("Delete this site and all its recipes?")) return;
     await api.deleteSite(siteId);
     load();
+  };
+
+  const openEdit = (s: SiteOut) => {
+    setEditSite(s);
+    const wpUsers = (s as any).wp_users?.length
+      ? (s as any).wp_users.map((u: { username: string }) => ({ username: u.username, password: "" }))
+      : [{ username: (s as any).wp_username || "", password: "" }];
+    setEditForm({
+      domain: s.domain,
+      wp_url: s.wp_url,
+      wp_users: wpUsers.length ? wpUsers : [emptyWpUser()],
+      sheet_name: s.sheet_name || "",
+      spreadsheet_id: s.spreadsheet_id || "",
+    });
+  };
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editSite) return;
+    const validUsers = editForm.wp_users.filter((u) => u.username.trim());
+    if (!validUsers.length) {
+      alert("Add at least one WP user.");
+      return;
+    }
+    setEditing(true);
+    try {
+      const data: Record<string, unknown> = {
+        domain: editForm.domain,
+        wp_url: editForm.wp_url,
+        wp_users: validUsers.map((u) => ({ username: u.username, password: u.password })),
+        sheet_name: editForm.sheet_name,
+        spreadsheet_id: editForm.spreadsheet_id,
+      };
+      await api.updateSite(editSite.id, data);
+      setEditSite(null);
+      load();
+    } catch (err: any) {
+      alert(err.message || "Failed to update site");
+    }
+    setEditing(false);
   };
 
   const canAddSite = (role === "owner" || role === "admin") && sites.length < MAX_SITES_PER_PROJECT;
@@ -157,13 +205,37 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
             <label className="block text-sm font-medium text-gray-300 mb-1">WordPress URL</label>
             <input value={form.wp_url} onChange={(e) => setForm({ ...form, wp_url: e.target.value })} required className="input-field" placeholder="https://example.com/xmlrpc.php" />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">WP Username</label>
-            <input value={form.wp_username} onChange={(e) => setForm({ ...form, wp_username: e.target.value })} required className="input-field" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">WP Password</label>
-            <input type="password" value={form.wp_password} onChange={(e) => setForm({ ...form, wp_password: e.target.value })} required className="input-field" />
+          <div className="col-span-2">
+            <label className="block text-sm font-medium text-gray-300 mb-1">WP Users (one randomly selected per publish)</label>
+            <div className="space-y-2">
+              {form.wp_users.map((u, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <input
+                    value={u.username}
+                    onChange={(e) => setForm({ ...form, wp_users: form.wp_users.map((x, j) => j === i ? { ...x, username: e.target.value } : x) })}
+                    className="input-field flex-1"
+                    placeholder="Username"
+                    required
+                  />
+                  <input
+                    type="password"
+                    value={u.password}
+                    onChange={(e) => setForm({ ...form, wp_users: form.wp_users.map((x, j) => j === i ? { ...x, password: e.target.value } : x) })}
+                    className="input-field flex-1"
+                    placeholder="Password"
+                    required
+                  />
+                  {form.wp_users.length > 1 && (
+                    <button type="button" onClick={() => setForm({ ...form, wp_users: form.wp_users.filter((_, j) => j !== i) })} className="text-gray-500 hover:text-red-400 p-2">
+                      <Minus size={16} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button type="button" onClick={() => setForm({ ...form, wp_users: [...form.wp_users, emptyWpUser()] })} className="text-sm text-brand-400 hover:text-brand-300 flex items-center gap-1">
+                <Plus size={14} /> Add another user
+              </button>
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">Sheet Name</label>
@@ -184,7 +256,7 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
           <div key={s.id} className="card flex items-center justify-between">
             <Link href={`/projects/${projectId}/sites/${s.id}`} className="flex-1 min-w-0">
               <h3 className="font-semibold text-white hover:text-brand-400 transition">{s.domain}</h3>
-              <p className="text-sm text-gray-400">{s.wp_url} &middot; {s.recipe_count} recipes</p>
+              <p className="text-sm text-gray-400">{s.wp_url} &middot; {(s as any).wp_users?.length || 1} user(s) &middot; {s.recipe_count} recipes</p>
             </Link>
             <div className="flex items-center gap-1 flex-shrink-0">
               <button
@@ -194,6 +266,15 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
               >
                 <Info size={16} />
               </button>
+              {(role === "owner" || role === "admin") && (
+                <button
+                  onClick={() => openEdit(s)}
+                  className="text-gray-400 hover:text-brand-400 transition p-2"
+                  title="Edit site"
+                >
+                  <Pencil size={16} />
+                </button>
+              )}
               <button
                 onClick={() => handlePublishToWordPress(s.id)}
                 disabled={publishingSiteId === s.id || s.recipe_count === 0}
@@ -232,8 +313,12 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
                 <dd className="text-gray-300 break-all">{detailsSite.wp_url}</dd>
               </div>
               <div>
-                <dt className="text-gray-500">WP Username</dt>
-                <dd className="text-gray-300">{detailsSite.wp_username}</dd>
+                <dt className="text-gray-500">WP Users</dt>
+                <dd className="text-gray-300">
+                  {((detailsSite as any).wp_users?.length
+                    ? (detailsSite as any).wp_users.map((u: { username: string }) => u.username).join(", ")
+                    : (detailsSite as any).wp_username || "—")}
+                </dd>
               </div>
               {detailsSite.sheet_name && (
                 <div>
@@ -261,92 +346,104 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
           </div>
         </div>
       )}
-    </div>
-  );
-}
 
-const CRED_TYPES = [
-  { key: "openai", label: "OpenAI API Key" },
-  { key: "discord_auth", label: "Discord Authorization" },
-  { key: "discord_app_id", label: "Discord Application ID" },
-  { key: "discord_guild", label: "Discord Guild ID" },
-  { key: "discord_channel", label: "Discord Channel ID" },
-  { key: "mj_version", label: "Midjourney Version" },
-  { key: "mj_id", label: "Midjourney ID" },
-  { key: "google_sa_json", label: "Google Service Account JSON" },
-];
-
-function CredentialsTab({ projectId, role }: { projectId: string; role: string | null }) {
-  const [creds, setCreds] = useState<CredentialOut[]>([]);
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    api.getCredentials(projectId).then(setCreds).catch(() => {});
-  }, [projectId]);
-
-  const handleSave = async () => {
-    setSaving(true);
-    const toSave = Object.entries(values)
-      .filter(([, v]) => v.trim())
-      .map(([key_type, value]) => ({ key_type, value }));
-    if (toSave.length) {
-      const updated = await api.setCredentials(projectId, toSave);
-      setCreds(updated);
-      setValues({});
-    }
-    setSaving(false);
-  };
-
-  const getMasked = (key: string) => creds.find((c) => c.key_type === key)?.masked_value || "Not set";
-
-  if (role !== "owner" && role !== "admin") {
-    return <p className="text-gray-400">You don&apos;t have permission to view credentials.</p>;
-  }
-
-  return (
-    <div className="space-y-4">
-      <Link
-        href="/settings"
-        className="card flex items-center gap-3 hover:border-brand-500/50 transition block"
-      >
-        <div className="h-10 w-10 rounded-lg bg-brand-600/20 flex items-center justify-center text-brand-400">
-          <Key size={20} />
-        </div>
-        <div>
-          <h3 className="font-semibold text-white">Clés API globales</h3>
-          <p className="text-sm text-gray-400">Paramètres → OpenAI, Midjourney, Google Sheets</p>
-        </div>
-        <span className="ml-auto text-brand-400 text-sm">Ouvrir →</span>
-      </Link>
-
-      <p className="text-xs text-gray-500 mb-2">Clés par projet (optionnel, écrase les paramètres) :</p>
-      {CRED_TYPES.map((ct) => (
-        <div key={ct.key} className="card">
-          <div className="flex items-center justify-between mb-2">
-            <label className="text-sm font-medium text-gray-300">{ct.label}</label>
-            <span className="text-xs text-gray-500 font-mono">{getMasked(ct.key)}</span>
+      {editSite && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-gray-900 rounded-xl border border-gray-700 max-w-lg w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">Edit site</h3>
+              <button onClick={() => setEditSite(null)} className="text-gray-500 hover:text-white">
+                <X size={18} />
+              </button>
+            </div>
+            <form onSubmit={handleUpdate} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Domain</label>
+                <input
+                  value={editForm.domain}
+                  onChange={(e) => setEditForm({ ...editForm, domain: e.target.value })}
+                  required
+                  className="input-field w-full"
+                  placeholder="example.com"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">WordPress URL</label>
+                <input
+                  value={editForm.wp_url}
+                  onChange={(e) => setEditForm({ ...editForm, wp_url: e.target.value })}
+                  required
+                  className="input-field w-full"
+                  placeholder="https://example.com/xmlrpc.php"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">WP Users (blank password = keep current)</label>
+                <div className="space-y-2">
+                  {editForm.wp_users.map((u, i) => (
+                    <div key={i} className="flex gap-2 items-center">
+                      <input
+                        value={u.username}
+                        onChange={(e) => setEditForm({ ...editForm, wp_users: editForm.wp_users.map((x, j) => j === i ? { ...x, username: e.target.value } : x) })}
+                        className="input-field flex-1"
+                        placeholder="Username"
+                        required
+                      />
+                      <input
+                        type="password"
+                        value={u.password}
+                        onChange={(e) => setEditForm({ ...editForm, wp_users: editForm.wp_users.map((x, j) => j === i ? { ...x, password: e.target.value } : x) })}
+                        className="input-field flex-1"
+                        placeholder="•••• leave blank to keep"
+                      />
+                      {editForm.wp_users.length > 1 && (
+                        <button type="button" onClick={() => setEditForm({ ...editForm, wp_users: editForm.wp_users.filter((_, j) => j !== i) })} className="text-gray-500 hover:text-red-400 p-2">
+                          <Minus size={16} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setEditForm({ ...editForm, wp_users: [...editForm.wp_users, emptyWpUser()] })} className="text-sm text-brand-400 hover:text-brand-300 flex items-center gap-1">
+                    <Plus size={14} /> Add another user
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Sheet name (optional)</label>
+                <input
+                  value={editForm.sheet_name}
+                  onChange={(e) => setEditForm({ ...editForm, sheet_name: e.target.value })}
+                  className="input-field w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Spreadsheet ID (optional)</label>
+                <input
+                  value={editForm.spreadsheet_id}
+                  onChange={(e) => setEditForm({ ...editForm, spreadsheet_id: e.target.value })}
+                  className="input-field w-full"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditSite(null)}
+                  className="flex-1 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editing}
+                  className="flex-1 btn-primary"
+                >
+                  {editing ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </form>
           </div>
-          {ct.key === "google_sa_json" ? (
-            <textarea
-              value={values[ct.key] || ""}
-              onChange={(e) => setValues({ ...values, [ct.key]: e.target.value })}
-              className="input-field h-24 font-mono text-xs"
-              placeholder="Paste JSON here to update..."
-            />
-          ) : (
-            <input
-              value={values[ct.key] || ""}
-              onChange={(e) => setValues({ ...values, [ct.key]: e.target.value })}
-              className="input-field font-mono text-xs"
-              placeholder="Enter new value to update..."
-            />
-          )}
         </div>
-      ))}
-      <button onClick={handleSave} disabled={saving} className="btn-primary">
-        {saving ? "Saving..." : "Save Credentials"}
-      </button>
+      )}
     </div>
   );
 }

@@ -1,8 +1,12 @@
 from __future__ import annotations
 import asyncio
+import logging
+import os
 import threading
 import uuid
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 from typing import Any
 
 from sqlalchemy import select, update
@@ -10,10 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db_models import (
     Job as JobModel, JobLog, JobStatus, JobType,
-    ProjectCredential, UserCredential, Site, Recipe, RecipeStatus,
+    Site, Recipe, RecipeStatus, Prompt,
 )
-from ..crypto import decrypt
 from ..database import SessionLocal
+from ..services.credentials_loader import load_credentials_for_job
+from ..site_credentials import get_random_wp_credentials
 
 
 class RunningJob:
@@ -75,24 +80,19 @@ class JobManager:
         project_id = db_job.project_id
         job_id_str = str(db_job.id)
 
-        # User credentials (Paramètres) override project credentials
-        credentials: dict[str, str] = {}
-        project_rows = await db.execute(
-            select(ProjectCredential).where(ProjectCredential.project_id == project_id)
-        )
-        for c in project_rows.scalars().all():
-            try:
-                credentials[c.key_type] = decrypt(c.encrypted_value)
-            except Exception:
-                pass
-        user_rows = await db.execute(
-            select(UserCredential).where(UserCredential.user_id == db_job.created_by)
-        )
-        for c in user_rows.scalars().all():
-            try:
-                credentials[c.key_type] = decrypt(c.encrypted_value)
-            except Exception:
-                pass
+        # Use same db session as request - same pattern as Paramètres/Settings API
+        credentials = await load_credentials_for_job(db, project_id, db_job.created_by)
+
+        if not credentials.get("openai") and os.environ.get("OPENAI_API_KEY"):
+            credentials["openai"] = os.environ["OPENAI_API_KEY"]
+        if not credentials.get("openai"):
+            logger.warning("No OpenAI key found. Loaded keys: %s", list(credentials.keys()))
+
+        # Load configurable prompts
+        prompts: dict[str, str] = {}
+        prompt_rows = await db.execute(select(Prompt))
+        for p in prompt_rows.scalars().all():
+            prompts[p.key] = p.value
 
         if not site_id:
             site_rows = await db.execute(
@@ -125,13 +125,24 @@ class JobManager:
         else:
             target_status = RecipeStatus.generated
 
-        recipe_query = (
-            select(Recipe)
-            .where(Recipe.site_id == site_id, Recipe.status == target_status)
-            .order_by(Recipe.created_at.asc())
-        )
-        if recipe_id:
-            recipe_query = recipe_query.where(Recipe.id == recipe_id)
+        if recipe_id and db_job.job_type == JobType.articles:
+            recipe_query = (
+                select(Recipe)
+                .where(
+                    Recipe.site_id == site_id,
+                    Recipe.id == recipe_id,
+                    Recipe.status.in_([RecipeStatus.pending, RecipeStatus.failed]),
+                )
+                .order_by(Recipe.created_at.asc())
+            )
+        else:
+            recipe_query = (
+                select(Recipe)
+                .where(Recipe.site_id == site_id, Recipe.status == target_status)
+                .order_by(Recipe.created_at.asc())
+            )
+            if recipe_id:
+                recipe_query = recipe_query.where(Recipe.id == recipe_id)
 
         recipe_rows = await db.execute(recipe_query)
         recipes_raw = recipe_rows.scalars().all()
@@ -188,14 +199,16 @@ class JobManager:
                 if db_job.job_type == JobType.articles:
                     if not credentials.get("openai"):
                         raise ValueError(
-                            "OpenAI API key not configured. Put article_writ (1) (1).py in the project root and run "
-                            "seed (docker compose exec backend python -m app.scripts.seed_dev_data), or set it in the project Credentials tab."
+                            "OpenAI API key not found. Make sure to: 1) Go to Paramètres → Clés API, "
+                            "2) Paste your OpenAI key (sk-...), 3) Click Enregistrer (button appears when you type). "
+                            "Or set OPENAI_API_KEY in your environment."
                         )
 
                     process_recipes_from_db(
                         recipes=recipes_data,
                         site_domain=site_domain,
                         credentials=credentials,
+                        prompts=prompts,
                         log=rj.log,
                         should_stop=rj.should_stop,
                         on_progress=rj.set_progress,
@@ -219,6 +232,8 @@ class JobManager:
 
             except Exception as e:
                 rj.log(f"Job failed: {e}")
+                if db_job.job_type == JobType.articles:
+                    _revert_generating(recipes_data)
                 _finalize(job_id_str, JobStatus.failed, rj._logs, error=str(e))
 
         async def _update_recipe(recipe_id: str, fields: dict, job_type: JobType):
@@ -299,15 +314,12 @@ class JobManager:
         thread.start()
 
     def _build_site_config(self, site_obj) -> dict:
-        try:
-            wp_pass = decrypt(site_obj.wp_password_enc)
-        except Exception:
-            wp_pass = ""
+        wp_user, wp_pass = get_random_wp_credentials(site_obj)
         return {
             "id": str(site_obj.id),
             "domain": site_obj.domain,
             "wp_url": site_obj.wp_url,
-            "wp_username": site_obj.wp_username,
+            "wp_username": wp_user,
             "wp_password": wp_pass,
         }
 

@@ -109,6 +109,13 @@ export const api = {
       body: JSON.stringify(creds),
     }),
 
+  getSettingsPrompts: () => request<PromptOut[]>(`/api/settings/prompts`),
+  setSettingsPrompts: (prompts: Record<string, string>) =>
+    request<PromptOut[]>(`/api/settings/prompts`, {
+      method: "PUT",
+      body: JSON.stringify({ prompts }),
+    }),
+
   // ── Sites ──────────────────────────────────────────────
   getSites: (projectId: string) => request<SiteOut[]>(`/api/projects/${projectId}/sites`),
 
@@ -151,6 +158,11 @@ export const api = {
 
   deleteRecipe: (recipeId: string) =>
     request<void>(`/api/recipes/${recipeId}`, { method: "DELETE" }),
+
+  publishRecipeArticle: (recipeId: string) =>
+    request<{ wp_post_id: string; wp_permalink: string }>(`/api/recipes/${recipeId}/publish-article`, {
+      method: "POST",
+    }),
 
   getPinterestBoards: (projectId: string) =>
     request<PinterestBoard[]>(`/api/projects/${projectId}/pinterest/boards`),
@@ -250,23 +262,37 @@ export interface CredentialOut {
   updated_at: string;
 }
 
+export interface PromptOut {
+  key: string;
+  value: string;
+  description: string;
+}
+
+export interface WpUserOut {
+  username: string;
+}
+
 export interface SiteOut {
   id: string;
   project_id: string;
   domain: string;
   wp_url: string;
-  wp_username: string;
+  wp_users: WpUserOut[];
   sheet_name: string;
   spreadsheet_id: string;
   created_at: string;
   recipe_count: number;
 }
 
+export interface WpUserItem {
+  username: string;
+  password: string;
+}
+
 export interface SiteCreateData {
   domain: string;
   wp_url: string;
-  wp_username: string;
-  wp_password: string;
+  wp_users: WpUserItem[];
   sheet_name?: string;
   spreadsheet_id?: string;
 }

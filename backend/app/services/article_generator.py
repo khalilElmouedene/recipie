@@ -52,6 +52,7 @@ def generate_for_recipe(
     image_url: str,
     site_domain: str,
     credentials: dict,
+    prompts: dict[str, str] | None = None,
     log: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
 ) -> dict:
@@ -83,7 +84,7 @@ def generate_for_recipe(
         if _stop():
             return result
         _log("Generating recipe JSON...")
-        recipe_json = openai_service.generate_recipe_json(recipe_title, full_recipe, "", openai_key, log=_log)
+        recipe_json = openai_service.generate_recipe_json(recipe_title, full_recipe, "", openai_key, prompts=prompts, log=_log)
         result["generated_json"] = recipe_json
 
         # 4. Generate article HTML
@@ -91,21 +92,21 @@ def generate_for_recipe(
             return result
         _log("Generating article HTML...")
         internal_links = get_sitemap_links(site_domain + "/post-sitemap1.xml")
-        article = openai_service.generate_article(recipe_title, full_recipe, "", internal_links, openai_key, log=_log)
+        article = openai_service.generate_article(recipe_title, full_recipe, "", internal_links, openai_key, prompts=prompts, log=_log)
         result["generated_article"] = article
 
         # 5. Meta description
         if _stop():
             return result
         _log("Generating meta description...")
-        meta = openai_service.generate_meta_description(recipe_title, openai_key, log=_log)
+        meta = openai_service.generate_meta_description(recipe_title, openai_key, prompts=prompts, log=_log)
         result["meta_description"] = meta
 
         # 6. Category
         if _stop():
             return result
         _log("Generating category...")
-        category = openai_service.generate_category(recipe_title, openai_key, log=_log)
+        category = openai_service.generate_category(recipe_title, openai_key, prompts=prompts, log=_log)
         result["category"] = category
 
         # 7. Midjourney images (only if Discord credentials exist)
@@ -115,7 +116,7 @@ def generate_for_recipe(
                 return result
             _log("Generating Midjourney images...")
             try:
-                img_urls = midjourney.generate_images(recipe_title, image_url, credentials, wait_time=190, log=_log)
+                img_urls = midjourney.generate_images(recipe_title, image_url, credentials, prompts=prompts, wait_time=190, log=_log)
                 result["generated_images"] = json.dumps(img_urls)
             except Exception as e:
                 _log(f"Midjourney failed (non-fatal): {e}")
@@ -135,6 +136,7 @@ def process_recipes_from_db(
     recipes: list[dict],
     site_domain: str,
     credentials: dict,
+    prompts: dict[str, str] | None = None,
     log: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     on_progress: Callable[[int, int], None] | None = None,
@@ -172,6 +174,7 @@ def process_recipes_from_db(
             image_url=image_url,
             site_domain=site_domain,
             credentials=credentials,
+            prompts=prompts,
             log=_log,
             should_stop=_stop,
         )

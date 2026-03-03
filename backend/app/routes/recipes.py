@@ -14,6 +14,7 @@ from ..database import get_db
 from ..db_models import User, Site, Recipe, ProjectCredential, RecipeStatus
 from ..dependencies import get_current_user, check_project_access
 from ..crypto import decrypt
+from ..site_credentials import get_random_wp_credentials
 from ..models import (
     RecipeCreate, RecipeOut, RecipeUpdate,
     PinterestPinRequest, PinterestBulkResponse,
@@ -211,6 +212,62 @@ async def delete_recipe(
 
     await db.execute(sql_delete(Recipe).where(Recipe.id == recipe_id))
     await db.commit()
+
+
+@router.post("/api/recipes/{recipe_id}/publish-article", response_model=dict)
+async def publish_recipe_article(
+    recipe_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Publish a single recipe's full article to WordPress (same as publisher job)."""
+    result = await db.execute(select(Recipe).where(Recipe.id == recipe_id))
+    recipe = result.scalar_one_or_none()
+    if not recipe:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+
+    site_result = await db.execute(select(Site).where(Site.id == recipe.site_id))
+    site_obj = site_result.scalar_one_or_none()
+    if not site_obj:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    await check_project_access(site_obj.project_id, user, db)
+
+    if not recipe.generated_article:
+        raise HTTPException(status_code=400, detail="No article generated. Generate content first.")
+
+    wp_username, wp_password = get_random_wp_credentials(site_obj)
+    site_config = {
+        "wp_url": site_obj.wp_url,
+        "wp_username": wp_username,
+        "wp_password": wp_password,
+        "domain": site_obj.domain if site_obj.domain.startswith("http") else f"https://{site_obj.domain}",
+    }
+
+    recipe_dict = {
+        "id": str(recipe.id),
+        "recipe_text": recipe.recipe_text,
+        "generated_article": recipe.generated_article,
+        "generated_json": recipe.generated_json,
+        "focus_keyword": recipe.focus_keyword,
+        "meta_description": recipe.meta_description,
+        "category": recipe.category,
+        "image_url": recipe.image_url,
+        "generated_images": recipe.generated_images,
+    }
+
+    from ..services.publisher import publish_recipe
+    pub_result = publish_recipe(recipe_dict, site_config)
+
+    if "error_message" in pub_result:
+        raise HTTPException(status_code=500, detail=pub_result["error_message"])
+
+    recipe.wp_post_id = pub_result.get("wp_post_id")
+    recipe.wp_permalink = pub_result.get("wp_permalink")
+    recipe.status = RecipeStatus.published
+    await db.commit()
+
+    return {"wp_post_id": recipe.wp_post_id, "wp_permalink": recipe.wp_permalink}
 
 
 @router.get("/api/pin-templates", response_model=list[PinTemplateOut])

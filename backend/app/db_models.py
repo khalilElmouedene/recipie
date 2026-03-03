@@ -66,6 +66,16 @@ class User(Base):
     credentials: Mapped[list["UserCredential"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
+class Prompt(Base):
+    """Configurable prompts for AI generation (app-wide)."""
+    __tablename__ = "prompts"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
 class UserCredential(Base):
     """Clés API globales de l'utilisateur (non liées à un projet)."""
     __tablename__ = "user_credentials"
@@ -129,8 +139,9 @@ class Site(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     domain: Mapped[str] = mapped_column(String(300), nullable=False)
     wp_url: Mapped[str] = mapped_column(String(500), nullable=False)
-    wp_username: Mapped[str] = mapped_column(String(200), nullable=False)
-    wp_password_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    wp_username: Mapped[str] = mapped_column(String(200), nullable=True)  # deprecated, use wp_users_enc
+    wp_password_enc: Mapped[str] = mapped_column(Text, nullable=True)  # deprecated, use wp_users_enc
+    wp_users_enc: Mapped[str] = mapped_column(Text, nullable=True)  # JSON: [{"username","password_enc"},...]
     sheet_name: Mapped[str] = mapped_column(String(200), default="")
     spreadsheet_id: Mapped[str] = mapped_column(String(200), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

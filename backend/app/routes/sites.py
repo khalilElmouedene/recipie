@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import uuid
 from typing import Annotated
 
@@ -14,6 +15,7 @@ from ..db_models import User, Site, Recipe, Project, ProjectMemberRole
 from ..dependencies import get_current_user, check_project_access
 from ..models import SiteCreate, SiteUpdate, SiteOut
 from ..services import wordpress as wp_service
+from ..site_credentials import get_random_wp_credentials
 
 router = APIRouter(tags=["sites"])
 
@@ -25,18 +27,32 @@ class MediaUploadResponse(BaseModel):
     post_url: str | None = None
 
 
+def _parse_wp_users(site: Site) -> list[dict]:
+    """Parse wp_users_enc or legacy wp_username into list of {username}."""
+    if site.wp_users_enc:
+        try:
+            users = json.loads(site.wp_users_enc)
+            return [{"username": u.get("username", "")} for u in users if isinstance(u, dict) and u.get("username")]
+        except (json.JSONDecodeError, TypeError):
+            pass
+    if site.wp_username:
+        return [{"username": site.wp_username}]
+    return []
+
+
 async def _site_out(site: Site, db: AsyncSession) -> dict:
     recipe_count = await db.scalar(
         select(func.count()).select_from(Recipe).where(Recipe.site_id == site.id)
     ) or 0
+    wp_users = _parse_wp_users(site)
     return {
         "id": site.id,
         "project_id": site.project_id,
         "domain": site.domain,
         "wp_url": site.wp_url,
-        "wp_username": site.wp_username,
-        "sheet_name": site.sheet_name,
-        "spreadsheet_id": site.spreadsheet_id,
+        "wp_users": wp_users,
+        "sheet_name": site.sheet_name or "",
+        "spreadsheet_id": site.spreadsheet_id or "",
         "created_at": site.created_at,
         "recipe_count": recipe_count,
     }
@@ -68,12 +84,15 @@ async def create_site(
     if not prj.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Project not found")
 
+    wp_users_enc = json.dumps([
+        {"username": u.username, "password_enc": encrypt(u.password)}
+        for u in body.wp_users
+    ])
     site = Site(
         project_id=project_id,
         domain=body.domain,
         wp_url=body.wp_url,
-        wp_username=body.wp_username,
-        wp_password_enc=encrypt(body.wp_password),
+        wp_users_enc=wp_users_enc,
         sheet_name=body.sheet_name,
         spreadsheet_id=body.spreadsheet_id,
     )
@@ -102,10 +121,23 @@ async def update_site(
         site.domain = body.domain
     if body.wp_url is not None:
         site.wp_url = body.wp_url
-    if body.wp_username is not None:
-        site.wp_username = body.wp_username
-    if body.wp_password is not None:
-        site.wp_password_enc = encrypt(body.wp_password)
+    if body.wp_users is not None:
+        existing = []
+        if site.wp_users_enc:
+            try:
+                existing = json.loads(site.wp_users_enc)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        existing_by_user = {u.get("username"): u.get("password_enc", "") for u in existing if isinstance(u, dict) and u.get("username")}
+        if site.wp_username and site.wp_password_enc:
+            existing_by_user[site.wp_username] = site.wp_password_enc
+        new_users = []
+        for u in body.wp_users:
+            pwd_enc = encrypt(u.password) if u.password.strip() else existing_by_user.get(u.username, "")
+            if pwd_enc:
+                new_users.append({"username": u.username, "password_enc": pwd_enc})
+        if new_users:
+            site.wp_users_enc = json.dumps(new_users)
     if body.sheet_name is not None:
         site.sheet_name = body.sheet_name
     if body.spreadsheet_id is not None:
@@ -150,15 +182,14 @@ async def upload_media_to_wordpress(
 
     await check_project_access(site.project_id, user, db)
 
-    wp_password = decrypt(site.wp_password_enc)
-    
+    wp_username, wp_password = get_random_wp_credentials(site)
     file_content = await file.read()
     filename = file.filename or "pin-design.png"
     
     try:
         media_result = wp_service.upload_media(
             wp_url=site.wp_url,
-            username=site.wp_username,
+            username=wp_username,
             password=wp_password,
             filename=filename,
             file_content=file_content,
@@ -172,7 +203,7 @@ async def upload_media_to_wordpress(
         if create_post and media_id:
             post_result = wp_service.create_pin_post(
                 wp_url=site.wp_url,
-                username=site.wp_username,
+                username=wp_username,
                 password=wp_password,
                 title=title,
                 media_id=int(media_id) if isinstance(media_id, str) else media_id,
@@ -222,11 +253,11 @@ async def upload_from_url_to_wordpress(
         ext = ".webp"
     filename = f"recipe-{uuid.uuid4().hex[:8]}{ext}"
 
-    wp_password = decrypt(site.wp_password_enc)
+    wp_username, wp_password = get_random_wp_credentials(site)
     try:
         media_result = wp_service.upload_media(
             wp_url=site.wp_url,
-            username=site.wp_username,
+            username=wp_username,
             password=wp_password,
             filename=filename,
             file_content=file_content,
@@ -239,7 +270,7 @@ async def upload_from_url_to_wordpress(
         if create_post and media_id:
             post_result = wp_service.create_pin_post(
                 wp_url=site.wp_url,
-                username=site.wp_username,
+                username=wp_username,
                 password=wp_password,
                 title=title,
                 media_id=int(media_id) if isinstance(media_id, str) else media_id,

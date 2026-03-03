@@ -300,12 +300,15 @@ async def seed():
             )
             if r.scalar_one_or_none():
                 continue
+            wp_users_enc = __import__("json").dumps([{
+                "username": site_cfg.get("wp_user", "fill-in"),
+                "password_enc": encrypt(site_cfg.get("wp_pass", "placeholder")),
+            }])
             site = Site(
                 project_id=project_id,
                 domain=site_cfg["domain"],
                 wp_url=site_cfg["wp_url"],
-                wp_username=site_cfg.get("wp_user", "fill-in"),
-                wp_password_enc=encrypt(site_cfg.get("wp_pass", "placeholder")),
+                wp_users_enc=wp_users_enc,
                 sheet_name=site_cfg.get("sheet_name", ""),
                 spreadsheet_id=site_cfg.get("spreadsheet_id", spreadsheet_id),
             )

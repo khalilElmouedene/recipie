@@ -141,6 +141,7 @@ def generate_images(
     recipe_name: str,
     source_img: str,
     credentials: dict,
+    prompts: dict[str, str] | None = None,
     wait_time: int = 190,
     log: Callable[[str], None] | None = None,
 ) -> list[str]:
@@ -149,10 +150,9 @@ def generate_images(
     mj_version, mj_id, discord_auth
     """
     _log = log or print
-    prompt = (
-        f"/imagine prompt:  {recipe_name} | Amateur photo, taken with an iPhone 15 Pro"
-        f"  |  --ar 5:6 --v 7   --sref {source_img} "
-    )
+    from .prompts import get_prompt
+    tpl = get_prompt(prompts or {}, "midjourney_imagine")
+    prompt = tpl.format(recipe_name=recipe_name, source_img=source_img)
 
     while True:
         try:

@@ -24,6 +24,8 @@ services:
       # Required for storing/reading project credentials (OpenAI, Discord, etc.). Same key used by seed.
       ENCRYPTION_KEY: L57_9ksKmrCJ7Prht4FFOVWL7PaVqGAFhWkaRmj6qQY=
       CORS_ORIGINS: http://localhost:3000
+      # Optional fallback: create .env with OPENAI_API_KEY=sk-your-key (used when Paramètres save fails)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - .:/workspace:ro
     depends_on:
