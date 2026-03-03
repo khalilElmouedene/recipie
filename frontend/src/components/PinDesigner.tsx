@@ -876,11 +876,11 @@ export default function PinDesigner({
         canvas.on("object:rotating", onTransformStart);
         canvas.on("object:resizing", onTransformStart);
 
-        // Keep text and frames always on top when moved, so they stay visible over images
+        // Keep text (not frames) on top when moved - frames would block clicking other elements
         canvas.on("object:modified", (e: any) => {
           transformSaveDone = false;
           const obj = e.target;
-          if (obj && (obj.__pinType === "text" || obj.__pinType === "frame")) {
+          if (obj && obj.__pinType === "text") {
             canvas.bringObjectToFront(obj);
             canvas.renderAll();
             updateLayers();
@@ -1150,6 +1150,7 @@ export default function PinDesigner({
     (frame as any).__pinType = "frame";
     (frame as any).__strokeStyle = "solid";
     canvas.add(frame);
+    canvas.sendObjectToBack(frame);  // Frames go to back so they don't block clicks on text/bands
     canvas.setActiveObject(frame);
     canvas.renderAll();
     updateLayers();
