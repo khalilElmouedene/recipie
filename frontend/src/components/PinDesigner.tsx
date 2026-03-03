@@ -913,14 +913,26 @@ export default function PinDesigner({
         canvas.on("object:rotating", onTransformStart);
         canvas.on("object:resizing", onTransformStart);
 
-        // Text on top when moved; frames to back when moved/resized so they don't block text
+        // Text on top when moved; frames go backwards but stay above images/bands so frame stays visible
         canvas.on("object:modified", (e: any) => {
           transformSaveDone = false;
           const obj = e.target;
           if (obj && obj.__pinType === "text") {
             canvas.bringObjectToFront(obj);
           } else if (obj && obj.__pinType === "frame") {
-            canvas.sendObjectToBack(obj);
+            // Move frame backwards until just below text (so text stays clickable) but above images (so frame stays visible)
+            for (;;) {
+              const objs = canvas.getObjects();
+              const idx = objs.indexOf(obj);
+              if (idx <= 0) break;
+              const below = objs[idx - 1] as any;
+              if (below.__isFill || below.__isLabel) break;
+              if (below.__pinType === "image" || below.__pinType === "band") break;
+              canvas.sendObjectBackwards(obj);
+            }
+            canvas.getObjects().forEach((o: any) => {
+              if ((o as any).__isFill) canvas.sendObjectToBack(o);
+            });
           }
           canvas.renderAll();
           updateLayers();
@@ -1219,7 +1231,19 @@ export default function PinDesigner({
     (frame as any).__pinType = "frame";
     (frame as any).__strokeStyle = "solid";
     canvas.add(frame);
-    canvas.sendObjectToBack(frame);  // Frames go to back so they don't block clicks on text/bands
+    canvas.sendObjectToBack(frame);
+    // Move frame forward until just below text - above images so visible, below text so text is clickable
+    for (;;) {
+      const objs = canvas.getObjects();
+      const idx = objs.indexOf(frame);
+      if (idx >= objs.length - 1) break;
+      const above = objs[idx + 1] as any;
+      if (above.__pinType === "text") break;
+      canvas.bringObjectForward(frame);
+    }
+    canvas.getObjects().forEach((o: any) => {
+      if ((o as any).__isFill) canvas.sendObjectToBack(o);
+    });
     canvas.setActiveObject(frame);
     canvas.renderAll();
     updateLayers();
