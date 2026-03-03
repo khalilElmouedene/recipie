@@ -390,6 +390,13 @@ export default function PinDesigner({
   const [bandOpacity, setBandOpacity] = useState(1);
   const [bandFill, setBandFill] = useState("#ffffff");
 
+  // Image transform (position, size, rotation)
+  const [imgLeft, setImgLeft] = useState(0);
+  const [imgTop, setImgTop] = useState(0);
+  const [imgWidth, setImgWidth] = useState(0);
+  const [imgHeight, setImgHeight] = useState(0);
+  const [imgAngle, setImgAngle] = useState(0);
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -556,16 +563,26 @@ export default function PinDesigner({
         if (imageUrl) {
           try {
             const img = await fabric.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
-            const w = el.width;
-            const h = el.height;
-            const scaleX = w / (img.width || 1);
-            const scaleY = h / (img.height || 1);
+            const zoneW = el.width;
+            const zoneH = el.height;
+            const centerX = el.x + zoneW / 2;
+            const centerY = el.y + zoneH / 2;
+            const imgW = img.width || 1;
+            const imgH = img.height || 1;
+            const scale = Math.min(zoneW / imgW, zoneH / imgH);
             img.set({
-              left: el.x,
-              top: el.y,
-              scaleX,
-              scaleY,
+              left: centerX,
+              top: centerY,
+              originX: "center",
+              originY: "center",
+              scaleX: scale,
+              scaleY: scale,
               selectable: true,
+              hasControls: true,
+              hasBorders: true,
+              cornerSize: 12,
+              cornerColor: "#6366f1",
+              borderColor: "#6366f1",
             });
             (img as any).__pinId = el.id;
             (img as any).__pinLabel = el.label;
@@ -802,6 +819,14 @@ export default function PinDesigner({
                 setBandOpacity(1);
                 setBandFill("#ffffff");
               }
+            } else if (obj.__pinType === "image") {
+              const w = ((obj.width ?? 0) * (obj.scaleX ?? 1));
+              const h = ((obj.height ?? 0) * (obj.scaleY ?? 1));
+              setImgLeft(Math.round(obj.left ?? 0));
+              setImgTop(Math.round(obj.top ?? 0));
+              setImgWidth(Math.round(w));
+              setImgHeight(Math.round(h));
+              setImgAngle(Math.round(obj.angle ?? 0));
             }
           }
         });
@@ -839,6 +864,14 @@ export default function PinDesigner({
                 setBandOpacity(1);
                 setBandFill("#ffffff");
               }
+            } else if (obj.__pinType === "image") {
+              const w = ((obj.width ?? 0) * (obj.scaleX ?? 1));
+              const h = ((obj.height ?? 0) * (obj.scaleY ?? 1));
+              setImgLeft(Math.round(obj.left ?? 0));
+              setImgTop(Math.round(obj.top ?? 0));
+              setImgWidth(Math.round(w));
+              setImgHeight(Math.round(h));
+              setImgAngle(Math.round(obj.angle ?? 0));
             }
           }
         });
@@ -868,6 +901,14 @@ export default function PinDesigner({
           if (target && target.__pinType === "text") {
             target.enterEditing();
             target.selectAll();
+          } else if (target && target.__pinType === "image") {
+            canvas.setActiveObject(target);
+            canvas.bringObjectToFront(target);
+            target.set({ hasControls: true, hasBorders: true, cornerSize: 12, cornerColor: "#6366f1", borderColor: "#6366f1" });
+            setSelectedId(target.__pinId);
+            selectedIdRef.current = target.__pinId;
+            canvas.renderAll();
+            updateLayers();
           }
         });
 
@@ -891,12 +932,20 @@ export default function PinDesigner({
         canvas.on("object:rotating", onTransformStart);
         canvas.on("object:resizing", onTransformStart);
 
-        // Text on top when moved; frames go backwards but stay above images/bands so frame stays visible
+        // Text on top when moved; frames go backwards; sync image props when image is resized/moved
         canvas.on("object:modified", (e: any) => {
           transformSaveDone = false;
           const obj = e.target;
           if (obj && obj.__pinType === "text") {
             canvas.bringObjectToFront(obj);
+          } else if (obj && obj.__pinType === "image") {
+            const w = ((obj.width ?? 0) * (obj.scaleX ?? 1));
+            const h = ((obj.height ?? 0) * (obj.scaleY ?? 1));
+            setImgLeft(Math.round(obj.left ?? 0));
+            setImgTop(Math.round(obj.top ?? 0));
+            setImgWidth(Math.round(w));
+            setImgHeight(Math.round(h));
+            setImgAngle(Math.round(obj.angle ?? 0));
           } else if (obj && obj.__pinType === "frame") {
             // Move frame backwards until just below text (so text stays clickable) but above images (so frame stays visible)
             for (;;) {
@@ -1280,18 +1329,29 @@ export default function PinDesigner({
     saveUndoState();
     if (!target || target.__pinType !== "image") return;
 
-    const l = target.left ?? 0;
-    const t = target.top ?? 0;
-    const w = target.width ?? 400;
-    const h = target.height ?? 400;
+    const br = (target as any).getBoundingRect?.();
+    const centerX = br ? br.left + br.width / 2 : (target.left ?? 0) + ((target.width ?? 400) * (target.scaleX ?? 1)) / 2;
+    const centerY = br ? br.top + br.height / 2 : (target.top ?? 0) + ((target.height ?? 400) * (target.scaleY ?? 1)) / 2;
+    const zoneW = br ? br.width : (target.width ?? 400) * (target.scaleX ?? 1);
+    const zoneH = br ? br.height : (target.height ?? 400) * (target.scaleY ?? 1);
 
     fabric.FabricImage.fromURL(imageUrl.trim(), { crossOrigin: "anonymous" })
       .then((img: any) => {
+        const imgW = img.width || 1;
+        const imgH = img.height || 1;
+        const scale = Math.min(zoneW / imgW, zoneH / imgH);
         img.set({
-          left: l,
-          top: t,
-          scaleX: w / (img.width || 1),
-          scaleY: h / (img.height || 1),
+          left: centerX,
+          top: centerY,
+          originX: "center",
+          originY: "center",
+          scaleX: scale,
+          scaleY: scale,
+          hasControls: true,
+          hasBorders: true,
+          cornerSize: 12,
+          cornerColor: "#6366f1",
+          borderColor: "#6366f1",
         });
         const pid = target.__pinId;
         img.__pinId = pid;
@@ -1340,7 +1400,45 @@ export default function PinDesigner({
         setFrameStrokeColor(obj.stroke ?? "#333333");
         setFrameStrokeStyle(obj.__strokeStyle ?? "solid");
       }
+      if (obj.__pinType === "image") {
+        const w = ((obj.width ?? 0) * (obj.scaleX ?? 1));
+        const h = ((obj.height ?? 0) * (obj.scaleY ?? 1));
+        setImgLeft(Math.round(obj.left ?? 0));
+        setImgTop(Math.round(obj.top ?? 0));
+        setImgWidth(Math.round(w));
+        setImgHeight(Math.round(h));
+        setImgAngle(Math.round(obj.angle ?? 0));
+      }
     }
+  };
+
+  const updateImageTransform = (prop: "left" | "top" | "width" | "height" | "angle", value: number) => {
+    const canvas = fabricCanvasRef.current;
+    const obj = getSelectedObject();
+    if (!canvas || !obj || obj.__pinType !== "image") return;
+    saveUndoState();
+    if (prop === "left") {
+      obj.set("left", value);
+      setImgLeft(value);
+    } else if (prop === "top") {
+      obj.set("top", value);
+      setImgTop(value);
+    } else if (prop === "width" || prop === "height") {
+      const w = obj.width ?? 1;
+      const h = obj.height ?? 1;
+      if (prop === "width" && w > 0) {
+        obj.set("scaleX", value / w);
+      } else if (prop === "height" && h > 0) {
+        obj.set("scaleY", value / h);
+      }
+      setImgWidth(prop === "width" ? value : Math.round((obj.width ?? 0) * (obj.scaleX ?? 1)));
+      setImgHeight(prop === "height" ? value : Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)));
+    } else if (prop === "angle") {
+      obj.set("angle", value);
+      setImgAngle(value);
+    }
+    obj.setCoords();
+    canvas.renderAll();
   };
 
   const selectedElement = layers.find((l) => l.id === selectedId);
@@ -1907,8 +2005,60 @@ export default function PinDesigner({
               )}
 
               {selectedElement.type === "image" && (
-                <div>
-                  <label className="text-xs text-gray-400 block mb-2">Choose Image</label>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Position & Size</label>
+                    <p className="text-[10px] text-gray-500 mb-2">Double-click image to adjust on canvas. Or use inputs:</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-gray-500">X</label>
+                        <input
+                          type="number"
+                          value={imgLeft}
+                          onChange={(e) => updateImageTransform("left", parseInt(e.target.value) || 0)}
+                          className="input-field text-sm w-full"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-gray-500">Y</label>
+                        <input
+                          type="number"
+                          value={imgTop}
+                          onChange={(e) => updateImageTransform("top", parseInt(e.target.value) || 0)}
+                          className="input-field text-sm w-full"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-gray-500">Width</label>
+                        <input
+                          type="number"
+                          value={imgWidth}
+                          onChange={(e) => updateImageTransform("width", Math.max(1, parseInt(e.target.value) || 1))}
+                          className="input-field text-sm w-full"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-gray-500">Height</label>
+                        <input
+                          type="number"
+                          value={imgHeight}
+                          onChange={(e) => updateImageTransform("height", Math.max(1, parseInt(e.target.value) || 1))}
+                          className="input-field text-sm w-full"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[10px] text-gray-500">Rotation (°)</label>
+                        <input
+                          type="number"
+                          value={imgAngle}
+                          onChange={(e) => updateImageTransform("angle", parseInt(e.target.value) || 0)}
+                          className="input-field text-sm w-full"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-2">Choose Image</label>
                   {recipeImages.length > 0 ? (
                     <div className="grid grid-cols-2 gap-2">
                       {recipeImages.slice(0, 8).map((url, i) => (
@@ -1936,6 +2086,7 @@ export default function PinDesigner({
                       }}
                     />
                   </div>
+                </div>
                 </div>
               )}
 
