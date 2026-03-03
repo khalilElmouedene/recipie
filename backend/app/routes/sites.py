@@ -2,6 +2,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from sqlalchemy import select, func, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -179,6 +180,72 @@ async def upload_media_to_wordpress(
             post_id = str(post_result.get("post_id", ""))
             post_url = post_result.get("post_url", "")
         
+        return MediaUploadResponse(
+            media_id=str(media_id),
+            media_url=media_url,
+            post_id=post_id,
+            post_url=post_url,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/sites/{site_id}/upload-from-url", response_model=MediaUploadResponse)
+async def upload_from_url_to_wordpress(
+    site_id: uuid.UUID,
+    image_url: str = Query(..., description="URL of the image to upload"),
+    title: str = Query("Pin Design"),
+    create_post: bool = Query(True),
+    user: Annotated[User, Depends(get_current_user)] = None,
+    db: Annotated[AsyncSession, Depends(get_db)] = None,
+):
+    """Fetch image from URL and upload to WordPress."""
+    result = await db.execute(select(Site).where(Site.id == site_id))
+    site = result.scalar_one_or_none()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    await check_project_access(site.project_id, user, db)
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(image_url, timeout=30)
+            resp.raise_for_status()
+            file_content = resp.content
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch image: {e}")
+
+    ext = ".jpg"
+    if "png" in (image_url.lower().split("?")[0] or ""):
+        ext = ".png"
+    elif "webp" in (image_url.lower().split("?")[0] or ""):
+        ext = ".webp"
+    filename = f"recipe-{uuid.uuid4().hex[:8]}{ext}"
+
+    wp_password = decrypt(site.wp_password_enc)
+    try:
+        media_result = wp_service.upload_media(
+            wp_url=site.wp_url,
+            username=site.wp_username,
+            password=wp_password,
+            filename=filename,
+            file_content=file_content,
+            title=title,
+        )
+        media_id = media_result.get("id", "")
+        media_url = media_result.get("url", "")
+        post_id = None
+        post_url = None
+        if create_post and media_id:
+            post_result = wp_service.create_pin_post(
+                wp_url=site.wp_url,
+                username=site.wp_username,
+                password=wp_password,
+                title=title,
+                media_id=int(media_id) if isinstance(media_id, str) else media_id,
+            )
+            post_id = str(post_result.get("post_id", ""))
+            post_url = post_result.get("post_url", "")
         return MediaUploadResponse(
             media_id=str(media_id),
             media_url=media_url,

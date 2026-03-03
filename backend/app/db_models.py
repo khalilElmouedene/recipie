@@ -63,6 +63,21 @@ class User(Base):
 
     owned_projects: Mapped[list[Project]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     memberships: Mapped[list[ProjectMember]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    credentials: Mapped[list["UserCredential"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+
+class UserCredential(Base):
+    """Clés API globales de l'utilisateur (non liées à un projet)."""
+    __tablename__ = "user_credentials"
+    __table_args__ = (UniqueConstraint("user_id", "key_type", name="uq_user_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    key_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    encrypted_value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+    user: Mapped["User"] = relationship(back_populates="credentials")
 
 
 class Project(Base):

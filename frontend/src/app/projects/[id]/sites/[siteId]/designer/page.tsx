@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import PinDesigner from "@/components/PinDesigner";
 import { api, RecipeOut } from "@/lib/api";
@@ -8,6 +8,8 @@ import { api, RecipeOut } from "@/lib/api";
 export default function PinDesignerPage() {
   const params = useParams<{ id: string; siteId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const recipeId = searchParams.get("recipe");
   const [recipes, setRecipes] = useState<RecipeOut[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -19,8 +21,10 @@ export default function PinDesignerPage() {
       .finally(() => setLoading(false));
   }, [params.siteId]);
 
+  const targetRecipe = recipeId ? recipes.find((r) => r.id === recipeId) : recipes[0];
   const allImages: string[] = [];
-  recipes.forEach((recipe) => {
+  const recipesToUse = targetRecipe ? [targetRecipe] : recipes;
+  recipesToUse.forEach((recipe) => {
     if (recipe.generated_images) {
       try {
         const arr = JSON.parse(recipe.generated_images);
@@ -36,8 +40,7 @@ export default function PinDesignerPage() {
     }
   });
 
-  const firstRecipe = recipes[0];
-  const title = firstRecipe?.recipe_text?.split("\n")[0] || "Recipe Title";
+  const title = targetRecipe?.recipe_text?.split("\n")[0] || "Recipe Title";
 
   if (loading) {
     return (

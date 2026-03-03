@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Globe, Key, Users, Briefcase, Plus, Trash2, ArrowLeft, Download } from "lucide-react";
+import { Globe, Key, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send } from "lucide-react";
 import { api, ProjectOut, SiteOut, CredentialOut, MemberOut, JobOut, UserOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
@@ -69,7 +69,7 @@ export default function ProjectDetailPage() {
         ))}
       </div>
 
-      {tab === "sites" && <SitesTab projectId={id} role={role} />}
+      {tab === "sites" && <SitesTab projectId={id} role={role} router={router} />}
       {tab === "credentials" && <CredentialsTab projectId={id} role={role} />}
       {tab === "members" && <MembersTab projectId={id} role={role} />}
       {tab === "jobs" && <JobsTab projectId={id} />}
@@ -77,17 +77,24 @@ export default function ProjectDetailPage() {
   );
 }
 
-function SitesTab({ projectId, role }: { projectId: string; role: string | null }) {
+const MAX_SITES_PER_PROJECT = 4;
+
+function SitesTab({ projectId, role, router }: { projectId: string; role: string | null; router: ReturnType<typeof useRouter> }) {
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
   const [form, setForm] = useState({ domain: "", wp_url: "", wp_username: "", wp_password: "", sheet_name: "", spreadsheet_id: "" });
   const [loading, setLoading] = useState(false);
+  const [publishingSiteId, setPublishingSiteId] = useState<string | null>(null);
 
   const load = () => api.getSites(projectId).then(setSites).catch(() => {});
   useEffect(() => { load(); }, [projectId]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (sites.length >= MAX_SITES_PER_PROJECT) {
+      alert(`Un projet peut contenir au maximum ${MAX_SITES_PER_PROJECT} sites.`);
+      return;
+    }
     setLoading(true);
     try {
       await api.createSite(projectId, form);
@@ -98,19 +105,46 @@ function SitesTab({ projectId, role }: { projectId: string; role: string | null 
     setLoading(false);
   };
 
+  const handlePublishToWordPress = async (siteId: string) => {
+    setPublishingSiteId(siteId);
+    try {
+      const job = await api.startJob(projectId, { job_type: "publisher", site_id: siteId });
+      router.push(`/jobs/${job.id}`);
+    } catch (e: any) {
+      alert(e.message || "Failed to start publish job");
+    } finally {
+      setPublishingSiteId(null);
+    }
+  };
+
   const handleDelete = async (siteId: string) => {
     if (!confirm("Delete this site and all its recipes?")) return;
     await api.deleteSite(siteId);
     load();
   };
 
+  const canAddSite = (role === "owner" || role === "admin") && sites.length < MAX_SITES_PER_PROJECT;
+
   return (
     <div>
-      {(role === "owner" || role === "admin") && (
-        <button onClick={() => setShow(!show)} className="btn-primary flex items-center gap-2 mb-4">
-          <Plus size={18} /> Add Site
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {canAddSite && (
+          <button onClick={() => setShow(!show)} className="btn-primary flex items-center gap-2">
+            <Plus size={18} /> Add Site
+          </button>
+        )}
+        {sites.length >= MAX_SITES_PER_PROJECT && (role === "owner" || role === "admin") && (
+          <span className="text-sm text-amber-400">Maximum {MAX_SITES_PER_PROJECT} sites par projet</span>
+        )}
+        <button
+          onClick={() => window.open(api.getProjectExcelExportUrl(projectId), "_blank")}
+          disabled={sites.length === 0}
+          className="btn-secondary flex items-center gap-2 border-green-700 text-green-400 hover:text-green-300 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Export all sites to one Excel file (one sheet per site)"
+        >
+          <Download size={18} /> Export All Excel
         </button>
-      )}
+      </div>
 
       {show && (
         <form onSubmit={handleCreate} className="card mb-4 grid grid-cols-2 gap-4">
@@ -147,15 +181,25 @@ function SitesTab({ projectId, role }: { projectId: string; role: string | null 
       <div className="space-y-3">
         {sites.map((s) => (
           <div key={s.id} className="card flex items-center justify-between">
-            <Link href={`/projects/${projectId}/sites/${s.id}`} className="flex-1">
+            <Link href={`/projects/${projectId}/sites/${s.id}`} className="flex-1 min-w-0">
               <h3 className="font-semibold text-white hover:text-brand-400 transition">{s.domain}</h3>
               <p className="text-sm text-gray-400">{s.wp_url} &middot; {s.recipe_count} recipes</p>
             </Link>
-            {(role === "owner" || role === "admin") && (
-              <button onClick={() => handleDelete(s.id)} className="text-gray-500 hover:text-red-400 transition p-2">
-                <Trash2 size={16} />
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={() => handlePublishToWordPress(s.id)}
+                disabled={publishingSiteId === s.id || s.recipe_count === 0}
+                className="text-gray-400 hover:text-green-400 transition p-2 disabled:opacity-40"
+                title="Publish to WordPress"
+              >
+                <Send size={16} />
               </button>
-            )}
+              {(role === "owner" || role === "admin") && (
+                <button onClick={() => handleDelete(s.id)} className="text-gray-500 hover:text-red-400 transition p-2">
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </div>
           </div>
         ))}
         {sites.length === 0 && <p className="text-center py-8 text-gray-500">No sites added yet.</p>}
@@ -205,6 +249,21 @@ function CredentialsTab({ projectId, role }: { projectId: string; role: string |
 
   return (
     <div className="space-y-4">
+      <Link
+        href="/settings"
+        className="card flex items-center gap-3 hover:border-brand-500/50 transition block"
+      >
+        <div className="h-10 w-10 rounded-lg bg-brand-600/20 flex items-center justify-center text-brand-400">
+          <Key size={20} />
+        </div>
+        <div>
+          <h3 className="font-semibold text-white">Clés API globales</h3>
+          <p className="text-sm text-gray-400">Paramètres → OpenAI, Midjourney, Google Sheets</p>
+        </div>
+        <span className="ml-auto text-brand-400 text-sm">Ouvrir →</span>
+      </Link>
+
+      <p className="text-xs text-gray-500 mb-2">Clés par projet (optionnel, écrase les paramètres) :</p>
       {CRED_TYPES.map((ct) => (
         <div key={ct.key} className="card">
           <div className="flex items-center justify-between mb-2">

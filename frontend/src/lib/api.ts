@@ -101,6 +101,14 @@ export const api = {
       body: JSON.stringify(creds),
     }),
 
+  // ── Settings (clés API globales, non liées aux projets) ──
+  getSettingsCredentials: () => request<CredentialOut[]>(`/api/settings/credentials`),
+  setSettingsCredentials: (creds: { key_type: string; value: string }[]) =>
+    request<CredentialOut[]>(`/api/settings/credentials`, {
+      method: "PUT",
+      body: JSON.stringify(creds),
+    }),
+
   // ── Sites ──────────────────────────────────────────────
   getSites: (projectId: string) => request<SiteOut[]>(`/api/projects/${projectId}/sites`),
 
@@ -112,6 +120,16 @@ export const api = {
 
   deleteSite: (siteId: string) =>
     request<void>(`/api/sites/${siteId}`, { method: "DELETE" }),
+
+  uploadToWordPressFromUrl: (siteId: string, params: { image_url: string; title: string; create_post?: boolean }) =>
+    request<{ media_id: string; media_url: string; post_id?: string; post_url?: string }>(
+      `/api/sites/${siteId}/upload-from-url?${new URLSearchParams({
+        image_url: params.image_url,
+        title: params.title,
+        create_post: String(params.create_post ?? true),
+      })}`,
+      { method: "POST" }
+    ),
 
   // ── Recipes ────────────────────────────────────────────
   getRecipes: (siteId: string) => request<RecipeOut[]>(`/api/sites/${siteId}/recipes`),

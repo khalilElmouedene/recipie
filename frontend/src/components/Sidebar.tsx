@@ -1,12 +1,13 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Users, LogOut } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Users, LogOut, Settings } from "lucide-react";
 import { clearToken, getUserRole } from "@/lib/auth";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderKanban },
+  { href: "/settings", label: "Paramètres", icon: Settings },
 ];
 
 export default function Sidebar() {

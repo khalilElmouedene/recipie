@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles, Globe } from "lucide-react";
 import { api, SiteOut, RecipeOut, PinterestBoard, PinterestBulkResponse, PinTemplate, BulkGeneratePinsResponse, BulkPinItem } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
@@ -42,14 +42,14 @@ export default function SiteDetailPage() {
   const [pinning, setPinning] = useState(false);
   const [pinResult, setPinResult] = useState<PinterestBulkResponse | null>(null);
 
-  // Pin Designer (per-recipe)
+  // Pin Designer (bulk generator only - per-recipe uses same designer page)
   const [pinTemplates, setPinTemplates] = useState<PinTemplate[]>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState("");
-  const [designTitle, setDesignTitle] = useState("");
-  const [designIngredients, setDesignIngredients] = useState("");
-  const [designWebsite, setDesignWebsite] = useState("");
-  const [generatingPin, setGeneratingPin] = useState(false);
-  const [pinPreview, setPinPreview] = useState<string | null>(null);
+
+  // WordPress publish
+  const [wpOpen, setWpOpen] = useState<string | null>(null);
+  const [wpTitle, setWpTitle] = useState("");
+  const [wpCreatePost, setWpCreatePost] = useState(true);
+  const [wpPublishing, setWpPublishing] = useState(false);
 
   // Bulk Pin Generator (site-level)
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -230,45 +230,8 @@ export default function SiteDetailPage() {
     try {
       const t = await api.getPinTemplates();
       setPinTemplates(t);
-      if (t.length > 0) {
-        setSelectedTemplate(t[0].id);
-        setBulkTemplate(t[0].id);
-      }
+      if (t.length > 0) setBulkTemplate(t[0].id);
     } catch {}
-  };
-
-  const handleOpenDesigner = (recipe: RecipeOut) => {
-    loadTemplates();
-    setDesignTitle(recipe.recipe_text.split("\n")[0] || "");
-    setDesignIngredients("");
-    setDesignWebsite(site?.domain || "");
-    setPinPreview(null);
-  };
-
-  const handleGeneratePin = async (recipeId: string) => {
-    if (!selectedTemplate) return;
-    setGeneratingPin(true);
-    setPinPreview(null);
-    try {
-      const res = await api.generatePin(recipeId, {
-        template_id: selectedTemplate,
-        title: designTitle || undefined,
-        ingredients: designIngredients || undefined,
-        website: designWebsite || undefined,
-      });
-      setPinPreview(res.image_base64);
-    } catch (err: any) {
-      alert(err.message || "Failed to generate pin image");
-    }
-    setGeneratingPin(false);
-  };
-
-  const handleDownloadPin = () => {
-    if (!pinPreview) return;
-    const link = document.createElement("a");
-    link.href = pinPreview;
-    link.download = `pin-${Date.now()}.jpg`;
-    link.click();
   };
 
   const handleOpenBulk = () => {
@@ -306,6 +269,54 @@ export default function SiteDetailPage() {
         }, i * 200);
       }
     });
+  };
+
+  const getRecipeImageUrl = (r: RecipeOut): string | null => {
+    if (r.generated_images) {
+      try {
+        const imgs: string[] = JSON.parse(r.generated_images);
+        if (imgs?.[0]) return imgs[0];
+      } catch {}
+    }
+    return r.image_url || null;
+  };
+
+  const handleOpenWordPress = (r: RecipeOut) => {
+    const imgUrl = getRecipeImageUrl(r);
+    if (!imgUrl) {
+      alert("No image to publish. Generate content first.");
+      return;
+    }
+    setWpOpen(r.id);
+    setWpTitle(r.recipe_text?.split("\n")[0] || "Recipe");
+  };
+
+  const handlePublishToWordPress = async () => {
+    if (!wpOpen || !siteId) return;
+    const r = recipes.find((rec) => rec.id === wpOpen);
+    if (!r) return;
+    const imgUrl = getRecipeImageUrl(r);
+    if (!imgUrl) {
+      alert("No image found");
+      return;
+    }
+    setWpPublishing(true);
+    try {
+      const data = await api.uploadToWordPressFromUrl(siteId, {
+        image_url: imgUrl,
+        title: wpTitle,
+        create_post: wpCreatePost,
+      });
+      if (data.post_url) {
+        alert(`Published to WordPress!\n\nPost: ${data.post_url}`);
+      } else {
+        alert(`Uploaded to WordPress! Media ID: ${data.media_id}\n\nFind it in Media → Library.`);
+      }
+      setWpOpen(null);
+    } catch (err: any) {
+      alert(err.message || "Failed to publish to WordPress");
+    }
+    setWpPublishing(false);
   };
 
   const handleCreatePins = async (recipeId: string) => {
@@ -492,6 +503,15 @@ export default function SiteDetailPage() {
                     <Eye size={16} />
                   </button>
                 )}
+                {getRecipeImageUrl(r) && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleOpenWordPress(r); }}
+                    className="text-gray-500 hover:text-blue-400 p-1"
+                    title="Publish to WordPress"
+                  >
+                    <Globe size={16} />
+                  </button>
+                )}
                 <button onClick={(e) => { e.stopPropagation(); handleDelete(r.id); }} className="text-gray-500 hover:text-red-400 p-1">
                   <Trash2 size={16} />
                 </button>
@@ -505,10 +525,7 @@ export default function SiteDetailPage() {
                   {(["article", "recipe", "seo", "images", "pinterest"] as const).map((tab) => (
                     <button
                       key={tab}
-                      onClick={() => {
-                        setDetailTab(tab);
-                        if (tab === "pinterest") handleOpenDesigner(r);
-                      }}
+                      onClick={() => setDetailTab(tab)}
                       className={`px-3 py-2 text-xs font-medium border-b-2 transition capitalize ${
                         detailTab === tab ? "border-brand-500 text-brand-400" : "border-transparent text-gray-500 hover:text-gray-300"
                       }`}
@@ -730,92 +747,17 @@ export default function SiteDetailPage() {
                       {!r.generated_images ? (
                         <p className="text-gray-500 text-sm">No generated images yet. Generate content first before creating pins.</p>
                       ) : (
-                        <div className="space-y-4">
-                          {/* Template selector */}
-                          <div>
-                            <label className="text-xs font-semibold text-gray-400 uppercase mb-2 block">Select Template</label>
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                              {pinTemplates.map((t) => (
-                                <button
-                                  key={t.id}
-                                  onClick={() => setSelectedTemplate(t.id)}
-                                  className={`rounded-lg border-2 p-2 text-left transition ${
-                                    selectedTemplate === t.id
-                                      ? "border-brand-500 bg-brand-500/10"
-                                      : "border-gray-700 hover:border-gray-500"
-                                  }`}
-                                >
-                                  <div className="flex gap-1 mb-1.5">
-                                    {t.colors.map((c, ci) => (
-                                      <div key={ci} className="w-4 h-4 rounded-sm" style={{ backgroundColor: c }} />
-                                    ))}
-                                  </div>
-                                  <p className="text-xs font-medium text-white">{t.name}</p>
-                                  <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{t.description}</p>
-                                  <p className="text-[10px] text-gray-600 mt-0.5">{t.image_count} image{t.image_count > 1 ? "s" : ""}</p>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* Customization */}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div>
-                              <label className="text-xs text-gray-400 mb-1 block">Pin Title</label>
-                              <input
-                                value={designTitle}
-                                onChange={(e) => setDesignTitle(e.target.value)}
-                                className="input-field text-sm"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs text-gray-400 mb-1 block">Website</label>
-                              <input
-                                value={designWebsite}
-                                onChange={(e) => setDesignWebsite(e.target.value)}
-                                className="input-field text-sm"
-                                placeholder="mysite.com"
-                              />
-                            </div>
-                          </div>
-                          <div>
-                            <label className="text-xs text-gray-400 mb-1 block">Ingredients (one per line, auto-filled from recipe if empty)</label>
-                            <textarea
-                              value={designIngredients}
-                              onChange={(e) => setDesignIngredients(e.target.value)}
-                              rows={4}
-                              className="input-field text-sm"
-                              placeholder="Leave empty to auto-extract from recipe data..."
-                            />
-                          </div>
-
+                        <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-6 text-center">
+                          <p className="text-gray-300 text-sm mb-4">
+                            Use the same Pin Designer as the designer page: templates (band-peach, canva-brown, etc.), elements, layers, and full editing.
+                          </p>
                           <button
-                            onClick={() => handleGeneratePin(r.id)}
-                            disabled={generatingPin || !selectedTemplate}
-                            className="btn-primary flex items-center gap-2"
+                            onClick={() => router.push(`/projects/${projectId}/sites/${siteId}/designer?recipe=${r.id}`)}
+                            className="btn-primary inline-flex items-center gap-2"
                           >
-                            <Sparkles size={16} />
-                            {generatingPin ? "Generating pin image..." : "Generate Pin Preview"}
+                            <LayoutGrid size={18} />
+                            Open Pin Designer
                           </button>
-
-                          {/* Preview */}
-                          {pinPreview && (
-                            <div className="space-y-3">
-                              <div className="flex items-center justify-between">
-                                <span className="text-xs font-semibold text-gray-400 uppercase">Preview</span>
-                                <button onClick={handleDownloadPin} className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5">
-                                  <Download size={12} /> Download
-                                </button>
-                              </div>
-                              <div className="flex justify-center">
-                                <img
-                                  src={pinPreview}
-                                  alt="Pin preview"
-                                  className="rounded-lg shadow-lg max-h-[500px] w-auto"
-                                />
-                              </div>
-                            </div>
-                          )}
                         </div>
                       )}
                     </div>
@@ -944,6 +886,53 @@ export default function SiteDetailPage() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* WordPress Publish Modal */}
+      {wpOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center">
+          <div className="bg-gray-900 rounded-xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold text-white mb-4">Publish to WordPress</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Post Title</label>
+                <input
+                  value={wpTitle}
+                  onChange={(e) => setWpTitle(e.target.value)}
+                  className="input-field w-full"
+                  placeholder="Recipe title..."
+                />
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={wpCreatePost}
+                  onChange={(e) => setWpCreatePost(e.target.checked)}
+                  className="rounded border-gray-600 bg-gray-800 text-brand-500"
+                />
+                <span className="text-sm text-gray-300">Create blog post</span>
+              </label>
+              <p className="text-xs text-gray-500">
+                Uploads the recipe image and optionally creates a published post.
+              </p>
+            </div>
+            <div className="flex gap-2 mt-6">
+              <button
+                onClick={() => setWpOpen(null)}
+                className="flex-1 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePublishToWordPress}
+                disabled={wpPublishing}
+                className="flex-1 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {wpPublishing ? "Publishing..." : "Publish to WordPress"}
+              </button>
+            </div>
           </div>
         </div>
       )}

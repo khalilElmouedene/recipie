@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db_models import (
     Job as JobModel, JobLog, JobStatus, JobType,
-    ProjectCredential, Site, Recipe, RecipeStatus,
+    ProjectCredential, UserCredential, Site, Recipe, RecipeStatus,
 )
 from ..crypto import decrypt
 from ..database import SessionLocal
@@ -75,11 +75,20 @@ class JobManager:
         project_id = db_job.project_id
         job_id_str = str(db_job.id)
 
-        cred_rows = await db.execute(
+        # User credentials (Paramètres) override project credentials
+        credentials: dict[str, str] = {}
+        project_rows = await db.execute(
             select(ProjectCredential).where(ProjectCredential.project_id == project_id)
         )
-        credentials: dict[str, str] = {}
-        for c in cred_rows.scalars().all():
+        for c in project_rows.scalars().all():
+            try:
+                credentials[c.key_type] = decrypt(c.encrypted_value)
+            except Exception:
+                pass
+        user_rows = await db.execute(
+            select(UserCredential).where(UserCredential.user_id == db_job.created_by)
+        )
+        for c in user_rows.scalars().all():
             try:
                 credentials[c.key_type] = decrypt(c.encrypted_value)
             except Exception:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import json
-from datetime import datetime, timezone
+from urllib.parse import urlparse
 from typing import Any
 
 import openpyxl
@@ -10,28 +10,30 @@ from openpyxl.styles import (
     Alignment, Font, PatternFill, Border, Side,
 )
 from openpyxl.utils import get_column_letter
+from slugify import slugify
 
-# ── Column definitions (matches V1 Project 1.xlsx exactly) ──────────────────
+# ── Column definitions (matches Article_Writing_Winsome.xlsx Sheet1 exactly) ────
 
 COLUMNS = [
-    "Featured Image",
-    "Articles",
-    "Recipe JSON",
-    "Category",
-    "Publish Date",
-    "Focus Keyword",
-    "Meta description",
-    "full recipe",
-    "Pin Title",
-    "link article",
-    "Pin Description",
-    "Tags",
-    "internal link",
-    "external link",
+    "Images :",
+    "Recipe :",
+    "Recipe Title :",
+    "SEO title :",
+    "Meta Desc :",
+    "Categories :",
+    "Article :",
+    "URL Slug :",
+    "Keyphrase :",
+    "Tags :",
+    "Pin Title :",
+    "Pin Description :",
+    "Keywords :",
+    "Board :",
+    "JSON :",
 ]
 
 # Column widths (approximate)
-COL_WIDTHS = [60, 60, 60, 18, 22, 40, 60, 60, 60, 50, 60, 40, 45, 40]
+COL_WIDTHS = [50, 60, 45, 50, 55, 18, 60, 45, 35, 45, 45, 55, 45, 30, 60]
 
 _HEADER_FILL = PatternFill("solid", fgColor="2D5016")
 _HEADER_FONT = Font(bold=True, color="FFFFFF", size=10)
@@ -46,65 +48,65 @@ _WRAP        = Alignment(wrap_text=True, vertical="top")
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _images_four(recipe: Any) -> list[str]:
-    """Return up to 4 image URLs: generated images first, then image_url, then empty strings."""
+def _images_newline(recipe: Any) -> str:
+    """Return image URLs newline-separated (matches Article_Writing_Winsome)."""
     out: list[str] = []
     if recipe.generated_images:
         try:
             imgs = json.loads(recipe.generated_images)
             if imgs and isinstance(imgs, list):
-                out = [str(u) for u in imgs[:4] if u]
+                out = [str(u).strip() for u in imgs if u]
         except Exception:
             pass
-    while len(out) < 4:
-        if len(out) == 0 and recipe.image_url:
-            out.append(recipe.image_url)
-        else:
-            out.append("")
-    return out[:4]
+    if not out and recipe.image_url:
+        out = [recipe.image_url]
+    return "\n".join(out) if out else ""
 
 
-def _publish_date(recipe: Any) -> str:
-    dt = recipe.created_at
-    if dt is None:
-        return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.strftime("%Y/%m/%d %H:%M")
-
-
-def _sitemap_url(domain: str) -> str:
-    d = domain.replace("https://", "").replace("http://", "").rstrip("/")
-    return f"https://{d}/sitemap_index.xml"
-
-
-def _pin_title(recipe: Any) -> str:
-    """Derive a Pin Title from focus_keyword or first line of recipe_text."""
-    if recipe.focus_keyword:
-        return recipe.focus_keyword.strip()
+def _recipe_title(recipe: Any) -> str:
+    """Recipe title from JSON name, recipe_text first line, or focus_keyword."""
+    if recipe.generated_json:
+        try:
+            data = json.loads(recipe.generated_json)
+            if isinstance(data, dict) and data.get("name"):
+                return str(data["name"]).strip()
+        except Exception:
+            pass
     if recipe.recipe_text:
-        return recipe.recipe_text.split("\n")[0].strip()
-    return ""
+        first = recipe.recipe_text.split("\n")[0].strip()
+        if first:
+            return first
+    return recipe.focus_keyword or ""
 
 
-def _recipe_row(recipe: Any, sitemap_url: str) -> list[str]:
-    imgs = _images_four(recipe)
-    featured = ",".join(u for u in imgs if u)  # First column: 4 images separated by ,
+def _url_slug(recipe: Any) -> str:
+    """URL slug from wp_permalink or slugify of title."""
+    if recipe.wp_permalink:
+        path = urlparse(recipe.wp_permalink).path.strip("/")
+        if path:
+            return path.split("/")[-1] or ""
+    return slugify(_recipe_title(recipe)) or ""
+
+
+def _recipe_row(recipe: Any) -> list[str]:
+    title = _recipe_title(recipe)
+    pin_title = recipe.focus_keyword or title
     return [
-        featured,                                # Featured Image (url1,url2,url3,url4)
-        recipe.generated_article or "",          # Articles
-        recipe.generated_json or "",             # Recipe JSON
-        recipe.category or "",                   # Category
-        _publish_date(recipe),                   # Publish Date
-        recipe.focus_keyword or "",              # Focus Keyword
-        recipe.meta_description or "",           # Meta description
-        recipe.generated_full_recipe or "",      # full recipe
-        _pin_title(recipe),                      # Pin Title
-        recipe.wp_permalink or "",               # link article
-        recipe.meta_description or "",           # Pin Description
-        "",                                      # Tags (not generated yet)
-        sitemap_url,                             # internal link
-        "",                                      # external link (Pinterest)
+        _images_newline(recipe),                  # Images :
+        recipe.generated_full_recipe or "",       # Recipe :
+        title,                                    # Recipe Title :
+        title,                                    # SEO title : (same as recipe title)
+        recipe.meta_description or "",             # Meta Desc :
+        recipe.category or "",                    # Categories :
+        recipe.generated_article or "",           # Article :
+        _url_slug(recipe),                        # URL Slug :
+        recipe.focus_keyword or "",               # Keyphrase :
+        "",                                       # Tags :
+        pin_title,                                # Pin Title :
+        recipe.meta_description or "",            # Pin Description :
+        recipe.focus_keyword or "",               # Keywords :
+        "",                                       # Board :
+        recipe.generated_json or "",              # JSON :
     ]
 
 
@@ -125,11 +127,9 @@ def _write_sheet(ws, site: Any, recipes: list[Any]) -> None:
     for col_idx, width in enumerate(COL_WIDTHS, start=1):
         ws.column_dimensions[get_column_letter(col_idx)].width = width
 
-    sitemap = _sitemap_url(site.domain)
-
     # Data rows
     for row_idx, recipe in enumerate(recipes, start=2):
-        row_data = _recipe_row(recipe, sitemap)
+        row_data = _recipe_row(recipe)
         fill = _ALT_FILL if row_idx % 2 == 0 else None
         for col_idx, value in enumerate(row_data, start=1):
             cell = ws.cell(row=row_idx, column=col_idx, value=value)

@@ -2,6 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Canva template fonts (from template images) */
+@font-face {
+  font-family: "Triumvirate Compressed";
+  src: url("https://db.onlinewebfonts.com/t/5a32f658165caabc56128c8cd63b3c63.eot");
+  src: url("https://db.onlinewebfonts.com/t/5a32f658165caabc56128c8cd63b3c63.eot?#iefix") format("embedded-opentype"),
+    url("https://db.onlinewebfonts.com/t/5a32f658165caabc56128c8cd63b3c63.woff2") format("woff2"),
+    url("https://db.onlinewebfonts.com/t/5a32f658165caabc56128c8cd63b3c63.woff") format("woff"),
+    url("https://db.onlinewebfonts.com/t/5a32f658165caabc56128c8cd63b3c63.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Quintus Regular";
+  src: url("https://db.onlinewebfonts.com/t/18fd0f547f85b3ee8cac28d61df7f3e5.eot");
+  src: url("https://db.onlinewebfonts.com/t/18fd0f547f85b3ee8cac28d61df7f3e5.eot?#iefix") format("embedded-opentype"),
+    url("https://db.onlinewebfonts.com/t/18fd0f547f85b3ee8cac28d61df7f3e5.woff2") format("woff2"),
+    url("https://db.onlinewebfonts.com/t/18fd0f547f85b3ee8cac28d61df7f3e5.woff") format("woff"),
+    url("https://db.onlinewebfonts.com/t/18fd0f547f85b3ee8cac28d61df7f3e5.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Penumbra Sans Std";
+  src: url("https://db.onlinewebfonts.com/t/63c3bbd0b162ba03d8156e15a6b4b7f2.eot");
+  src: url("https://db.onlinewebfonts.com/t/63c3bbd0b162ba03d8156e15a6b4b7f2.eot?#iefix") format("embedded-opentype"),
+    url("https://db.onlinewebfonts.com/t/63c3bbd0b162ba03d8156e15a6b4b7f2.woff2") format("woff2"),
+    url("https://db.onlinewebfonts.com/t/63c3bbd0b162ba03d8156e15a6b4b7f2.woff") format("woff"),
+    url("https://db.onlinewebfonts.com/t/63c3bbd0b162ba03d8156e15a6b4b7f2.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+}
+
 @layer base {
   body {
     @apply bg-gray-950 text-gray-100 antialiased;

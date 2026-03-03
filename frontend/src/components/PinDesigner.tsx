@@ -1,10 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, Download, ZoomIn, ZoomOut, Layers, LayoutTemplate, Grid3X3, Type, Upload, Image as ImageIcon, Minus, Trash2, Square, ArrowUp, ArrowDown, Send, Globe } from "lucide-react";
+import { X, Download, ZoomIn, ZoomOut, Layers, LayoutTemplate, Grid3X3, Type, Upload, Image as ImageIcon, Minus, Trash2, Square, ArrowUp, ArrowDown, Send } from "lucide-react";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
+
+function hexToRgba(hex: string, alpha: number): string {
+  hex = hex.replace("#", "");
+  if (hex.length === 3) {
+    hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+  }
+  if (hex.length !== 6) return `rgba(255,255,255,${alpha})`;
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
 
 interface TemplateElement {
   id: string;
@@ -28,12 +40,59 @@ interface PinTemplate {
   id: string;
   name: string;
   description: string;
-  previewLayout: "simple" | "grid4" | "grid6" | "hero" | "sandwich" | "band-white" | "band-blue" | "band-peach";
+  previewLayout: "simple" | "grid4" | "grid6" | "hero" | "sandwich" | "band-white" | "band-blue" | "band-peach" | "band-brown";
   bgColor: string;
   elements: TemplateElement[];
+  exampleImage?: string; // Path to Canva example in public folder
 }
 
 const TEMPLATES: PinTemplate[] = [
+  // Canva example templates (from public/template images)
+  {
+    id: "canva-brown-bars",
+    name: "Canva Style: Brown Band",
+    description: "Like Knock You Naked Bars – image, brown band with white title, image",
+    previewLayout: "band-brown",
+    bgColor: "#ffffff",
+    exampleImage: "/template images/d2b66990e00856a279d4028d04a4d3dc.png",
+    elements: [
+      { id: "image1", type: "image", label: "Top Image", x: 0, y: 0, width: 1000, height: 600, bgColor: "#e8e8e8" },
+      { id: "textBand", type: "band", label: "Text Band", x: 0, y: 600, width: 1000, height: 140, bgColor: "#8b6914" },
+      { id: "title", type: "text", label: "Title", x: 500, y: 670, width: 940, height: 80, defaultText: "Recipe Title Here", fontSize: 48, fontWeight: "normal", fill: "#ffffff", textAlign: "center" },
+      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 740, width: 1000, height: 620, bgColor: "#e8e8e8" },
+    ],
+  },
+  {
+    id: "canva-peach-brownie",
+    name: "Canva Style: Peach Multi-Text",
+    description: "Like Chocolate Brownie Cookies – subtitle, main title, logo space",
+    previewLayout: "band-peach",
+    bgColor: "#ffffff",
+    exampleImage: "/template images/018e61fd82eb8a091fc8fa52a6c26309.png",
+    elements: [
+      { id: "image1", type: "image", label: "Top Image", x: 0, y: 0, width: 1000, height: 560, bgColor: "#e8e8e8" },
+      { id: "textBand", type: "band", label: "Text Band", x: 0, y: 560, width: 1000, height: 200, bgColor: "#ffecd2" },
+      { id: "subtitle", type: "text", label: "Subtitle", x: 500, y: 590, width: 940, height: 30, defaultText: "The Best", fontSize: 24, fontWeight: "normal", fill: "#1a5f5f", textAlign: "center" },
+      { id: "title1", type: "text", label: "Title Line 1", x: 500, y: 640, width: 940, height: 50, defaultText: "RECIPE TITLE LINE 1", fontSize: 42, fontWeight: "bold", fill: "#1a5f5f", textAlign: "center" },
+      { id: "title2", type: "text", label: "Title Line 2", x: 500, y: 700, width: 940, height: 50, defaultText: "LINE 2", fontSize: 42, fontWeight: "bold", fill: "#1a5f5f", textAlign: "center" },
+      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 760, width: 1000, height: 620, bgColor: "#e8e8e8" },
+    ],
+  },
+  {
+    id: "canva-cinnamon-rolls",
+    name: "Canva Style: Brown + URL",
+    description: "Like Biscoff Cinnamon Rolls – dark band, title + website footer",
+    previewLayout: "band-brown",
+    bgColor: "#ffffff",
+    exampleImage: "/template images/240dd71b9abbf222812816708239b680.png",
+    elements: [
+      { id: "image1", type: "image", label: "Top Image", x: 0, y: 0, width: 1000, height: 560, bgColor: "#e8e8e8" },
+      { id: "textBand", type: "band", label: "Text Band", x: 0, y: 560, width: 1000, height: 180, bgColor: "#4a3728" },
+      { id: "title", type: "text", label: "Title", x: 500, y: 610, width: 940, height: 70, defaultText: "Recipe Title Here", fontSize: 38, fontWeight: "bold", fill: "#f5e6d3", textAlign: "center" },
+      { id: "website", type: "text", label: "Website", x: 500, y: 680, width: 940, height: 35, defaultText: "WWW.YOURSITE.COM", fontSize: 22, fontWeight: "bold", fill: "#f5e6d3", textAlign: "center" },
+      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 740, width: 1000, height: 640, bgColor: "#e8e8e8" },
+    ],
+  },
   {
     id: "peach-band",
     name: "Peach Band Style",
@@ -249,6 +308,15 @@ function TemplatePreview({ layout }: { layout: PinTemplate["previewLayout"] }) {
       </div>
     );
   }
+  if (layout === "band-brown") {
+    return (
+      <div className="h-full flex flex-col p-0.5">
+        <div className={`${imgBox} flex-[3]`} />
+        <div className="bg-amber-900 flex-[1] flex items-center justify-center text-[7px] text-amber-100 font-bold px-1 text-center">Recipe Title</div>
+        <div className={`${imgBox} flex-[3]`} />
+      </div>
+    );
+  }
   return null;
 }
 
@@ -272,6 +340,8 @@ export default function PinDesigner({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricCanvasRef = useRef<any>(null);
   const fabricLibRef = useRef<any>(null);
+  const undoHistoryRef = useRef<string[]>([]);
+  const isRestoringRef = useRef(false);
   const [mounted, setMounted] = useState(false);
   const [zoom, setZoom] = useState(35);
   const [leftTab, setLeftTab] = useState<"elements" | "layers" | "templates">("elements");
@@ -292,12 +362,6 @@ export default function PinDesigner({
   const [pinLink, setPinLink] = useState("");
   const [publishing, setPublishing] = useState(false);
   
-  // WordPress state
-  const [showWpModal, setShowWpModal] = useState(false);
-  const [wpTitle, setWpTitle] = useState(initialTitle);
-  const [wpCreatePost, setWpCreatePost] = useState(true);
-  const [wpPublishing, setWpPublishing] = useState(false);
-  
   // Text properties
   const [fontFamily, setFontFamily] = useState("Arial");
   const [fontSize, setFontSize] = useState(32);
@@ -311,8 +375,18 @@ export default function PinDesigner({
   const [frameStrokeColor, setFrameStrokeColor] = useState("#333333");
   const [frameStrokeStyle, setFrameStrokeStyle] = useState<"solid" | "dashed" | "dotted">("solid");
 
+  // Band properties (transparency)
+  const [bandOpacity, setBandOpacity] = useState(1);
+  const [bandFill, setBandFill] = useState("#ffffff");
+
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  // Preload Canva template fonts so canvas can render them
+  useEffect(() => {
+    const canvaFonts = ["Triumvirate Compressed", "Quintus Regular", "Penumbra Sans Std"];
+    Promise.all(canvaFonts.map((f) => document.fonts.load(`16px "${f}"`))).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -320,6 +394,19 @@ export default function PinDesigner({
       checkPinterestStatus();
     }
   }, [projectId]);
+
+  // Ctrl+Z undo
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "z" || !e.ctrlKey && !e.metaKey) return;
+      const target = e.target as HTMLElement;
+      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable) return;
+      e.preventDefault();
+      performUndo();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const checkPinterestStatus = async () => {
     if (!projectId) return;
@@ -423,92 +510,82 @@ export default function PinDesigner({
     publishToPinterest(dataUrl);
   };
 
-  const handleWpPublish = async () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-    
-    setWpPublishing(true);
-    try {
-      canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
-      canvas.renderAll();
-      const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
-      canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", true));
-      canvas.renderAll();
-
-      const blob = await (await fetch(dataUrl)).blob();
-      const formData = new FormData();
-      formData.append("file", blob, `${pinName.replace(/\s+/g, "-")}.png`);
-
-      const token = localStorage.getItem("token");
-      const params = new URLSearchParams({ title: wpTitle, create_post: String(wpCreatePost) });
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/sites/${siteId}/upload-media?${params}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.post_url) {
-          alert(`Published to WordPress!\n\nPost: ${data.post_url}\n\nYou can view it on your blog.`);
-        } else {
-          alert(`Uploaded to WordPress! Media ID: ${data.media_id}\n\nFind it in Media → Library.`);
-        }
-        setShowWpModal(false);
-      } else {
-        const err = await res.json();
-        alert(`Failed: ${err.detail || "Unknown error"}`);
-      }
-    } catch (err: any) {
-      alert(`Error: ${err.message}`);
-    } finally {
-      setWpPublishing(false);
-    }
-  };
-
   const loadTemplate = async (template: PinTemplate) => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
 
+    undoHistoryRef.current = [];
     canvas.clear();
     canvas.backgroundColor = template.bgColor;
 
     const { Rect, FabricText, IText } = fabric;
+    let imageIndex = 0;
 
     for (const el of template.elements) {
       if (el.type === "image") {
-        const rect = new Rect({
-          left: el.x,
-          top: el.y,
-          width: el.width,
-          height: el.height,
-          fill: el.bgColor || "#e0e0e0",
-          rx: 8,
-          ry: 8,
-          selectable: true,
-          strokeWidth: 2,
-          stroke: "#cccccc",
-        });
-        (rect as any).__pinId = el.id;
-        (rect as any).__pinLabel = el.label;
-        (rect as any).__pinType = "image";
-        canvas.add(rect);
+        // Cycle through available images so all zones get filled (e.g. 2 images → 4 zones: img0, img1, img0, img1)
+        const imageUrl = recipeImages.length > 0 ? (recipeImages[imageIndex % recipeImages.length]?.trim() || "") : "";
+        imageIndex++;
+        let imageLoaded = false;
 
-        const label = new FabricText(el.label, {
-          left: el.x + el.width / 2,
-          top: el.y + el.height / 2,
-          fontSize: 18,
-          fontFamily: "Arial",
-          fill: "#999999",
-          originX: "center",
-          originY: "center",
-          selectable: false,
-          evented: false,
-        });
-        (label as any).__isLabel = true;
-        (label as any).__forId = el.id;
-        canvas.add(label);
+        if (imageUrl) {
+          try {
+            const img = await fabric.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
+            const w = el.width;
+            const h = el.height;
+            const scaleX = w / (img.width || 1);
+            const scaleY = h / (img.height || 1);
+            img.set({
+              left: el.x,
+              top: el.y,
+              scaleX,
+              scaleY,
+              selectable: true,
+            });
+            (img as any).__pinId = el.id;
+            (img as any).__pinLabel = el.label;
+            (img as any).__pinType = "image";
+            canvas.add(img);
+            imageLoaded = true;
+          } catch {
+            // Fallback to placeholder if image fails to load
+          }
+        }
+
+        if (!imageLoaded) {
+          const rect = new Rect({
+            left: el.x,
+            top: el.y,
+            width: el.width,
+            height: el.height,
+            fill: el.bgColor || "#e0e0e0",
+            rx: 8,
+            ry: 8,
+            selectable: true,
+            strokeWidth: 2,
+            stroke: "#cccccc",
+          });
+          (rect as any).__pinId = el.id;
+          (rect as any).__pinLabel = el.label;
+          (rect as any).__pinType = "image";
+          canvas.add(rect);
+
+          const label = new FabricText(el.label, {
+            left: el.x + el.width / 2,
+            top: el.y + el.height / 2,
+            fontSize: 18,
+            fontFamily: "Arial",
+            fill: "#999999",
+            originX: "center",
+            originY: "center",
+            selectable: false,
+            evented: false,
+          });
+          (label as any).__isLabel = true;
+          (label as any).__forId = el.id;
+          canvas.add(label);
+        }
       } else if (el.type === "band") {
         const band = new Rect({
           left: el.x,
@@ -546,6 +623,29 @@ export default function PinDesigner({
       }
     }
 
+    // Fill any gap at bottom so no white space (pin must be full 1500px)
+    const allObjs = canvas.getObjects();
+    let bottomExtent = 0;
+    for (const obj of allObjs) {
+      const br = (obj as any).getBoundingRect?.();
+      if (br) bottomExtent = Math.max(bottomExtent, br.top + br.height);
+      else bottomExtent = Math.max(bottomExtent, ((obj as any).top ?? 0) + ((obj as any).height ?? 0) * ((obj as any).scaleY ?? 1));
+    }
+    if (bottomExtent < PIN_H) {
+      const fill = new Rect({
+        left: 0,
+        top: bottomExtent,
+        width: PIN_W,
+        height: PIN_H - bottomExtent,
+        fill: template.bgColor,
+        selectable: false,
+        evented: false,
+      });
+      (fill as any).__isFill = true;
+      canvas.add(fill);
+      canvas.sendObjectToBack(fill);
+    }
+
     canvas.renderAll();
     updateLayers();
   };
@@ -555,6 +655,54 @@ export default function PinDesigner({
     if (!canvas) return;
     const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel);
     setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType })));
+  };
+
+  const MAX_UNDO = 50;
+
+  const saveUndoState = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || isRestoringRef.current) return;
+    try {
+      const json = JSON.stringify(canvas.toJSON(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"]));
+      const history = undoHistoryRef.current;
+      history.push(json);
+      if (history.length > MAX_UNDO) history.shift();
+    } catch {}
+  };
+
+  const performUndo = async () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || undoHistoryRef.current.length === 0) return;
+    const json = undoHistoryRef.current.pop()!;
+    isRestoringRef.current = true;
+    try {
+      const parsed = JSON.parse(json);
+      await canvas.loadFromJSON(json);
+
+      // Restore custom properties (__pinId, etc.) - Fabric may not restore them by default
+      const customKeys = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"];
+      const serializedObjs = parsed?.objects;
+      const fabricObjs = canvas.getObjects();
+      if (Array.isArray(serializedObjs) && serializedObjs.length === fabricObjs.length) {
+        serializedObjs.forEach((ser: any, i: number) => {
+          const obj = fabricObjs[i] as any;
+          if (obj && ser) {
+            customKeys.forEach((k) => {
+              if (ser[k] !== undefined) obj[k] = ser[k];
+            });
+          }
+        });
+      }
+
+      canvas.discardActiveObject();
+      canvas.renderAll();
+      setSelectedId(null);
+      updateLayers();
+    } catch (e) {
+      undoHistoryRef.current.push(json);
+    } finally {
+      isRestoringRef.current = false;
+    }
   };
 
   useEffect(() => {
@@ -593,6 +741,21 @@ export default function PinDesigner({
               setFrameStrokeWidth(obj.strokeWidth ?? 4);
               setFrameStrokeColor(obj.stroke ?? "#333333");
               setFrameStrokeStyle(obj.__strokeStyle ?? "solid");
+            } else if (obj.__pinType === "band") {
+              const fill = obj.fill;
+              if (typeof fill === "string") {
+                const match = fill.match(/rgba?\((\d+),(\d+),(\d+)(?:,([\d.]+))?\)/);
+                if (match) {
+                  setBandOpacity(parseFloat(match[4] ?? "1"));
+                  setBandFill(`#${parseInt(match[1], 10).toString(16).padStart(2, "0")}${parseInt(match[2], 10).toString(16).padStart(2, "0")}${parseInt(match[3], 10).toString(16).padStart(2, "0")}`);
+                } else {
+                  setBandOpacity(1);
+                  setBandFill(fill.startsWith("#") ? fill : "#ffffff");
+                }
+              } else {
+                setBandOpacity(1);
+                setBandFill("#ffffff");
+              }
             }
           }
         });
@@ -611,6 +774,21 @@ export default function PinDesigner({
               setFrameStrokeWidth(obj.strokeWidth ?? 4);
               setFrameStrokeColor(obj.stroke ?? "#333333");
               setFrameStrokeStyle(obj.__strokeStyle ?? "solid");
+            } else if (obj.__pinType === "band") {
+              const fill = obj.fill;
+              if (typeof fill === "string") {
+                const match = fill.match(/rgba?\((\d+),(\d+),(\d+)(?:,([\d.]+))?\)/);
+                if (match) {
+                  setBandOpacity(parseFloat(match[4] ?? "1"));
+                  setBandFill(`#${parseInt(match[1], 10).toString(16).padStart(2, "0")}${parseInt(match[2], 10).toString(16).padStart(2, "0")}${parseInt(match[3], 10).toString(16).padStart(2, "0")}`);
+                } else {
+                  setBandOpacity(1);
+                  setBandFill(fill.startsWith("#") ? fill : "#ffffff");
+                }
+              } else {
+                setBandOpacity(1);
+                setBandFill("#ffffff");
+              }
             }
           }
         });
@@ -631,6 +809,30 @@ export default function PinDesigner({
           const target = e.target;
           if (target && target.__pinType === "text") {
             setEditText(target.text ?? "");
+          }
+        });
+
+        // Save state before user transforms (drag, resize) for Ctrl+Z undo (Fabric v6: moving/scaling/rotating fire at transform start)
+        let transformSaveDone = false;
+        const onTransformStart = () => {
+          if (!transformSaveDone) {
+            transformSaveDone = true;
+            saveUndoState();
+          }
+        };
+        canvas.on("object:moving", onTransformStart);
+        canvas.on("object:scaling", onTransformStart);
+        canvas.on("object:rotating", onTransformStart);
+        canvas.on("object:resizing", onTransformStart);
+
+        // Keep text and frames always on top when moved, so they stay visible over images
+        canvas.on("object:modified", (e: any) => {
+          transformSaveDone = false;
+          const obj = e.target;
+          if (obj && (obj.__pinType === "text" || obj.__pinType === "frame")) {
+            canvas.bringObjectToFront(obj);
+            canvas.renderAll();
+            updateLayers();
           }
         });
 
@@ -665,6 +867,7 @@ export default function PinDesigner({
   const deleteSelectedElement = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !selectedId) return;
+    saveUndoState();
     
     const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
     if (obj) {
@@ -681,6 +884,7 @@ export default function PinDesigner({
   const sendToBack = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !selectedId) return;
+    saveUndoState();
     const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
     if (obj) {
       canvas.sendObjectToBack(obj);
@@ -692,6 +896,7 @@ export default function PinDesigner({
   const bringToFront = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !selectedId) return;
+    saveUndoState();
     const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
     if (obj) {
       canvas.bringObjectToFront(obj);
@@ -759,6 +964,7 @@ export default function PinDesigner({
   const applyEditText = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !selectedId) return;
+    saveUndoState();
     const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
     if (obj && obj.set && obj.__pinType === "text") {
       obj.set("text", editText);
@@ -769,6 +975,7 @@ export default function PinDesigner({
   const updateTextProperty = (property: string, value: any) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !selectedId) return;
+    saveUndoState();
     const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
     if (obj && obj.set && obj.__pinType === "text") {
       if (property === "fontFamily") {
@@ -795,6 +1002,7 @@ export default function PinDesigner({
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
+    saveUndoState();
 
     const id = `text_${Date.now()}`;
     const text = new fabric.IText("New Text", {
@@ -825,6 +1033,7 @@ export default function PinDesigner({
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
+    saveUndoState();
 
     const id = `image_${Date.now()}`;
     const rect = new fabric.Rect({
@@ -869,6 +1078,7 @@ export default function PinDesigner({
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
+    saveUndoState();
 
     const id = `frame_${Date.now()}`;
     const frame = new fabric.Rect({
@@ -902,6 +1112,7 @@ export default function PinDesigner({
   const updateFrameProperty = (property: string, value: any) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !selectedId) return;
+    saveUndoState();
     const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
     if (obj && obj.__pinType === "frame") {
       if (property === "strokeWidth") {
@@ -943,6 +1154,7 @@ export default function PinDesigner({
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas || !imageUrl.trim() || !selectedId) return;
+    saveUndoState();
 
     const target = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
     if (!target || target.__pinType !== "image") return;
@@ -1094,59 +1306,6 @@ export default function PinDesigner({
                 className="flex-1 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {publishing ? "Publishing..." : "Publish Pin"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* WordPress Publish Modal */}
-      {showWpModal && (
-        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center">
-          <div className="bg-gray-900 rounded-xl p-6 w-full max-w-md">
-            <h3 className="text-lg font-semibold text-white mb-4">Publish to WordPress</h3>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">Post Title</label>
-                <input
-                  value={wpTitle}
-                  onChange={(e) => setWpTitle(e.target.value)}
-                  className="input-field w-full"
-                  placeholder="Pin image title..."
-                />
-              </div>
-              
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={wpCreatePost}
-                  onChange={(e) => setWpCreatePost(e.target.checked)}
-                  className="rounded border-gray-600 bg-gray-800 text-brand-500"
-                />
-                <span className="text-sm text-gray-300">Create blog post (appears on your site)</span>
-              </label>
-              
-              <p className="text-xs text-gray-500">
-                {wpCreatePost
-                  ? "Creates a new published post with your pin as the featured image. You can find it on your blog."
-                  : "Uploads only to Media Library. Check Media → Library in WP admin."}
-              </p>
-            </div>
-            
-            <div className="flex gap-2 mt-6">
-              <button
-                onClick={() => setShowWpModal(false)}
-                className="flex-1 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-600"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleWpPublish}
-                disabled={wpPublishing}
-                className="flex-1 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {wpPublishing ? "Publishing..." : wpCreatePost ? "Publish Post" : "Upload to Media"}
               </button>
             </div>
           </div>
@@ -1306,8 +1465,16 @@ export default function PinDesigner({
                         : "border-gray-700 hover:border-gray-500"
                     }`}
                   >
-                    <div className="h-28 rounded bg-gray-800 mb-2 overflow-hidden">
-                      <TemplatePreview layout={t.previewLayout} />
+                    <div className="h-28 rounded bg-gray-800 mb-2 overflow-hidden flex items-center justify-center">
+                      {t.exampleImage ? (
+                        <img
+                          src={t.exampleImage}
+                          alt={t.name}
+                          className="h-full w-full object-contain object-top"
+                        />
+                      ) : (
+                        <TemplatePreview layout={t.previewLayout} />
+                      )}
                     </div>
                     <p className="text-sm font-medium text-white">{t.name}</p>
                     <p className="text-[11px] text-gray-500 mb-2">{t.description}</p>
@@ -1430,33 +1597,19 @@ export default function PinDesigner({
                 </div>
               </div>
 
-              {/* Quick Actions */}
-              {(projectId || siteId) && (
+              {/* Quick Actions - Pinterest only (WordPress: use Publish on recipe list) */}
+              {projectId && (
                 <div>
                   <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Publish Design</label>
-                  <div className="flex gap-2">
-                    {projectId && (
-                      <button
-                        onClick={() => setShowPublishModal(true)}
-                        disabled={!pinterestConnected}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs disabled:opacity-50 disabled:cursor-not-allowed"
-                        title={pinterestConnected ? "Publish to Pinterest" : "Connect Pinterest first"}
-                      >
-                        <Send size={14} />
-                        Pinterest
-                      </button>
-                    )}
-                    {siteId && (
-                      <button
-                        onClick={() => setShowWpModal(true)}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs"
-                        title="Publish to WordPress"
-                      >
-                        <Globe size={14} />
-                        WordPress
-                      </button>
-                    )}
-                  </div>
+                  <button
+                    onClick={() => setShowPublishModal(true)}
+                    disabled={!pinterestConnected}
+                    className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={pinterestConnected ? "Publish to Pinterest" : "Connect Pinterest first"}
+                  >
+                    <Send size={14} />
+                    Pinterest
+                  </button>
                 </div>
               )}
 
@@ -1486,12 +1639,19 @@ export default function PinDesigner({
                           onChange={(e) => updateTextProperty("fontFamily", e.target.value)}
                           className="input-field text-sm w-full"
                         >
-                          <option value="Arial">Arial</option>
-                          <option value="Georgia">Georgia</option>
-                          <option value="Times New Roman">Times New Roman</option>
-                          <option value="Verdana">Verdana</option>
-                          <option value="Courier New">Courier New</option>
-                          <option value="Impact">Impact</option>
+                          <optgroup label="Canva templates">
+                            <option value="Triumvirate Compressed">Triumvirate Compressed</option>
+                            <option value="Quintus Regular">Quintus Regular</option>
+                            <option value="Penumbra Sans Std">Penumbra Sans Std</option>
+                          </optgroup>
+                          <optgroup label="System fonts">
+                            <option value="Arial">Arial</option>
+                            <option value="Georgia">Georgia</option>
+                            <option value="Times New Roman">Times New Roman</option>
+                            <option value="Verdana">Verdana</option>
+                            <option value="Courier New">Courier New</option>
+                            <option value="Impact">Impact</option>
+                          </optgroup>
                         </select>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
@@ -1622,20 +1782,49 @@ export default function PinDesigner({
                     <div className="flex gap-2 items-center">
                       <input
                         type="color"
-                        defaultValue="#ffffff"
+                        value={bandFill}
                         onChange={(e) => {
+                          const v = e.target.value;
+                          saveUndoState();
+                          setBandFill(v);
                           const canvas = fabricCanvasRef.current;
                           if (!canvas || !selectedId) return;
                           const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
                           if (obj && obj.set) {
-                            obj.set("fill", e.target.value);
+                            obj.set("fill", hexToRgba(v, bandOpacity));
                             canvas.renderAll();
                           }
                         }}
-                        className="w-10 h-8 rounded border border-gray-600 cursor-pointer"
+                        className="w-10 h-8 rounded border border-gray-600 cursor-pointer bg-transparent"
                       />
                       <span className="text-xs text-gray-400">Click to change color</span>
                     </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Transparence</label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={Math.round(bandOpacity * 100)}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10) / 100;
+                          saveUndoState();
+                          setBandOpacity(v);
+                          const canvas = fabricCanvasRef.current;
+                          if (!canvas || !selectedId) return;
+                          const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+                          if (obj && obj.set) {
+                            obj.set("fill", hexToRgba(bandFill, v));
+                            canvas.renderAll();
+                          }
+                        }}
+                        className="flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-gray-700 accent-brand-500"
+                      />
+                      <span className="text-xs text-gray-400 w-10">{Math.round(bandOpacity * 100)}%</span>
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-1">0% = transparent, 100% = opaque</p>
                   </div>
                   <div>
                     <label className="text-[10px] text-gray-500 block mb-1">Quick Colors</label>
@@ -1644,11 +1833,13 @@ export default function PinDesigner({
                         <button
                           key={color}
                           onClick={() => {
+                            saveUndoState();
+                            setBandFill(color);
                             const canvas = fabricCanvasRef.current;
                             if (!canvas || !selectedId) return;
                             const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
                             if (obj && obj.set) {
-                              obj.set("fill", color);
+                              obj.set("fill", hexToRgba(color, bandOpacity));
                               canvas.renderAll();
                             }
                           }}
