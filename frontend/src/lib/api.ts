@@ -139,7 +139,14 @@ export const api = {
   createRecipe: (siteId: string, data: { image_url: string; recipe_text: string }) =>
     request<RecipeOut>(`/api/sites/${siteId}/recipes`, { method: "POST", body: JSON.stringify(data) }),
 
-  updateRecipe: (recipeId: string, data: { recipe_text?: string; generated_images?: string }) =>
+  updateRecipe: (recipeId: string, data: {
+    recipe_text?: string;
+    generated_images?: string;
+    pin_design_image?: string;
+    pin_title?: string;
+    pin_description?: string;
+    pin_blog_link?: string;
+  }) =>
     request<RecipeOut>(`/api/recipes/${recipeId}`, { method: "PATCH", body: JSON.stringify(data) }),
 
   deleteRecipe: (recipeId: string) =>
@@ -280,6 +287,10 @@ export interface RecipeOut {
   generated_images: string | null;
   wp_post_id: string | null;
   wp_permalink: string | null;
+  pin_design_image: string | null;
+  pin_title: string | null;
+  pin_description: string | null;
+  pin_blog_link: string | null;
   error_message: string | null;
   created_at: string;
 }

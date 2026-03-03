@@ -157,6 +157,10 @@ class Recipe(Base):
     generated_images: Mapped[str | None] = mapped_column(Text, nullable=True)
     wp_post_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     wp_permalink: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pin_design_image: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pin_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    pin_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pin_blog_link: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

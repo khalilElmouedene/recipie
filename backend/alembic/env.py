@@ -13,8 +13,13 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.database import Base
 from app import db_models  # noqa: F401 — registers all models
+from app.config import settings
 
 target_metadata = Base.metadata
+
+# Use DATABASE_URL from env (Docker) when available
+url = settings.database_url
+config.set_main_option("sqlalchemy.url", url)
 
 
 def run_migrations_offline() -> None:

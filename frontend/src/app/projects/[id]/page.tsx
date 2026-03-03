@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Globe, Key, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send } from "lucide-react";
+import { Globe, Key, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X } from "lucide-react";
 import { api, ProjectOut, SiteOut, CredentialOut, MemberOut, JobOut, UserOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
@@ -85,6 +85,7 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
   const [form, setForm] = useState({ domain: "", wp_url: "", wp_username: "", wp_password: "", sheet_name: "", spreadsheet_id: "" });
   const [loading, setLoading] = useState(false);
   const [publishingSiteId, setPublishingSiteId] = useState<string | null>(null);
+  const [detailsSite, setDetailsSite] = useState<SiteOut | null>(null);
 
   const load = () => api.getSites(projectId).then(setSites).catch(() => {});
   useEffect(() => { load(); }, [projectId]);
@@ -187,6 +188,13 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
             </Link>
             <div className="flex items-center gap-1 flex-shrink-0">
               <button
+                onClick={() => setDetailsSite(s)}
+                className="text-gray-400 hover:text-brand-400 transition p-2"
+                title="Site details"
+              >
+                <Info size={16} />
+              </button>
+              <button
                 onClick={() => handlePublishToWordPress(s.id)}
                 disabled={publishingSiteId === s.id || s.recipe_count === 0}
                 className="text-gray-400 hover:text-green-400 transition p-2 disabled:opacity-40"
@@ -204,6 +212,55 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
         ))}
         {sites.length === 0 && <p className="text-center py-8 text-gray-500">No sites added yet.</p>}
       </div>
+
+      {detailsSite && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-gray-900 rounded-xl border border-gray-700 max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">Site details</h3>
+              <button onClick={() => setDetailsSite(null)} className="text-gray-500 hover:text-white">
+                <X size={18} />
+              </button>
+            </div>
+            <dl className="space-y-3 text-sm">
+              <div>
+                <dt className="text-gray-500">Domain</dt>
+                <dd className="text-white font-medium">{detailsSite.domain}</dd>
+              </div>
+              <div>
+                <dt className="text-gray-500">WordPress URL</dt>
+                <dd className="text-gray-300 break-all">{detailsSite.wp_url}</dd>
+              </div>
+              <div>
+                <dt className="text-gray-500">WP Username</dt>
+                <dd className="text-gray-300">{detailsSite.wp_username}</dd>
+              </div>
+              {detailsSite.sheet_name && (
+                <div>
+                  <dt className="text-gray-500">Sheet name</dt>
+                  <dd className="text-gray-300">{detailsSite.sheet_name}</dd>
+                </div>
+              )}
+              {detailsSite.spreadsheet_id && (
+                <div>
+                  <dt className="text-gray-500">Spreadsheet ID</dt>
+                  <dd className="text-gray-300 break-all text-xs">{detailsSite.spreadsheet_id}</dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-gray-500">Recipes</dt>
+                <dd className="text-gray-300">{detailsSite.recipe_count}</dd>
+              </div>
+            </dl>
+            <Link
+              href={`/projects/${projectId}/sites/${detailsSite.id}`}
+              className="mt-4 inline-flex items-center gap-2 text-brand-400 hover:text-brand-300"
+            >
+              View site →
+            </Link>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

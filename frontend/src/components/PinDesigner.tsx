@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, Download, ZoomIn, ZoomOut, Layers, LayoutTemplate, Grid3X3, Type, Upload, Image as ImageIcon, Minus, Trash2, Square, ArrowUp, ArrowDown, Send } from "lucide-react";
+import { X, Download, ZoomIn, ZoomOut, Layers, LayoutTemplate, Grid3X3, Type, Upload, Image as ImageIcon, Minus, Trash2, Square, ArrowUp, ArrowDown, Send, Save } from "lucide-react";
+import { api } from "@/lib/api";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
@@ -327,6 +328,9 @@ export interface PinDesignerProps {
   recipeImages?: string[];
   projectId?: string;
   siteId?: string;
+  recipeId?: string;
+  recipePinTitle?: string;
+  recipePinDescription?: string;
 }
 
 export default function PinDesigner({
@@ -336,6 +340,9 @@ export default function PinDesigner({
   recipeImages = [],
   projectId,
   siteId,
+  recipeId,
+  recipePinTitle,
+  recipePinDescription,
 }: PinDesignerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricCanvasRef = useRef<any>(null);
@@ -344,9 +351,9 @@ export default function PinDesigner({
   const isRestoringRef = useRef(false);
   const [mounted, setMounted] = useState(false);
   const [zoom, setZoom] = useState(35);
-  const [leftTab, setLeftTab] = useState<"elements" | "layers" | "templates">("elements");
+  const [leftTab, setLeftTab] = useState<"elements" | "layers" | "templates">("templates");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedTemplate, setSelectedTemplate] = useState<PinTemplate>(TEMPLATES[0]);
+  const [selectedTemplate, setSelectedTemplate] = useState<PinTemplate | null>(null);
   const [editText, setEditText] = useState("");
   const [pinName, setPinName] = useState(templateName);
   const [layers, setLayers] = useState<{ id: string; label: string; type: string }[]>([]);
@@ -510,6 +517,31 @@ export default function PinDesigner({
     publishToPinterest(dataUrl);
   };
 
+  const [savingToRecipe, setSavingToRecipe] = useState(false);
+  const handleSaveToRecipe = async () => {
+    if (!recipeId) return;
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    setSavingToRecipe(true);
+    try {
+      canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+      canvas.renderAll();
+      const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
+      canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", true));
+      canvas.renderAll();
+      await api.updateRecipe(recipeId, {
+        pin_design_image: dataUrl,
+        pin_title: recipePinTitle || initialTitle,
+        pin_description: recipePinDescription || initialTitle,
+      });
+      alert("Design saved to recipe.");
+    } catch (err: any) {
+      alert(`Failed to save: ${err.message}`);
+    } finally {
+      setSavingToRecipe(false);
+    }
+  };
+
   const loadTemplate = async (template: PinTemplate) => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
@@ -597,6 +629,7 @@ export default function PinDesigner({
           strokeWidth: 0,
           originX: "left",
           originY: "top",
+          objectCaching: false,
         });
         (band as any).__pinId = el.id;
         (band as any).__pinLabel = el.label;
@@ -655,6 +688,20 @@ export default function PinDesigner({
     if (!canvas) return;
     const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel);
     setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType })));
+  };
+
+  /** Get the currently selected Fabric object - uses getActiveObject first, falls back to find by selectedId */
+  const getSelectedObject = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return null;
+    const active = canvas.getActiveObject();
+    if (active && (active as any).__pinId) return active as any;
+    if ((active as any)?._objects?.length === 1) return (active as any)._objects[0];
+    if (selectedId) {
+      const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+      if (obj) return obj;
+    }
+    return null;
   };
 
   const MAX_UNDO = 50;
@@ -722,12 +769,14 @@ export default function PinDesigner({
         const canvas = new Canvas(canvasRef.current!, {
           width: PIN_W,
           height: PIN_H,
-          backgroundColor: selectedTemplate.bgColor,
+          backgroundColor: "#1a1a2e",
         });
         fabricCanvasRef.current = canvas;
 
         canvas.on("selection:created", (e: any) => {
-          const obj = e.selected?.[0];
+          let obj = e.selected?.[0];
+          if (!obj && (e.selected as any)?._objects?.length) obj = (e.selected as any)._objects[0];
+          if (!obj) obj = canvas.getActiveObject() as any;
           if (obj?.__pinId) {
             setSelectedId(obj.__pinId);
             if (obj.__pinType === "text") {
@@ -760,7 +809,9 @@ export default function PinDesigner({
           }
         });
         canvas.on("selection:updated", (e: any) => {
-          const obj = e.selected?.[0];
+          let obj = e.selected?.[0];
+          if (!obj && (e.selected as any)?._objects?.length) obj = (e.selected as any)._objects[0];
+          if (!obj) obj = canvas.getActiveObject() as any;
           if (obj?.__pinId) {
             setSelectedId(obj.__pinId);
             if (obj.__pinType === "text") {
@@ -837,7 +888,6 @@ export default function PinDesigner({
         });
 
         setCanvasReady(true);
-        await loadTemplate(selectedTemplate);
       } catch (err) {
         console.error("Fabric init error:", err);
       }
@@ -855,7 +905,7 @@ export default function PinDesigner({
   }, [mounted]);
 
   useEffect(() => {
-    if (canvasReady) {
+    if (canvasReady && selectedTemplate) {
       loadTemplate(selectedTemplate);
     }
   }, [selectedTemplate, canvasReady]);
@@ -866,13 +916,13 @@ export default function PinDesigner({
 
   const deleteSelectedElement = () => {
     const canvas = fabricCanvasRef.current;
-    if (!canvas || !selectedId) return;
+    const obj = getSelectedObject();
+    if (!canvas || !obj) return;
     saveUndoState();
-    
-    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
     if (obj) {
+      const pid = obj.__pinId;
       canvas.remove(obj);
-      const label = canvas.getObjects().find((o: any) => o.__forId === selectedId);
+      const label = canvas.getObjects().find((o: any) => o.__forId === pid);
       if (label) canvas.remove(label);
       canvas.discardActiveObject();
       canvas.renderAll();
@@ -883,9 +933,9 @@ export default function PinDesigner({
 
   const sendToBack = () => {
     const canvas = fabricCanvasRef.current;
-    if (!canvas || !selectedId) return;
+    const obj = getSelectedObject();
+    if (!canvas || !obj) return;
     saveUndoState();
-    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
     if (obj) {
       canvas.sendObjectToBack(obj);
       canvas.renderAll();
@@ -895,9 +945,9 @@ export default function PinDesigner({
 
   const bringToFront = () => {
     const canvas = fabricCanvasRef.current;
-    if (!canvas || !selectedId) return;
+    const obj = getSelectedObject();
+    if (!canvas || !obj) return;
     saveUndoState();
-    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
     if (obj) {
       canvas.bringObjectToFront(obj);
       canvas.renderAll();
@@ -929,7 +979,7 @@ export default function PinDesigner({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
+      if (e.key === "Delete" || e.key === "Backspace") {
         const activeElement = document.activeElement;
         const isInputFocused = activeElement?.tagName === "INPUT" || 
                                activeElement?.tagName === "TEXTAREA" ||
@@ -943,7 +993,7 @@ export default function PinDesigner({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedId]);
+  }, []);
 
   const setZoomPct = (pct: number) => setZoom(Math.max(20, Math.min(150, pct)));
 
@@ -963,10 +1013,10 @@ export default function PinDesigner({
 
   const applyEditText = () => {
     const canvas = fabricCanvasRef.current;
-    if (!canvas || !selectedId) return;
+    const obj = getSelectedObject();
+    if (!canvas || !obj) return;
     saveUndoState();
-    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
-    if (obj && obj.set && obj.__pinType === "text") {
+    if (obj.set && obj.__pinType === "text") {
       obj.set("text", editText);
       canvas.renderAll();
     }
@@ -974,10 +1024,10 @@ export default function PinDesigner({
 
   const updateTextProperty = (property: string, value: any) => {
     const canvas = fabricCanvasRef.current;
-    if (!canvas || !selectedId) return;
+    const obj = getSelectedObject();
+    if (!canvas || !obj) return;
     saveUndoState();
-    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
-    if (obj && obj.set && obj.__pinType === "text") {
+    if (obj.set && obj.__pinType === "text") {
       if (property === "fontFamily") {
         obj.set("fontFamily", value);
         setFontFamily(value);
@@ -1111,10 +1161,10 @@ export default function PinDesigner({
 
   const updateFrameProperty = (property: string, value: any) => {
     const canvas = fabricCanvasRef.current;
-    if (!canvas || !selectedId) return;
+    const obj = getSelectedObject();
+    if (!canvas || !obj) return;
     saveUndoState();
-    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
-    if (obj && obj.__pinType === "frame") {
+    if (obj.__pinType === "frame") {
       if (property === "strokeWidth") {
         obj.set("strokeWidth", parseInt(value));
         setFrameStrokeWidth(parseInt(value));
@@ -1153,10 +1203,9 @@ export default function PinDesigner({
   const applyImage = (imageUrl: string) => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
-    if (!fabric || !canvas || !imageUrl.trim() || !selectedId) return;
+    const target = getSelectedObject();
+    if (!fabric || !canvas || !imageUrl.trim() || !target) return;
     saveUndoState();
-
-    const target = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
     if (!target || target.__pinType !== "image") return;
 
     const l = target.left ?? 0;
@@ -1172,11 +1221,12 @@ export default function PinDesigner({
           scaleX: w / (img.width || 1),
           scaleY: h / (img.height || 1),
         });
-        img.__pinId = selectedId;
+        const pid = target.__pinId;
+        img.__pinId = pid;
         img.__pinLabel = target.__pinLabel;
         img.__pinType = "image";
         canvas.remove(target);
-        const label = canvas.getObjects().find((o: any) => o.__forId === selectedId);
+        const label = canvas.getObjects().find((o: any) => o.__forId === pid);
         if (label) canvas.remove(label);
         canvas.add(img);
         canvas.setActiveObject(img);
@@ -1194,7 +1244,29 @@ export default function PinDesigner({
       canvas.setActiveObject(obj);
       canvas.renderAll();
       setSelectedId(id);
-      setEditText(obj.text ?? "");
+      if (obj.__pinType === "text") {
+        setEditText(obj.text ?? "");
+        setFontFamily(obj.fontFamily ?? "Arial");
+        setFontSize(obj.fontSize ?? 32);
+        setFontWeight(obj.fontWeight ?? "normal");
+        setTextAlign(obj.textAlign ?? "center");
+        setTextColor(obj.fill ?? "#333333");
+      }
+      if (obj.__pinType === "band") {
+        const fill = obj.fill;
+        if (typeof fill === "string") {
+          const match = fill.match(/rgba?\((\d+),(\d+),(\d+)(?:,([\d.]+))?\)/);
+          if (match) {
+            setBandOpacity(parseFloat(match[4] ?? "1"));
+            setBandFill(`#${parseInt(match[1], 10).toString(16).padStart(2, "0")}${parseInt(match[2], 10).toString(16).padStart(2, "0")}${parseInt(match[3], 10).toString(16).padStart(2, "0")}`);
+          } else { setBandOpacity(1); setBandFill(fill.startsWith("#") ? fill : "#ffffff"); }
+        } else { setBandOpacity(1); setBandFill("#ffffff"); }
+      }
+      if (obj.__pinType === "frame") {
+        setFrameStrokeWidth(obj.strokeWidth ?? 4);
+        setFrameStrokeColor(obj.stroke ?? "#333333");
+        setFrameStrokeStyle(obj.__strokeStyle ?? "solid");
+      }
     }
   };
 
@@ -1218,6 +1290,15 @@ export default function PinDesigner({
           <button onClick={handleExport} className="btn-primary flex items-center gap-2 px-3 py-1.5 text-sm">
             <Download size={16} /> Export
           </button>
+          {recipeId && (
+            <button
+              onClick={handleSaveToRecipe}
+              disabled={savingToRecipe || !selectedTemplate}
+              className="btn-primary flex items-center gap-2 px-3 py-1.5 text-sm"
+            >
+              <Save size={16} /> {savingToRecipe ? "Saving..." : "Save to Recipe"}
+            </button>
+          )}
           {projectId && (
             pinterestConnected ? (
               <button 
@@ -1424,6 +1505,7 @@ export default function PinDesigner({
                                   canvas.setActiveObject(img);
                                   canvas.renderAll();
                                   updateLayers();
+                                  setSelectedId(id);
                                 });
                             };
                             reader.readAsDataURL(file);
@@ -1460,7 +1542,7 @@ export default function PinDesigner({
                   <div
                     key={t.id}
                     className={`rounded-lg border-2 p-3 cursor-pointer transition ${
-                      selectedTemplate.id === t.id
+                      selectedTemplate?.id === t.id
                         ? "border-brand-500 bg-brand-500/10"
                         : "border-gray-700 hover:border-gray-500"
                     }`}
@@ -1481,12 +1563,12 @@ export default function PinDesigner({
                     <button
                       onClick={() => handleUseTemplate(t)}
                       className={`text-xs px-3 py-1 rounded ${
-                        selectedTemplate.id === t.id
+                        selectedTemplate?.id === t.id
                           ? "bg-brand-500 text-white"
                           : "bg-gray-700 text-gray-300 hover:bg-gray-600"
                       }`}
                     >
-                      {selectedTemplate.id === t.id ? "✓ Selected" : "Use Template"}
+                      {selectedTemplate?.id === t.id ? "✓ Selected" : "Use Template"}
                     </button>
                   </div>
                 ))}
@@ -1523,7 +1605,7 @@ export default function PinDesigner({
               <ZoomIn size={18} />
             </button>
           </div>
-          <div className="p-4 flex justify-center" style={{ minHeight: `${(PIN_H * zoom) / 100 + 40}px` }}>
+          <div className="p-4 flex justify-center relative" style={{ minHeight: `${(PIN_H * zoom) / 100 + 40}px` }}>
             <div
               style={{ 
                 transform: `scale(${zoom / 100})`, 
@@ -1531,9 +1613,18 @@ export default function PinDesigner({
                 width: PIN_W,
                 height: PIN_H,
               }}
-              className="shadow-2xl rounded-lg overflow-hidden border-2 border-gray-600 flex-shrink-0"
+              className="shadow-2xl rounded-lg overflow-hidden border-2 border-gray-600 flex-shrink-0 relative"
             >
               <canvas ref={canvasRef} />
+              {!selectedTemplate && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 rounded-lg">
+                  <div className="text-center px-6 py-4">
+                    <LayoutTemplate size={48} className="mx-auto text-gray-500 mb-3" />
+                    <p className="text-gray-400 font-medium">Select a template to get started</p>
+                    <p className="text-sm text-gray-500 mt-1">Choose from the Templates panel on the left</p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </main>
@@ -1785,11 +1876,12 @@ export default function PinDesigner({
                         value={bandFill}
                         onChange={(e) => {
                           const v = e.target.value;
+                          const obj = getSelectedObject();
+                          if (!obj) return;
                           saveUndoState();
                           setBandFill(v);
                           const canvas = fabricCanvasRef.current;
-                          if (!canvas || !selectedId) return;
-                          const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+                          if (!canvas) return;
                           if (obj && obj.set) {
                             obj.set("fill", hexToRgba(v, bandOpacity));
                             canvas.renderAll();
@@ -1810,11 +1902,12 @@ export default function PinDesigner({
                         value={Math.round(bandOpacity * 100)}
                         onChange={(e) => {
                           const v = parseInt(e.target.value, 10) / 100;
+                          const obj = getSelectedObject();
+                          if (!obj) return;
                           saveUndoState();
                           setBandOpacity(v);
                           const canvas = fabricCanvasRef.current;
-                          if (!canvas || !selectedId) return;
-                          const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+                          if (!canvas) return;
                           if (obj && obj.set) {
                             obj.set("fill", hexToRgba(bandFill, v));
                             canvas.renderAll();
@@ -1833,11 +1926,12 @@ export default function PinDesigner({
                         <button
                           key={color}
                           onClick={() => {
+                            const obj = getSelectedObject();
+                            if (!obj) return;
                             saveUndoState();
                             setBandFill(color);
                             const canvas = fabricCanvasRef.current;
-                            if (!canvas || !selectedId) return;
-                            const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+                            if (!canvas) return;
                             if (obj && obj.set) {
                               obj.set("fill", hexToRgba(color, bandOpacity));
                               canvas.renderAll();

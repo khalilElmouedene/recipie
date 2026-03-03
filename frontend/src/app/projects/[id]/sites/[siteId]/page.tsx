@@ -51,6 +51,12 @@ export default function SiteDetailPage() {
   const [wpCreatePost, setWpCreatePost] = useState(true);
   const [wpPublishing, setWpPublishing] = useState(false);
 
+  // Saved pin design form (Pinterest tab)
+  const [pinDesignTitle, setPinDesignTitle] = useState("");
+  const [pinDesignDesc, setPinDesignDesc] = useState("");
+  const [pinDesignLink, setPinDesignLink] = useState("");
+  const [pinDesignSaving, setPinDesignSaving] = useState(false);
+
   // Bulk Pin Generator (site-level)
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkTemplate, setBulkTemplate] = useState("");
@@ -60,6 +66,18 @@ export default function SiteDetailPage() {
   const [recipeJobMap, setRecipeJobMap] = useState<Record<string, string>>({});
 
   const loadRecipes = () => api.getRecipes(siteId).then(setRecipes).catch(() => {});
+
+  // Sync pin design form when expanded recipe changes (auto-fill from generated data)
+  useEffect(() => {
+    if (!expandedId) return;
+    const r = recipes.find((rec) => rec.id === expandedId);
+    if (r) {
+      const recipeTitle = r.recipe_text?.split("\n")[0]?.trim() || "";
+      setPinDesignTitle(r.pin_title || recipeTitle);
+      setPinDesignDesc(r.pin_description || r.meta_description || recipeTitle);
+      setPinDesignLink(r.pin_blog_link || r.wp_permalink || "");
+    }
+  }, [expandedId, recipes]);
 
   useEffect(() => {
     api.getSites(projectId).then((sites) => {
@@ -317,6 +335,21 @@ export default function SiteDetailPage() {
       alert(err.message || "Failed to publish to WordPress");
     }
     setWpPublishing(false);
+  };
+
+  const handleSavePinDesign = async (recipeId: string) => {
+    setPinDesignSaving(true);
+    try {
+      await api.updateRecipe(recipeId, {
+        pin_title: pinDesignTitle || undefined,
+        pin_description: pinDesignDesc || undefined,
+        pin_blog_link: pinDesignLink || undefined,
+      });
+      loadRecipes();
+    } catch (err: any) {
+      alert(err.message || "Failed to save");
+    }
+    setPinDesignSaving(false);
   };
 
   const handleCreatePins = async (recipeId: string) => {
@@ -743,23 +776,83 @@ export default function SiteDetailPage() {
                     </div>
                   )}
                   {detailTab === "pinterest" && (
-                    <div>
-                      {!r.generated_images ? (
-                        <p className="text-gray-500 text-sm">No generated images yet. Generate content first before creating pins.</p>
-                      ) : (
-                        <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-6 text-center">
-                          <p className="text-gray-300 text-sm mb-4">
-                            Use the same Pin Designer as the designer page: templates (band-peach, canva-brown, etc.), elements, layers, and full editing.
-                          </p>
-                          <button
-                            onClick={() => router.push(`/projects/${projectId}/sites/${siteId}/designer?recipe=${r.id}`)}
-                            className="btn-primary inline-flex items-center gap-2"
-                          >
-                            <LayoutGrid size={18} />
-                            Open Pin Designer
-                          </button>
+                    <div className="space-y-4">
+                      {r.pin_design_image ? (
+                        <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-4">
+                          <div className="flex flex-col sm:flex-row gap-4">
+                            <div className="flex-shrink-0 relative group">
+                              <img src={r.pin_design_image} alt="Saved pin" className="w-48 rounded-lg border border-gray-600 object-cover" />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const link = document.createElement("a");
+                                  link.href = r.pin_design_image!;
+                                  link.download = `pin-${(pinDesignTitle || r.recipe_text?.split("\n")[0] || "design").replace(/[^a-z0-9]/gi, "_").slice(0, 40)}.png`;
+                                  link.click();
+                                }}
+                                className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Download"
+                              >
+                                <Download size={28} className="text-white" />
+                              </button>
+                            </div>
+                            <div className="flex-1 space-y-3">
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">Title</label>
+                                <input
+                                  value={pinDesignTitle}
+                                  onChange={(e) => setPinDesignTitle(e.target.value)}
+                                  className="input-field text-sm w-full"
+                                  placeholder="Pin title..."
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">Description</label>
+                                <textarea
+                                  value={pinDesignDesc}
+                                  onChange={(e) => setPinDesignDesc(e.target.value)}
+                                  className="input-field text-sm w-full"
+                                  rows={2}
+                                  placeholder="Pin description..."
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">Blog link (if already published on WordPress)</label>
+                                <input
+                                  value={pinDesignLink}
+                                  onChange={(e) => setPinDesignLink(e.target.value)}
+                                  className="input-field text-sm w-full"
+                                  placeholder="https://yoursite.com/recipe-post"
+                                />
+                              </div>
+                              <button
+                                onClick={() => handleSavePinDesign(r.id)}
+                                disabled={pinDesignSaving}
+                                className="btn-primary text-sm"
+                              >
+                                {pinDesignSaving ? "Saving..." : "Save"}
+                              </button>
+                            </div>
+                          </div>
                         </div>
-                      )}
+                      ) : null}
+                      <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-6 text-center">
+                        <p className="text-gray-300 text-sm mb-4">
+                          {r.pin_design_image
+                            ? "Edit your design or use the Pin Designer for templates, elements, layers, and full editing."
+                            : "Use the same Pin Designer as the designer page: templates (band-peach, canva-brown, etc.), elements, layers, and full editing."}
+                        </p>
+                        <button
+                          onClick={() => router.push(`/projects/${projectId}/sites/${siteId}/designer?recipe=${r.id}`)}
+                          className="btn-primary inline-flex items-center gap-2"
+                        >
+                          <LayoutGrid size={18} />
+                          {r.pin_design_image ? "Edit Pin Designer" : "Open Pin Designer"}
+                        </button>
+                        {!r.generated_images && !r.image_url && (
+                          <p className="text-gray-500 text-xs mt-3">Generate content first to auto-fill images in the designer.</p>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

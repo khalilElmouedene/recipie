@@ -9,7 +9,6 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-# revision identifiers, used by Alembic.
 revision = "add_user_credentials"
 down_revision = None
 branch_labels = None
@@ -17,6 +16,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    if bind.dialect.has_table(bind, "user_credentials"):
+        return  # Table already exists (e.g. created by SQLAlchemy before Alembic)
     op.create_table(
         "user_credentials",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),

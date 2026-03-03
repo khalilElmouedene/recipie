@@ -110,6 +110,14 @@ async def update_recipe(
         recipe.recipe_text = body.recipe_text
     if body.generated_images is not None:
         recipe.generated_images = body.generated_images
+    if body.pin_design_image is not None:
+        recipe.pin_design_image = body.pin_design_image
+    if body.pin_title is not None:
+        recipe.pin_title = body.pin_title
+    if body.pin_description is not None:
+        recipe.pin_description = body.pin_description
+    if body.pin_blog_link is not None:
+        recipe.pin_blog_link = body.pin_blog_link
 
     await db.commit()
     row = await db.execute(select(Recipe).where(Recipe.id == recipe_id))

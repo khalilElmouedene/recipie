@@ -142,6 +142,10 @@ class RecipeCreate(BaseModel):
 class RecipeUpdate(BaseModel):
     recipe_text: str | None = None
     generated_images: str | None = None
+    pin_design_image: str | None = None
+    pin_title: str | None = None
+    pin_description: str | None = None
+    pin_blog_link: str | None = None
 
 
 class PinterestPinRequest(BaseModel):
@@ -182,6 +186,10 @@ class RecipeOut(BaseModel):
     generated_images: str | None = None
     wp_post_id: str | None = None
     wp_permalink: str | None = None
+    pin_design_image: str | None = None
+    pin_title: str | None = None
+    pin_description: str | None = None
+    pin_blog_link: str | None = None
     error_message: str | None = None
     created_at: datetime
 

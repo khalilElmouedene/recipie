@@ -40,7 +40,8 @@ export default function PinDesignerPage() {
     }
   });
 
-  const title = targetRecipe?.recipe_text?.split("\n")[0] || "Recipe Title";
+  const recipeTitle = targetRecipe?.recipe_text?.split("\n")[0]?.trim() || "Recipe Title";
+  const recipeDesc = targetRecipe?.meta_description || targetRecipe?.recipe_text?.split("\n")[0]?.trim() || "";
 
   if (loading) {
     return (
@@ -52,11 +53,14 @@ export default function PinDesignerPage() {
 
   return (
     <PinDesigner
-      templateName={title}
-      initialTitle={title}
+      templateName={recipeTitle}
+      initialTitle={recipeTitle}
       recipeImages={allImages}
       projectId={params.id}
       siteId={params.siteId}
+      recipeId={recipeId || undefined}
+      recipePinTitle={targetRecipe?.pin_title || recipeTitle}
+      recipePinDescription={targetRecipe?.pin_description || recipeDesc}
       onClose={() => router.push(`/projects/${params.id}/sites/${params.siteId}`)}
     />
   );
