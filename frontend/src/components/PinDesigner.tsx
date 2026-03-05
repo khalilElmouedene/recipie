@@ -374,6 +374,16 @@ export default function PinDesigner({
   recipePinTitle,
   recipePinDescription,
 }: PinDesignerProps) {
+  // Route external image URLs through backend proxy to avoid browser CORS restrictions
+  const proxyUrl = (url: string) => {
+    if (!url) return url;
+    if (url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("/")) return url;
+    if (url.startsWith(window.location.origin)) return url;
+    const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    if (url.startsWith(api)) return url;
+    return `${api}/api/image-proxy?url=${encodeURIComponent(url)}`;
+  };
+
   // ── Canvas refs ──────────────────────────────────────────────────────────
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasWrapperRef = useRef<HTMLDivElement>(null);  // scaled canvas wrapper
@@ -803,7 +813,7 @@ export default function PinDesigner({
 
         if (imageUrl) {
           try {
-            const img = await fabric.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
+            const img = await fabric.FabricImage.fromURL(proxyUrl(imageUrl), { crossOrigin: "anonymous" });
             const zoneW = el.width;
             const zoneH = el.height;
             const imgW = img.width || 1;
@@ -1467,7 +1477,7 @@ export default function PinDesigner({
     const zoneW = br ? br.width : (target.width ?? 400) * (target.scaleX ?? 1);
     const zoneH = br ? br.height : (target.height ?? 400) * (target.scaleY ?? 1);
 
-    fabric.FabricImage.fromURL(imageUrl.trim(), { crossOrigin: "anonymous" })
+    fabric.FabricImage.fromURL(proxyUrl(imageUrl.trim()), { crossOrigin: "anonymous" })
       .then((img: any) => {
         if (!img || !img.width) throw new Error("Empty image");
 
@@ -2169,7 +2179,7 @@ export default function PinDesigner({
                             className="rounded-lg overflow-hidden border-2 border-gray-700 hover:border-brand-500 transition relative group"
                           >
                             <img
-                              src={url}
+                              src={proxyUrl(url)}
                               alt={`Image ${i + 1}`}
                               className="w-full h-20 object-cover"
                               onError={(e) => {

@@ -5,7 +5,8 @@ import json
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import requests as _requests
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse, Response
 from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,22 @@ from ..models import (
 )
 
 router = APIRouter(tags=["recipes"])
+
+
+@router.get("/api/image-proxy")
+def image_proxy(url: str = Query(...)):
+    """Proxy external images (e.g. Discord CDN) to avoid browser CORS restrictions."""
+    try:
+        r = _requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20, stream=True)
+        r.raise_for_status()
+        media_type = r.headers.get("content-type", "image/jpeg").split(";")[0]
+        return Response(
+            content=r.content,
+            media_type=media_type,
+            headers={"Cache-Control": "public, max-age=3600", "Access-Control-Allow-Origin": "*"},
+        )
+    except Exception:
+        raise HTTPException(status_code=404, detail="Image not available")
 
 
 @router.get("/api/sites/{site_id}/recipes", response_model=list[RecipeOut])

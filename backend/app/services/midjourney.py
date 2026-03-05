@@ -37,7 +37,23 @@ class MidjourneyApi:
             "Content-Type": "application/json",
         }
 
+    def _get_latest_message_id(self) -> str:
+        """Return the ID of the most recent message in the channel (used as a baseline)."""
+        try:
+            r = requests.get(
+                f"https://discord.com/api/v9/channels/{self.channel_id}/messages?limit=1",
+                headers=self._headers(),
+            )
+            msgs = r.json()
+            if msgs:
+                return msgs[0]["id"]
+        except Exception:
+            pass
+        return "0"
+
     def send_message(self) -> requests.Response:
+        # Snapshot the channel before sending so we can filter to OUR messages only
+        self.baseline_id = self._get_latest_message_id()
         url = "https://discord.com/api/v9/interactions"
         data = {
             "type": 2,
@@ -82,16 +98,33 @@ class MidjourneyApi:
         self._log(f"Waiting {self.wait_time}s for Midjourney generation...")
         time.sleep(self.wait_time)
         try:
+            # Only look at messages that appeared AFTER we sent our prompt
             response = requests.get(
                 f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
                 headers=self._headers(),
+                params={"after": self.baseline_id, "limit": 50},
             )
             messages = response.json()
-            self.message_id = messages[0]["id"]
-            components = messages[0]["components"][0]["components"]
-            buttons = [c for c in components if c.get("label") in ["U1", "U2", "U3", "U4"]]
-            self.custom_ids = [b["custom_id"] for b in buttons]
-            self._log(f"Got message {self.message_id} with {len(self.custom_ids)} upscale buttons")
+            # Find the grid message that has U1/U2/U3/U4 upscale buttons
+            for msg in messages:
+                try:
+                    comps = msg.get("components", [])
+                    if not comps:
+                        continue
+                    buttons = [
+                        c for c in comps[0].get("components", [])
+                        if c.get("label") in ["U1", "U2", "U3", "U4"]
+                    ]
+                    if len(buttons) >= 4:
+                        self.message_id = msg["id"]
+                        self.custom_ids = [b["custom_id"] for b in buttons]
+                        self._log(f"Got grid message {self.message_id} with {len(self.custom_ids)} upscale buttons")
+                        return
+                except (KeyError, IndexError):
+                    continue
+            raise ValueError("No grid message with upscale buttons found")
+        except ValueError:
+            raise
         except Exception as e:
             self._log(f"Error getting messages: {e}")
             raise ValueError("Timeout")
@@ -101,6 +134,9 @@ class MidjourneyApi:
         self.get_message()
         if not self.custom_ids:
             raise ValueError("No buttons found to upscale images")
+        # Record baseline just before triggering upscales so download_image can
+        # find only the 4 upscaled images that belong to this recipe
+        self.upscale_baseline_id = self._get_latest_message_id()
         for custom_id in self.custom_ids[:4]:
             data = {
                 "type": 3,
@@ -121,17 +157,29 @@ class MidjourneyApi:
     def download_image(self) -> list[str]:
         img_urls: list[str] = []
         try:
+            # Only look at messages after our upscale requests were sent
+            after_id = getattr(self, "upscale_baseline_id", self.message_id)
             response = requests.get(
                 f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
                 headers=self._headers(),
+                params={"after": after_id, "limit": 50},
             )
             messages = response.json()
-            for i in range(4):
-                self.message_id = messages[i]["id"]
-                image_url = messages[i]["attachments"][0]["url"]
-                img_urls.append(image_url)
+            # Collect the first 4 messages that have image attachments
+            for msg in messages:
+                try:
+                    if msg.get("attachments"):
+                        img_urls.append(msg["attachments"][0]["url"])
+                        if len(img_urls) >= 4:
+                            break
+                except (KeyError, IndexError):
+                    continue
+            if not img_urls:
+                raise ValueError("No upscaled images found")
             self._log(f"Downloaded {len(img_urls)} image URLs")
             return img_urls
+        except ValueError:
+            raise
         except Exception as e:
             self._log(f"Error downloading images: {e}")
             raise ValueError("Timeout")
