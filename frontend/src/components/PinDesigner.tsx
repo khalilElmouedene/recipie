@@ -629,13 +629,14 @@ export default function PinDesigner({
 
   const MAX_UNDO = 50;
 
+  // Fabric v6: toJSON() ignores propertiesToInclude — must use toObject() to include custom keys
+  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"];
+
   const saveUndoState = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas || isRestoringRef.current) return;
     try {
-      const json = JSON.stringify(
-        canvas.toJSON(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"])
-      );
+      const json = JSON.stringify(canvas.toObject(UNDO_CUSTOM_KEYS));
       const history = undoHistoryRef.current;
       history.push({ json, selectedId: selectedIdRef.current });
       if (history.length > MAX_UNDO) history.shift();
@@ -650,18 +651,31 @@ export default function PinDesigner({
     const entry = undoHistoryRef.current.pop()!;
     isRestoringRef.current = true;
 
-    // Custom keys we need to restore — Fabric v6 drops unknown props on loadFromJSON
-    const CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"];
     let ok = false;
 
     try {
-      // The reviver is called for EACH object as it is created during JSON load.
-      // This is the only reliable way to restore custom props: index-based loops
-      // fail because Fabric v6 may resolve image loads out-of-order, scrambling indices.
-      await canvas.loadFromJSON(entry.json, (serializedObj: any, instance: any) => {
-        CUSTOM_KEYS.forEach((k) => {
-          if (serializedObj[k] !== undefined) (instance as any)[k] = serializedObj[k];
-        });
+      // Parse first so we have the saved custom props for post-load restoration
+      const savedData = JSON.parse(entry.json);
+      const savedObjs: any[] = savedData.objects || [];
+
+      await canvas.loadFromJSON(entry.json);
+
+      // Post-load: restore custom properties by matching type + position.
+      // Needed because Fabric v6 toJSON() ignores propertiesToInclude — we use
+      // toObject() when saving, but loadFromJSON does not auto-restore unknown keys.
+      const remaining = [...savedObjs];
+      (canvas.getObjects() as any[]).forEach((canvasObj) => {
+        const idx = remaining.findIndex((s) =>
+          s.type === canvasObj.type &&
+          Math.abs((s.left ?? 0) - (canvasObj.left ?? 0)) < 1 &&
+          Math.abs((s.top ?? 0) - (canvasObj.top ?? 0)) < 1
+        );
+        if (idx !== -1) {
+          UNDO_CUSTOM_KEYS.forEach((k) => {
+            if (remaining[idx][k] !== undefined) canvasObj[k] = remaining[idx][k];
+          });
+          remaining.splice(idx, 1);
+        }
       });
 
       const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel);
@@ -2148,8 +2162,12 @@ export default function PinDesigner({
                     <label className="text-xs text-gray-400 block mb-2">Choose Image</label>
                     {recipeImages.length > 0 ? (
                       <div className="grid grid-cols-2 gap-2">
-                        {recipeImages.slice(0, 8).map((url, i) => (
-                          <button key={i} onClick={() => applyImage(url)} className="rounded-lg overflow-hidden border-2 border-gray-700 hover:border-brand-500 transition">
+                        {recipeImages.slice(0, 4).map((url, i) => (
+                          <button
+                            key={i}
+                            onClick={() => applyImage(url)}
+                            className="rounded-lg overflow-hidden border-2 border-gray-700 hover:border-brand-500 transition relative group"
+                          >
                             <img
                               src={url}
                               alt={`Image ${i + 1}`}
@@ -2159,6 +2177,9 @@ export default function PinDesigner({
                                 if (btn) btn.style.display = "none";
                               }}
                             />
+                            <span className="absolute bottom-0 left-0 right-0 text-[9px] text-center bg-black/50 text-white py-0.5 opacity-0 group-hover:opacity-100 transition">
+                              {i === 0 ? "Original" : `Variant ${i}`}
+                            </span>
                           </button>
                         ))}
                       </div>
