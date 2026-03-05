@@ -25,6 +25,11 @@ export default function PinDesignerPage() {
   const allImages: string[] = [];
   const recipesToUse = targetRecipe ? [targetRecipe] : recipes;
   recipesToUse.forEach((recipe) => {
+    // Put the stable original image_url first so there's always at least one working image
+    if (recipe.image_url && !allImages.includes(recipe.image_url)) {
+      allImages.push(recipe.image_url);
+    }
+    // Then add Midjourney-generated images (may be expired Discord CDN URLs)
     if (recipe.generated_images) {
       try {
         const arr = JSON.parse(recipe.generated_images);
@@ -34,9 +39,6 @@ export default function PinDesignerPage() {
           });
         }
       } catch {}
-    }
-    if (recipe.image_url && !allImages.includes(recipe.image_url)) {
-      allImages.push(recipe.image_url);
     }
   });
 

@@ -6,12 +6,34 @@ import unicodedata
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+from pathlib import Path
 from random import randint
 from typing import Callable
 
 import requests
 
 from . import midjourney, openai_service
+from app.config import settings
+
+UPLOADS_DIR = Path("/app/uploads")
+
+
+def _cache_image(url: str, log: Callable[[str], None] | None = None) -> str:
+    """Download a Discord CDN image and save it locally. Returns the permanent server URL."""
+    _log = log or print
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        r.raise_for_status()
+        UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        filename = f"{uuid.uuid4().hex}.webp"
+        dest = UPLOADS_DIR / filename
+        dest.write_bytes(r.content)
+        permanent_url = f"{settings.server_base_url.rstrip('/')}/uploads/{filename}"
+        _log(f"Image cached locally: {filename}")
+        return permanent_url
+    except Exception as e:
+        _log(f"Image cache failed, keeping original URL: {e}")
+        return url
 
 
 def clean_keyword(text: str) -> str:
@@ -117,7 +139,9 @@ def generate_for_recipe(
             _log("Generating Midjourney images...")
             try:
                 img_urls = midjourney.generate_images(recipe_title, image_url, credentials, prompts=prompts, wait_time=190, log=_log)
-                result["generated_images"] = json.dumps(img_urls)
+                # Cache immediately — Discord CDN URLs expire after a few hours
+                cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
+                result["generated_images"] = json.dumps(cached_urls)
             except Exception as e:
                 _log(f"Midjourney failed (non-fatal): {e}")
         else:

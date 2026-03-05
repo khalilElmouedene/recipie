@@ -28,6 +28,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - .:/workspace:ro
+      - uploads_data:/app/uploads
     depends_on:
       - db
     restart: unless-stopped
@@ -47,3 +48,4 @@ services:
 
 volumes:
   pgdata:
+  uploads_data:

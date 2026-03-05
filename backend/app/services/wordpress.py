@@ -16,9 +16,11 @@ from wordpress_xmlrpc.methods.posts import NewPost, EditPost
 from wordpress_xmlrpc.methods.media import UploadFile
 
 
-def extract_and_remove_title(html: str) -> tuple[str, str]:
+def _parse_and_extract_title(html: str):
+    """Parse HTML, strip the H1/H2 title, return (title, soup).
+    The soup object can be further manipulated before converting to string."""
     if not html or not isinstance(html, str):
-        return "New Recipe Post", ""
+        return "New Recipe Post", BeautifulSoup("", "html.parser")
     soup = BeautifulSoup(html, "html.parser")
     title = "New Recipe Post"
     h1 = soup.find("h1")
@@ -30,7 +32,40 @@ def extract_and_remove_title(html: str) -> tuple[str, str]:
         if h2:
             title = h2.get_text(strip=True)
             h2.decompose()
-    return title, str(soup)
+    return title, soup
+
+
+def inject_images_into_html(soup, img1_url: str | None, img2_url: str | None = None) -> str:
+    """Insert images into article HTML using BeautifulSoup — mirrors the Winsome publisher script.
+    img1 is inserted before the first <p> (top of article).
+    img2 is inserted before the 4th <h2> (mid-article).
+    Returns the final HTML string."""
+    # Strip any pre-existing <img> tags from AI-generated HTML (they point to external/expiring URLs)
+    for img_tag in soup.find_all("img"):
+        img_tag.decompose()
+
+    # Image 1 — before first <p>
+    first_p = soup.find("p")
+    if first_p and img1_url:
+        tag = soup.new_tag("img", src=img1_url, loading="lazy", decoding="async")
+        first_p.insert_before(tag)
+
+    # Image 2 — before 4th <h2>
+    if img2_url:
+        h2_list = soup.find_all("h2")
+        target = h2_list[3] if len(h2_list) >= 4 else (soup.find("body") or soup)
+        tag2 = soup.new_tag("img", src=img2_url, loading="lazy", decoding="async")
+        target.insert_before(tag2)
+
+    body = soup.find("body")
+    return body.decode_contents() if body else str(soup)
+
+
+def extract_and_remove_title(html: str) -> tuple[str, str]:
+    title, soup = _parse_and_extract_title(html)
+    body = soup.find("body")
+    content = body.decode_contents() if body else str(soup)
+    return title, content
 
 
 def get_first_valid_image_url(image_urls: str | list | None) -> str | None:
@@ -204,6 +239,7 @@ def add_recipe(
     site_config: dict,
     image_url: str | None = None,
     author: str | None = None,
+    image_id: int | str | None = None,
     log: Callable[[str], None] | None = None,
 ) -> int | None:
     _log = log or print
@@ -215,6 +251,9 @@ def add_recipe(
         if image_url:
             recipe_data["image_url"] = image_url
             recipe_data["pin_image_url"] = image_url
+        # WPRM needs the WordPress media attachment ID to display the image in the recipe card
+        if image_id:
+            recipe_data["image_id"] = int(image_id)
         if author:
             recipe_data["author_name"] = author
 

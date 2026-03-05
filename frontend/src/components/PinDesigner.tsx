@@ -1,23 +1,44 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { X, Download, ZoomIn, ZoomOut, Layers, LayoutTemplate, Grid3X3, Type, Upload, Image as ImageIcon, Minus, Trash2, Square, ArrowUp, ArrowDown, Send, Save } from "lucide-react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import {
+  X, Download, ZoomIn, ZoomOut, Layers, LayoutTemplate, Grid3X3,
+  Type, Upload, Image as ImageIcon, Minus, Trash2, Square,
+  Send, Save, AlignLeft, AlignCenter,
+  AlignRight, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown,
+} from "lucide-react";
 import { api } from "@/lib/api";
+import { useDesignerStore } from "@/store/useDesignerStore";
+import type { StrokeStyle } from "@/store/useDesignerStore";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
 function hexToRgba(hex: string, alpha: number): string {
   hex = hex.replace("#", "");
-  if (hex.length === 3) {
+  if (hex.length === 3)
     hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
-  }
   if (hex.length !== 6) return `rgba(255,255,255,${alpha})`;
   const r = parseInt(hex.slice(0, 2), 16);
   const g = parseInt(hex.slice(2, 4), 16);
   const b = parseInt(hex.slice(4, 6), 16);
   return `rgba(${r},${g},${b},${alpha})`;
 }
+
+function rgbaToHex(rgba: string): { hex: string; alpha: number } {
+  const match = rgba.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+  if (match) {
+    const r = parseInt(match[1]).toString(16).padStart(2, "0");
+    const g = parseInt(match[2]).toString(16).padStart(2, "0");
+    const b = parseInt(match[3]).toString(16).padStart(2, "0");
+    return { hex: `#${r}${g}${b}`, alpha: parseFloat(match[4] ?? "1") };
+  }
+  return { hex: rgba.startsWith("#") ? rgba : "#ffffff", alpha: 1 };
+}
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface TemplateElement {
   id: string;
@@ -34,21 +55,24 @@ interface TemplateElement {
   bgColor?: string;
   textAlign?: string;
   strokeWidth?: number;
-  strokeStyle?: "solid" | "dashed" | "dotted";
+  strokeStyle?: StrokeStyle;
 }
 
 interface PinTemplate {
   id: string;
   name: string;
   description: string;
-  previewLayout: "simple" | "grid4" | "grid6" | "hero" | "sandwich" | "band-white" | "band-blue" | "band-peach" | "band-brown";
+  previewLayout:
+    | "simple" | "grid4" | "grid6" | "hero" | "sandwich"
+    | "band-white" | "band-blue" | "band-peach" | "band-brown";
   bgColor: string;
   elements: TemplateElement[];
-  exampleImage?: string; // Path to Canva example in public folder
+  exampleImage?: string;
 }
 
+// ─── Templates ───────────────────────────────────────────────────────────────
+
 const TEMPLATES: PinTemplate[] = [
-  // Canva example templates (from public/template images)
   {
     id: "canva-brown-bars",
     name: "Canva Style: Brown Band",
@@ -209,6 +233,8 @@ const TEMPLATES: PinTemplate[] = [
   },
 ];
 
+// ─── Template Preview ─────────────────────────────────────────────────────────
+
 function TemplatePreview({ layout }: { layout: PinTemplate["previewLayout"] }) {
   const imgBox = "bg-gradient-to-br from-orange-200 to-orange-300 rounded";
   const textBox = "bg-gray-700 rounded";
@@ -321,6 +347,8 @@ function TemplatePreview({ layout }: { layout: PinTemplate["previewLayout"] }) {
   return null;
 }
 
+// ─── Props ────────────────────────────────────────────────────────────────────
+
 export interface PinDesignerProps {
   onClose: () => void;
   templateName?: string;
@@ -333,6 +361,8 @@ export interface PinDesignerProps {
   recipePinDescription?: string;
 }
 
+// ─── Component ───────────────────────────────────────────────────────────────
+
 export default function PinDesigner({
   onClose,
   templateName = "My Pin",
@@ -344,26 +374,39 @@ export default function PinDesigner({
   recipePinTitle,
   recipePinDescription,
 }: PinDesignerProps) {
+  // ── Canvas refs ──────────────────────────────────────────────────────────
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasWrapperRef = useRef<HTMLDivElement>(null);  // scaled canvas wrapper
+  const canvasAreaRef = useRef<HTMLDivElement>(null);     // scroll container
   const fabricCanvasRef = useRef<any>(null);
   const fabricLibRef = useRef<any>(null);
+
+  // ── Undo ────────────────────────────────────────────────────────────────
   const undoHistoryRef = useRef<{ json: string; selectedId: string | null }[]>([]);
   const isRestoringRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
+  const transformSaveDoneRef = useRef(false);
+
+  // ── Zustand store ───────────────────────────────────────────────────────
+  const {
+    selectedId, setSelectedId,
+    layers, setLayers,
+    leftTab, setLeftTab,
+    zoom, setZoom,
+    textProps, setTextProps,
+    bandProps, setBandProps,
+    frameProps, setFrameProps,
+    imageProps, setImageProps,
+    toolbarPos, setToolbarPos,
+  } = useDesignerStore();
+
+  // ── Local UI state ──────────────────────────────────────────────────────
   const [mounted, setMounted] = useState(false);
-  const [zoom, setZoom] = useState(35);
-  const [leftTab, setLeftTab] = useState<"elements" | "layers" | "templates">("templates");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  useEffect(() => {
-    selectedIdRef.current = selectedId;
-  }, [selectedId]);
-  const [selectedTemplate, setSelectedTemplate] = useState<PinTemplate | null>(null);
-  const [editText, setEditText] = useState("");
-  const [pinName, setPinName] = useState(templateName);
-  const [layers, setLayers] = useState<{ id: string; label: string; type: string }[]>([]);
   const [canvasReady, setCanvasReady] = useState(false);
-  
-  // Pinterest state
+  const [selectedTemplate, setSelectedTemplate] = useState<PinTemplate | null>(null);
+  const [pinName, setPinName] = useState(templateName);
+
+  // Pinterest
   const [pinterestConnected, setPinterestConnected] = useState(false);
   const [pinterestBoards, setPinterestBoards] = useState<{ id: string; name: string }[]>([]);
   const [showPublishModal, setShowPublishModal] = useState(false);
@@ -372,47 +415,22 @@ export default function PinDesigner({
   const [pinDescription, setPinDescription] = useState("");
   const [pinLink, setPinLink] = useState("");
   const [publishing, setPublishing] = useState(false);
-  
-  // Text properties
-  const [fontFamily, setFontFamily] = useState("Arial");
-  const [fontSize, setFontSize] = useState(32);
-  const [fontWeight, setFontWeight] = useState("normal");
-  const [textAlign, setTextAlign] = useState("center");
-  const [textColor, setTextColor] = useState("#333333");
-  const [textEffect, setTextEffect] = useState("none");
-  
-  // Frame properties
-  const [frameStrokeWidth, setFrameStrokeWidth] = useState(4);
-  const [frameStrokeColor, setFrameStrokeColor] = useState("#333333");
-  const [frameStrokeStyle, setFrameStrokeStyle] = useState<"solid" | "dashed" | "dotted">("solid");
+  const [savingToRecipe, setSavingToRecipe] = useState(false);
 
-  // Band properties (transparency)
-  const [bandOpacity, setBandOpacity] = useState(1);
-  const [bandFill, setBandFill] = useState("#ffffff");
+  // ── Mount ────────────────────────────────────────────────────────────────
+  useEffect(() => { setMounted(true); }, []);
 
-  // Image transform (position, size, rotation)
-  const [imgLeft, setImgLeft] = useState(0);
-  const [imgTop, setImgTop] = useState(0);
-  const [imgWidth, setImgWidth] = useState(0);
-  const [imgHeight, setImgHeight] = useState(0);
-  const [imgAngle, setImgAngle] = useState(0);
-
+  // Preload fonts
   useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // Preload Canva template fonts so canvas can render them
-  useEffect(() => {
-    const canvaFonts = ["Triumvirate Compressed", "Quintus Regular", "Penumbra Sans Std"];
-    Promise.all(canvaFonts.map((f) => document.fonts.load(`16px "${f}"`))).catch(() => {});
+    const fonts = ["Triumvirate Compressed", "Quintus Regular", "Penumbra Sans Std"];
+    Promise.all(fonts.map((f) => document.fonts.load(`16px "${f}"`))).catch(() => {});
   }, []);
 
   useEffect(() => {
-    if (projectId) {
-      checkPinterestStatus();
-    }
+    if (projectId) checkPinterestStatus();
   }, [projectId]);
 
+  // ── Pinterest ────────────────────────────────────────────────────────────
 
   const checkPinterestStatus = async () => {
     if (!projectId) return;
@@ -425,9 +443,7 @@ export default function PinDesigner({
       if (res.ok) {
         const data = await res.json();
         setPinterestConnected(data.connected);
-        if (data.connected) {
-          fetchPinterestBoards();
-        }
+        if (data.connected) fetchPinterestBoards();
       }
     } catch (err) {
       console.error("Failed to check Pinterest status:", err);
@@ -478,10 +494,7 @@ export default function PinDesigner({
       const token = localStorage.getItem("token");
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/pinterest/create-pin`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           project_id: projectId,
           board_id: selectedBoard,
@@ -505,31 +518,41 @@ export default function PinDesigner({
     }
   };
 
-  const handlePublish = () => {
+  // ── Canvas helpers ────────────────────────────────────────────────────────
+
+  const getExportDataUrl = () => {
     const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
+    if (!canvas) return null;
     canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
     canvas.renderAll();
-    const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
+    const data = canvas.toDataURL({ format: "png", multiplier: 1 });
     canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", true));
     canvas.renderAll();
-    publishToPinterest(dataUrl);
+    return data;
   };
 
-  const [savingToRecipe, setSavingToRecipe] = useState(false);
+  const handleExport = () => {
+    const data = getExportDataUrl();
+    if (!data) return;
+    const a = document.createElement("a");
+    a.href = data;
+    a.download = `${pinName.replace(/[^a-z0-9]/gi, "_")}_pin.png`;
+    a.click();
+  };
+
+  const handlePublish = () => {
+    const data = getExportDataUrl();
+    if (data) publishToPinterest(data);
+  };
+
   const handleSaveToRecipe = async () => {
     if (!recipeId) return;
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
+    const data = getExportDataUrl();
+    if (!data) return;
     setSavingToRecipe(true);
     try {
-      canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
-      canvas.renderAll();
-      const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
-      canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", true));
-      canvas.renderAll();
       await api.updateRecipe(recipeId, {
-        pin_design_image: dataUrl,
+        pin_design_image: data,
         pin_title: recipePinTitle || initialTitle,
         pin_description: recipePinDescription || initialTitle,
       });
@@ -541,6 +564,211 @@ export default function PinDesigner({
     }
   };
 
+  // ── Toolbar position (floating toolbar above selected object) ────────────
+
+  const recalcToolbarPos = useCallback((obj?: any) => {
+    const wrapper = canvasWrapperRef.current;
+    const canvas = fabricCanvasRef.current;
+    if (!wrapper || !canvas) { setToolbarPos(null); return; }
+
+    const target = obj ?? canvas.getActiveObject();
+    if (!target) { setToolbarPos(null); return; }
+
+    const bound = target.getBoundingRect(true, true);
+    const wRect = wrapper.getBoundingClientRect();
+    const zf = zoom / 100;
+
+    setToolbarPos({
+      x: wRect.left + (bound.left + bound.width / 2) * zf,
+      y: wRect.top + bound.top * zf,
+    });
+  }, [zoom, setToolbarPos]);
+
+  // ── Selection sync ────────────────────────────────────────────────────────
+  // Single function used by both selection:created and selection:updated
+
+  const syncSelectionFromObject = useCallback((obj: any) => {
+    if (!obj?.__pinId) return;
+    selectedIdRef.current = obj.__pinId;
+    setSelectedId(obj.__pinId);
+
+    if (obj.__pinType === "text") {
+      setTextProps({
+        editText: obj.text ?? "",
+        fontFamily: obj.fontFamily ?? "Arial",
+        fontSize: obj.fontSize ?? 32,
+        fontWeight: obj.fontWeight ?? "normal",
+        textAlign: obj.textAlign ?? "center",
+        textColor: obj.fill ?? "#333333",
+      });
+    } else if (obj.__pinType === "frame") {
+      setFrameProps({
+        strokeWidth: obj.strokeWidth ?? 4,
+        strokeColor: obj.stroke ?? "#333333",
+        strokeStyle: obj.__strokeStyle ?? "solid",
+        rx: obj.rx ?? 0,
+      });
+    } else if (obj.__pinType === "band") {
+      const fill = typeof obj.fill === "string" ? obj.fill : "#ffffff";
+      const parsed = rgbaToHex(fill);
+      setBandProps({ bandFill: parsed.hex, bandOpacity: parsed.alpha });
+    } else if (obj.__pinType === "image") {
+      setImageProps({
+        left: Math.round(obj.left ?? 0),
+        top: Math.round(obj.top ?? 0),
+        width: Math.round((obj.width ?? 0) * (obj.scaleX ?? 1)),
+        height: Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)),
+        angle: Math.round(obj.angle ?? 0),
+      });
+    }
+
+    recalcToolbarPos(obj);
+  }, [setSelectedId, setTextProps, setBandProps, setFrameProps, setImageProps, recalcToolbarPos]);
+
+  // ── Undo ─────────────────────────────────────────────────────────────────
+
+  const MAX_UNDO = 50;
+
+  const saveUndoState = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || isRestoringRef.current) return;
+    try {
+      const json = JSON.stringify(
+        canvas.toJSON(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"])
+      );
+      const history = undoHistoryRef.current;
+      history.push({ json, selectedId: selectedIdRef.current });
+      if (history.length > MAX_UNDO) history.shift();
+    } catch {}
+  };
+
+  const performUndo = async () => {
+    if (isRestoringRef.current) return;
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || undoHistoryRef.current.length === 0) return;
+
+    const entry = undoHistoryRef.current.pop()!;
+    isRestoringRef.current = true;
+
+    // Custom keys we need to restore — Fabric v6 drops unknown props on loadFromJSON
+    const CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"];
+    let ok = false;
+
+    try {
+      // The reviver is called for EACH object as it is created during JSON load.
+      // This is the only reliable way to restore custom props: index-based loops
+      // fail because Fabric v6 may resolve image loads out-of-order, scrambling indices.
+      await canvas.loadFromJSON(entry.json, (serializedObj: any, instance: any) => {
+        CUSTOM_KEYS.forEach((k) => {
+          if (serializedObj[k] !== undefined) (instance as any)[k] = serializedObj[k];
+        });
+      });
+
+      const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel);
+      setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType })));
+      ok = true;
+    } catch {
+      undoHistoryRef.current.push(entry);
+    }
+
+    if (!ok) {
+      isRestoringRef.current = false;
+      return;
+    }
+
+    // Find the previously selected object (now correctly tagged via reviver)
+    const prevId = entry.selectedId;
+    const restoredObj = prevId
+      ? (canvas.getObjects().find((o: any) => o.__pinId === prevId) as any)
+      : null;
+
+    if (restoredObj) {
+      // setActiveObject fires selection:created which is still blocked by isRestoringRef.
+      // We update all state inline here to avoid any stale-closure issues.
+      canvas.setActiveObject(restoredObj);
+      canvas.renderAll();
+
+      selectedIdRef.current = restoredObj.__pinId;
+      setSelectedId(restoredObj.__pinId);
+
+      if (restoredObj.__pinType === "text") {
+        setTextProps({
+          editText: restoredObj.text ?? "",
+          fontFamily: restoredObj.fontFamily ?? "Arial",
+          fontSize: restoredObj.fontSize ?? 32,
+          fontWeight: restoredObj.fontWeight ?? "normal",
+          textAlign: restoredObj.textAlign ?? "center",
+          textColor: restoredObj.fill ?? "#333333",
+        });
+      } else if (restoredObj.__pinType === "frame") {
+        setFrameProps({
+          strokeWidth: restoredObj.strokeWidth ?? 4,
+          strokeColor: restoredObj.stroke ?? "#333333",
+          strokeStyle: restoredObj.__strokeStyle ?? "solid",
+          rx: restoredObj.rx ?? 0,
+        });
+      } else if (restoredObj.__pinType === "band") {
+        const fill = typeof restoredObj.fill === "string" ? restoredObj.fill : "#ffffff";
+        const parsed = rgbaToHex(fill);
+        setBandProps({ bandFill: parsed.hex, bandOpacity: parsed.alpha });
+      } else if (restoredObj.__pinType === "image") {
+        setImageProps({
+          left: Math.round(restoredObj.left ?? 0),
+          top: Math.round(restoredObj.top ?? 0),
+          width: Math.round((restoredObj.width ?? 0) * (restoredObj.scaleX ?? 1)),
+          height: Math.round((restoredObj.height ?? 0) * (restoredObj.scaleY ?? 1)),
+          angle: Math.round(restoredObj.angle ?? 0),
+        });
+      }
+
+      // Compute toolbar position with fresh zoom from store (avoids stale closure)
+      const wrapper = canvasWrapperRef.current;
+      if (wrapper) {
+        const bound = restoredObj.getBoundingRect(true, true);
+        const wRect = wrapper.getBoundingClientRect();
+        const zf = useDesignerStore.getState().zoom / 100;
+        setToolbarPos({
+          x: wRect.left + (bound.left + bound.width / 2) * zf,
+          y: wRect.top + bound.top * zf,
+        });
+      }
+    } else {
+      canvas.discardActiveObject();
+      canvas.renderAll();
+      selectedIdRef.current = null;
+      setSelectedId(null);
+      setTextProps({ editText: "" });
+      setToolbarPos(null);
+    }
+
+    // Release lock last — after all state is committed
+    isRestoringRef.current = false;
+  };
+
+  // ── Layer helpers ─────────────────────────────────────────────────────────
+
+  const updateLayers = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel);
+    setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType })));
+  };
+
+  const getSelectedObject = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return null;
+    const active = canvas.getActiveObject();
+    if (active && (active as any).__pinId) return active as any;
+    if ((active as any)?._objects?.length === 1) return (active as any)._objects[0];
+    if (selectedId) {
+      const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+      if (obj) return obj;
+    }
+    return null;
+  };
+
+  // ── Template loading ──────────────────────────────────────────────────────
+
   const loadTemplate = async (template: PinTemplate) => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
@@ -550,12 +778,11 @@ export default function PinDesigner({
     canvas.clear();
     canvas.backgroundColor = template.bgColor;
 
-    const { Rect, FabricText, IText } = fabric;
+    const { Rect, FabricText } = fabric;
     let imageIndex = 0;
 
     for (const el of template.elements) {
       if (el.type === "image") {
-        // Cycle through available images so all zones get filled (e.g. 2 images → 4 zones: img0, img1, img0, img1)
         const imageUrl = recipeImages.length > 0 ? (recipeImages[imageIndex % recipeImages.length]?.trim() || "") : "";
         imageIndex++;
         let imageLoaded = false;
@@ -565,14 +792,14 @@ export default function PinDesigner({
             const img = await fabric.FabricImage.fromURL(imageUrl, { crossOrigin: "anonymous" });
             const zoneW = el.width;
             const zoneH = el.height;
-            const centerX = el.x + zoneW / 2;
-            const centerY = el.y + zoneH / 2;
             const imgW = img.width || 1;
             const imgH = img.height || 1;
-            const scale = Math.min(zoneW / imgW, zoneH / imgH);
+
+            // Cover fit: fill zone completely, crop overflow
+            const scale = Math.max(zoneW / imgW, zoneH / imgH);
             img.set({
-              left: centerX,
-              top: centerY,
+              left: el.x + zoneW / 2,
+              top: el.y + zoneH / 2,
               originX: "center",
               originY: "center",
               scaleX: scale,
@@ -584,13 +811,26 @@ export default function PinDesigner({
               cornerColor: "#6366f1",
               borderColor: "#6366f1",
             });
+
             (img as any).__pinId = el.id;
             (img as any).__pinLabel = el.label;
             (img as any).__pinType = "image";
+
+            // Clip the image to its zone so it never visually overlaps adjacent elements
+            const clipRect = new fabric.Rect({
+              left: el.x,
+              top: el.y,
+              width: el.width,
+              height: el.height,
+              absolutePositioned: true,
+              fill: "",
+            });
+            (img as any).clipPath = clipRect;
+
             canvas.add(img);
             imageLoaded = true;
           } catch {
-            // Fallback to placeholder if image fails to load
+            // fall through to placeholder
           }
         }
 
@@ -601,8 +841,8 @@ export default function PinDesigner({
             width: el.width,
             height: el.height,
             fill: el.bgColor || "#e0e0e0",
-            rx: 8,
-            ry: 8,
+            rx: 0,
+            ry: 0,
             selectable: true,
             strokeWidth: 2,
             stroke: "#cccccc",
@@ -645,47 +885,66 @@ export default function PinDesigner({
         (band as any).__pinType = "band";
         canvas.add(band);
       } else if (el.type === "text") {
-        const text = new IText(el.id === "title" && initialTitle ? initialTitle : (el.defaultText || "Text"), {
-          left: el.x,
-          top: el.y,
-          fontSize: el.fontSize || 32,
-          fontFamily: "Arial",
-          fontWeight: el.fontWeight || "normal",
-          fill: el.fill || "#333333",
-          originX: "center",
-          originY: "center",
-          selectable: true,
-          textAlign: el.textAlign || "center",
-          editable: true,
-        });
-        (text as any).__pinId = el.id;
-        (text as any).__pinLabel = el.label;
-        (text as any).__pinType = "text";
-        canvas.add(text);
+        const textContent = el.id === "title" && initialTitle ? initialTitle : (el.defaultText || "Text");
+        const textbox = new fabric.Textbox(
+          textContent,
+          {
+            left: el.x,
+            top: el.y,
+            width: el.width || 940,
+            fontSize: el.fontSize || 32,
+            fontFamily: "Arial",
+            fontWeight: el.fontWeight || "normal",
+            fill: el.fill || "#333333",
+            originX: "center",
+            originY: "center",
+            selectable: true,
+            textAlign: el.textAlign || "center",
+            editable: true,
+            splitByGrapheme: false,
+          }
+        );
+        (textbox as any).__pinId = el.id;
+        (textbox as any).__pinLabel = el.label;
+        (textbox as any).__pinType = "text";
+        canvas.add(textbox);
       }
     }
 
-    // Fill any gap at bottom so no white space (pin must be full 1500px)
-    const allObjs = canvas.getObjects();
-    let bottomExtent = 0;
-    for (const obj of allObjs) {
-      const br = (obj as any).getBoundingRect?.();
-      if (br) bottomExtent = Math.max(bottomExtent, br.top + br.height);
-      else bottomExtent = Math.max(bottomExtent, ((obj as any).top ?? 0) + ((obj as any).height ?? 0) * ((obj as any).scaleY ?? 1));
-    }
-    if (bottomExtent < PIN_H) {
-      const fill = new Rect({
-        left: 0,
-        top: bottomExtent,
-        width: PIN_W,
-        height: PIN_H - bottomExtent,
-        fill: template.bgColor,
-        selectable: false,
-        evented: false,
-      });
-      (fill as any).__isFill = true;
-      canvas.add(fill);
-      canvas.sendObjectToBack(fill);
+
+    // ── Stretch the last image/band element to fill the full canvas height ──
+    // This eliminates the empty background gap at the bottom of the pin.
+    const contentObjs = canvas.getObjects().filter(
+      (o: any) => (o.__pinType === "image" || o.__pinType === "band") && !o.__isLabel
+    );
+    if (contentObjs.length > 0) {
+      const last = contentObjs[contentObjs.length - 1] as any;
+
+      // Compute the current bottom edge of this object
+      let bottomEdge: number;
+      if (last.originY === "center") {
+        // FabricImage loaded with originY:"center"
+        bottomEdge = (last.top ?? 0) + ((last.height ?? 0) * (last.scaleY ?? 1)) / 2;
+      } else {
+        // Rect (band / placeholder) with default top-left origin
+        bottomEdge = (last.top ?? 0) + (last.height ?? 0) * (last.scaleY ?? 1);
+      }
+
+      const gap = PIN_H - bottomEdge;
+      if (gap > 1) {
+        if (last.type === "image") {
+          const origH = last.height ?? 1;
+          const curScaleY = last.scaleY ?? 1;
+          const newScaleY = (origH * curScaleY + gap) / origH;
+          last.set({ scaleY: newScaleY, top: (last.top ?? 0) + gap / 2 });
+          // Grow the clip zone to match the stretched image height
+          if (last.clipPath) last.clipPath.set("height", (last.clipPath.height ?? 0) + gap);
+        } else {
+          last.set("height", (last.height ?? 0) + gap);
+          if (last.clipPath) last.clipPath.set("height", (last.clipPath.height ?? 0) + gap);
+        }
+        last.setCoords();
+      }
     }
 
     canvas.renderAll();
@@ -693,76 +952,7 @@ export default function PinDesigner({
     saveUndoState();
   };
 
-  const updateLayers = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-    const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel);
-    setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType })));
-  };
-
-  /** Get the currently selected Fabric object - uses getActiveObject first, falls back to find by selectedId */
-  const getSelectedObject = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return null;
-    const active = canvas.getActiveObject();
-    if (active && (active as any).__pinId) return active as any;
-    if ((active as any)?._objects?.length === 1) return (active as any)._objects[0];
-    if (selectedId) {
-      const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
-      if (obj) return obj;
-    }
-    return null;
-  };
-
-  const MAX_UNDO = 50;
-
-  const saveUndoState = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas || isRestoringRef.current) return;
-    try {
-      const json = JSON.stringify(canvas.toJSON(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"]));
-      const history = undoHistoryRef.current;
-      history.push({ json, selectedId: selectedIdRef.current });
-      if (history.length > MAX_UNDO) history.shift();
-    } catch {}
-  };
-
-  const performUndo = async () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas || undoHistoryRef.current.length === 0) return;
-    const entry = undoHistoryRef.current.pop()!;
-    const { json } = entry;
-    isRestoringRef.current = true;
-    try {
-      const parsed = JSON.parse(json);
-      await canvas.loadFromJSON(json);
-
-      // Restore custom properties (__pinId, etc.) - Fabric may not restore them by default
-      const customKeys = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"];
-      const serializedObjs = parsed?.objects ?? [];
-      const fabricObjs = canvas.getObjects();
-      const n = Math.min(serializedObjs.length, fabricObjs.length);
-      for (let i = 0; i < n; i++) {
-        const ser = serializedObjs[i];
-        const obj = fabricObjs[i] as any;
-        if (obj && ser) {
-          customKeys.forEach((k) => {
-            if (ser[k] !== undefined) obj[k] = ser[k];
-          });
-        }
-      }
-
-      canvas.discardActiveObject();
-      updateLayers();
-      setSelectedId(null);
-      setEditText("");
-      canvas.renderAll();
-    } catch (e) {
-      undoHistoryRef.current.push(entry);
-    } finally {
-      isRestoringRef.current = false;
-    }
-  };
+  // ── Canvas initialization ─────────────────────────────────────────────────
 
   useEffect(() => {
     if (!mounted || !canvasRef.current) return;
@@ -776,191 +966,159 @@ export default function PinDesigner({
         if (disposed) return;
 
         fabricLibRef.current = fabric;
-        const { Canvas } = fabric;
-
-        const canvas = new Canvas(canvasRef.current!, {
+        const canvas = new fabric.Canvas(canvasRef.current!, {
           width: PIN_W,
           height: PIN_H,
           backgroundColor: "#1a1a2e",
+          preserveObjectStacking: true,
+          fireRightClick: true,
+          stopContextMenu: true,
         });
         fabricCanvasRef.current = canvas;
 
+        // ── Selection events ──────────────────────────────────────────────
+        const getFirstSelected = (e: any): any => {
+          let obj = e.selected?.[0];
+          if (!obj && (e.selected as any)?._objects?.length) obj = (e.selected as any)._objects[0];
+          if (!obj) obj = canvas.getActiveObject() as any;
+          return obj;
+        };
+
         canvas.on("selection:created", (e: any) => {
           if (isRestoringRef.current) return;
-          let obj = e.selected?.[0];
-          if (!obj && (e.selected as any)?._objects?.length) obj = (e.selected as any)._objects[0];
-          if (!obj) obj = canvas.getActiveObject() as any;
-          if (obj?.__pinId) {
-            selectedIdRef.current = obj.__pinId;
-            setSelectedId(obj.__pinId);
-            if (obj.__pinType === "text") {
-              setEditText(obj.text ?? "");
-              setFontFamily(obj.fontFamily ?? "Arial");
-              setFontSize(obj.fontSize ?? 32);
-              setFontWeight(obj.fontWeight ?? "normal");
-              setTextAlign(obj.textAlign ?? "center");
-              setTextColor(obj.fill ?? "#333333");
-            } else if (obj.__pinType === "frame") {
-              setFrameStrokeWidth(obj.strokeWidth ?? 4);
-              setFrameStrokeColor(obj.stroke ?? "#333333");
-              setFrameStrokeStyle(obj.__strokeStyle ?? "solid");
-            } else if (obj.__pinType === "band") {
-              const fill = obj.fill;
-              if (typeof fill === "string") {
-                const match = fill.match(/rgba?\((\d+),(\d+),(\d+)(?:,([\d.]+))?\)/);
-                if (match) {
-                  setBandOpacity(parseFloat(match[4] ?? "1"));
-                  setBandFill(`#${parseInt(match[1], 10).toString(16).padStart(2, "0")}${parseInt(match[2], 10).toString(16).padStart(2, "0")}${parseInt(match[3], 10).toString(16).padStart(2, "0")}`);
-                } else {
-                  setBandOpacity(1);
-                  setBandFill(fill.startsWith("#") ? fill : "#ffffff");
-                }
-              } else {
-                setBandOpacity(1);
-                setBandFill("#ffffff");
-              }
-            } else if (obj.__pinType === "image") {
-              const w = ((obj.width ?? 0) * (obj.scaleX ?? 1));
-              const h = ((obj.height ?? 0) * (obj.scaleY ?? 1));
-              setImgLeft(Math.round(obj.left ?? 0));
-              setImgTop(Math.round(obj.top ?? 0));
-              setImgWidth(Math.round(w));
-              setImgHeight(Math.round(h));
-              setImgAngle(Math.round(obj.angle ?? 0));
-            }
-          }
+          const obj = getFirstSelected(e);
+          if (obj) syncSelectionFromObject(obj);
         });
+
         canvas.on("selection:updated", (e: any) => {
           if (isRestoringRef.current) return;
-          let obj = e.selected?.[0];
-          if (!obj && (e.selected as any)?._objects?.length) obj = (e.selected as any)._objects[0];
-          if (!obj) obj = canvas.getActiveObject() as any;
-          if (obj?.__pinId) {
-            selectedIdRef.current = obj.__pinId;
-            setSelectedId(obj.__pinId);
-            if (obj.__pinType === "text") {
-              setEditText(obj.text ?? "");
-              setFontFamily(obj.fontFamily ?? "Arial");
-              setFontSize(obj.fontSize ?? 32);
-              setFontWeight(obj.fontWeight ?? "normal");
-              setTextAlign(obj.textAlign ?? "center");
-              setTextColor(obj.fill ?? "#333333");
-            } else if (obj.__pinType === "frame") {
-              setFrameStrokeWidth(obj.strokeWidth ?? 4);
-              setFrameStrokeColor(obj.stroke ?? "#333333");
-              setFrameStrokeStyle(obj.__strokeStyle ?? "solid");
-            } else if (obj.__pinType === "band") {
-              const fill = obj.fill;
-              if (typeof fill === "string") {
-                const match = fill.match(/rgba?\((\d+),(\d+),(\d+)(?:,([\d.]+))?\)/);
-                if (match) {
-                  setBandOpacity(parseFloat(match[4] ?? "1"));
-                  setBandFill(`#${parseInt(match[1], 10).toString(16).padStart(2, "0")}${parseInt(match[2], 10).toString(16).padStart(2, "0")}${parseInt(match[3], 10).toString(16).padStart(2, "0")}`);
-                } else {
-                  setBandOpacity(1);
-                  setBandFill(fill.startsWith("#") ? fill : "#ffffff");
-                }
-              } else {
-                setBandOpacity(1);
-                setBandFill("#ffffff");
-              }
-            } else if (obj.__pinType === "image") {
-              const w = ((obj.width ?? 0) * (obj.scaleX ?? 1));
-              const h = ((obj.height ?? 0) * (obj.scaleY ?? 1));
-              setImgLeft(Math.round(obj.left ?? 0));
-              setImgTop(Math.round(obj.top ?? 0));
-              setImgWidth(Math.round(w));
-              setImgHeight(Math.round(h));
-              setImgAngle(Math.round(obj.angle ?? 0));
-            }
-          }
+          const obj = getFirstSelected(e);
+          if (obj) syncSelectionFromObject(obj);
         });
+
         canvas.on("selection:cleared", () => {
           if (isRestoringRef.current) return;
           selectedIdRef.current = null;
           setSelectedId(null);
-          setEditText("");
+          setTextProps({ editText: "" });
+          setToolbarPos(null);
         });
 
-        canvas.on("mouse:down", (e: any) => {
-          const target = e.target;
-          const obj = getSelectedObject();
-          if (obj && !target && e.pointer) {
-            saveUndoState();
-            const pt = canvas.getPointer(e.e);
-            obj.setPositionByOrigin?.({ x: pt.x, y: pt.y } as any, "center", "center");
-            if (!obj.setPositionByOrigin) obj.set({ left: pt.x, top: pt.y });
-            obj.setCoords();
-            canvas.renderAll();
-            updateLayers();
-          }
+        // ── Text events ───────────────────────────────────────────────────
+        canvas.on("text:changed", (e: any) => {
+          const t = e.target;
+          if (t?.__pinType === "text") setTextProps({ editText: t.text ?? "" });
         });
 
         canvas.on("mouse:dblclick", (e: any) => {
           const target = e.target;
-          if (target && target.__pinType === "text") {
+          if (!target) return;
+          if (target.__pinType === "text") {
             target.enterEditing();
             target.selectAll();
-          } else if (target && target.__pinType === "image") {
+          } else if (target.__pinType === "image") {
             canvas.setActiveObject(target);
             canvas.bringObjectToFront(target);
             target.set({ hasControls: true, hasBorders: true, cornerSize: 12, cornerColor: "#6366f1", borderColor: "#6366f1" });
-            setSelectedId(target.__pinId);
-            selectedIdRef.current = target.__pinId;
+            syncSelectionFromObject(target);
             canvas.renderAll();
-            updateLayers();
           }
         });
 
-        canvas.on("text:changed", (e: any) => {
-          const target = e.target;
-          if (target && target.__pinType === "text") {
-            setEditText(target.text ?? "");
-          }
-        });
-
-        // Save state before user transforms (drag, resize) for Ctrl+Z undo (Fabric v6: moving/scaling/rotating fire at transform start)
-        let transformSaveDone = false;
-        const onTransformStart = () => {
-          if (!transformSaveDone) {
-            transformSaveDone = true;
+        // ── Transform events (undo + toolbar) ────────────────────────────
+        canvas.on("object:moving", (e: any) => {
+          if (!transformSaveDoneRef.current) {
+            transformSaveDoneRef.current = true;
             saveUndoState();
           }
-        };
-        canvas.on("object:moving", onTransformStart);
-        canvas.on("object:scaling", onTransformStart);
-        canvas.on("object:rotating", onTransformStart);
-        canvas.on("object:resizing", onTransformStart);
+          const obj = e.target as any;
+          // Canva-like frame behavior: image is locked inside its clip zone.
+          // The clip zone (frame) stays fixed; the image pans within it.
+          // Constrain image so it always fully covers the frame (no empty corners).
+          if (obj?.clipPath && obj.clipPath.absolutePositioned) {
+            const clip = obj.clipPath;
+            const imgW = (obj.width || 1) * (obj.scaleX || 1);
+            const imgH = (obj.height || 1) * (obj.scaleY || 1);
+            const clipLeft   = clip.left ?? 0;
+            const clipTop    = clip.top  ?? 0;
+            const clipRight  = clipLeft + (clip.width  || 0);
+            const clipBottom = clipTop  + (clip.height || 0);
+            // With originX/Y "center": image center must stay in range that keeps image covering clip
+            const minLeft = clipRight  - imgW / 2;
+            const maxLeft = clipLeft   + imgW / 2;
+            const minTop  = clipBottom - imgH / 2;
+            const maxTop  = clipTop    + imgH / 2;
+            obj.left = Math.max(minLeft, Math.min(maxLeft, obj.left));
+            obj.top  = Math.max(minTop,  Math.min(maxTop,  obj.top));
+          }
+          recalcToolbarPos(obj);
+        });
+        canvas.on("object:scaling", (e: any) => {
+          if (!transformSaveDoneRef.current) {
+            transformSaveDoneRef.current = true;
+            saveUndoState();
+          }
+          recalcToolbarPos(e.target);
+        });
+        canvas.on("object:rotating", (e: any) => {
+          if (!transformSaveDoneRef.current) {
+            transformSaveDoneRef.current = true;
+            saveUndoState();
+          }
+          recalcToolbarPos(e.target);
+        });
+        canvas.on("object:resizing", () => {
+          if (!transformSaveDoneRef.current) {
+            transformSaveDoneRef.current = true;
+            saveUndoState();
+          }
+        });
 
-        // Text on top when moved; frames go backwards; sync image props when image is resized/moved
         canvas.on("object:modified", (e: any) => {
-          transformSaveDone = false;
-          const obj = e.target;
-          if (obj && obj.__pinType === "text") {
+          transformSaveDoneRef.current = false;
+          const obj = e.target as any;
+          if (!obj) return;
+          // After scaling, re-enforce frame constraints so image still covers its clip zone
+          if (obj?.clipPath && obj.clipPath.absolutePositioned) {
+            const clip = obj.clipPath;
+            const imgW = (obj.width || 1) * (obj.scaleX || 1);
+            const imgH = (obj.height || 1) * (obj.scaleY || 1);
+            const clipLeft   = clip.left ?? 0;
+            const clipTop    = clip.top  ?? 0;
+            const clipRight  = clipLeft + (clip.width  || 0);
+            const clipBottom = clipTop  + (clip.height || 0);
+            const minLeft = clipRight  - imgW / 2;
+            const maxLeft = clipLeft   + imgW / 2;
+            const minTop  = clipBottom - imgH / 2;
+            const maxTop  = clipTop    + imgH / 2;
+            obj.left = Math.max(minLeft, Math.min(maxLeft, obj.left));
+            obj.top  = Math.max(minTop,  Math.min(maxTop,  obj.top));
+            obj.setCoords();
+          }
+
+          if (obj.__pinType === "text") {
             canvas.bringObjectToFront(obj);
-          } else if (obj && obj.__pinType === "image") {
-            const w = ((obj.width ?? 0) * (obj.scaleX ?? 1));
-            const h = ((obj.height ?? 0) * (obj.scaleY ?? 1));
-            setImgLeft(Math.round(obj.left ?? 0));
-            setImgTop(Math.round(obj.top ?? 0));
-            setImgWidth(Math.round(w));
-            setImgHeight(Math.round(h));
-            setImgAngle(Math.round(obj.angle ?? 0));
-          } else if (obj && obj.__pinType === "frame") {
-            // Move frame backwards until just below text (so text stays clickable) but above images (so frame stays visible)
+          } else if (obj.__pinType === "image") {
+            setImageProps({
+              left: Math.round(obj.left ?? 0),
+              top: Math.round(obj.top ?? 0),
+              width: Math.round((obj.width ?? 0) * (obj.scaleX ?? 1)),
+              height: Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)),
+              angle: Math.round(obj.angle ?? 0),
+            });
+          } else if (obj.__pinType === "frame") {
             for (;;) {
               const objs = canvas.getObjects();
               const idx = objs.indexOf(obj);
               if (idx <= 0) break;
               const below = objs[idx - 1] as any;
-              if (below.__isFill || below.__isLabel) break;
+              if (below.__isLabel) break;
               if (below.__pinType === "image" || below.__pinType === "band") break;
               canvas.sendObjectBackwards(obj);
             }
-            canvas.getObjects().forEach((o: any) => {
-              if ((o as any).__isFill) canvas.sendObjectToBack(o);
-            });
           }
+
+          recalcToolbarPos(obj);
           canvas.renderAll();
           updateLayers();
         });
@@ -982,78 +1140,26 @@ export default function PinDesigner({
     };
   }, [mounted]);
 
+  // Load template when ready
   useEffect(() => {
-    if (canvasReady && selectedTemplate) {
-      loadTemplate(selectedTemplate);
-    }
+    if (canvasReady && selectedTemplate) loadTemplate(selectedTemplate);
   }, [selectedTemplate, canvasReady]);
 
-  const handleUseTemplate = (template: PinTemplate) => {
-    setSelectedTemplate(template);
-  };
+  // ── Ctrl+wheel zoom ───────────────────────────────────────────────────────
 
-  const deleteSelectedElement = () => {
-    const canvas = fabricCanvasRef.current;
-    const obj = getSelectedObject();
-    if (!canvas || !obj) return;
-    saveUndoState();
-    if (obj) {
-      const pid = obj.__pinId;
-      canvas.remove(obj);
-      const label = canvas.getObjects().find((o: any) => o.__forId === pid);
-      if (label) canvas.remove(label);
-      canvas.discardActiveObject();
-      canvas.renderAll();
-      setSelectedId(null);
-      updateLayers();
-    }
-  };
+  useEffect(() => {
+    const el = canvasAreaRef.current;
+    if (!el) return;
+    const handleWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      setZoom(zoom + (e.deltaY < 0 ? 5 : -5));
+    };
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, [zoom, setZoom]);
 
-  const sendToBack = () => {
-    const canvas = fabricCanvasRef.current;
-    const obj = getSelectedObject();
-    if (!canvas || !obj) return;
-    saveUndoState();
-    if (obj) {
-      canvas.sendObjectToBack(obj);
-      canvas.renderAll();
-      updateLayers();
-    }
-  };
-
-  const bringToFront = () => {
-    const canvas = fabricCanvasRef.current;
-    const obj = getSelectedObject();
-    if (!canvas || !obj) return;
-    saveUndoState();
-    if (obj) {
-      canvas.bringObjectToFront(obj);
-      canvas.renderAll();
-      updateLayers();
-    }
-  };
-
-  const moveLayerUp = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas || !selectedId) return;
-    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
-    if (obj) {
-      canvas.bringObjectForward(obj);
-      canvas.renderAll();
-      updateLayers();
-    }
-  };
-
-  const moveLayerDown = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas || !selectedId) return;
-    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
-    if (obj) {
-      canvas.sendObjectBackwards(obj);
-      canvas.renderAll();
-      updateLayers();
-    }
-  };
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
 
   const MOVE_STEP = 5;
 
@@ -1065,31 +1171,29 @@ export default function PinDesigner({
     obj.set("left", (obj.left ?? 0) + dx);
     obj.set("top", (obj.top ?? 0) + dy);
     obj.setCoords();
+    recalcToolbarPos(obj);
     canvas.renderAll();
   };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const activeElement = document.activeElement as HTMLElement;
-      const isInputFocused = activeElement?.tagName === "INPUT" || 
-                             activeElement?.tagName === "TEXTAREA" ||
-                             activeElement?.getAttribute("contenteditable") === "true";
+      const active = document.activeElement as HTMLElement;
+      const isInput =
+        active?.tagName === "INPUT" ||
+        active?.tagName === "TEXTAREA" ||
+        active?.getAttribute("contenteditable") === "true";
 
-      if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
-        if (!isInputFocused) {
-          e.preventDefault();
-          performUndo();
-        }
+      if (e.key === "z" && (e.ctrlKey || e.metaKey) && !isInput) {
+        e.preventDefault();
+        performUndo();
         return;
       }
-      if (e.key === "Delete" || e.key === "Backspace") {
-        if (!isInputFocused) {
-          e.preventDefault();
-          deleteSelectedElement();
-        }
+      if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
+        e.preventDefault();
+        deleteSelectedElement();
         return;
       }
-      if (!isInputFocused && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+      if (!isInput && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         e.preventDefault();
         const step = e.shiftKey ? MOVE_STEP * 2 : MOVE_STEP;
         if (e.key === "ArrowUp") moveSelectedBy(0, -step);
@@ -1098,62 +1202,98 @@ export default function PinDesigner({
         else if (e.key === "ArrowRight") moveSelectedBy(step, 0);
       }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedId]);
 
-  const setZoomPct = (pct: number) => setZoom(Math.max(20, Math.min(150, pct)));
+  // ── Actions ───────────────────────────────────────────────────────────────
 
-  const handleExport = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-    canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
-    canvas.renderAll();
-    const data = canvas.toDataURL({ format: "png", multiplier: 1 });
-    canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", true));
-    canvas.renderAll();
-    const a = document.createElement("a");
-    a.href = data;
-    a.download = `${pinName.replace(/[^a-z0-9]/gi, "_")}_pin.png`;
-    a.click();
-  };
-
-  const applyEditText = () => {
+  const deleteSelectedElement = () => {
     const canvas = fabricCanvasRef.current;
     const obj = getSelectedObject();
     if (!canvas || !obj) return;
     saveUndoState();
-    if (obj.set && obj.__pinType === "text") {
-      obj.set("text", editText);
+    const pid = obj.__pinId;
+    canvas.remove(obj);
+    const label = canvas.getObjects().find((o: any) => o.__forId === pid);
+    if (label) canvas.remove(label);
+    canvas.discardActiveObject();
+    setSelectedId(null);
+    setToolbarPos(null);
+    canvas.renderAll();
+    updateLayers();
+  };
+
+  const sendToBack = () => {
+    const canvas = fabricCanvasRef.current;
+    const obj = getSelectedObject();
+    if (!canvas || !obj) return;
+    saveUndoState();
+    canvas.sendObjectToBack(obj);
+    canvas.renderAll();
+    updateLayers();
+  };
+
+  const bringToFront = () => {
+    const canvas = fabricCanvasRef.current;
+    const obj = getSelectedObject();
+    if (!canvas || !obj) return;
+    saveUndoState();
+    canvas.bringObjectToFront(obj);
+    canvas.renderAll();
+    updateLayers();
+  };
+
+  const moveLayerUp = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !selectedId) return;
+    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+    if (!obj) return;
+    canvas.bringObjectForward(obj);
+    canvas.renderAll();
+    updateLayers();
+  };
+
+  const moveLayerDown = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !selectedId) return;
+    const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+    if (!obj) return;
+    canvas.sendObjectBackwards(obj);
+    canvas.renderAll();
+    updateLayers();
+  };
+
+  const selectById = (id: string) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    const obj = canvas.getObjects().find((o: any) => o.__pinId === id);
+    if (obj) {
+      canvas.setActiveObject(obj);
       canvas.renderAll();
+      syncSelectionFromObject(obj);
     }
+  };
+
+  // ── Text ──────────────────────────────────────────────────────────────────
+
+  const applyEditText = () => {
+    const canvas = fabricCanvasRef.current;
+    const obj = getSelectedObject();
+    if (!canvas || !obj || obj.__pinType !== "text") return;
+    saveUndoState();
+    obj.set("text", textProps.editText);
+    canvas.renderAll();
   };
 
   const updateTextProperty = (property: string, value: any) => {
     const canvas = fabricCanvasRef.current;
     const obj = getSelectedObject();
-    if (!canvas || !obj) return;
+    if (!canvas || !obj || obj.__pinType !== "text") return;
     saveUndoState();
-    if (obj.set && obj.__pinType === "text") {
-      if (property === "fontFamily") {
-        obj.set("fontFamily", value);
-        setFontFamily(value);
-      } else if (property === "fontSize") {
-        obj.set("fontSize", parseInt(value));
-        setFontSize(parseInt(value));
-      } else if (property === "fontWeight") {
-        obj.set("fontWeight", value);
-        setFontWeight(value);
-      } else if (property === "textAlign") {
-        obj.set("textAlign", value);
-        setTextAlign(value);
-      } else if (property === "fill") {
-        obj.set("fill", value);
-        setTextColor(value);
-      }
-      canvas.renderAll();
-    }
+    obj.set(property === "fill" ? "fill" : property, property === "fontSize" ? parseInt(value) : value);
+    setTextProps({ [property === "fill" ? "textColor" : property]: property === "fontSize" ? parseInt(value) : value });
+    canvas.renderAll();
   };
 
   const addTextElement = () => {
@@ -1161,11 +1301,11 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
     saveUndoState();
-
     const id = `text_${Date.now()}`;
-    const text = new fabric.IText("New Text", {
+    const text = new fabric.Textbox("New Text", {
       left: PIN_W / 2,
       top: PIN_H / 2,
+      width: 800,
       fontSize: 36,
       fontFamily: "Arial",
       fontWeight: "normal",
@@ -1183,53 +1323,75 @@ export default function PinDesigner({
     canvas.setActiveObject(text);
     canvas.renderAll();
     updateLayers();
-    setSelectedId(id);
-    setEditText("New Text");
+    syncSelectionFromObject(text);
   };
 
-  const addImageZone = () => {
+  // ── Band ──────────────────────────────────────────────────────────────────
+
+  const updateBandColor = (hex: string, opacity?: number) => {
+    const canvas = fabricCanvasRef.current;
+    const obj = getSelectedObject();
+    if (!canvas || !obj || obj.__pinType !== "band") return;
+    saveUndoState();
+    const alpha = opacity ?? bandProps.bandOpacity;
+    const newHex = hex ?? bandProps.bandFill;
+    obj.set("fill", hexToRgba(newHex, alpha));
+    setBandProps({ bandFill: newHex, bandOpacity: alpha });
+    canvas.renderAll();
+  };
+
+  const addBand = () => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
-    saveUndoState();
-
-    const id = `image_${Date.now()}`;
-    const rect = new fabric.Rect({
-      left: 100,
-      top: 100,
-      width: 300,
-      height: 300,
-      fill: "#e0e0e0",
-      rx: 8,
-      ry: 8,
+    const id = `band_${Date.now()}`;
+    const band = new fabric.Rect({
+      left: 0,
+      top: PIN_H / 2 - 75,
+      width: PIN_W,
+      height: 150,
+      fill: "#1565c0",
       selectable: true,
-      strokeWidth: 2,
-      stroke: "#cccccc",
+      strokeWidth: 0,
+      originX: "left",
+      originY: "top",
     });
-    (rect as any).__pinId = id;
-    (rect as any).__pinLabel = "Image Zone";
-    (rect as any).__pinType = "image";
-    canvas.add(rect);
-
-    const label = new fabric.FabricText("Image Zone", {
-      left: 100 + 150,
-      top: 100 + 150,
-      fontSize: 16,
-      fontFamily: "Arial",
-      fill: "#999999",
-      originX: "center",
-      originY: "center",
-      selectable: false,
-      evented: false,
-    });
-    (label as any).__isLabel = true;
-    (label as any).__forId = id;
-    canvas.add(label);
-
-    canvas.setActiveObject(rect);
+    (band as any).__pinId = id;
+    (band as any).__pinLabel = "Color Band";
+    (band as any).__pinType = "band";
+    canvas.add(band);
+    canvas.setActiveObject(band);
     canvas.renderAll();
     updateLayers();
-    setSelectedId(id);
+    syncSelectionFromObject(band);
+  };
+
+  // ── Frame ─────────────────────────────────────────────────────────────────
+
+  const updateFrameProperty = (property: string, value: any) => {
+    const canvas = fabricCanvasRef.current;
+    const obj = getSelectedObject();
+    if (!canvas || !obj || obj.__pinType !== "frame") return;
+    saveUndoState();
+    if (property === "strokeWidth") {
+      obj.set("strokeWidth", parseInt(value));
+      setFrameProps({ strokeWidth: parseInt(value) });
+    } else if (property === "stroke") {
+      obj.set("stroke", value);
+      setFrameProps({ strokeColor: value });
+    } else if (property === "strokeStyle") {
+      (obj as any).__strokeStyle = value;
+      if (value === "solid") obj.set("strokeDashArray", undefined);
+      else if (value === "dashed") obj.set("strokeDashArray", [15, 10]);
+      else if (value === "dotted") obj.set("strokeDashArray", [4, 6]);
+      setFrameProps({ strokeStyle: value });
+    } else if (property === "rx") {
+      const v = parseInt(value);
+      obj.set("rx", v);
+      obj.set("ry", v);
+      setFrameProps({ rx: v });
+    }
+    canvas.renderAll();
   };
 
   const addFrame = () => {
@@ -1237,7 +1399,6 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
     saveUndoState();
-
     const id = `frame_${Date.now()}`;
     const frame = new fabric.Rect({
       left: PIN_W / 2,
@@ -1258,8 +1419,8 @@ export default function PinDesigner({
     (frame as any).__pinType = "frame";
     (frame as any).__strokeStyle = "solid";
     canvas.add(frame);
+    // Position frame above images, below text
     canvas.sendObjectToBack(frame);
-    // Move frame forward until just below text - above images so visible, below text so text is clickable
     for (;;) {
       const objs = canvas.getObjects();
       const idx = objs.indexOf(frame);
@@ -1268,81 +1429,41 @@ export default function PinDesigner({
       if (above.__pinType === "text") break;
       canvas.bringObjectForward(frame);
     }
-    canvas.getObjects().forEach((o: any) => {
-      if ((o as any).__isFill) canvas.sendObjectToBack(o);
-    });
+    canvas.getObjects().forEach((o: any) => { if (o.__isFill) canvas.sendObjectToBack(o); });
     canvas.setActiveObject(frame);
     canvas.renderAll();
     updateLayers();
-    setSelectedId(id);
-    setFrameStrokeWidth(4);
-    setFrameStrokeColor("#333333");
-    setFrameStrokeStyle("solid");
+    syncSelectionFromObject(frame);
   };
 
-  const updateFrameProperty = (property: string, value: any) => {
-    const canvas = fabricCanvasRef.current;
-    const obj = getSelectedObject();
-    if (!canvas || !obj) return;
-    saveUndoState();
-    if (obj.__pinType === "frame") {
-      if (property === "strokeWidth") {
-        obj.set("strokeWidth", parseInt(value));
-        setFrameStrokeWidth(parseInt(value));
-      } else if (property === "stroke") {
-        obj.set("stroke", value);
-        setFrameStrokeColor(value);
-      } else if (property === "strokeStyle") {
-        setFrameStrokeStyle(value);
-        (obj as any).__strokeStyle = value;
-        if (value === "solid") {
-          obj.set("strokeDashArray", undefined);
-        } else if (value === "dashed") {
-          obj.set("strokeDashArray", [15, 10]);
-        } else if (value === "dotted") {
-          obj.set("strokeDashArray", [4, 6]);
-        }
-      } else if (property === "rx") {
-        obj.set("rx", parseInt(value));
-        obj.set("ry", parseInt(value));
-      }
-      canvas.renderAll();
-    }
-  };
-
-  const syncTextProperties = (obj: any) => {
-    if (obj && obj.__pinType === "text") {
-      setEditText(obj.text ?? "");
-      setFontFamily(obj.fontFamily ?? "Arial");
-      setFontSize(obj.fontSize ?? 32);
-      setFontWeight(obj.fontWeight ?? "normal");
-      setTextAlign(obj.textAlign ?? "center");
-      setTextColor(obj.fill ?? "#333333");
-    }
-  };
+  // ── Image ─────────────────────────────────────────────────────────────────
 
   const applyImage = (imageUrl: string) => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
     const target = getSelectedObject();
     if (!fabric || !canvas || !imageUrl.trim() || !target) return;
+    if (target.__pinType !== "image") return;
     saveUndoState();
-    if (!target || target.__pinType !== "image") return;
 
-    const br = (target as any).getBoundingRect?.();
-    const centerX = br ? br.left + br.width / 2 : (target.left ?? 0) + ((target.width ?? 400) * (target.scaleX ?? 1)) / 2;
-    const centerY = br ? br.top + br.height / 2 : (target.top ?? 0) + ((target.height ?? 400) * (target.scaleY ?? 1)) / 2;
+    // Get zone bounds from existing object
+    const br = target.getBoundingRect?.();
+    const zoneLeft = br ? br.left : (target.left ?? 0);
+    const zoneTop = br ? br.top : (target.top ?? 0);
     const zoneW = br ? br.width : (target.width ?? 400) * (target.scaleX ?? 1);
     const zoneH = br ? br.height : (target.height ?? 400) * (target.scaleY ?? 1);
 
     fabric.FabricImage.fromURL(imageUrl.trim(), { crossOrigin: "anonymous" })
       .then((img: any) => {
+        if (!img || !img.width) throw new Error("Empty image");
+
         const imgW = img.width || 1;
         const imgH = img.height || 1;
-        const scale = Math.min(zoneW / imgW, zoneH / imgH);
+        // Cover fit
+        const scale = Math.max(zoneW / imgW, zoneH / imgH);
         img.set({
-          left: centerX,
-          top: centerY,
+          left: zoneLeft + zoneW / 2,
+          top: zoneTop + zoneH / 2,
           originX: "center",
           originY: "center",
           scaleX: scale,
@@ -1353,10 +1474,27 @@ export default function PinDesigner({
           cornerColor: "#6366f1",
           borderColor: "#6366f1",
         });
+
         const pid = target.__pinId;
         img.__pinId = pid;
         img.__pinLabel = target.__pinLabel;
         img.__pinType = "image";
+
+        // Inherit the clip zone from the replaced object, or build a new one from its bounds
+        const existingClip = target.clipPath;
+        if (existingClip && (existingClip as any).absolutePositioned) {
+          img.clipPath = existingClip;
+        } else {
+          img.clipPath = new fabric.Rect({
+            left: zoneLeft,
+            top: zoneTop,
+            width: zoneW,
+            height: zoneH,
+            absolutePositioned: true,
+            fill: "",
+          });
+        }
+
         canvas.remove(target);
         const label = canvas.getObjects().find((o: any) => o.__forId === pid);
         if (label) canvas.remove(label);
@@ -1364,52 +1502,94 @@ export default function PinDesigner({
         canvas.setActiveObject(img);
         canvas.renderAll();
         updateLayers();
+        syncSelectionFromObject(img);
       })
-      .catch(() => alert("Could not load image. Check URL or CORS."));
+      .catch(() => {
+        console.warn("Could not load image:", imageUrl);
+        alert("Could not load image — the URL may have expired. Try uploading the image directly.");
+      });
   };
 
-  const selectById = (id: string) => {
+  const addImageZone = () => {
+    const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-    const obj = canvas.getObjects().find((o: any) => o.__pinId === id);
-    if (obj) {
-      canvas.setActiveObject(obj);
-      canvas.renderAll();
-      selectedIdRef.current = id;
-      setSelectedId(id);
-      if (obj.__pinType === "text") {
-        setEditText(obj.text ?? "");
-        setFontFamily(obj.fontFamily ?? "Arial");
-        setFontSize(obj.fontSize ?? 32);
-        setFontWeight(obj.fontWeight ?? "normal");
-        setTextAlign(obj.textAlign ?? "center");
-        setTextColor(obj.fill ?? "#333333");
-      }
-      if (obj.__pinType === "band") {
-        const fill = obj.fill;
-        if (typeof fill === "string") {
-          const match = fill.match(/rgba?\((\d+),(\d+),(\d+)(?:,([\d.]+))?\)/);
-          if (match) {
-            setBandOpacity(parseFloat(match[4] ?? "1"));
-            setBandFill(`#${parseInt(match[1], 10).toString(16).padStart(2, "0")}${parseInt(match[2], 10).toString(16).padStart(2, "0")}${parseInt(match[3], 10).toString(16).padStart(2, "0")}`);
-          } else { setBandOpacity(1); setBandFill(fill.startsWith("#") ? fill : "#ffffff"); }
-        } else { setBandOpacity(1); setBandFill("#ffffff"); }
-      }
-      if (obj.__pinType === "frame") {
-        setFrameStrokeWidth(obj.strokeWidth ?? 4);
-        setFrameStrokeColor(obj.stroke ?? "#333333");
-        setFrameStrokeStyle(obj.__strokeStyle ?? "solid");
-      }
-      if (obj.__pinType === "image") {
-        const w = ((obj.width ?? 0) * (obj.scaleX ?? 1));
-        const h = ((obj.height ?? 0) * (obj.scaleY ?? 1));
-        setImgLeft(Math.round(obj.left ?? 0));
-        setImgTop(Math.round(obj.top ?? 0));
-        setImgWidth(Math.round(w));
-        setImgHeight(Math.round(h));
-        setImgAngle(Math.round(obj.angle ?? 0));
-      }
-    }
+    if (!fabric || !canvas) return;
+    saveUndoState();
+    const id = `image_${Date.now()}`;
+    const rect = new fabric.Rect({
+      left: 100,
+      top: 100,
+      width: 300,
+      height: 300,
+      fill: "#e0e0e0",
+      rx: 0,
+      ry: 0,
+      selectable: true,
+      strokeWidth: 2,
+      stroke: "#cccccc",
+    });
+    (rect as any).__pinId = id;
+    (rect as any).__pinLabel = "Image Zone";
+    (rect as any).__pinType = "image";
+    canvas.add(rect);
+    const label = new fabric.FabricText("Image Zone", {
+      left: 250,
+      top: 250,
+      fontSize: 16,
+      fontFamily: "Arial",
+      fill: "#999999",
+      originX: "center",
+      originY: "center",
+      selectable: false,
+      evented: false,
+    });
+    (label as any).__isLabel = true;
+    (label as any).__forId = id;
+    canvas.add(label);
+    canvas.setActiveObject(rect);
+    canvas.renderAll();
+    updateLayers();
+    syncSelectionFromObject(rect);
+  };
+
+  const handleUploadImage = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const fabric = fabricLibRef.current;
+        const canvas = fabricCanvasRef.current;
+        if (!fabric || !canvas || !reader.result) return;
+        saveUndoState();
+        const id = `image_${Date.now()}`;
+        fabric.FabricImage.fromURL(reader.result as string, { crossOrigin: "anonymous" })
+          .then((img: any) => {
+            const scale = Math.min(400 / img.width, 400 / img.height);
+            img.set({
+              left: PIN_W / 2,
+              top: PIN_H / 2,
+              scaleX: scale,
+              scaleY: scale,
+              originX: "center",
+              originY: "center",
+            });
+            (img as any).__pinId = id;
+            (img as any).__pinLabel = "Uploaded Image";
+            (img as any).__pinType = "image";
+            canvas.add(img);
+            canvas.setActiveObject(img);
+            canvas.renderAll();
+            updateLayers();
+            syncSelectionFromObject(img);
+          });
+      };
+      reader.readAsDataURL(file);
+    };
+    input.click();
   };
 
   const updateImageTransform = (prop: "left" | "top" | "width" | "height" | "angle", value: number) => {
@@ -1419,37 +1599,159 @@ export default function PinDesigner({
     saveUndoState();
     if (prop === "left") {
       obj.set("left", value);
-      setImgLeft(value);
     } else if (prop === "top") {
       obj.set("top", value);
-      setImgTop(value);
-    } else if (prop === "width" || prop === "height") {
+    } else if (prop === "width") {
       const w = obj.width ?? 1;
+      if (w > 0) obj.set("scaleX", value / w);
+    } else if (prop === "height") {
       const h = obj.height ?? 1;
-      if (prop === "width" && w > 0) {
-        obj.set("scaleX", value / w);
-      } else if (prop === "height" && h > 0) {
-        obj.set("scaleY", value / h);
-      }
-      setImgWidth(prop === "width" ? value : Math.round((obj.width ?? 0) * (obj.scaleX ?? 1)));
-      setImgHeight(prop === "height" ? value : Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)));
+      if (h > 0) obj.set("scaleY", value / h);
     } else if (prop === "angle") {
       obj.set("angle", value);
-      setImgAngle(value);
     }
     obj.setCoords();
+    setImageProps({ [prop]: value });
     canvas.renderAll();
   };
 
+  const setZoomPct = (pct: number) => setZoom(Math.max(20, Math.min(200, pct)));
+
   const selectedElement = layers.find((l) => l.id === selectedId);
+  const selectedType = selectedElement?.type ?? null;
+
+  // ── Loading guard ─────────────────────────────────────────────────────────
 
   if (!mounted) {
-    return <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950 text-white">Loading designer...</div>;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950 text-white">
+        Loading designer...
+      </div>
+    );
   }
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-950 text-white">
-      <header className="flex items-center justify-between border-b border-gray-800 px-4 py-2">
+
+      {/* ── Floating Toolbar ──────────────────────────────────────────────── */}
+      {toolbarPos && selectedId && (
+        <div
+          style={{
+            position: "fixed",
+            left: toolbarPos.x,
+            top: toolbarPos.y - 52,
+            transform: "translateX(-50%)",
+            zIndex: 200,
+            pointerEvents: "auto",
+          }}
+          className="flex items-center gap-0.5 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 shadow-2xl"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {/* Layer order */}
+          <button onClick={sendToBack} title="Send to back" className="p-1 rounded hover:bg-gray-700 text-gray-300">
+            <ChevronsDown size={14} />
+          </button>
+          <button onClick={moveLayerDown} title="Move down" className="p-1 rounded hover:bg-gray-700 text-gray-300">
+            <ChevronDown size={14} />
+          </button>
+          <button onClick={moveLayerUp} title="Move up" className="p-1 rounded hover:bg-gray-700 text-gray-300">
+            <ChevronUp size={14} />
+          </button>
+          <button onClick={bringToFront} title="Bring to front" className="p-1 rounded hover:bg-gray-700 text-gray-300">
+            <ChevronsUp size={14} />
+          </button>
+
+          <div className="w-px h-4 bg-gray-700 mx-0.5" />
+
+          {/* Text-specific */}
+          {selectedType === "text" && (
+            <>
+              <button
+                onClick={() => updateTextProperty("fontWeight", textProps.fontWeight === "bold" ? "normal" : "bold")}
+                title="Bold"
+                className={`p-1 rounded text-gray-300 font-bold text-xs ${textProps.fontWeight === "bold" ? "bg-brand-500 text-white" : "hover:bg-gray-700"}`}
+              >
+                B
+              </button>
+              <button
+                onClick={() => updateTextProperty("textAlign", "left")}
+                title="Align left"
+                className={`p-1 rounded ${textProps.textAlign === "left" ? "bg-brand-500 text-white" : "text-gray-300 hover:bg-gray-700"}`}
+              >
+                <AlignLeft size={13} />
+              </button>
+              <button
+                onClick={() => updateTextProperty("textAlign", "center")}
+                title="Align center"
+                className={`p-1 rounded ${textProps.textAlign === "center" ? "bg-brand-500 text-white" : "text-gray-300 hover:bg-gray-700"}`}
+              >
+                <AlignCenter size={13} />
+              </button>
+              <button
+                onClick={() => updateTextProperty("textAlign", "right")}
+                title="Align right"
+                className={`p-1 rounded ${textProps.textAlign === "right" ? "bg-brand-500 text-white" : "text-gray-300 hover:bg-gray-700"}`}
+              >
+                <AlignRight size={13} />
+              </button>
+              <button
+                onClick={() => updateTextProperty("fontSize", Math.max(8, textProps.fontSize - 2))}
+                className="p-1 rounded hover:bg-gray-700 text-gray-300 text-xs font-mono"
+                title="Decrease font size"
+              >A-</button>
+              <span className="text-xs text-gray-400 px-1 tabular-nums">{textProps.fontSize}</span>
+              <button
+                onClick={() => updateTextProperty("fontSize", Math.min(200, textProps.fontSize + 2))}
+                className="p-1 rounded hover:bg-gray-700 text-gray-300 text-xs font-mono"
+                title="Increase font size"
+              >A+</button>
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
+            </>
+          )}
+
+          {/* Image-specific */}
+          {selectedType === "image" && (
+            <>
+              <button
+                onClick={handleUploadImage}
+                className="p-1 rounded hover:bg-gray-700 text-gray-300 text-[11px] font-medium px-2"
+                title="Replace image"
+              >
+                Replace
+              </button>
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
+            </>
+          )}
+
+          {/* Band-specific */}
+          {selectedType === "band" && (
+            <>
+              <input
+                type="color"
+                value={bandProps.bandFill}
+                onChange={(e) => updateBandColor(e.target.value)}
+                className="w-6 h-6 rounded cursor-pointer border border-gray-600 bg-transparent"
+                title="Band color"
+              />
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
+            </>
+          )}
+
+          {/* Delete */}
+          <button
+            onClick={deleteSelectedElement}
+            title="Delete (Del)"
+            className="p-1 rounded hover:bg-red-900 text-red-400"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* ── Header ────────────────────────────────────────────────────────── */}
+      <header className="flex items-center justify-between border-b border-gray-800 px-4 py-2 flex-shrink-0">
         <span className="font-semibold text-white">Pin Designer</span>
         <input
           value={pinName}
@@ -1472,15 +1774,15 @@ export default function PinDesigner({
           )}
           {projectId && (
             pinterestConnected ? (
-              <button 
-                onClick={() => setShowPublishModal(true)} 
+              <button
+                onClick={() => setShowPublishModal(true)}
                 className="flex items-center gap-2 px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition"
               >
                 <Send size={16} /> Publish to Pinterest
               </button>
             ) : (
-              <button 
-                onClick={connectPinterest} 
+              <button
+                onClick={connectPinterest}
                 className="flex items-center gap-2 px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition"
               >
                 <Send size={16} /> Connect Pinterest
@@ -1493,65 +1795,33 @@ export default function PinDesigner({
         </div>
       </header>
 
-      {/* Pinterest Publish Modal */}
+      {/* ── Pinterest Publish Modal ────────────────────────────────────────── */}
       {showPublishModal && (
         <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center">
           <div className="bg-gray-900 rounded-xl p-6 w-full max-w-md">
             <h3 className="text-lg font-semibold text-white mb-4">Publish to Pinterest</h3>
-            
             <div className="space-y-4">
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Board</label>
-                <select
-                  value={selectedBoard}
-                  onChange={(e) => setSelectedBoard(e.target.value)}
-                  className="input-field w-full"
-                >
-                  {pinterestBoards.map((b) => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
+                <select value={selectedBoard} onChange={(e) => setSelectedBoard(e.target.value)} className="input-field w-full">
+                  {pinterestBoards.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                 </select>
               </div>
-              
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Pin Title</label>
-                <input
-                  value={pinTitle}
-                  onChange={(e) => setPinTitle(e.target.value)}
-                  className="input-field w-full"
-                  maxLength={100}
-                />
+                <input value={pinTitle} onChange={(e) => setPinTitle(e.target.value)} className="input-field w-full" maxLength={100} />
               </div>
-              
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Description</label>
-                <textarea
-                  value={pinDescription}
-                  onChange={(e) => setPinDescription(e.target.value)}
-                  className="input-field w-full"
-                  rows={3}
-                  maxLength={500}
-                />
+                <textarea value={pinDescription} onChange={(e) => setPinDescription(e.target.value)} className="input-field w-full" rows={3} maxLength={500} />
               </div>
-              
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Link URL (optional)</label>
-                <input
-                  value={pinLink}
-                  onChange={(e) => setPinLink(e.target.value)}
-                  className="input-field w-full"
-                  placeholder="https://..."
-                />
+                <input value={pinLink} onChange={(e) => setPinLink(e.target.value)} className="input-field w-full" placeholder="https://..." />
               </div>
             </div>
-            
             <div className="flex gap-2 mt-6">
-              <button
-                onClick={() => setShowPublishModal(false)}
-                className="flex-1 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-600"
-              >
-                Cancel
-              </button>
+              <button onClick={() => setShowPublishModal(false)} className="flex-1 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-600">Cancel</button>
               <button
                 onClick={handlePublish}
                 disabled={publishing || !selectedBoard}
@@ -1564,135 +1834,58 @@ export default function PinDesigner({
         </div>
       )}
 
+      {/* ── Body ──────────────────────────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0">
-        <aside className="w-64 border-r border-gray-800 flex flex-col">
+
+        {/* ── Left Panel ─────────────────────────────────────────────────── */}
+        <aside className="w-64 border-r border-gray-800 flex flex-col flex-shrink-0">
           <div className="flex border-b border-gray-800">
-            <button
-              onClick={() => setLeftTab("elements")}
-              className={`flex-1 flex items-center justify-center gap-1 py-2 text-xs ${leftTab === "elements" ? "text-brand-400 border-b-2 border-brand-500" : "text-gray-500"}`}
-            >
-              <Grid3X3 size={14} /> Elements
-            </button>
-            <button
-              onClick={() => setLeftTab("layers")}
-              className={`flex-1 flex items-center justify-center gap-1 py-2 text-xs ${leftTab === "layers" ? "text-brand-400 border-b-2 border-brand-500" : "text-gray-500"}`}
-            >
-              <Layers size={14} /> Layers
-            </button>
-            <button
-              onClick={() => setLeftTab("templates")}
-              className={`flex-1 flex items-center justify-center gap-1 py-2 text-xs ${leftTab === "templates" ? "text-brand-400 border-b-2 border-brand-500" : "text-gray-500"}`}
-            >
-              <LayoutTemplate size={14} /> Templates
-            </button>
+            {(["elements", "layers", "templates"] as const).map((tab) => {
+              const Icon = tab === "elements" ? Grid3X3 : tab === "layers" ? Layers : LayoutTemplate;
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setLeftTab(tab)}
+                  className={`flex-1 flex items-center justify-center gap-1 py-2 text-xs capitalize ${leftTab === tab ? "text-brand-400 border-b-2 border-brand-500" : "text-gray-500"}`}
+                >
+                  <Icon size={14} /> {tab}
+                </button>
+              );
+            })}
           </div>
+
           <div className="p-3 overflow-y-auto flex-1">
+
+            {/* Elements Tab */}
             {leftTab === "elements" && (
               <div className="space-y-4">
                 <div>
                   <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Add Elements</p>
                   <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={addTextElement}
-                      className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition"
-                    >
+                    <button onClick={addTextElement} className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition">
                       <Type size={28} className="text-gray-300" />
                       <span className="text-xs text-gray-400">Text</span>
                     </button>
-                    <button
-                      onClick={addImageZone}
-                      className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition"
-                    >
+                    <button onClick={addImageZone} className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition">
                       <ImageIcon size={28} className="text-gray-300" />
                       <span className="text-xs text-gray-400">Image Zone</span>
                     </button>
-                    <button
-                      onClick={() => {
-                        const fabric = fabricLibRef.current;
-                        const canvas = fabricCanvasRef.current;
-                        if (!fabric || !canvas) return;
-                        const id = `band_${Date.now()}`;
-                        const band = new fabric.Rect({
-                          left: 0,
-                          top: PIN_H / 2 - 75,
-                          width: PIN_W,
-                          height: 150,
-                          fill: "#1565c0",
-                          selectable: true,
-                          strokeWidth: 0,
-                          originX: "left",
-                          originY: "top",
-                        });
-                        (band as any).__pinId = id;
-                        (band as any).__pinLabel = "Color Band";
-                        (band as any).__pinType = "band";
-                        canvas.add(band);
-                        canvas.setActiveObject(band);
-                        canvas.renderAll();
-                        updateLayers();
-                        setSelectedId(id);
-                      }}
-                      className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition"
-                    >
+                    <button onClick={addBand} className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition">
                       <div className="w-7 h-5 bg-blue-500 rounded" />
                       <span className="text-xs text-gray-400">Color Band</span>
                     </button>
-                    <button
-                      onClick={addFrame}
-                      className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition"
-                    >
+                    <button onClick={addFrame} className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition">
                       <Square size={28} className="text-gray-300" />
                       <span className="text-xs text-gray-400">Frame</span>
                     </button>
-                    <button
-                      onClick={() => {
-                        const input = document.createElement("input");
-                        input.type = "file";
-                        input.accept = "image/*";
-                        input.onchange = (e) => {
-                          const file = (e.target as HTMLInputElement).files?.[0];
-                          if (file) {
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                              const fabric = fabricLibRef.current;
-                              const canvas = fabricCanvasRef.current;
-                              if (!fabric || !canvas || !reader.result) return;
-                              const id = `image_${Date.now()}`;
-                              fabric.FabricImage.fromURL(reader.result as string, { crossOrigin: "anonymous" })
-                                .then((img: any) => {
-                                  const scale = Math.min(400 / img.width, 400 / img.height);
-                                  img.set({
-                                    left: PIN_W / 2,
-                                    top: PIN_H / 2,
-                                    scaleX: scale,
-                                    scaleY: scale,
-                                    originX: "center",
-                                    originY: "center",
-                                  });
-                                  (img as any).__pinId = id;
-                                  (img as any).__pinLabel = "Uploaded Image";
-                                  (img as any).__pinType = "image";
-                                  canvas.add(img);
-                                  canvas.setActiveObject(img);
-                                  canvas.renderAll();
-                                  updateLayers();
-                                  setSelectedId(id);
-                                });
-                            };
-                            reader.readAsDataURL(file);
-                          }
-                        };
-                        input.click();
-                      }}
-                      className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition col-span-2"
-                    >
+                    <button onClick={handleUploadImage} className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition col-span-2">
                       <Upload size={28} className="text-gray-300" />
                       <span className="text-xs text-gray-400">Upload Image</span>
                     </button>
                   </div>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Template Size</p>
+                  <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Canvas Size</p>
                   <div className="flex gap-2">
                     <div className="flex-1">
                       <label className="text-[10px] text-gray-500">Width</label>
@@ -1706,25 +1899,19 @@ export default function PinDesigner({
                 </div>
               </div>
             )}
+
+            {/* Templates Tab */}
             {leftTab === "templates" && (
               <div className="space-y-3">
                 <p className="text-xs text-gray-400 mb-2">Choose a template:</p>
                 {TEMPLATES.map((t) => (
                   <div
                     key={t.id}
-                    className={`rounded-lg border-2 p-3 cursor-pointer transition ${
-                      selectedTemplate?.id === t.id
-                        ? "border-brand-500 bg-brand-500/10"
-                        : "border-gray-700 hover:border-gray-500"
-                    }`}
+                    className={`rounded-lg border-2 p-3 cursor-pointer transition ${selectedTemplate?.id === t.id ? "border-brand-500 bg-brand-500/10" : "border-gray-700 hover:border-gray-500"}`}
                   >
                     <div className="h-28 rounded bg-gray-800 mb-2 overflow-hidden flex items-center justify-center">
                       {t.exampleImage ? (
-                        <img
-                          src={t.exampleImage}
-                          alt={t.name}
-                          className="h-full w-full object-contain object-top"
-                        />
+                        <img src={t.exampleImage} alt={t.name} className="h-full w-full object-contain object-top" />
                       ) : (
                         <TemplatePreview layout={t.previewLayout} />
                       )}
@@ -1732,12 +1919,8 @@ export default function PinDesigner({
                     <p className="text-sm font-medium text-white">{t.name}</p>
                     <p className="text-[11px] text-gray-500 mb-2">{t.description}</p>
                     <button
-                      onClick={() => handleUseTemplate(t)}
-                      className={`text-xs px-3 py-1 rounded ${
-                        selectedTemplate?.id === t.id
-                          ? "bg-brand-500 text-white"
-                          : "bg-gray-700 text-gray-300 hover:bg-gray-600"
-                      }`}
+                      onClick={() => setSelectedTemplate(t)}
+                      className={`text-xs px-3 py-1 rounded ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
                     >
                       {selectedTemplate?.id === t.id ? "✓ Selected" : "Use Template"}
                     </button>
@@ -1745,19 +1928,19 @@ export default function PinDesigner({
                 ))}
               </div>
             )}
+
+            {/* Layers Tab */}
             {leftTab === "layers" && (
               <div className="space-y-1">
                 <p className="text-xs text-gray-400 mb-2">Click to select & edit:</p>
                 {layers.length === 0 && <p className="text-xs text-gray-500">No layers</p>}
-                {layers.map((l) => (
+                {[...layers].reverse().map((l) => (
                   <button
                     key={l.id}
                     onClick={() => selectById(l.id)}
-                    className={`w-full text-left px-3 py-2 rounded text-sm flex items-center gap-2 ${
-                      selectedId === l.id ? "bg-brand-500/20 text-brand-400" : "text-gray-300 hover:bg-gray-800"
-                    }`}
+                    className={`w-full text-left px-3 py-2 rounded text-sm flex items-center gap-2 ${selectedId === l.id ? "bg-brand-500/20 text-brand-400" : "text-gray-300 hover:bg-gray-800"}`}
                   >
-                    {l.type === "image" ? <Grid3X3 size={14} /> : <span className="text-xs">Aa</span>}
+                    {l.type === "image" ? <ImageIcon size={14} /> : l.type === "text" ? <Type size={14} /> : l.type === "band" ? <Minus size={14} /> : <Square size={14} />}
                     {l.label}
                   </button>
                 ))}
@@ -1766,20 +1949,26 @@ export default function PinDesigner({
           </div>
         </aside>
 
-        <main className="flex-1 overflow-auto bg-gray-900">
+        {/* ── Canvas Area ─────────────────────────────────────────────────── */}
+        <main ref={canvasAreaRef} className="flex-1 overflow-auto bg-gray-900">
+          {/* Zoom bar */}
           <div className="sticky top-0 z-10 bg-gray-900/95 backdrop-blur border-b border-gray-800 px-4 py-2 flex items-center justify-center gap-2">
             <button onClick={() => setZoomPct(zoom - 10)} className="p-1.5 rounded bg-gray-800 hover:bg-gray-700">
               <ZoomOut size={18} />
             </button>
-            <span className="text-sm text-gray-400 w-12 text-center">{zoom}%</span>
+            <span className="text-sm text-gray-400 w-14 text-center">{zoom}%</span>
             <button onClick={() => setZoomPct(zoom + 10)} className="p-1.5 rounded bg-gray-800 hover:bg-gray-700">
               <ZoomIn size={18} />
             </button>
+            <span className="text-xs text-gray-600 ml-2">Ctrl+scroll to zoom</span>
           </div>
-          <div className="p-4 flex justify-center relative" style={{ minHeight: `${(PIN_H * zoom) / 100 + 40}px` }}>
+
+          <div className="p-8 flex justify-center" style={{ minHeight: `${(PIN_H * zoom) / 100 + 64}px` }}>
+            {/* Scaled canvas wrapper — ref used for floating toolbar positioning */}
             <div
-              style={{ 
-                transform: `scale(${zoom / 100})`, 
+              ref={canvasWrapperRef}
+              style={{
+                transform: `scale(${zoom / 100})`,
                 transformOrigin: "top center",
                 width: PIN_W,
                 height: PIN_H,
@@ -1800,66 +1989,45 @@ export default function PinDesigner({
           </div>
         </main>
 
-        <aside className="w-72 border-l border-gray-800 p-4 overflow-y-auto">
+        {/* ── Right Panel (Properties) ────────────────────────────────────── */}
+        <aside className="w-72 border-l border-gray-800 p-4 overflow-y-auto flex-shrink-0">
           <h4 className="text-xs font-semibold text-gray-400 uppercase mb-3">Properties</h4>
+
           {selectedElement ? (
             <div className="space-y-4">
+              {/* Object header */}
               <div className="p-3 bg-gray-800 rounded-lg flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-white">{selectedElement.label}</p>
                   <p className="text-xs text-gray-500">
-                    {selectedElement.type === "image" ? "Image slot" : 
-                     selectedElement.type === "band" ? "Color band" : 
-                     selectedElement.type === "frame" ? "Border frame" : "Text element"}
+                    {selectedType === "image" ? "Image slot" : selectedType === "band" ? "Color band" : selectedType === "frame" ? "Border frame" : "Text element"}
                   </p>
                 </div>
-                <button
-                  onClick={deleteSelectedElement}
-                  className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition"
-                  title="Delete element (Del)"
-                >
+                <button onClick={deleteSelectedElement} className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition" title="Delete (Del)">
                   <Trash2 size={18} />
                 </button>
               </div>
 
-              {/* Layer Controls */}
+              {/* Layer order */}
               <div>
                 <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Layer Order</label>
                 <div className="flex gap-1">
-                  <button
-                    onClick={sendToBack}
-                    className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs"
-                    title="Send to Back"
-                  >
-                    <ArrowDown size={14} />
-                    <ArrowDown size={14} className="-ml-2" />
+                  <button onClick={sendToBack} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs" title="Send to Back">
+                    <ChevronsDown size={14} />
                   </button>
-                  <button
-                    onClick={moveLayerDown}
-                    className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs"
-                    title="Move Down"
-                  >
-                    <ArrowDown size={14} />
+                  <button onClick={moveLayerDown} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs" title="Move Down">
+                    <ChevronDown size={14} />
                   </button>
-                  <button
-                    onClick={moveLayerUp}
-                    className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs"
-                    title="Move Up"
-                  >
-                    <ArrowUp size={14} />
+                  <button onClick={moveLayerUp} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs" title="Move Up">
+                    <ChevronUp size={14} />
                   </button>
-                  <button
-                    onClick={bringToFront}
-                    className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs"
-                    title="Bring to Front"
-                  >
-                    <ArrowUp size={14} />
-                    <ArrowUp size={14} className="-ml-2" />
+                  <button onClick={bringToFront} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 text-xs" title="Bring to Front">
+                    <ChevronsUp size={14} />
                   </button>
                 </div>
               </div>
 
-              {/* Quick Actions - Pinterest only (WordPress: use Publish on recipe list) */}
+              {/* Pinterest publish shortcut */}
               {projectId && (
                 <div>
                   <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Publish Design</label>
@@ -1869,38 +2037,31 @@ export default function PinDesigner({
                     className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                     title={pinterestConnected ? "Publish to Pinterest" : "Connect Pinterest first"}
                   >
-                    <Send size={14} />
-                    Pinterest
+                    <Send size={14} /> Pinterest
                   </button>
                 </div>
               )}
 
-              {selectedElement.type === "text" && (
+              {/* ── Text Properties ──────────────────────────────────────── */}
+              {selectedType === "text" && (
                 <div className="space-y-4">
-                  {/* Text Content */}
                   <div>
                     <label className="text-xs font-semibold text-gray-400 uppercase block mb-1">Text Content</label>
                     <textarea
-                      value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
+                      value={textProps.editText}
+                      onChange={(e) => setTextProps({ editText: e.target.value })}
                       onBlur={applyEditText}
                       rows={2}
                       className="input-field text-sm w-full"
                       placeholder="Enter text..."
                     />
                   </div>
-
-                  {/* Font Family & Size */}
                   <div>
                     <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Text Properties</label>
                     <div className="space-y-2">
                       <div>
                         <label className="text-[10px] text-gray-500">Font Family</label>
-                        <select
-                          value={fontFamily}
-                          onChange={(e) => updateTextProperty("fontFamily", e.target.value)}
-                          className="input-field text-sm w-full"
-                        >
+                        <select value={textProps.fontFamily} onChange={(e) => updateTextProperty("fontFamily", e.target.value)} className="input-field text-sm w-full">
                           <optgroup label="Canva templates">
                             <option value="Triumvirate Compressed">Triumvirate Compressed</option>
                             <option value="Quintus Regular">Quintus Regular</option>
@@ -1919,22 +2080,11 @@ export default function PinDesigner({
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-[10px] text-gray-500">Font Size</label>
-                          <input
-                            type="number"
-                            value={fontSize}
-                            onChange={(e) => updateTextProperty("fontSize", e.target.value)}
-                            className="input-field text-sm w-full"
-                            min="8"
-                            max="200"
-                          />
+                          <input type="number" value={textProps.fontSize} onChange={(e) => updateTextProperty("fontSize", e.target.value)} className="input-field text-sm w-full" min="8" max="200" />
                         </div>
                         <div>
                           <label className="text-[10px] text-gray-500">Font Weight</label>
-                          <select
-                            value={fontWeight}
-                            onChange={(e) => updateTextProperty("fontWeight", e.target.value)}
-                            className="input-field text-sm w-full"
-                          >
+                          <select value={textProps.fontWeight} onChange={(e) => updateTextProperty("fontWeight", e.target.value)} className="input-field text-sm w-full">
                             <option value="normal">Normal</option>
                             <option value="bold">Bold</option>
                           </select>
@@ -1942,237 +2092,128 @@ export default function PinDesigner({
                       </div>
                     </div>
                   </div>
-
-                  {/* Text Align */}
                   <div>
                     <label className="text-[10px] text-gray-500 block mb-1">Text Align</label>
                     <div className="flex gap-1">
-                      {["left", "center", "right"].map((align) => (
+                      {(["left", "center", "right"] as const).map((a) => (
                         <button
-                          key={align}
-                          onClick={() => updateTextProperty("textAlign", align)}
-                          className={`flex-1 py-1.5 rounded text-xs font-medium transition ${
-                            textAlign === align
-                              ? "bg-brand-500 text-white"
-                              : "bg-gray-700 text-gray-300 hover:bg-gray-600"
-                          }`}
+                          key={a}
+                          onClick={() => updateTextProperty("textAlign", a)}
+                          className={`flex-1 py-1.5 rounded text-xs font-medium transition ${textProps.textAlign === a ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
                         >
-                          {align.charAt(0).toUpperCase() + align.slice(1)}
+                          {a.charAt(0).toUpperCase() + a.slice(1)}
                         </button>
                       ))}
                     </div>
                   </div>
-
-                  {/* Text Color */}
                   <div>
                     <label className="text-[10px] text-gray-500 block mb-1">Text Color</label>
                     <div className="flex gap-2 items-center">
-                      <input
-                        type="color"
-                        value={textColor}
-                        onChange={(e) => updateTextProperty("fill", e.target.value)}
-                        className="w-10 h-8 rounded border border-gray-600 cursor-pointer"
-                      />
-                      <input
-                        type="text"
-                        value={textColor}
-                        onChange={(e) => updateTextProperty("fill", e.target.value)}
-                        className="input-field text-sm flex-1"
-                        placeholder="#000000"
-                      />
+                      <input type="color" value={textProps.textColor} onChange={(e) => updateTextProperty("fill", e.target.value)} className="w-10 h-8 rounded border border-gray-600 cursor-pointer" />
+                      <input type="text" value={textProps.textColor} onChange={(e) => updateTextProperty("fill", e.target.value)} className="input-field text-sm flex-1" placeholder="#000000" />
                     </div>
                   </div>
-
-                  {/* Quick Colors */}
                   <div>
                     <label className="text-[10px] text-gray-500 block mb-1">Quick Colors</label>
                     <div className="flex gap-1 flex-wrap">
-                      {["#000000", "#ffffff", "#e63946", "#2d5016", "#1d3557", "#f4a261", "#2a9d8f", "#9b59b6"].map((color) => (
-                        <button
-                          key={color}
-                          onClick={() => updateTextProperty("fill", color)}
-                          className={`w-6 h-6 rounded border-2 ${textColor === color ? "border-brand-500" : "border-gray-600"}`}
-                          style={{ backgroundColor: color }}
-                        />
+                      {["#000000", "#ffffff", "#e63946", "#2d5016", "#1d3557", "#f4a261", "#2a9d8f", "#9b59b6"].map((c) => (
+                        <button key={c} onClick={() => updateTextProperty("fill", c)} className={`w-6 h-6 rounded border-2 ${textProps.textColor === c ? "border-brand-500" : "border-gray-600"}`} style={{ backgroundColor: c }} />
                       ))}
                     </div>
                   </div>
-
-                  <button onClick={applyEditText} className="btn-primary text-xs px-3 py-1.5 w-full">
-                    Apply Text
-                  </button>
+                  <button onClick={applyEditText} className="btn-primary text-xs px-3 py-1.5 w-full">Apply Text</button>
                 </div>
               )}
 
-              {selectedElement.type === "image" && (
+              {/* ── Image Properties ─────────────────────────────────────── */}
+              {selectedType === "image" && (
                 <div className="space-y-4">
                   <div>
                     <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Position & Size</label>
-                    <p className="text-[10px] text-gray-500 mb-2">Double-click image to adjust on canvas. Or use inputs:</p>
+                    <p className="text-[10px] text-gray-500 mb-2">Drag on canvas to reposition. Use inputs for precision:</p>
                     <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[10px] text-gray-500">X</label>
-                        <input
-                          type="number"
-                          value={imgLeft}
-                          onChange={(e) => updateImageTransform("left", parseInt(e.target.value) || 0)}
-                          className="input-field text-sm w-full"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-gray-500">Y</label>
-                        <input
-                          type="number"
-                          value={imgTop}
-                          onChange={(e) => updateImageTransform("top", parseInt(e.target.value) || 0)}
-                          className="input-field text-sm w-full"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-gray-500">Width</label>
-                        <input
-                          type="number"
-                          value={imgWidth}
-                          onChange={(e) => updateImageTransform("width", Math.max(1, parseInt(e.target.value) || 1))}
-                          className="input-field text-sm w-full"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-gray-500">Height</label>
-                        <input
-                          type="number"
-                          value={imgHeight}
-                          onChange={(e) => updateImageTransform("height", Math.max(1, parseInt(e.target.value) || 1))}
-                          className="input-field text-sm w-full"
-                        />
-                      </div>
+                      {([["X", "left", imageProps.left], ["Y", "top", imageProps.top], ["W", "width", imageProps.width], ["H", "height", imageProps.height]] as const).map(([label, prop, val]) => (
+                        <div key={prop}>
+                          <label className="text-[10px] text-gray-500">{label}</label>
+                          <input type="number" value={val} onChange={(e) => updateImageTransform(prop, Math.max(1, parseInt(e.target.value) || 0))} className="input-field text-sm w-full" />
+                        </div>
+                      ))}
                       <div className="col-span-2">
                         <label className="text-[10px] text-gray-500">Rotation (°)</label>
-                        <input
-                          type="number"
-                          value={imgAngle}
-                          onChange={(e) => updateImageTransform("angle", parseInt(e.target.value) || 0)}
-                          className="input-field text-sm w-full"
-                        />
+                        <input type="number" value={imageProps.angle} onChange={(e) => updateImageTransform("angle", parseInt(e.target.value) || 0)} className="input-field text-sm w-full" />
                       </div>
                     </div>
                   </div>
                   <div>
                     <label className="text-xs text-gray-400 block mb-2">Choose Image</label>
-                  {recipeImages.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      {recipeImages.slice(0, 8).map((url, i) => (
-                        <button
-                          key={i}
-                          onClick={() => applyImage(url)}
-                          className="rounded-lg overflow-hidden border-2 border-gray-700 hover:border-brand-500 transition"
-                        >
-                          <img src={url} alt={`Image ${i + 1}`} className="w-full h-20 object-cover" />
-                        </button>
-                      ))}
+                    {recipeImages.length > 0 ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        {recipeImages.slice(0, 8).map((url, i) => (
+                          <button key={i} onClick={() => applyImage(url)} className="rounded-lg overflow-hidden border-2 border-gray-700 hover:border-brand-500 transition">
+                            <img
+                              src={url}
+                              alt={`Image ${i + 1}`}
+                              className="w-full h-20 object-cover"
+                              onError={(e) => {
+                                const btn = (e.target as HTMLElement).closest("button");
+                                if (btn) btn.style.display = "none";
+                              }}
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-500 mb-2">No recipe images available</p>
+                    )}
+                    <div className="mt-3">
+                      <label className="text-xs text-gray-400 block mb-1">Or paste URL:</label>
+                      <input
+                        className="input-field text-sm w-full"
+                        placeholder="https://..."
+                        onKeyDown={(e) => { if (e.key === "Enter") applyImage((e.target as HTMLInputElement).value); }}
+                      />
                     </div>
-                  ) : (
-                    <p className="text-xs text-gray-500 mb-2">No recipe images available</p>
-                  )}
-                  <div className="mt-3">
-                    <label className="text-xs text-gray-400 block mb-1">Or paste URL:</label>
-                    <input
-                      className="input-field text-sm w-full"
-                      placeholder="https://..."
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          applyImage((e.target as HTMLInputElement).value);
-                        }
-                      }}
-                    />
                   </div>
-                </div>
                 </div>
               )}
 
-              {selectedElement.type === "band" && (
+              {/* ── Band Properties ──────────────────────────────────────── */}
+              {selectedType === "band" && (
                 <div className="space-y-4">
                   <div>
                     <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Band Color</label>
                     <div className="flex gap-2 items-center">
-                      <input
-                        type="color"
-                        value={bandFill}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          const obj = getSelectedObject();
-                          if (!obj) return;
-                          saveUndoState();
-                          setBandFill(v);
-                          const canvas = fabricCanvasRef.current;
-                          if (!canvas) return;
-                          if (obj && obj.set) {
-                            obj.set("fill", hexToRgba(v, bandOpacity));
-                            canvas.renderAll();
-                          }
-                        }}
-                        className="w-10 h-8 rounded border border-gray-600 cursor-pointer bg-transparent"
-                      />
+                      <input type="color" value={bandProps.bandFill} onChange={(e) => updateBandColor(e.target.value)} className="w-10 h-8 rounded border border-gray-600 cursor-pointer bg-transparent" />
                       <span className="text-xs text-gray-400">Click to change color</span>
                     </div>
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Transparence</label>
+                    <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Transparency</label>
                     <div className="flex gap-2 items-center">
                       <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={Math.round(bandOpacity * 100)}
-                        onChange={(e) => {
-                          const v = parseInt(e.target.value, 10) / 100;
-                          const obj = getSelectedObject();
-                          if (!obj) return;
-                          saveUndoState();
-                          setBandOpacity(v);
-                          const canvas = fabricCanvasRef.current;
-                          if (!canvas) return;
-                          if (obj && obj.set) {
-                            obj.set("fill", hexToRgba(bandFill, v));
-                            canvas.renderAll();
-                          }
-                        }}
+                        type="range" min="0" max="100"
+                        value={Math.round(bandProps.bandOpacity * 100)}
+                        onChange={(e) => updateBandColor(bandProps.bandFill, parseInt(e.target.value) / 100)}
                         className="flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-gray-700 accent-brand-500"
                       />
-                      <span className="text-xs text-gray-400 w-10">{Math.round(bandOpacity * 100)}%</span>
+                      <span className="text-xs text-gray-400 w-10">{Math.round(bandProps.bandOpacity * 100)}%</span>
                     </div>
                     <p className="text-[10px] text-gray-500 mt-1">0% = transparent, 100% = opaque</p>
                   </div>
                   <div>
                     <label className="text-[10px] text-gray-500 block mb-1">Quick Colors</label>
                     <div className="flex gap-1 flex-wrap">
-                      {["#ffffff", "#ffecd2", "#ffd4d4", "#1565c0", "#2d3436", "#e63946", "#2a9d8f", "#f4a261", "#000000"].map((color) => (
-                        <button
-                          key={color}
-                          onClick={() => {
-                            const obj = getSelectedObject();
-                            if (!obj) return;
-                            saveUndoState();
-                            setBandFill(color);
-                            const canvas = fabricCanvasRef.current;
-                            if (!canvas) return;
-                            if (obj && obj.set) {
-                              obj.set("fill", hexToRgba(color, bandOpacity));
-                              canvas.renderAll();
-                            }
-                          }}
-                          className="w-6 h-6 rounded border-2 border-gray-600 hover:border-brand-500"
-                          style={{ backgroundColor: color }}
-                        />
+                      {["#ffffff", "#ffecd2", "#ffd4d4", "#1565c0", "#2d3436", "#e63946", "#2a9d8f", "#f4a261", "#000000"].map((c) => (
+                        <button key={c} onClick={() => updateBandColor(c)} className="w-6 h-6 rounded border-2 border-gray-600 hover:border-brand-500" style={{ backgroundColor: c }} />
                       ))}
                     </div>
                   </div>
                 </div>
               )}
 
-              {selectedElement.type === "frame" && (
+              {/* ── Frame Properties ─────────────────────────────────────── */}
+              {selectedType === "frame" && (
                 <div className="space-y-4">
-                  {/* Border Style */}
                   <div>
                     <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Border Style</label>
                     <div className="flex gap-1">
@@ -2180,88 +2221,40 @@ export default function PinDesigner({
                         <button
                           key={style}
                           onClick={() => updateFrameProperty("strokeStyle", style)}
-                          className={`flex-1 py-2 rounded text-xs font-medium transition flex flex-col items-center gap-1 ${
-                            frameStrokeStyle === style
-                              ? "bg-brand-500 text-white"
-                              : "bg-gray-700 text-gray-300 hover:bg-gray-600"
-                          }`}
+                          className={`flex-1 py-2 rounded text-xs font-medium transition flex flex-col items-center gap-1 ${frameProps.strokeStyle === style ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
                         >
-                          <div 
-                            className="w-8 h-0 border-t-2"
-                            style={{ 
-                              borderStyle: style,
-                              borderColor: frameStrokeStyle === style ? "white" : "#9ca3af"
-                            }}
-                          />
+                          <div className="w-8 h-0 border-t-2" style={{ borderStyle: style, borderColor: frameProps.strokeStyle === style ? "white" : "#9ca3af" }} />
                           <span className="capitalize">{style}</span>
                         </button>
                       ))}
                     </div>
                   </div>
-
-                  {/* Border Width */}
                   <div>
                     <label className="text-[10px] text-gray-500 block mb-1">Border Width</label>
                     <div className="flex gap-2 items-center">
-                      <input
-                        type="range"
-                        min="1"
-                        max="20"
-                        value={frameStrokeWidth}
-                        onChange={(e) => updateFrameProperty("strokeWidth", e.target.value)}
-                        className="flex-1"
-                      />
-                      <span className="text-sm text-gray-300 w-8">{frameStrokeWidth}px</span>
+                      <input type="range" min="1" max="20" value={frameProps.strokeWidth} onChange={(e) => updateFrameProperty("strokeWidth", e.target.value)} className="flex-1" />
+                      <span className="text-sm text-gray-300 w-8">{frameProps.strokeWidth}px</span>
                     </div>
                   </div>
-
-                  {/* Corner Radius */}
                   <div>
                     <label className="text-[10px] text-gray-500 block mb-1">Corner Radius</label>
                     <div className="flex gap-2 items-center">
-                      <input
-                        type="range"
-                        min="0"
-                        max="50"
-                        defaultValue="0"
-                        onChange={(e) => updateFrameProperty("rx", e.target.value)}
-                        className="flex-1"
-                      />
-                      <span className="text-sm text-gray-300 w-8">{0}px</span>
+                      <input type="range" min="0" max="50" value={frameProps.rx} onChange={(e) => updateFrameProperty("rx", e.target.value)} className="flex-1" />
+                      <span className="text-sm text-gray-300 w-8">{frameProps.rx}px</span>
                     </div>
                   </div>
-
-                  {/* Border Color */}
                   <div>
                     <label className="text-[10px] text-gray-500 block mb-1">Border Color</label>
                     <div className="flex gap-2 items-center">
-                      <input
-                        type="color"
-                        value={frameStrokeColor}
-                        onChange={(e) => updateFrameProperty("stroke", e.target.value)}
-                        className="w-10 h-8 rounded border border-gray-600 cursor-pointer"
-                      />
-                      <input
-                        type="text"
-                        value={frameStrokeColor}
-                        onChange={(e) => updateFrameProperty("stroke", e.target.value)}
-                        className="input-field text-sm flex-1"
-                        placeholder="#000000"
-                      />
+                      <input type="color" value={frameProps.strokeColor} onChange={(e) => updateFrameProperty("stroke", e.target.value)} className="w-10 h-8 rounded border border-gray-600 cursor-pointer" />
+                      <input type="text" value={frameProps.strokeColor} onChange={(e) => updateFrameProperty("stroke", e.target.value)} className="input-field text-sm flex-1" placeholder="#000000" />
                     </div>
                   </div>
-
-                  {/* Quick Colors */}
                   <div>
                     <label className="text-[10px] text-gray-500 block mb-1">Quick Colors</label>
                     <div className="flex gap-1 flex-wrap">
-                      {["#000000", "#333333", "#666666", "#ffffff", "#e63946", "#1565c0", "#2a9d8f", "#f4a261", "#9b59b6"].map((color) => (
-                        <button
-                          key={color}
-                          onClick={() => updateFrameProperty("stroke", color)}
-                          className={`w-6 h-6 rounded border-2 ${frameStrokeColor === color ? "border-brand-500" : "border-gray-600"}`}
-                          style={{ backgroundColor: color }}
-                        />
+                      {["#000000", "#333333", "#666666", "#ffffff", "#e63946", "#1565c0", "#2a9d8f", "#f4a261", "#9b59b6"].map((c) => (
+                        <button key={c} onClick={() => updateFrameProperty("stroke", c)} className={`w-6 h-6 rounded border-2 ${frameProps.strokeColor === c ? "border-brand-500" : "border-gray-600"}`} style={{ backgroundColor: c }} />
                       ))}
                     </div>
                   </div>

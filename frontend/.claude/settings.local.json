@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install zustand)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(xargs grep -l \"WPClient\\\\|wordpress_xmlrpc\")",
+      "WebFetch(domain:momymakes.com)",
+      "Bash(python -c \"from app.services.publisher import publish_recipe; from app.services.wordpress import inject_images_into_html, _parse_and_extract_title; print\\(''OK''\\)\")",
+      "Bash(python -m py_compile app/services/wordpress.py app/services/publisher.py)"
+    ]
+  }
+}

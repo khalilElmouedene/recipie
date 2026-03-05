@@ -1,13 +1,18 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import init_db
 
+UPLOADS_DIR = Path("/app/uploads")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     await init_db()
     yield
 
@@ -34,6 +39,8 @@ from app.routes.dashboard import router as dashboard_router
 from app.routes.pinterest import router as pinterest_router
 from app.routes.settings import router as settings_router
 from app.ws.logs import router as ws_router
+
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 app.include_router(auth_router)
 app.include_router(users_router)

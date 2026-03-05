@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     encryption_key: str = ""
     cors_origins: str = "http://localhost:3000"
     
+    # Base URL this server is reachable at (used to build permanent image URLs)
+    server_base_url: str = "http://localhost:8000"
+
     # Pinterest OAuth
     pinterest_client_id: str = ""
     pinterest_client_secret: str = ""
