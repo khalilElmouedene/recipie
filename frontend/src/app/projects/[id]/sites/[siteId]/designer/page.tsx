@@ -23,24 +23,23 @@ export default function PinDesignerPage() {
 
   const targetRecipe = recipeId ? recipes.find((r) => r.id === recipeId) : recipes[0];
   const allImages: string[] = [];
-  const recipesToUse = targetRecipe ? [targetRecipe] : recipes;
-  recipesToUse.forEach((recipe) => {
-    // Put the stable original image_url first so there's always at least one working image
-    if (recipe.image_url && !allImages.includes(recipe.image_url)) {
-      allImages.push(recipe.image_url);
-    }
-    // Then add Midjourney-generated images (may be expired Discord CDN URLs)
+  // Collect generated images (4 Midjourney variants) from all recipes for Choose Image
+  recipes.forEach((recipe) => {
     if (recipe.generated_images) {
       try {
         const arr = JSON.parse(recipe.generated_images);
         if (Array.isArray(arr)) {
-          arr.forEach((url) => {
-            if (url && !allImages.includes(url)) allImages.push(url);
+          arr.forEach((url: string) => {
+            if (url?.trim() && !allImages.includes(url.trim())) allImages.push(url.trim());
           });
         }
       } catch {}
     }
   });
+  // Add image_url from target recipe (or first) as fallback
+  if (targetRecipe?.image_url && !allImages.includes(targetRecipe.image_url)) {
+    allImages.push(targetRecipe.image_url);
+  }
 
   const recipeTitle = targetRecipe?.recipe_text?.split("\n")[0]?.trim() || "Recipe Title";
   const recipeDesc = targetRecipe?.meta_description || targetRecipe?.recipe_text?.split("\n")[0]?.trim() || "";

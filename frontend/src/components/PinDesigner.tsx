@@ -84,7 +84,7 @@ const TEMPLATES: PinTemplate[] = [
       { id: "image1", type: "image", label: "Top Image", x: 0, y: 0, width: 1000, height: 600, bgColor: "#e8e8e8" },
       { id: "textBand", type: "band", label: "Text Band", x: 0, y: 600, width: 1000, height: 140, bgColor: "#8b6914" },
       { id: "title", type: "text", label: "Title", x: 500, y: 670, width: 940, height: 80, defaultText: "Recipe Title Here", fontSize: 48, fontWeight: "normal", fill: "#ffffff", textAlign: "center" },
-      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 740, width: 1000, height: 620, bgColor: "#e8e8e8" },
+      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 740, width: 1000, height: 760, bgColor: "#e8e8e8" },
     ],
   },
   {
@@ -100,7 +100,7 @@ const TEMPLATES: PinTemplate[] = [
       { id: "subtitle", type: "text", label: "Subtitle", x: 500, y: 590, width: 940, height: 30, defaultText: "The Best", fontSize: 24, fontWeight: "normal", fill: "#1a5f5f", textAlign: "center" },
       { id: "title1", type: "text", label: "Title Line 1", x: 500, y: 640, width: 940, height: 50, defaultText: "RECIPE TITLE LINE 1", fontSize: 42, fontWeight: "bold", fill: "#1a5f5f", textAlign: "center" },
       { id: "title2", type: "text", label: "Title Line 2", x: 500, y: 700, width: 940, height: 50, defaultText: "LINE 2", fontSize: 42, fontWeight: "bold", fill: "#1a5f5f", textAlign: "center" },
-      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 760, width: 1000, height: 620, bgColor: "#e8e8e8" },
+      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 760, width: 1000, height: 740, bgColor: "#e8e8e8" },
     ],
   },
   {
@@ -115,7 +115,7 @@ const TEMPLATES: PinTemplate[] = [
       { id: "textBand", type: "band", label: "Text Band", x: 0, y: 560, width: 1000, height: 180, bgColor: "#4a3728" },
       { id: "title", type: "text", label: "Title", x: 500, y: 610, width: 940, height: 70, defaultText: "Recipe Title Here", fontSize: 38, fontWeight: "bold", fill: "#f5e6d3", textAlign: "center" },
       { id: "website", type: "text", label: "Website", x: 500, y: 680, width: 940, height: 35, defaultText: "WWW.YOURSITE.COM", fontSize: 22, fontWeight: "bold", fill: "#f5e6d3", textAlign: "center" },
-      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 740, width: 1000, height: 640, bgColor: "#e8e8e8" },
+      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 740, width: 1000, height: 760, bgColor: "#e8e8e8" },
     ],
   },
   {
@@ -128,9 +128,9 @@ const TEMPLATES: PinTemplate[] = [
       { id: "image1", type: "image", label: "Top Image", x: 0, y: 0, width: 1000, height: 550, bgColor: "#e8e8e8" },
       { id: "textBand", type: "band", label: "Text Band", x: 0, y: 550, width: 1000, height: 120, bgColor: "#ffecd2" },
       { id: "title", type: "text", label: "Title", x: 500, y: 610, width: 940, height: 80, defaultText: "Easy Strawberry Cheesecake Recipe | Simple Dessert", fontSize: 36, fontWeight: "bold", fill: "#333333", textAlign: "center" },
-      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 670, width: 1000, height: 550, bgColor: "#e8e8e8" },
-      { id: "footerBand", type: "band", label: "Footer Band", x: 0, y: 1220, width: 1000, height: 80, bgColor: "#ffd4d4" },
-      { id: "website", type: "text", label: "Website", x: 500, y: 1260, width: 940, height: 40, defaultText: "WWW.YOURSITE.COM", fontSize: 28, fontWeight: "bold", fill: "#333333", textAlign: "center" },
+      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 670, width: 1000, height: 750, bgColor: "#e8e8e8" },
+      { id: "footerBand", type: "band", label: "Footer Band", x: 0, y: 1420, width: 1000, height: 80, bgColor: "#ffd4d4" },
+      { id: "website", type: "text", label: "Website", x: 500, y: 1460, width: 940, height: 40, defaultText: "WWW.YOURSITE.COM", fontSize: 28, fontWeight: "bold", fill: "#333333", textAlign: "center" },
     ],
   },
   {
@@ -143,7 +143,7 @@ const TEMPLATES: PinTemplate[] = [
       { id: "image1", type: "image", label: "Top Image", x: 0, y: 0, width: 1000, height: 580, bgColor: "#e8e8e8" },
       { id: "textBand", type: "band", label: "Text Band", x: 0, y: 580, width: 1000, height: 140, bgColor: "#ffffff" },
       { id: "title", type: "text", label: "Title", x: 500, y: 650, width: 940, height: 90, defaultText: "9 BEST SALAD RECIPES", fontSize: 56, fontWeight: "bold", fill: "#e65100", textAlign: "center" },
-      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 720, width: 1000, height: 580, bgColor: "#e8e8e8" },
+      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 720, width: 1000, height: 780, bgColor: "#e8e8e8" },
     ],
   },
   {
@@ -158,7 +158,7 @@ const TEMPLATES: PinTemplate[] = [
       { id: "subtitle", type: "text", label: "Subtitle", x: 500, y: 560, width: 940, height: 30, defaultText: "SIMPLE AND EASY", fontSize: 22, fontWeight: "normal", fill: "#ffffff", textAlign: "center" },
       { id: "title", type: "text", label: "Title", x: 500, y: 620, width: 940, height: 70, defaultText: "Delicious Recipe Title", fontSize: 44, fontWeight: "bold", fill: "#ffffff", textAlign: "center" },
       { id: "website", type: "text", label: "Website", x: 500, y: 690, width: 940, height: 30, defaultText: "WWW.YOURSITE.COM", fontSize: 20, fontWeight: "normal", fill: "#ffffff", textAlign: "center" },
-      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 720, width: 1000, height: 520, bgColor: "#e8e8e8" },
+      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 720, width: 1000, height: 780, bgColor: "#e8e8e8" },
     ],
   },
   {
@@ -168,15 +168,15 @@ const TEMPLATES: PinTemplate[] = [
     previewLayout: "sandwich",
     bgColor: "#ffffff",
     elements: [
-      { id: "image1", type: "image", label: "Top Left", x: 0, y: 0, width: 500, height: 400, bgColor: "#e8e8e8" },
-      { id: "image2", type: "image", label: "Top Right", x: 500, y: 0, width: 500, height: 400, bgColor: "#e8e8e8" },
-      { id: "textBand", type: "band", label: "Text Band", x: 0, y: 400, width: 1000, height: 180, bgColor: "#ffffff" },
-      { id: "title", type: "text", label: "Title", x: 500, y: 460, width: 940, height: 70, defaultText: "THE BEST RECIPES", fontSize: 52, fontWeight: "bold", fill: "#e63946", textAlign: "center" },
-      { id: "subtitle", type: "text", label: "Subtitle", x: 500, y: 530, width: 940, height: 40, defaultText: "Comfort Food Collection", fontSize: 28, fill: "#666666", textAlign: "center" },
-      { id: "image3", type: "image", label: "Bottom Left", x: 0, y: 580, width: 500, height: 400, bgColor: "#e8e8e8" },
-      { id: "image4", type: "image", label: "Bottom Right", x: 500, y: 580, width: 500, height: 400, bgColor: "#e8e8e8" },
-      { id: "footerBand", type: "band", label: "Footer", x: 0, y: 980, width: 1000, height: 60, bgColor: "#e63946" },
-      { id: "website", type: "text", label: "Website", x: 500, y: 1010, width: 940, height: 30, defaultText: "WWW.YOURSITE.COM", fontSize: 24, fontWeight: "bold", fill: "#ffffff", textAlign: "center" },
+      { id: "image1", type: "image", label: "Top Left", x: 0, y: 0, width: 500, height: 500, bgColor: "#e8e8e8" },
+      { id: "image2", type: "image", label: "Top Right", x: 500, y: 0, width: 500, height: 500, bgColor: "#e8e8e8" },
+      { id: "textBand", type: "band", label: "Text Band", x: 0, y: 500, width: 1000, height: 180, bgColor: "#ffffff" },
+      { id: "title", type: "text", label: "Title", x: 500, y: 560, width: 940, height: 70, defaultText: "THE BEST RECIPES", fontSize: 52, fontWeight: "bold", fill: "#e63946", textAlign: "center" },
+      { id: "subtitle", type: "text", label: "Subtitle", x: 500, y: 630, width: 940, height: 40, defaultText: "Comfort Food Collection", fontSize: 28, fill: "#666666", textAlign: "center" },
+      { id: "image3", type: "image", label: "Bottom Left", x: 0, y: 680, width: 500, height: 760, bgColor: "#e8e8e8" },
+      { id: "image4", type: "image", label: "Bottom Right", x: 500, y: 680, width: 500, height: 760, bgColor: "#e8e8e8" },
+      { id: "footerBand", type: "band", label: "Footer", x: 0, y: 1440, width: 1000, height: 60, bgColor: "#e63946" },
+      { id: "website", type: "text", label: "Website", x: 500, y: 1470, width: 940, height: 30, defaultText: "WWW.YOURSITE.COM", fontSize: 24, fontWeight: "bold", fill: "#ffffff", textAlign: "center" },
     ],
   },
   {
@@ -191,10 +191,10 @@ const TEMPLATES: PinTemplate[] = [
       { id: "textBand", type: "band", label: "Text Band", x: 0, y: 450, width: 1000, height: 150, bgColor: "#ffffff" },
       { id: "title", type: "text", label: "Title", x: 500, y: 500, width: 940, height: 70, defaultText: "THE BEST 4", fontSize: 56, fontWeight: "bold", fill: "#e63946", textAlign: "center" },
       { id: "subtitle", type: "text", label: "Subtitle", x: 500, y: 570, width: 940, height: 40, defaultText: "COMFORT FOOD RECIPES", fontSize: 28, fontWeight: "bold", fill: "#1d3557", textAlign: "center" },
-      { id: "image3", type: "image", label: "Image 3", x: 0, y: 600, width: 500, height: 450, bgColor: "#e8e8e8" },
-      { id: "image4", type: "image", label: "Image 4", x: 500, y: 600, width: 500, height: 450, bgColor: "#e8e8e8" },
-      { id: "footerBand", type: "band", label: "Footer", x: 0, y: 1050, width: 1000, height: 50, bgColor: "#e63946" },
-      { id: "website", type: "text", label: "Website", x: 500, y: 1075, width: 940, height: 30, defaultText: "WWW.YOURSITE.COM", fontSize: 22, fontWeight: "bold", fill: "#ffffff", textAlign: "center" },
+      { id: "image3", type: "image", label: "Image 3", x: 0, y: 600, width: 500, height: 850, bgColor: "#e8e8e8" },
+      { id: "image4", type: "image", label: "Image 4", x: 500, y: 600, width: 500, height: 850, bgColor: "#e8e8e8" },
+      { id: "footerBand", type: "band", label: "Footer", x: 0, y: 1450, width: 1000, height: 50, bgColor: "#e63946" },
+      { id: "website", type: "text", label: "Website", x: 500, y: 1475, width: 940, height: 30, defaultText: "WWW.YOURSITE.COM", fontSize: 22, fontWeight: "bold", fill: "#ffffff", textAlign: "center" },
     ],
   },
   {
@@ -207,14 +207,14 @@ const TEMPLATES: PinTemplate[] = [
       { id: "headerBand", type: "band", label: "Header Band", x: 0, y: 0, width: 1000, height: 140, bgColor: "#2d3436" },
       { id: "header", type: "text", label: "Header", x: 500, y: 50, width: 940, height: 50, defaultText: "TOP 6", fontSize: 48, fontWeight: "bold", fill: "#ffffff", textAlign: "center" },
       { id: "subtitle", type: "text", label: "Subtitle", x: 500, y: 100, width: 940, height: 35, defaultText: "Vegan Recipes for Christmas", fontSize: 22, fill: "#cccccc", textAlign: "center" },
-      { id: "image1", type: "image", label: "Image 1", x: 0, y: 140, width: 334, height: 320, bgColor: "#dfe6e9" },
-      { id: "image2", type: "image", label: "Image 2", x: 334, y: 140, width: 333, height: 320, bgColor: "#dfe6e9" },
-      { id: "image3", type: "image", label: "Image 3", x: 667, y: 140, width: 333, height: 320, bgColor: "#dfe6e9" },
-      { id: "image4", type: "image", label: "Image 4", x: 0, y: 460, width: 334, height: 320, bgColor: "#dfe6e9" },
-      { id: "image5", type: "image", label: "Image 5", x: 334, y: 460, width: 333, height: 320, bgColor: "#dfe6e9" },
-      { id: "image6", type: "image", label: "Image 6", x: 667, y: 460, width: 333, height: 320, bgColor: "#dfe6e9" },
-      { id: "footerBand", type: "band", label: "Footer Band", x: 0, y: 780, width: 1000, height: 60, bgColor: "#2d3436" },
-      { id: "footer", type: "text", label: "Footer", x: 500, y: 810, width: 940, height: 30, defaultText: "Dinner starters, sides & main course dishes", fontSize: 20, fill: "#ffffff", textAlign: "center" },
+      { id: "image1", type: "image", label: "Image 1", x: 0, y: 140, width: 334, height: 640, bgColor: "#dfe6e9" },
+      { id: "image2", type: "image", label: "Image 2", x: 334, y: 140, width: 333, height: 640, bgColor: "#dfe6e9" },
+      { id: "image3", type: "image", label: "Image 3", x: 667, y: 140, width: 333, height: 640, bgColor: "#dfe6e9" },
+      { id: "image4", type: "image", label: "Image 4", x: 0, y: 780, width: 334, height: 640, bgColor: "#dfe6e9" },
+      { id: "image5", type: "image", label: "Image 5", x: 334, y: 780, width: 333, height: 640, bgColor: "#dfe6e9" },
+      { id: "image6", type: "image", label: "Image 6", x: 667, y: 780, width: 333, height: 640, bgColor: "#dfe6e9" },
+      { id: "footerBand", type: "band", label: "Footer Band", x: 0, y: 1420, width: 1000, height: 80, bgColor: "#2d3436" },
+      { id: "footer", type: "text", label: "Footer", x: 500, y: 1460, width: 940, height: 30, defaultText: "Dinner starters, sides & main course dishes", fontSize: 20, fill: "#ffffff", textAlign: "center" },
     ],
   },
   {
@@ -225,10 +225,10 @@ const TEMPLATES: PinTemplate[] = [
     bgColor: "#1a1a2e",
     elements: [
       { id: "hero", type: "image", label: "Hero Image", x: 0, y: 0, width: 1000, height: 1100, bgColor: "#2d2d44" },
-      { id: "textBand", type: "band", label: "Text Band", x: 0, y: 1100, width: 1000, height: 200, bgColor: "#1a1a2e" },
-      { id: "title", type: "text", label: "Title", x: 500, y: 1150, width: 940, height: 80, defaultText: "AMAZING RECIPE", fontSize: 64, fontWeight: "bold", fill: "#ffffff", textAlign: "center" },
-      { id: "subtitle", type: "text", label: "Description", x: 500, y: 1220, width: 940, height: 50, defaultText: "Quick & Easy to Make", fontSize: 28, fill: "#ffd700", textAlign: "center" },
-      { id: "website", type: "text", label: "Website", x: 500, y: 1270, width: 940, height: 30, defaultText: "WWW.YOURSITE.COM", fontSize: 22, fill: "#cccccc", textAlign: "center" },
+      { id: "textBand", type: "band", label: "Text Band", x: 0, y: 1100, width: 1000, height: 400, bgColor: "#1a1a2e" },
+      { id: "title", type: "text", label: "Title", x: 500, y: 1160, width: 940, height: 80, defaultText: "AMAZING RECIPE", fontSize: 64, fontWeight: "bold", fill: "#ffffff", textAlign: "center" },
+      { id: "subtitle", type: "text", label: "Description", x: 500, y: 1280, width: 940, height: 50, defaultText: "Quick & Easy to Make", fontSize: 28, fill: "#ffd700", textAlign: "center" },
+      { id: "website", type: "text", label: "Website", x: 500, y: 1440, width: 940, height: 30, defaultText: "WWW.YOURSITE.COM", fontSize: 22, fill: "#cccccc", textAlign: "center" },
     ],
   },
 ];
@@ -2172,7 +2172,7 @@ export default function PinDesigner({
                     <label className="text-xs text-gray-400 block mb-2">Choose Image</label>
                     {recipeImages.length > 0 ? (
                       <div className="grid grid-cols-2 gap-2">
-                        {recipeImages.slice(0, 4).map((url, i) => (
+                        {recipeImages.map((url, i) => (
                           <button
                             key={i}
                             onClick={() => applyImage(url)}
@@ -2182,6 +2182,7 @@ export default function PinDesigner({
                               src={proxyUrl(url)}
                               alt={`Image ${i + 1}`}
                               className="w-full h-20 object-cover"
+                              crossOrigin="anonymous"
                               onError={(e) => {
                                 const btn = (e.target as HTMLElement).closest("button");
                                 if (btn) btn.style.display = "none";
