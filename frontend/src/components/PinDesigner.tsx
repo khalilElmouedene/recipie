@@ -42,7 +42,7 @@ function rgbaToHex(rgba: string): { hex: string; alpha: number } {
 
 interface TemplateElement {
   id: string;
-  type: "image" | "text" | "band" | "frame";
+  type: "image" | "text" | "band" | "frame" | "circle";
   label: string;
   x: number;
   y: number;
@@ -51,11 +51,13 @@ interface TemplateElement {
   defaultText?: string;
   fontSize?: number;
   fontWeight?: string;
+  fontStyle?: string;
   fill?: string;
   bgColor?: string;
   textAlign?: string;
   strokeWidth?: number;
   strokeStyle?: StrokeStyle;
+  radius?: number;
 }
 
 interface PinTemplate {
@@ -63,7 +65,7 @@ interface PinTemplate {
   name: string;
   description: string;
   previewLayout:
-    | "simple" | "grid4" | "grid6" | "hero" | "sandwich"
+    | "simple" | "grid4" | "grid6" | "hero" | "sandwich" | "card-overlap"
     | "band-white" | "band-blue" | "band-peach" | "band-brown";
   bgColor: string;
   elements: TemplateElement[];
@@ -218,6 +220,26 @@ const TEMPLATES: PinTemplate[] = [
     ],
   },
   {
+    id: "canva-card-overlap",
+    name: "Card Overlap Style",
+    description: "Image, floating white card with circle badge, image, footer",
+    previewLayout: "card-overlap",
+    bgColor: "#ffffff",
+    elements: [
+      { id: "image1", type: "image", label: "Top Image", x: 0, y: 0, width: 1000, height: 510, bgColor: "#e8e8e8" },
+      { id: "card", type: "band", label: "Card", x: 0, y: 440, width: 1000, height: 300, bgColor: "#faf8f3" },
+      { id: "badge", type: "circle", label: "Badge Circle", x: 500, y: 440, width: 136, height: 136, radius: 68, bgColor: "#7a2d2d" },
+      { id: "badgeNum", type: "text", label: "Badge Number", x: 500, y: 440, width: 136, height: 60, defaultText: "30", fontSize: 52, fontWeight: "bold", fill: "#ffffff", textAlign: "center" },
+      { id: "title", type: "text", label: "Title", x: 500, y: 565, width: 900, height: 90, defaultText: "Fall Recipes", fontSize: 72, fontWeight: "normal", fontStyle: "italic", fill: "#1a1a1a", textAlign: "center" },
+      { id: "lineLeft", type: "band", label: "Line Left", x: 30, y: 639, width: 175, height: 2, bgColor: "#aaaaaa" },
+      { id: "subtitle", type: "text", label: "Subtitle", x: 500, y: 640, width: 540, height: 40, defaultText: "EASY & DELICIOUS", fontSize: 22, fill: "#666666", textAlign: "center" },
+      { id: "lineRight", type: "band", label: "Line Right", x: 795, y: 639, width: 175, height: 2, bgColor: "#aaaaaa" },
+      { id: "image2", type: "image", label: "Bottom Image", x: 0, y: 740, width: 1000, height: 680, bgColor: "#e8e8e8" },
+      { id: "footer", type: "band", label: "Footer", x: 0, y: 1420, width: 1000, height: 80, bgColor: "#7a2d2d" },
+      { id: "website", type: "text", label: "Website", x: 500, y: 1460, width: 940, height: 40, defaultText: "REALLYGREATSITE.COM", fontSize: 22, fontWeight: "bold", fill: "#ffffff", textAlign: "center" },
+    ],
+  },
+  {
     id: "featured-hero",
     name: "Hero Image",
     description: "Big hero image with overlay text",
@@ -292,6 +314,20 @@ function TemplatePreview({ layout }: { layout: PinTemplate["previewLayout"] }) {
           <div className={`${imgBox} flex-1`} />
           <div className={`${imgBox} flex-1`} />
         </div>
+      </div>
+    );
+  }
+  if (layout === "card-overlap") {
+    return (
+      <div className="h-full flex flex-col p-1 relative">
+        <div className={`${imgBox} flex-[3]`} />
+        <div className="absolute left-1 right-1 bg-amber-50 rounded shadow flex flex-col items-center justify-center py-1" style={{ top: "38%", height: "22%" }}>
+          <div className="w-5 h-5 rounded-full bg-red-900 flex items-center justify-center text-[6px] text-white font-bold -mt-3 mb-0.5">30</div>
+          <div className="text-[7px] italic text-gray-800 leading-tight">Recipe Title</div>
+          <div className="text-[5px] text-gray-500 tracking-wide">EASY &amp; DELICIOUS</div>
+        </div>
+        <div className={`${imgBox} flex-[2]`} />
+        <div className="bg-red-900 h-2 w-full rounded-b" />
       </div>
     );
   }
@@ -891,6 +927,22 @@ export default function PinDesigner({
           (label as any).__forId = el.id;
           canvas.add(label);
         }
+      } else if (el.type === "circle") {
+        const circle = new fabric.Circle({
+          left: el.x,
+          top: el.y,
+          radius: el.radius || 60,
+          fill: el.bgColor || "#8b0000",
+          originX: "center",
+          originY: "center",
+          selectable: true,
+          strokeWidth: 0,
+          objectCaching: false,
+        });
+        (circle as any).__pinId = el.id;
+        (circle as any).__pinLabel = el.label;
+        (circle as any).__pinType = "band";
+        canvas.add(circle);
       } else if (el.type === "band") {
         const band = new Rect({
           left: el.x,
@@ -919,6 +971,7 @@ export default function PinDesigner({
             fontSize: el.fontSize || 32,
             fontFamily: "Arial",
             fontWeight: el.fontWeight || "normal",
+            fontStyle: (el.fontStyle as any) || "normal",
             fill: el.fill || "#333333",
             originX: "center",
             originY: "center",
