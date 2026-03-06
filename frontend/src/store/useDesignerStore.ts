@@ -80,6 +80,9 @@ interface DesignerState {
   // Floating toolbar position (screen coords)
   toolbarPos: { x: number; y: number } | null;
   setToolbarPos: (pos: { x: number; y: number } | null) => void;
+
+  // Reset all UI state (called on designer unmount)
+  resetStore: () => void;
 }
 
 export const useDesignerStore = create<DesignerState>()(
@@ -129,5 +132,14 @@ export const useDesignerStore = create<DesignerState>()(
 
     toolbarPos: null,
     setToolbarPos: (pos) => set({ toolbarPos: pos }),
+
+    resetStore: () => set({
+      selectedId: null,
+      activeTool: "select",
+      layers: [],
+      leftTab: "templates",
+      zoom: 35,
+      toolbarPos: null,
+    }),
   }))
 );

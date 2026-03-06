@@ -1,8 +1,8 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles, Globe } from "lucide-react";
-import { api, SiteOut, RecipeOut, PinterestBoard, PinterestBulkResponse, PinTemplate, BulkGeneratePinsResponse, BulkPinItem } from "@/lib/api";
+import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles, Globe, Square, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { api, SiteOut, RecipeOut, PinterestBoard, PinterestBulkResponse, PinTemplate, BulkGeneratePinsResponse, BulkPinItem, JobOut, getWsUrl } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -61,6 +61,11 @@ export default function SiteDetailPage() {
   const [bulkGenerating, setBulkGenerating] = useState(false);
   const [bulkResult, setBulkResult] = useState<BulkGeneratePinsResponse | null>(null);
   const [recipeJobMap, setRecipeJobMap] = useState<Record<string, string>>({});
+
+  // Inline job monitoring
+  const [activeJob, setActiveJob] = useState<JobOut | null>(null);
+  const [activeJobLastLog, setActiveJobLastLog] = useState<string>("");
+  const activeJobWsRef = useRef<WebSocket | null>(null);
 
   const loadRecipes = () => api.getRecipes(siteId).then(setRecipes).catch(() => {});
 
@@ -128,6 +133,49 @@ export default function SiteDetailPage() {
     }, 5000);
   }, []);
 
+  // Live WebSocket stream for active job
+  useEffect(() => {
+    if (!activeJob || activeJob.status !== "running") return;
+    const ws = new WebSocket(getWsUrl(activeJob.id));
+    activeJobWsRef.current = ws;
+    ws.onmessage = (e) => {
+      if (!e.data) return;
+      setActiveJobLastLog(e.data);
+      if (
+        e.data.includes("Job completed successfully") ||
+        e.data.includes("Job stopped") ||
+        e.data.includes("Job failed")
+      ) {
+        setTimeout(() => {
+          api.getJob(activeJob.id).then((j) => {
+            setActiveJob(j);
+            if (j.status !== "running") loadRecipes();
+          }).catch(() => {});
+        }, 800);
+      }
+    };
+    ws.onclose = () => {
+      const poll = (attempts: number) => {
+        api.getJob(activeJob.id).then((j) => {
+          setActiveJob(j);
+          if (j.status !== "running") { loadRecipes(); return; }
+          if (attempts > 0) setTimeout(() => poll(attempts - 1), 1500);
+        }).catch(() => {});
+      };
+      poll(3);
+    };
+    return () => ws.close();
+  }, [activeJob?.id, activeJob?.status]);
+
+  // Poll job status every 5s while running
+  useEffect(() => {
+    if (!activeJob || activeJob.status !== "running") return;
+    const t = setInterval(() => {
+      api.getJob(activeJob.id).then(setActiveJob).catch(() => {});
+    }, 5000);
+    return () => clearInterval(t);
+  }, [activeJob?.id, activeJob?.status]);
+
   const openRecipeLogs = async (recipeId: string) => {
     const knownJobId = recipeJobMap[recipeId];
     if (knownJobId) {
@@ -171,7 +219,8 @@ export default function SiteDetailPage() {
     setStarting(true);
     try {
       const job = await api.startJob(projectId, { job_type: type, site_id: siteId });
-      router.push(`/jobs/${job.id}`);
+      setActiveJob(job);
+      setActiveJobLastLog("");
     } catch (err: any) {
       alert(err.message || "Failed to start job");
     }
@@ -369,6 +418,74 @@ export default function SiteDetailPage() {
       <button onClick={() => router.push(`/projects/${projectId}`)} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4">
         <ArrowLeft size={16} /> Back to Project
       </button>
+
+      {/* ── Inline Job Monitor ──────────────────────────── */}
+      {activeJob && (
+        <div className={`rounded-lg border p-4 mb-4 ${
+          activeJob.status === "running"   ? "bg-blue-950/30 border-blue-800/40" :
+          activeJob.status === "completed" ? "bg-green-950/30 border-green-800/40" :
+          activeJob.status === "failed"    ? "bg-red-950/30 border-red-800/40" :
+                                             "bg-gray-800/30 border-gray-700/40"
+        }`}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3 min-w-0">
+              {activeJob.status === "running"   && <Loader2 size={18} className="text-blue-400 animate-spin mt-0.5 flex-shrink-0"/>}
+              {activeJob.status === "completed" && <CheckCircle size={18} className="text-green-400 mt-0.5 flex-shrink-0"/>}
+              {activeJob.status === "failed"    && <XCircle size={18} className="text-red-400 mt-0.5 flex-shrink-0"/>}
+              {activeJob.status === "stopped"   && <Square size={18} className="text-yellow-400 mt-0.5 flex-shrink-0"/>}
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-white">
+                  {activeJob.job_type === "articles" ? "Content Generation" : "Publishing"}&nbsp;
+                  <span className={`text-xs font-normal px-1.5 py-0.5 rounded ${
+                    activeJob.status === "running" ? "bg-blue-600/30 text-blue-300" :
+                    activeJob.status === "completed" ? "bg-green-600/30 text-green-300" :
+                    activeJob.status === "failed" ? "bg-red-600/30 text-red-300" : "bg-gray-700 text-gray-300"
+                  }`}>{activeJob.status}</span>
+                </p>
+                {activeJob.status === "running" && activeJob.total_rows != null && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <div className="w-40 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                           style={{ width: `${Math.min(100, ((activeJob.current_row ?? 0) / activeJob.total_rows) * 100)}%` }}/>
+                    </div>
+                    <span className="text-xs text-gray-400">{activeJob.current_row ?? 0} / {activeJob.total_rows} recipes</span>
+                  </div>
+                )}
+                {activeJobLastLog && activeJob.status === "running" && (
+                  <p className="text-xs text-gray-400 mt-1.5 truncate max-w-xl font-mono">{activeJobLastLog}</p>
+                )}
+                {activeJob.status === "completed" && (
+                  <p className="text-xs text-green-400 mt-1">All recipes processed — refreshing list...</p>
+                )}
+                {activeJob.error && (
+                  <p className="text-xs text-red-400 mt-1">{activeJob.error}</p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {activeJob.status === "running" && (
+                <button
+                  onClick={() => api.stopJob(activeJob.id).then((j) => setActiveJob(j)).catch(() => {})}
+                  className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 border border-red-800/40 px-2 py-1 rounded"
+                >
+                  <Square size={11}/> Stop
+                </button>
+              )}
+              <button
+                onClick={() => router.push(`/jobs/${activeJob.id}`)}
+                className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 border border-blue-800/40 px-2 py-1 rounded"
+              >
+                Full logs <ExternalLink size={11}/>
+              </button>
+              {activeJob.status !== "running" && (
+                <button onClick={() => setActiveJob(null)} className="text-gray-500 hover:text-gray-300 ml-1">
+                  <X size={14}/>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center justify-between mb-6">
         <div>

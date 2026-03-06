@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import re
+import threading
 import time
 import unicodedata
 import uuid
@@ -14,6 +15,11 @@ import requests
 
 from . import midjourney, openai_service
 from app.config import settings
+
+# Global lock — ensures only ONE Midjourney generation runs at a time across
+# all concurrent jobs. Prevents two recipes from polling the same Discord
+# channel simultaneously and stealing each other's results.
+_midjourney_lock = threading.Lock()
 
 UPLOADS_DIR = Path("/app/uploads")
 
@@ -136,14 +142,18 @@ def generate_for_recipe(
         if discord_auth and image_url:
             if _stop():
                 return result
-            _log("Generating Midjourney images...")
-            try:
-                img_urls = midjourney.generate_images(recipe_title, image_url, credentials, prompts=prompts, wait_time=190, log=_log)
-                # Cache immediately — Discord CDN URLs expire after a few hours
-                cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
-                result["generated_images"] = json.dumps(cached_urls)
-            except Exception as e:
-                _log(f"Midjourney failed (non-fatal): {e}")
+            _log("Waiting for Midjourney queue slot (one recipe at a time)...")
+            with _midjourney_lock:
+                if _stop():
+                    return result
+                _log("Midjourney slot acquired — generating images...")
+                try:
+                    img_urls = midjourney.generate_images(recipe_title, image_url, credentials, prompts=prompts, wait_time=190, log=_log)
+                    # Cache immediately — Discord CDN URLs expire after a few hours
+                    cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
+                    result["generated_images"] = json.dumps(cached_urls)
+                except Exception as e:
+                    _log(f"Midjourney failed (non-fatal): {e}")
         else:
             _log("Skipping Midjourney (no Discord credentials configured)")
 

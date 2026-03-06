@@ -444,6 +444,7 @@ export default function PinDesigner({
     frameProps, setFrameProps,
     imageProps, setImageProps,
     toolbarPos, setToolbarPos,
+    resetStore,
   } = useDesignerStore();
 
   // ── Local UI state ──────────────────────────────────────────────────────
@@ -1214,6 +1215,10 @@ export default function PinDesigner({
         fabricCanvasRef.current.dispose();
         fabricCanvasRef.current = null;
       }
+      fabricLibRef.current = null;
+      undoHistoryRef.current = [];
+      isRestoringRef.current = false;
+      resetStore();
     };
   }, [mounted]);
 
