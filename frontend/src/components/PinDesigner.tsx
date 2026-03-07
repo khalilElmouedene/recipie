@@ -2427,10 +2427,15 @@ export default function PinDesigner({
                               className="w-full h-20 object-cover"
                               crossOrigin="anonymous"
                               onError={(e) => {
-                                const btn = (e.target as HTMLElement).closest("button");
-                                if (btn) btn.style.display = "none";
+                                const img = e.target as HTMLImageElement;
+                                img.style.display = "none";
+                                const ph = img.nextElementSibling as HTMLElement | null;
+                                if (ph) ph.style.display = "flex";
                               }}
                             />
+                            <div style={{ display: "none" }} className="w-full h-20 bg-gray-700 items-center justify-center text-gray-400 text-[10px]">
+                              {i === 0 ? "Original" : `Variant ${i}`}
+                            </div>
                             <span className="absolute bottom-0 left-0 right-0 text-[9px] text-center bg-black/50 text-white py-0.5 opacity-0 group-hover:opacity-100 transition">
                               {i === 0 ? "Original" : `Variant ${i}`}
                             </span>

@@ -343,6 +343,7 @@ def set_rank_math_meta(
     focus_keyword: str,
     seo_description: str,
     site_config: dict,
+    seo_title: str = "",
     log: Callable[[str], None] | None = None,
 ):
     _log = log or print
@@ -351,6 +352,8 @@ def set_rank_math_meta(
         token = base64.b64encode(f"{site_config['wp_username']}:{site_config['wp_password']}".encode()).decode()
         headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
         meta = {}
+        if seo_title:
+            meta["rank_math_title"] = seo_title
         if focus_keyword:
             meta["rank_math_focus_keyword"] = focus_keyword
         if seo_description:

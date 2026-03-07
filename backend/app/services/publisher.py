@@ -111,8 +111,8 @@ def publish_recipe(
         except Exception:
             permalink = f"{domain}/{slug}/"
 
-        if focus_kw or meta_desc:
-            set_rank_math_meta(post_id, focus_kw, meta_desc, site_config, log=_log)
+        if focus_kw or meta_desc or title:
+            set_rank_math_meta(post_id, focus_kw, meta_desc, site_config, seo_title=title, log=_log)
 
         _log(f"Post created (ID: {post_id}) - {permalink}")
         result["wp_post_id"] = str(post_id)
