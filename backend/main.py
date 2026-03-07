@@ -13,7 +13,7 @@ UPLOADS_DIR = Path("/app/uploads")
 
 # Prompts that must always match the latest code default.
 # If the DB value is outdated (missing the uid/group structure), it gets reset.
-_FORCE_RESET_PROMPTS = {"recipe_json_user", "recipe_json_system"}
+_FORCE_RESET_PROMPTS = {"recipe_json_user", "recipe_json_system", "article"}
 
 
 async def _migrate_prompts() -> None:

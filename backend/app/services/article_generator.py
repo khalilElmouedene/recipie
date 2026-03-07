@@ -57,21 +57,71 @@ def clean_keyword(text: str) -> str:
     return cleaned
 
 
-def get_sitemap_links(sitemap_url: str) -> list[str]:
-    try:
-        if not sitemap_url.startswith(("http://", "https://")):
-            sitemap_url = "https://" + sitemap_url
-        r = requests.get(sitemap_url, timeout=15)
-        r.raise_for_status()
-        root = ET.fromstring(r.content)
-        ns = {"sitemap": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-        return [
-            loc.text
-            for url_el in root.findall(".//sitemap:url", ns)
-            if (loc := url_el.find("sitemap:loc", ns)) is not None
-        ]
-    except Exception:
-        return []
+def _fetch_sitemap_urls(sitemap_url: str) -> list[str]:
+    """Fetch all <loc> URLs from a single sitemap XML file."""
+    r = requests.get(sitemap_url, timeout=15)
+    r.raise_for_status()
+    root = ET.fromstring(r.content)
+    ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    return [
+        loc.text
+        for url_el in root.findall(".//s:url", ns)
+        if (loc := url_el.find("s:loc", ns)) is not None and loc.text
+    ]
+
+
+def get_sitemap_links(site_domain: str) -> list[str]:
+    """
+    Try multiple common sitemap locations for the site and return up to 50 post URLs.
+    Handles both sitemap index files and direct sitemap XML.
+    """
+    if not site_domain.startswith(("http://", "https://")):
+        site_domain = "https://" + site_domain
+    site_domain = site_domain.rstrip("/")
+
+    candidates = [
+        f"{site_domain}/post-sitemap.xml",
+        f"{site_domain}/post-sitemap1.xml",
+        f"{site_domain}/sitemap.xml",
+        f"{site_domain}/sitemap_index.xml",
+    ]
+
+    ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    for url in candidates:
+        try:
+            r = requests.get(url, timeout=15, headers=headers)
+            if r.status_code != 200:
+                continue
+            root = ET.fromstring(r.content)
+            # Sitemap index: contains <sitemap><loc>...</loc></sitemap>
+            child_sitemaps = [
+                loc.text
+                for sm in root.findall(".//s:sitemap", ns)
+                if (loc := sm.find("s:loc", ns)) is not None and loc.text
+            ]
+            if child_sitemaps:
+                # Use the first child sitemap (usually post-sitemap.xml or similar)
+                links: list[str] = []
+                for child_url in child_sitemaps[:3]:
+                    try:
+                        links.extend(_fetch_sitemap_urls(child_url))
+                    except Exception:
+                        pass
+                    if len(links) >= 50:
+                        break
+                if links:
+                    return links[:50]
+            else:
+                # Direct sitemap file
+                links = _fetch_sitemap_urls(url)
+                if links:
+                    return links[:50]
+        except Exception:
+            continue
+
+    return []
 
 
 def generate_for_recipe(
@@ -119,7 +169,8 @@ def generate_for_recipe(
         if _stop():
             return result
         _log("Generating article HTML...")
-        internal_links = get_sitemap_links(site_domain + "/post-sitemap1.xml")
+        internal_links = get_sitemap_links(site_domain)
+        _log(f"Found {len(internal_links)} internal links from sitemap")
         article = openai_service.generate_article(recipe_title, full_recipe, "", internal_links, openai_key, prompts=prompts, log=_log)
         result["generated_article"] = article
 

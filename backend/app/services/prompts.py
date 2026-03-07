@@ -17,8 +17,7 @@ DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
 2. SEO OPTIMIZATION:
 - Use focus keyword '{recipe_title}' naturally throughout
 - Include H2, H3, H4 headings with keywords
-- Add 1 external link to Pinterest
-- Add 5-7 internal links naturally distributed
+- Add 5-7 internal links using ONLY the URLs from this list (pick the most relevant ones and use natural anchor text): {internal_links}
 - Write meta description (will be used separately)
 
 3. FORMATTING:
