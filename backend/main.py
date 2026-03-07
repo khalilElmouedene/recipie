@@ -4,16 +4,43 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from sqlalchemy import select
 from app.config import settings
-from app.database import init_db
+from app.database import init_db, SessionLocal
+from app.services.prompts import DEFAULT_PROMPTS
 
 UPLOADS_DIR = Path("/app/uploads")
+
+# Prompts that must always match the latest code default.
+# If the DB value is outdated (missing the uid/group structure), it gets reset.
+_FORCE_RESET_PROMPTS = {"recipe_json_user", "recipe_json_system"}
+
+
+async def _migrate_prompts() -> None:
+    """Reset outdated recipe JSON prompts so new generation uses the fixed format."""
+    from app.db_models import Prompt
+    async with SessionLocal() as db:
+        for key in _FORCE_RESET_PROMPTS:
+            if key not in DEFAULT_PROMPTS:
+                continue
+            new_value = DEFAULT_PROMPTS[key]["value"]
+            result = await db.execute(select(Prompt).where(Prompt.key == key))
+            row = result.scalar_one_or_none()
+            if row is None:
+                # Not in DB yet — will use default automatically, nothing to do
+                continue
+            # Only overwrite if the stored value looks like the old broken format
+            # (old recipe_json_user had plain string examples, not uid/group objects)
+            if '"uid"' not in row.value:
+                row.value = new_value
+        await db.commit()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     await init_db()
+    await _migrate_prompts()
     yield
 
 

@@ -49,64 +49,71 @@ Write the complete article now with all sections fully developed.""",
         "description": "System message for recipe JSON generation",
     },
     "recipe_json_user": {
-        "value": """Generate a complete recipe for "{full_recipe}" that can be directly imported into WP Recipe Maker plugin via REST API.
+        "value": """Generate a complete recipe for "{full_recipe}" that can be directly imported into WP Recipe Maker plugin.
 
-Return ONLY valid JSON matching this exact structure (no markdown, no commentary):
+Return ONLY valid JSON exactly matching this structure (no markdown, no extra text):
 {{
+    "type": "wprm_recipe",
     "name": "Full recipe title",
-    "summary": "2-sentence enticing description of the recipe",
-    "author": {{"id": 1, "name": ""}},
+    "summary": "A 1-2 sentence enticing description of the recipe.",
+    "author": {{"id": 1, "name": "Recipe Creator"}},
     "servings": 4,
     "servings_unit": "servings",
-    "prep_time": 10,
-    "cook_time": 20,
-    "total_time": 30,
+    "cost": "",
+    "prep_time": 15,
+    "cook_time": 30,
+    "total_time": 45,
+    "custom_time": 0,
+    "custom_time_label": "",
+    "rating": {{"count": 0, "total": 0, "average": 0}},
     "tags": {{
         "course": ["Dessert"],
         "cuisine": ["American"],
-        "keyword": ["recipe-specific-keyword1", "recipe-specific-keyword2", "recipe-specific-keyword3", "recipe-specific-keyword4"]
+        "keyword": ["keyword-specific-to-recipe", "main-ingredient", "cooking-method", "occasion"],
+        "difficulty": "easy"
     }},
-    "equipment": [{{"name": "Equipment Name"}}],
-    "ingredients": [
-        {{
-            "name": "",
-            "ingredients": [
-                {{"amount": "1/2", "unit": "cup", "name": "ingredient name", "notes": "optional note"}},
-                {{"amount": "2", "unit": "tablespoons", "name": "ingredient name", "notes": ""}},
-                {{"amount": "", "unit": "", "name": "ingredient name", "notes": ""}}
-            ]
-        }}
+    "equipment": [
+        {{"name": "Equipment 1"}},
+        {{"name": "Equipment 2"}}
     ],
-    "instructions": [
-        {{
-            "name": "",
-            "instructions": [
-                {{"name": "", "text": "First step instruction text."}},
-                {{"name": "", "text": "Second step instruction text."}},
-                {{"name": "", "text": "Third step instruction text."}}
-            ]
-        }}
+    "ingredients_flat": [
+        {{"uid": "group_1", "name": "Main Ingredients", "type": "group"}},
+        {{"uid": "ingredient_1", "name": "ingredient name", "amount": "1", "unit": "cup", "notes": "", "group": "group_1", "type": "ingredient"}},
+        {{"uid": "ingredient_2", "name": "ingredient name", "amount": "1/2", "unit": "tablespoon", "notes": "optional note", "group": "group_1", "type": "ingredient"}},
+        {{"uid": "ingredient_3", "name": "ingredient name", "amount": "2", "unit": "cups", "notes": "", "group": "group_1", "type": "ingredient"}}
+    ],
+    "instructions_flat": [
+        {{"uid": "group_1", "name": "Instructions", "type": "group"}},
+        {{"uid": "instruction_1", "text": "Detailed first step.", "group": "group_1", "type": "instruction"}},
+        {{"uid": "instruction_2", "text": "Detailed second step.", "group": "group_1", "type": "instruction"}},
+        {{"uid": "instruction_3", "text": "Detailed third step.", "group": "group_1", "type": "instruction"}}
     ],
     "nutrition": {{
-        "calories": 350,
-        "carbohydrates": 50,
-        "protein": 5,
-        "fat": 15,
-        "saturated_fat": 9,
-        "cholesterol": 45,
-        "sodium": 80,
-        "fiber": 3,
-        "sugar": 40
+        "calories": "350 kcal",
+        "carbohydrates": "50 g",
+        "protein": "5 g",
+        "fat": "15 g",
+        "saturated_fat": "8 g",
+        "cholesterol": "45 mg",
+        "sodium": "80 mg",
+        "potassium": "",
+        "fiber": "3 g",
+        "sugar": "10 g",
+        "vitamin_a": "",
+        "vitamin_c": "",
+        "calcium": "",
+        "iron": ""
     }},
-    "notes": "Tips, substitutions, and variations for this recipe."
+    "custom_fields": {{}},
+    "notes": "Tips, substitutions, and storage instructions for this recipe."
 }}
 
 Rules:
-- Use at least 6-10 ingredients with realistic amounts and units
-- Write 5-8 detailed instruction steps
-- All nutrition values must be plain numbers (no units, no strings)
-- Keywords must be recipe-specific (ingredient names, cooking method, occasion)
-- Return ONLY the JSON object, nothing else""",
+- ingredients_flat: start with one group object, then list all 6-10 ingredients with uid, name, amount, unit, notes, group, type
+- instructions_flat: start with one group object, then list 5-8 detailed steps with uid, text, group, type
+- keywords must be recipe-specific (main ingredient, cooking method, flavor, occasion) — NOT generic words like "easy" or "delicious"
+- nutrition values must be strings with units exactly as shown (e.g. "350 kcal", "50 g", "80 mg")
+- Return ONLY the JSON object, absolutely nothing else""",
         "description": "Recipe JSON - placeholder: {full_recipe}",
     },
     "meta_description_system": {

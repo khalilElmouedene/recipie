@@ -234,6 +234,74 @@ def _update_alt_text(attachment_id: str, alt_text: str, site_config: dict, log: 
         log(f"Error updating alt text: {e}")
 
 
+def _normalize_recipe_for_wprm(data: dict) -> dict:
+    """
+    Convert ingredients_flat / instructions_flat (WPRM flat uid/group/type format,
+    OR plain-string arrays) into the grouped 'ingredients' / 'instructions' format
+    that the WPRM REST API endpoint /wp-json/wp/v2/wprm_recipe requires.
+    """
+    # ── ingredients ───────────────────────────────────────────────────────────
+    flat_ing = data.pop("ingredients_flat", None)
+    if flat_ing and not data.get("ingredients"):
+        groups: list = []
+        current: dict = {"name": "", "ingredients": []}
+        for item in (flat_ing if isinstance(flat_ing, list) else []):
+            if isinstance(item, dict):
+                t = item.get("type", "")
+                if t == "group":
+                    if current["ingredients"]:
+                        groups.append(current)
+                    current = {"name": item.get("name", ""), "ingredients": []}
+                elif t == "ingredient":
+                    current["ingredients"].append({
+                        "amount": str(item.get("amount", "")),
+                        "unit": str(item.get("unit", "")),
+                        "name": str(item.get("name", "")),
+                        "notes": str(item.get("notes", "")),
+                    })
+            elif isinstance(item, str) and item.strip():
+                # Fallback: plain string — parse "1 cup flour" loosely
+                current["ingredients"].append({"amount": "", "unit": "", "name": item.strip(), "notes": ""})
+        if current["ingredients"]:
+            groups.append(current)
+        if groups:
+            data["ingredients"] = groups
+
+    # ── instructions ──────────────────────────────────────────────────────────
+    flat_ins = data.pop("instructions_flat", None)
+    if flat_ins and not data.get("instructions"):
+        groups = []
+        current = {"name": "", "instructions": []}
+        for item in (flat_ins if isinstance(flat_ins, list) else []):
+            if isinstance(item, dict):
+                t = item.get("type", "")
+                if t == "group":
+                    if current["instructions"]:
+                        groups.append(current)
+                    current = {"name": item.get("name", ""), "instructions": []}
+                elif t == "instruction":
+                    current["instructions"].append({"name": "", "text": str(item.get("text", ""))})
+            elif isinstance(item, str) and item.strip():
+                current["instructions"].append({"name": "", "text": item.strip()})
+        if current["instructions"]:
+            groups.append(current)
+        if groups:
+            data["instructions"] = groups
+
+    # ── nutrition: strip unit strings → keep only numeric part ───────────────
+    nutrition = data.get("nutrition", {})
+    if isinstance(nutrition, dict):
+        for key, val in nutrition.items():
+            if isinstance(val, str) and val.strip():
+                # Extract leading number from strings like "350 kcal", "50 g"
+                import re as _re
+                m = _re.match(r"^\s*([\d.]+)", val)
+                nutrition[key] = m.group(1) if m else val
+        data["nutrition"] = nutrition
+
+    return data
+
+
 def add_recipe(
     recipe_data: dict,
     site_config: dict,
@@ -247,6 +315,9 @@ def add_recipe(
         api_url = site_config["wp_url"].replace("xmlrpc.php", "wp-json/wp/v2/wprm_recipe")
         token = base64.b64encode(f"{site_config['wp_username']}:{site_config['wp_password']}".encode()).decode()
         headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
+
+        # Normalize flat format → grouped format that WPRM REST API expects
+        recipe_data = _normalize_recipe_for_wprm(recipe_data)
 
         if image_url:
             recipe_data["image_url"] = image_url
