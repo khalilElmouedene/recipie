@@ -23,8 +23,12 @@ export default function PinDesignerPage() {
 
   const targetRecipe = recipeId ? recipes.find((r) => r.id === recipeId) : recipes[0];
   const allImages: string[] = [];
-  // Collect generated images (4 Midjourney variants) from all recipes for Choose Image
-  recipes.forEach((recipe) => {
+
+  // If opened from a specific recipe, only show that recipe's images.
+  // If opened from the site-level Pin Designer button (no recipeId), show all recipes' images.
+  const imageSources = recipeId ? recipes.filter((r) => r.id === recipeId) : recipes;
+
+  imageSources.forEach((recipe) => {
     if (recipe.generated_images) {
       try {
         const arr = JSON.parse(recipe.generated_images);
@@ -36,7 +40,7 @@ export default function PinDesignerPage() {
       } catch {}
     }
   });
-  // Add image_url from target recipe (or first) as fallback
+  // Add image_url from target recipe as fallback
   if (targetRecipe?.image_url && !allImages.includes(targetRecipe.image_url)) {
     allImages.push(targetRecipe.image_url);
   }

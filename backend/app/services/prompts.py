@@ -49,28 +49,64 @@ Write the complete article now with all sections fully developed.""",
         "description": "System message for recipe JSON generation",
     },
     "recipe_json_user": {
-        "value": """Generate a complete recipe for "{full_recipe}" that can be directly imported into WP Recipe Maker plugin.
+        "value": """Generate a complete recipe for "{full_recipe}" that can be directly imported into WP Recipe Maker plugin via REST API.
 
-Structure the response as a valid JSON object with these required fields:
+Return ONLY valid JSON matching this exact structure (no markdown, no commentary):
 {{
-    "type": "wprm_recipe",
-    "name": "The full recipe title",
-    "summary": "A brief 1-2 sentence description of the recipe",
+    "name": "Full recipe title",
+    "summary": "2-sentence enticing description of the recipe",
     "author": {{"id": 1, "name": ""}},
     "servings": 4,
     "servings_unit": "servings",
-    "prep_time": 15,
-    "cook_time": 30,
-    "total_time": 45,
-    "tags": {{"course": ["Main Course"], "cuisine": ["American"], "keyword": ["easy", "quick", "delicious"]}},
-    "equipment": [{{"name": "Mixing Bowl"}}, {{"name": "Baking Sheet"}}],
-    "ingredients_flat": [...],
-    "instructions_flat": [...],
-    "nutrition": {{"calories": "350 kcal", ...}},
-    "notes": "Any additional tips or variations"
+    "prep_time": 10,
+    "cook_time": 20,
+    "total_time": 30,
+    "tags": {{
+        "course": ["Dessert"],
+        "cuisine": ["American"],
+        "keyword": ["recipe-specific-keyword1", "recipe-specific-keyword2", "recipe-specific-keyword3", "recipe-specific-keyword4"]
+    }},
+    "equipment": [{{"name": "Equipment Name"}}],
+    "ingredients": [
+        {{
+            "name": "",
+            "ingredients": [
+                {{"amount": "1/2", "unit": "cup", "name": "ingredient name", "notes": "optional note"}},
+                {{"amount": "2", "unit": "tablespoons", "name": "ingredient name", "notes": ""}},
+                {{"amount": "", "unit": "", "name": "ingredient name", "notes": ""}}
+            ]
+        }}
+    ],
+    "instructions": [
+        {{
+            "name": "",
+            "instructions": [
+                {{"name": "", "text": "First step instruction text."}},
+                {{"name": "", "text": "Second step instruction text."}},
+                {{"name": "", "text": "Third step instruction text."}}
+            ]
+        }}
+    ],
+    "nutrition": {{
+        "calories": 350,
+        "carbohydrates": 50,
+        "protein": 5,
+        "fat": 15,
+        "saturated_fat": 9,
+        "cholesterol": 45,
+        "sodium": 80,
+        "fiber": 3,
+        "sugar": 40
+    }},
+    "notes": "Tips, substitutions, and variations for this recipe."
 }}
 
-Create a detailed, realistic recipe easy to rank google seo with at least 6-10 ingredients, 5-8 instruction steps. Return ONLY the valid JSON, no commentary.""",
+Rules:
+- Use at least 6-10 ingredients with realistic amounts and units
+- Write 5-8 detailed instruction steps
+- All nutrition values must be plain numbers (no units, no strings)
+- Keywords must be recipe-specific (ingredient names, cooking method, occasion)
+- Return ONLY the JSON object, nothing else""",
         "description": "Recipe JSON - placeholder: {full_recipe}",
     },
     "meta_description_system": {

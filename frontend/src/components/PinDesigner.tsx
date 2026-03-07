@@ -431,6 +431,7 @@ export default function PinDesigner({
   const undoHistoryRef = useRef<{ json: string; selectedId: string | null }[]>([]);
   const isRestoringRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
+  const activeObjRef = useRef<any>(null);
   const transformSaveDoneRef = useRef(false);
 
   // ── Zustand store ───────────────────────────────────────────────────────
@@ -457,6 +458,7 @@ export default function PinDesigner({
   const [pinterestConnected, setPinterestConnected] = useState(false);
   const [pinterestBoards, setPinterestBoards] = useState<{ id: string; name: string }[]>([]);
   const [showPublishModal, setShowPublishModal] = useState(false);
+  const [pinSuccessUrl, setPinSuccessUrl] = useState<string | null>(null);
   const [selectedBoard, setSelectedBoard] = useState("");
   const [pinTitle, setPinTitle] = useState(initialTitle);
   const [pinDescription, setPinDescription] = useState("");
@@ -553,8 +555,8 @@ export default function PinDesigner({
       });
       const data = await res.json();
       if (data.success) {
-        alert(`Pin created! ${data.pin_url}`);
         setShowPublishModal(false);
+        setPinSuccessUrl(data.pin_url || null);
       } else {
         alert(`Failed: ${data.error}`);
       }
@@ -637,6 +639,7 @@ export default function PinDesigner({
   const syncSelectionFromObject = useCallback((obj: any) => {
     if (!obj?.__pinId) return;
     selectedIdRef.current = obj.__pinId;
+    activeObjRef.current = obj;
     setSelectedId(obj.__pinId);
 
     if (obj.__pinType === "text") {
@@ -821,8 +824,11 @@ export default function PinDesigner({
     const active = canvas.getActiveObject();
     if (active && (active as any).__pinId) return active as any;
     if ((active as any)?._objects?.length === 1) return (active as any)._objects[0];
-    if (selectedId) {
-      const obj = canvas.getObjects().find((o: any) => o.__pinId === selectedId);
+    // Ref-tracked object is always up-to-date (set synchronously in syncSelectionFromObject)
+    if (activeObjRef.current?.__pinId) return activeObjRef.current;
+    const currentId = selectedIdRef.current || selectedId;
+    if (currentId) {
+      const obj = canvas.getObjects().find((o: any) => o.__pinId === currentId);
       if (obj) return obj;
     }
     return null;
@@ -1077,6 +1083,7 @@ export default function PinDesigner({
         canvas.on("selection:cleared", () => {
           if (isRestoringRef.current) return;
           selectedIdRef.current = null;
+          activeObjRef.current = null;
           setSelectedId(null);
           setTextProps({ editText: "" });
           setToolbarPos(null);
@@ -1365,6 +1372,8 @@ export default function PinDesigner({
     if (!canvas || !obj || obj.__pinType !== "text") return;
     saveUndoState();
     obj.set("text", textProps.editText);
+    if (typeof obj.initDimensions === "function") obj.initDimensions();
+    obj.setCoords();
     canvas.renderAll();
   };
 
@@ -1373,8 +1382,12 @@ export default function PinDesigner({
     const obj = getSelectedObject();
     if (!canvas || !obj || obj.__pinType !== "text") return;
     saveUndoState();
-    obj.set(property === "fill" ? "fill" : property, property === "fontSize" ? parseInt(value) : value);
-    setTextProps({ [property === "fill" ? "textColor" : property]: property === "fontSize" ? parseInt(value) : value });
+    const propName = property === "fill" ? "fill" : property;
+    const propValue = property === "fontSize" ? parseInt(value) : value;
+    obj.set(propName, propValue);
+    if (typeof obj.initDimensions === "function") obj.initDimensions();
+    obj.setCoords();
+    setTextProps({ [property === "fill" ? "textColor" : property]: propValue });
     canvas.renderAll();
   };
 
@@ -1912,6 +1925,37 @@ export default function PinDesigner({
                 {publishing ? "Publishing..." : "Publish Pin"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Pinterest Publish Success Modal ───────────────────────────────── */}
+      {pinSuccessUrl !== null && (
+        <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center">
+          <div className="bg-gray-900 rounded-xl p-6 w-full max-w-sm text-center">
+            <div className="w-14 h-14 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-4">
+              <svg className="w-7 h-7 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-bold text-white mb-1">Pin Published!</h3>
+            <p className="text-sm text-gray-400 mb-4">Your pin was successfully published to Pinterest.</p>
+            {pinSuccessUrl && (
+              <a
+                href={pinSuccessUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block w-full py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium mb-2"
+              >
+                View on Pinterest
+              </a>
+            )}
+            <button
+              onClick={() => setPinSuccessUrl(null)}
+              className="w-full py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white text-sm"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
