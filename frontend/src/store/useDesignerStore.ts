@@ -40,6 +40,13 @@ export interface ImageProps {
   angle: number;
 }
 
+export interface ShapeProps {
+  fill: string;
+  strokeColor: string;
+  strokeWidth: number;
+  opacity: number;
+}
+
 interface DesignerState {
   // Selection
   selectedId: string | null;
@@ -76,6 +83,10 @@ interface DesignerState {
   // Image transform state
   imageProps: ImageProps;
   setImageProps: (props: Partial<ImageProps>) => void;
+
+  // Shape state
+  shapeProps: ShapeProps;
+  setShapeProps: (props: Partial<ShapeProps>) => void;
 
   // Floating toolbar position (screen coords)
   toolbarPos: { x: number; y: number } | null;
@@ -129,6 +140,10 @@ export const useDesignerStore = create<DesignerState>()(
     imageProps: { left: 0, top: 0, width: 0, height: 0, angle: 0 },
     setImageProps: (props) =>
       set((s) => ({ imageProps: { ...s.imageProps, ...props } })),
+
+    shapeProps: { fill: "#6366f1", strokeColor: "#333333", strokeWidth: 0, opacity: 100 },
+    setShapeProps: (props) =>
+      set((s) => ({ shapeProps: { ...s.shapeProps, ...props } })),
 
     toolbarPos: null,
     setToolbarPos: (pos) => set({ toolbarPos: pos }),

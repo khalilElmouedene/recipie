@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   X, Download, ZoomIn, ZoomOut, Layers, LayoutTemplate, Grid3X3,
   Type, Upload, Image as ImageIcon, Minus, Trash2, Square,
@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useDesignerStore } from "@/store/useDesignerStore";
-import type { StrokeStyle } from "@/store/useDesignerStore";
+import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
@@ -444,6 +444,7 @@ export default function PinDesigner({
     bandProps, setBandProps,
     frameProps, setFrameProps,
     imageProps, setImageProps,
+    shapeProps, setShapeProps,
     toolbarPos, setToolbarPos,
     resetStore,
   } = useDesignerStore();
@@ -670,10 +671,18 @@ export default function PinDesigner({
         height: Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)),
         angle: Math.round(obj.angle ?? 0),
       });
+    } else if (obj.__pinType === "shape") {
+      const fill = typeof obj.fill === "string" ? obj.fill : "#6366f1";
+      setShapeProps({
+        fill,
+        strokeColor: obj.stroke ?? "#333333",
+        strokeWidth: obj.strokeWidth ?? 0,
+        opacity: Math.round((obj.opacity ?? 1) * 100),
+      });
     }
 
     recalcToolbarPos(obj);
-  }, [setSelectedId, setTextProps, setBandProps, setFrameProps, setImageProps, recalcToolbarPos]);
+  }, [setSelectedId, setTextProps, setBandProps, setFrameProps, setImageProps, setShapeProps, recalcToolbarPos]);
 
   // ── Undo ─────────────────────────────────────────────────────────────────
 
@@ -1531,6 +1540,95 @@ export default function PinDesigner({
     syncSelectionFromObject(frame);
   };
 
+  // ── Shape ─────────────────────────────────────────────────────────────────
+
+  const addShape = (shapeType: string) => {
+    const fabric = fabricLibRef.current;
+    const canvas = fabricCanvasRef.current;
+    if (!fabric || !canvas) return;
+    saveUndoState();
+    const id = `shape_${Date.now()}`;
+    const cx = PIN_W / 2;
+    const cy = PIN_H / 2;
+    const fill = shapeProps.fill;
+    let obj: any;
+
+    if (shapeType === "rect") {
+      obj = new fabric.Rect({ left: cx, top: cy, width: 400, height: 200, fill, strokeWidth: 0, originX: "center", originY: "center" });
+    } else if (shapeType === "rect-rounded") {
+      obj = new fabric.Rect({ left: cx, top: cy, width: 400, height: 200, rx: 40, ry: 40, fill, strokeWidth: 0, originX: "center", originY: "center" });
+    } else if (shapeType === "circle") {
+      obj = new fabric.Circle({ left: cx, top: cy, radius: 150, fill, strokeWidth: 0, originX: "center", originY: "center" });
+    } else if (shapeType === "ellipse") {
+      obj = new fabric.Ellipse({ left: cx, top: cy, rx: 220, ry: 130, fill, strokeWidth: 0, originX: "center", originY: "center" });
+    } else if (shapeType === "triangle") {
+      obj = new fabric.Triangle({ left: cx, top: cy, width: 300, height: 280, fill, strokeWidth: 0, originX: "center", originY: "center" });
+    } else if (shapeType === "line") {
+      obj = new fabric.Line([cx - 300, cy, cx + 300, cy], { stroke: fill, strokeWidth: 6, strokeLineCap: "round", selectable: true });
+    } else if (shapeType === "star") {
+      const pts: { x: number; y: number }[] = [];
+      for (let i = 0; i < 10; i++) {
+        const angle = (i * Math.PI) / 5 - Math.PI / 2;
+        const r = i % 2 === 0 ? 160 : 70;
+        pts.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+      }
+      obj = new fabric.Polygon(pts, { fill, strokeWidth: 0, originX: "center", originY: "center" });
+    } else if (shapeType === "diamond") {
+      obj = new fabric.Polygon(
+        [{ x: cx, y: cy - 180 }, { x: cx + 200, y: cy }, { x: cx, y: cy + 180 }, { x: cx - 200, y: cy }],
+        { fill, strokeWidth: 0, originX: "center", originY: "center" }
+      );
+    } else if (shapeType === "hexagon") {
+      const pts: { x: number; y: number }[] = [];
+      for (let i = 0; i < 6; i++) {
+        const angle = (i * Math.PI) / 3 - Math.PI / 6;
+        pts.push({ x: cx + 170 * Math.cos(angle), y: cy + 170 * Math.sin(angle) });
+      }
+      obj = new fabric.Polygon(pts, { fill, strokeWidth: 0, originX: "center", originY: "center" });
+    } else if (shapeType === "heart") {
+      // SVG heart path centered at 0,0 scaled to ~300px
+      obj = new fabric.Path(
+        "M 0,-80 C 0,-160 -160,-160 -160,-60 C -160,30 0,120 0,160 C 0,120 160,30 160,-60 C 160,-160 0,-160 0,-80 Z",
+        { left: cx, top: cy, fill, strokeWidth: 0, originX: "center", originY: "center" }
+      );
+    } else {
+      return;
+    }
+
+    obj.__pinId = id;
+    obj.__pinLabel = shapeType.charAt(0).toUpperCase() + shapeType.slice(1);
+    obj.__pinType = "shape";
+    obj.__shapeType = shapeType;
+    canvas.add(obj);
+    canvas.setActiveObject(obj);
+    canvas.renderAll();
+    updateLayers();
+    syncSelectionFromObject(obj);
+  };
+
+  const updateShapeProperty = (property: keyof ShapeProps, value: any) => {
+    const canvas = fabricCanvasRef.current;
+    const obj = getSelectedObject();
+    if (!canvas || !obj || obj.__pinType !== "shape") return;
+    saveUndoState();
+    if (property === "fill") {
+      obj.set("fill", value);
+      if (obj.type === "line") obj.set("stroke", value);
+      setShapeProps({ fill: value });
+    } else if (property === "strokeColor") {
+      if (obj.type !== "line") obj.set("stroke", value);
+      setShapeProps({ strokeColor: value });
+    } else if (property === "strokeWidth") {
+      if (obj.type !== "line") obj.set("strokeWidth", parseInt(value));
+      setShapeProps({ strokeWidth: parseInt(value) });
+    } else if (property === "opacity") {
+      obj.set("opacity", parseInt(value) / 100);
+      setShapeProps({ opacity: parseInt(value) });
+    }
+    obj.setCoords();
+    canvas.renderAll();
+  };
+
   // ── Image ─────────────────────────────────────────────────────────────────
 
   const applyImage = (imageUrl: string) => {
@@ -1834,6 +1932,20 @@ export default function PinDesigner({
             </>
           )}
 
+          {/* Shape-specific */}
+          {selectedType === "shape" && (
+            <>
+              <input
+                type="color"
+                value={shapeProps.fill}
+                onChange={(e) => updateShapeProperty("fill", e.target.value)}
+                className="w-6 h-6 rounded cursor-pointer border border-gray-600 bg-transparent"
+                title="Shape color"
+              />
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
+            </>
+          )}
+
           {/* Delete */}
           <button
             onClick={deleteSelectedElement}
@@ -2010,6 +2122,35 @@ export default function PinDesigner({
                     </button>
                   </div>
                 </div>
+
+                {/* ── Shapes ───────────────────────────────────────────── */}
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Shapes</p>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {([
+                      { type: "rect", label: "Rect", svg: <rect x="3" y="7" width="18" height="10" rx="0" fill="currentColor"/> },
+                      { type: "rect-rounded", label: "Round", svg: <rect x="3" y="7" width="18" height="10" rx="4" fill="currentColor"/> },
+                      { type: "circle", label: "Circle", svg: <circle cx="12" cy="12" r="9" fill="currentColor"/> },
+                      { type: "ellipse", label: "Ellipse", svg: <ellipse cx="12" cy="12" rx="10" ry="6" fill="currentColor"/> },
+                      { type: "triangle", label: "Tri", svg: <polygon points="12,3 22,21 2,21" fill="currentColor"/> },
+                      { type: "diamond", label: "Diamond", svg: <polygon points="12,2 22,12 12,22 2,12" fill="currentColor"/> },
+                      { type: "star", label: "Star", svg: <polygon points="12,2 15,9 22,9 16,14 18,21 12,17 6,21 8,14 2,9 9,9" fill="currentColor"/> },
+                      { type: "hexagon", label: "Hex", svg: <polygon points="12,2 21,7 21,17 12,22 3,17 3,7" fill="currentColor"/> },
+                      { type: "heart", label: "Heart", svg: <path d="M12 21C12 21 3 14 3 8a4 4 0 0 1 8-1 4 4 0 0 1 8 1c0 6-9 13-9 13z" fill="currentColor"/> },
+                      { type: "line", label: "Line", svg: <line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="3" strokeLinecap="round" fill="none"/> },
+                    ] as { type: string; label: string; svg: React.ReactNode }[]).map(({ type, label, svg }) => (
+                      <button
+                        key={type}
+                        onClick={() => addShape(type)}
+                        title={label}
+                        className="flex flex-col items-center gap-1 p-2 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition"
+                      >
+                        <svg viewBox="0 0 24 24" className="w-6 h-6 text-gray-300">{svg}</svg>
+                        <span className="text-[9px] text-gray-500">{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div>
                   <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Canvas Size</p>
                   <div className="flex gap-2">
@@ -2126,7 +2267,7 @@ export default function PinDesigner({
                 <div>
                   <p className="text-sm font-medium text-white">{selectedElement.label}</p>
                   <p className="text-xs text-gray-500">
-                    {selectedType === "image" ? "Image slot" : selectedType === "band" ? "Color band" : selectedType === "frame" ? "Border frame" : "Text element"}
+                    {selectedType === "image" ? "Image slot" : selectedType === "band" ? "Color band" : selectedType === "frame" ? "Border frame" : selectedType === "shape" ? "Shape" : "Text element"}
                   </p>
                 </div>
                 <button onClick={deleteSelectedElement} className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition" title="Delete (Del)">
@@ -2392,6 +2533,47 @@ export default function PinDesigner({
                       ))}
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* ── Shape Properties ─────────────────────────────────────── */}
+              {selectedType === "shape" && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Fill Color</label>
+                    <div className="flex gap-2 items-center">
+                      <input type="color" value={shapeProps.fill} onChange={(e) => updateShapeProperty("fill", e.target.value)} className="w-10 h-8 rounded border border-gray-600 cursor-pointer bg-transparent" />
+                      <input type="text" value={shapeProps.fill} onChange={(e) => updateShapeProperty("fill", e.target.value)} className="input-field text-sm flex-1" placeholder="#6366f1" />
+                    </div>
+                    <div className="flex gap-1 flex-wrap mt-2">
+                      {["#ffffff", "#000000", "#6366f1", "#e63946", "#f4a261", "#2a9d8f", "#1565c0", "#f1c40f", "#9b59b6", "#2d3436", "#ffecd2", "#ffd4d4"].map((c) => (
+                        <button key={c} onClick={() => updateShapeProperty("fill", c)} className={`w-6 h-6 rounded border-2 ${shapeProps.fill === c ? "border-brand-500" : "border-gray-600"}`} style={{ backgroundColor: c }} />
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Opacity</label>
+                    <div className="flex gap-2 items-center">
+                      <input type="range" min="10" max="100" step="5" value={shapeProps.opacity} onChange={(e) => updateShapeProperty("opacity", e.target.value)} className="flex-1" />
+                      <span className="text-sm text-gray-300 w-10">{shapeProps.opacity}%</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Border Width</label>
+                    <div className="flex gap-2 items-center">
+                      <input type="range" min="0" max="20" value={shapeProps.strokeWidth} onChange={(e) => updateShapeProperty("strokeWidth", e.target.value)} className="flex-1" />
+                      <span className="text-sm text-gray-300 w-8">{shapeProps.strokeWidth}px</span>
+                    </div>
+                  </div>
+                  {shapeProps.strokeWidth > 0 && (
+                    <div>
+                      <label className="text-[10px] text-gray-500 block mb-1">Border Color</label>
+                      <div className="flex gap-2 items-center">
+                        <input type="color" value={shapeProps.strokeColor} onChange={(e) => updateShapeProperty("strokeColor", e.target.value)} className="w-10 h-8 rounded border border-gray-600 cursor-pointer bg-transparent" />
+                        <input type="text" value={shapeProps.strokeColor} onChange={(e) => updateShapeProperty("strokeColor", e.target.value)} className="input-field text-sm flex-1" placeholder="#333333" />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
