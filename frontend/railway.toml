@@ -1,0 +1,9 @@
+[build]
+dockerfilePath = "Dockerfile"
+# NEXT_PUBLIC_API_URL must also be set as an env var in Railway dashboard.
+# Railway automatically passes matching env vars as Docker build args.
+
+[deploy]
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
