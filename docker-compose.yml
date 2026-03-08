@@ -4,7 +4,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: recipebot
     ports:
       - "5432:5432"
@@ -17,17 +17,18 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/recipebot
-      JWT_SECRET_KEY: change-me-to-a-random-secret
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/recipebot
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_ALGORITHM: HS256
       JWT_EXPIRE_MINUTES: "1440"
-      # Required for storing/reading project credentials (OpenAI, Discord, etc.). Same key used by seed.
-      ENCRYPTION_KEY: L57_9ksKmrCJ7Prht4FFOVWL7PaVqGAFhWkaRmj6qQY=
-      CORS_ORIGINS: http://localhost:3000
-      # Optional fallback: create .env with OPENAI_API_KEY=sk-your-key (used when Paramètres save fails)
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      APP_ENV: ${APP_ENV:-production}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      PINTEREST_CLIENT_ID: ${PINTEREST_CLIENT_ID:-}
+      PINTEREST_CLIENT_SECRET: ${PINTEREST_CLIENT_SECRET:-}
+      PINTEREST_REDIRECT_URI: ${PINTEREST_REDIRECT_URI:-http://localhost:3000/pinterest/callback}
     volumes:
-      - .:/workspace:ro
       - uploads_data:/app/uploads
     depends_on:
       - db
@@ -37,11 +38,11 @@ services:
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     depends_on:
       - backend
     restart: unless-stopped

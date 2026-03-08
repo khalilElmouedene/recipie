@@ -218,7 +218,7 @@ async def upload_media_to_wordpress(
             post_url=post_url,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="WordPress operation failed")
 
 
 @router.post("/api/sites/{site_id}/upload-from-url", response_model=MediaUploadResponse)
@@ -284,4 +284,4 @@ async def upload_from_url_to_wordpress(
             post_url=post_url,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="WordPress operation failed")

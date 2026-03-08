@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles, Globe, Square, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { api, SiteOut, RecipeOut, PinterestBoard, PinterestBulkResponse, PinTemplate, BulkGeneratePinsResponse, BulkPinItem, JobOut, getWsUrl } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
+import { sanitizeHtml } from "@/lib/sanitize";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -668,7 +669,7 @@ export default function SiteDetailPage() {
                   {detailTab === "article" && (
                     <div>
                       {r.generated_article ? (
-                        <div className="prose prose-invert prose-sm max-w-none text-sm text-gray-300" dangerouslySetInnerHTML={{ __html: r.generated_article }} />
+                        <div className="prose prose-invert prose-sm max-w-none text-sm text-gray-300" dangerouslySetInnerHTML={{ __html: sanitizeHtml(r.generated_article) }} />
                       ) : r.status === "failed" ? (
                         <div className="text-sm">
                           <p className="text-red-400 font-medium">Generation failed.</p>

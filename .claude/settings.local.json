@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"dangerouslySetInnerHTML\" c:/Users/GAMER/Downloads/Va1/frontend/src/app/projects/[id]/sites/[siteId]/page.tsx)",
+      "Bash(grep -E \"\\\\.\\(toml|yaml|yml\\)$|Procfile\")"
+    ]
+  }
+}

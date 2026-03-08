@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import os
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,7 +45,15 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Recipe Automation Platform", version="2.0.0", lifespan=lifespan)
+_debug = os.getenv("APP_ENV", "production").lower() != "production"
+app = FastAPI(
+    title="Recipe Automation Platform",
+    version="2.0.0",
+    lifespan=lifespan,
+    docs_url="/docs" if _debug else None,
+    redoc_url="/redoc" if _debug else None,
+    openapi_url="/openapi.json" if _debug else None,
+)
 
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(

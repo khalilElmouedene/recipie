@@ -25,19 +25,64 @@ from ..models import (
 
 router = APIRouter(tags=["recipes"])
 
+# Private/reserved IP ranges blocked by the image proxy to prevent SSRF
+_PRIVATE_RANGES = [
+    ("127.0.0.0", "127.255.255.255"),    # Loopback
+    ("169.254.0.0", "169.254.255.255"),  # Link-local / AWS metadata
+    ("10.0.0.0", "10.255.255.255"),      # RFC 1918
+    ("172.16.0.0", "172.31.255.255"),    # RFC 1918
+    ("192.168.0.0", "192.168.255.255"),  # RFC 1918
+    ("0.0.0.0", "0.255.255.255"),        # Reserved
+    ("100.64.0.0", "100.127.255.255"),   # Shared address space
+]
+
+
+def _ip_to_int(ip: str) -> int:
+    import struct, socket
+    return struct.unpack("!I", socket.inet_aton(ip))[0]
+
+
+def _is_safe_url(url: str) -> bool:
+    import socket
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = parsed.hostname or ""
+    if not host:
+        return False
+    try:
+        ip = socket.gethostbyname(host)
+        ip_int = _ip_to_int(ip)
+        for lo, hi in _PRIVATE_RANGES:
+            if _ip_to_int(lo) <= ip_int <= _ip_to_int(hi):
+                return False
+    except Exception:
+        return False  # Fail safe: unresolvable host is unsafe
+    return True
+
 
 @router.get("/api/image-proxy")
-def image_proxy(url: str = Query(...)):
+def image_proxy(
+    url: str = Query(...),
+    _user: Annotated[User, Depends(get_current_user)] = None,
+):
     """Proxy external images (e.g. Discord CDN) to avoid browser CORS restrictions."""
+    if not _is_safe_url(url):
+        raise HTTPException(status_code=400, detail="URL not allowed")
     try:
         r = _requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20, stream=True)
         r.raise_for_status()
         media_type = r.headers.get("content-type", "image/jpeg").split(";")[0]
+        if not media_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="URL is not an image")
         return Response(
             content=r.content,
             media_type=media_type,
-            headers={"Cache-Control": "public, max-age=3600", "Access-Control-Allow-Origin": "*"},
+            headers={"Cache-Control": "public, max-age=3600"},
         )
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=404, detail="Image not available")
 
@@ -277,7 +322,7 @@ async def publish_recipe_article(
     pub_result = publish_recipe(recipe_dict, site_config)
 
     if "error_message" in pub_result:
-        raise HTTPException(status_code=500, detail=pub_result["error_message"])
+        raise HTTPException(status_code=500, detail="Failed to publish article to WordPress")
 
     recipe.wp_post_id = pub_result.get("wp_post_id")
     recipe.wp_permalink = pub_result.get("wp_permalink")

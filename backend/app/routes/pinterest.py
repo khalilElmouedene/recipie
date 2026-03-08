@@ -1,5 +1,6 @@
 from __future__ import annotations
 import secrets
+import time
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,30 @@ router = APIRouter(prefix="/pinterest", tags=["pinterest"])
 PINTEREST_AUTH_URL = "https://www.pinterest.com/oauth/"
 PINTEREST_TOKEN_URL = "https://api.pinterest.com/v5/oauth/token"
 SCOPES = "boards:read,boards:write,pins:read,pins:write,user_accounts:read"
+
+# In-memory store of valid OAuth states — {state: expiry_timestamp}
+# States are valid for 10 minutes; purged on each new auth request.
+_VALID_STATES: dict[str, float] = {}
+_STATE_TTL = 600  # seconds
+
+
+def _issue_state() -> str:
+    """Generate and register a new OAuth state token."""
+    now = time.monotonic()
+    # Purge expired states
+    expired = [k for k, exp in _VALID_STATES.items() if now > exp]
+    for k in expired:
+        del _VALID_STATES[k]
+    state = secrets.token_urlsafe(32)
+    _VALID_STATES[state] = now + _STATE_TTL
+    return state
+
+
+def _consume_state(state: str) -> bool:
+    """Return True and remove the state if it is valid; False otherwise."""
+    now = time.monotonic()
+    exp = _VALID_STATES.pop(state, None)
+    return exp is not None and now <= exp
 
 
 class PinterestAuthUrl(BaseModel):
@@ -66,8 +91,8 @@ async def get_auth_url(
     if not settings.pinterest_client_id:
         raise HTTPException(400, "Pinterest client ID not configured")
     
-    state = secrets.token_urlsafe(32)
-    
+    state = _issue_state()
+
     url = (
         f"{PINTEREST_AUTH_URL}?"
         f"client_id={settings.pinterest_client_id}"
@@ -76,7 +101,7 @@ async def get_auth_url(
         f"&scope={SCOPES}"
         f"&state={state}"
     )
-    
+
     return PinterestAuthUrl(url=url, state=state)
 
 
@@ -87,6 +112,8 @@ async def handle_callback(
     user=Depends(get_current_user),
 ) -> PinterestStatus:
     """Exchange authorization code for access token and store it."""
+    if not _consume_state(data.state):
+        raise HTTPException(400, "Invalid or expired OAuth state — please restart the authorization flow")
     if not settings.pinterest_client_id or not settings.pinterest_client_secret:
         raise HTTPException(400, "Pinterest OAuth not configured")
     
