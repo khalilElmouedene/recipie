@@ -1709,11 +1709,22 @@ export default function PinDesigner({
     if (!fabric || !canvas) return;
     saveUndoState();
     const id = `image_${Date.now()}`;
+
+    // Size the zone to fill the empty space above any existing objects
+    const existingObjs = canvas.getObjects().filter(
+      (o: any) => !o.__isFill && !o.__isLabel
+    );
+    const minTop = existingObjs.length > 0
+      ? Math.min(...existingObjs.map((o: any) => (o.top ?? 0)))
+      : canvas.height ?? 1500;
+    const zoneW = canvas.width ?? 1000;
+    const zoneH = Math.max(200, minTop);
+
     const rect = new fabric.Rect({
-      left: 100,
-      top: 100,
-      width: 300,
-      height: 300,
+      left: 0,
+      top: 0,
+      width: zoneW,
+      height: zoneH,
       fill: "#e0e0e0",
       rx: 0,
       ry: 0,
@@ -1726,9 +1737,9 @@ export default function PinDesigner({
     (rect as any).__pinType = "image";
     canvas.add(rect);
     const label = new fabric.FabricText("Image Zone", {
-      left: 250,
-      top: 250,
-      fontSize: 16,
+      left: zoneW / 2,
+      top: zoneH / 2,
+      fontSize: 24,
       fontFamily: "Arial",
       fill: "#999999",
       originX: "center",
@@ -1979,7 +1990,7 @@ export default function PinDesigner({
               <Save size={16} /> {savingToRecipe ? "Saving..." : "Save to Recipe"}
             </button>
           )}
-          {projectId && (
+          {/* {projectId && (
             pinterestConnected ? (
               <button
                 onClick={() => setShowPublishModal(true)}
@@ -1995,7 +2006,7 @@ export default function PinDesigner({
                 <Send size={16} /> Connect Pinterest
               </button>
             )
-          )}
+          )} */}
           <button onClick={onClose} className="p-2 text-gray-400 hover:text-white">
             <X size={20} />
           </button>

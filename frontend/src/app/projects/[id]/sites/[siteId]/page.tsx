@@ -496,9 +496,9 @@ export default function SiteDetailPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button onClick={handleExport} className="btn-secondary flex items-center gap-2">
+          {/* <button onClick={handleExport} className="btn-secondary flex items-center gap-2">
             <Download size={16} /> CSV
-          </button>
+          </button> */}
           <button onClick={handleExportExcel} className="btn-secondary flex items-center gap-2 border-green-700 text-green-400 hover:text-green-300">
             <Download size={16} /> Excel
           </button>
@@ -508,13 +508,13 @@ export default function SiteDetailPage() {
           >
             <LayoutGrid size={16} /> Pin Designer
           </button>
-          <button
+          {/* <button
             onClick={handleOpenBulk}
             disabled={recipes.filter((r) => r.generated_images).length === 0}
             className="btn-secondary flex items-center gap-2"
           >
             <LayoutGrid size={16} /> Bulk Pins ({recipes.filter((r) => r.generated_images).length})
-          </button>
+          </button> */}
           <button onClick={() => handleRunJob("articles")} disabled={starting || pendingCount === 0} className="btn-primary flex items-center gap-2">
             <Play size={16} /> Generate ({pendingCount})
           </button>
