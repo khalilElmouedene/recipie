@@ -23,7 +23,7 @@ export default function Sidebar() {
     <aside className="flex h-screen w-64 flex-col border-r border-gray-800 bg-gray-900">
       <div className="flex h-16 items-center gap-2 border-b border-gray-800 px-6">
         <div className="h-8 w-8 rounded-lg bg-brand-600 flex items-center justify-center text-white font-bold text-sm">R</div>
-        <span className="text-lg font-bold text-white">RecipeBot</span>
+        <span className="text-lg font-bold text-white">Recipe Generator</span>
       </div>
 
       <nav className="flex-1 space-y-1 px-3 py-4">
