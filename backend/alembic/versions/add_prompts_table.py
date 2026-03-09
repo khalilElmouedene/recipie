@@ -15,6 +15,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    if bind.dialect.has_table(bind, "prompts"):
+        return
     op.create_table(
         "prompts",
         sa.Column("key", sa.String(100), primary_key=True),
