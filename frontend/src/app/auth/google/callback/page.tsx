@@ -1,10 +1,21 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { setToken } from "@/lib/auth";
 
-export default function GoogleCallbackPage() {
+function Spinner() {
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="text-center">
+        <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+        <p className="text-gray-400 text-sm">Signing you in...</p>
+      </div>
+    </div>
+  );
+}
+
+function CallbackHandler() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [error, setError] = useState("");
@@ -39,12 +50,13 @@ export default function GoogleCallbackPage() {
     );
   }
 
+  return <Spinner />;
+}
+
+export default function GoogleCallbackPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center">
-      <div className="text-center">
-        <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
-        <p className="text-gray-400 text-sm">Signing you in...</p>
-      </div>
-    </div>
+    <Suspense fallback={<Spinner />}>
+      <CallbackHandler />
+    </Suspense>
   );
 }
