@@ -1,13 +1,16 @@
-/** In browser: use same-origin (relative URLs) when not on localhost, so production works without rebuild. */
+/** In browser: use NEXT_PUBLIC_API_URL if set, otherwise same-origin (relative URLs) for reverse-proxy setups. */
 export function getApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
   if (typeof window !== "undefined") {
     const origin = window.location.origin;
     if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
-      return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      return "http://localhost:8000";
     }
-    return ""; // Same origin – relative URLs
+    return ""; // Same origin – relative URLs (reverse proxy setup)
   }
-  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  return "http://localhost:8000";
 }
 const API_URL = getApiBaseUrl();
 
