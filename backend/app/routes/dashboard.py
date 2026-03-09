@@ -18,15 +18,16 @@ async def get_dashboard(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    if user.role == UserRole.owner:
-        projects_q = await db.execute(select(Project).order_by(Project.created_at.desc()))
-    else:
-        projects_q = await db.execute(
-            select(Project)
-            .join(ProjectMember, ProjectMember.project_id == Project.id)
-            .where(ProjectMember.user_id == user.id)
-            .order_by(Project.created_at.desc())
+    projects_q = await db.execute(
+        select(Project)
+        .where(
+            (Project.owner_id == user.id) |
+            (Project.id.in_(
+                select(ProjectMember.project_id).where(ProjectMember.user_id == user.id)
+            ))
         )
+        .order_by(Project.created_at.desc())
+    )
 
     projects = projects_q.scalars().all()
 

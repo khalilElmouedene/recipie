@@ -61,10 +61,18 @@ async def check_project_access(
     *,
     require_roles: list[ProjectMemberRole] | None = None,
 ) -> ProjectMemberRole | None:
-    """Return the user's project-level role, or None for owners (who have full access).
-    Raises 403 if the user has no access or doesn't meet required_roles."""
-    if user.role == UserRole.owner:
-        return None
+    """Return the user's project-level role. All users (including owners) must be
+    a member of the project or its owner_id to access it."""
+    from .db_models import Project
+
+    # Allow if the user is the project owner_id
+    project_row = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_row.scalar_one_or_none()
+    if project and project.owner_id == user.id:
+        # Project creator always has admin access
+        if require_roles and ProjectMemberRole.admin not in require_roles:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient project role")
+        return ProjectMemberRole.admin
 
     result = await db.execute(
         select(ProjectMember).where(
