@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { Eye, EyeOff } from "lucide-react";
 import { api } from "@/lib/api";
 import { setToken } from "@/lib/auth";
 
@@ -46,6 +47,7 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const strength = getPasswordStrength(password);
 
@@ -121,14 +123,23 @@ export default function RegisterPage() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => { setPassword(e.target.value); setError(""); }}
-              required
-              className="input-field"
-              placeholder="••••••••"
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => { setPassword(e.target.value); setError(""); }}
+                required
+                className="input-field pr-10"
+                placeholder="••••••••"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-200"
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
             {password.length > 0 && (
               <div className="mt-2">
                 <div className="flex gap-1 mb-1">
