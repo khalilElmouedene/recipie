@@ -1,14 +1,14 @@
 """add google oauth support
 
 Revision ID: add_google_oauth
-Revises: add_prompts_table
+Revises: add_site_wp_users
 Create Date: 2026-03-09
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision: str = "add_google_oauth"
-down_revision = "add_prompts_table"
+down_revision = "add_site_wp_users"
 branch_labels = None
 depends_on = None
 
