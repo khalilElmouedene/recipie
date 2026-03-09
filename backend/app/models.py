@@ -59,6 +59,23 @@ class UserRoleUpdate(BaseModel):
     role: str
 
 
+class ProfileUpdate(BaseModel):
+    full_name: str | None = Field(default=None, min_length=1)
+    current_password: str | None = None
+    new_password: str | None = Field(default=None, min_length=8)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"[0-9]", v):
+            raise ValueError("Password must contain at least one number")
+        return v
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1)
     description: str = ""

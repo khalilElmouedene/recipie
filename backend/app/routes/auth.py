@@ -14,7 +14,7 @@ from ..config import settings
 from ..database import get_db
 from ..db_models import User, UserRole
 from ..dependencies import get_current_user
-from ..models import RegisterRequest, LoginRequest, TokenResponse, UserOut
+from ..models import RegisterRequest, LoginRequest, TokenResponse, UserOut, ProfileUpdate
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -87,6 +87,27 @@ async def login(body: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]
 
 @router.get("/me", response_model=UserOut)
 async def me(current_user: Annotated[User, Depends(get_current_user)]):
+    return current_user
+
+
+@router.patch("/me", response_model=UserOut)
+async def update_me(
+    body: ProfileUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    if body.full_name is not None:
+        current_user.full_name = body.full_name
+
+    if body.new_password is not None:
+        if not body.current_password:
+            raise HTTPException(status_code=400, detail="Current password is required to set a new password")
+        if not current_user.password_hash or not verify_password(body.current_password, current_user.password_hash):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+        current_user.password_hash = hash_password(body.new_password)
+
+    await db.commit()
+    await db.refresh(current_user)
     return current_user
 
 
