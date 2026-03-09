@@ -24,6 +24,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       APP_ENV: ${APP_ENV:-production}
+      SERVER_BASE_URL: ${SERVER_BASE_URL:-http://localhost:8000}
       PINTEREST_CLIENT_ID: ${PINTEREST_CLIENT_ID:-}
       PINTEREST_CLIENT_SECRET: ${PINTEREST_CLIENT_SECRET:-}
       PINTEREST_REDIRECT_URI: ${PINTEREST_REDIRECT_URI:-http://localhost:3000/pinterest/callback}
