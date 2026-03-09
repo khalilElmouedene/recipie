@@ -41,9 +41,29 @@ def generate_with_openai(prompt: str, api_key: str, max_retries: int = 3, log: C
     return f"Error: Failed after {max_retries} attempts"
 
 
-def generate_article(recipe_title: str, full_recipe: str, external_links: str, internal_links: list[str], api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+def generate_article(recipe_title: str, full_recipe: str, external_links: str, internal_links: list[str], api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None, site_domain: str = "") -> str:
     tpl = get_prompt(prompts or {}, "article")
-    prompt = tpl.format(recipe_title=recipe_title, full_recipe=full_recipe, external_links=external_links or "", internal_links=", ".join(internal_links) if internal_links else "")
+    if internal_links:
+        links_instruction = (
+            f"Add 5-7 internal links using ONLY the URLs from this list "
+            f"(pick the most relevant ones and use natural anchor text): {', '.join(internal_links)}"
+        )
+    else:
+        base = site_domain.rstrip("/") if site_domain else "https://yoursite.com"
+        if not base.startswith(("http://", "https://")):
+            base = "https://" + base
+        links_instruction = (
+            f"Add 3-5 internal links to relevant pages on the site '{base}'. "
+            f"Build logical URLs like {base}/category/breakfast/, {base}/category/dinner/, "
+            f"{base}/category/dessert/, {base}/recipes/, or {base}/. "
+            f"Use natural anchor text that fits the sentence."
+        )
+    prompt = tpl.format(
+        recipe_title=recipe_title,
+        full_recipe=full_recipe,
+        external_links=external_links or "",
+        internal_links=links_instruction,
+    )
     result = generate_with_openai(prompt, api_key, log=log)
     result = re.sub(r'```html\s*', '', result)
     result = re.sub(r'\s*```', '', result)

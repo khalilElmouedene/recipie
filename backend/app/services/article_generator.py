@@ -171,7 +171,7 @@ def generate_for_recipe(
         _log("Generating article HTML...")
         internal_links = get_sitemap_links(site_domain)
         _log(f"Found {len(internal_links)} internal links from sitemap")
-        article = openai_service.generate_article(recipe_title, full_recipe, "", internal_links, openai_key, prompts=prompts, log=_log)
+        article = openai_service.generate_article(recipe_title, full_recipe, "", internal_links, openai_key, prompts=prompts, log=_log, site_domain=site_domain)
         result["generated_article"] = article
 
         # 5. Meta description
