@@ -1,7 +1,6 @@
 from __future__ import annotations
 import asyncio
 import logging
-import os
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -83,8 +82,6 @@ class JobManager:
         # Use same db session as request - same pattern as Paramètres/Settings API
         credentials = await load_credentials_for_job(db, project_id, db_job.created_by)
 
-        if not credentials.get("openai") and os.environ.get("OPENAI_API_KEY"):
-            credentials["openai"] = os.environ["OPENAI_API_KEY"]
         if not credentials.get("openai"):
             logger.warning("No OpenAI key found. Loaded keys: %s", list(credentials.keys()))
 
@@ -199,9 +196,7 @@ class JobManager:
                 if db_job.job_type == JobType.articles:
                     if not credentials.get("openai"):
                         raise ValueError(
-                            "OpenAI API key not found. Make sure to: 1) Go to Paramètres → Clés API, "
-                            "2) Paste your OpenAI key (sk-...), 3) Click Enregistrer (button appears when you type). "
-                            "Or set OPENAI_API_KEY in your environment."
+                            "OpenAI API key not found. Go to Paramètres → Clés API, paste your OpenAI key (sk-...), and click Enregistrer."
                         )
 
                     process_recipes_from_db(
