@@ -8,6 +8,7 @@ interface UserProfile {
   email: string;
   full_name: string;
   role: string;
+  has_password: boolean;
 }
 
 export default function ProfilePage() {
@@ -71,7 +72,7 @@ export default function ProfilePage() {
     e.preventDefault();
     setPwError("");
     setPwSuccess("");
-    if (!currentPassword) {
+    if (profile?.has_password && !currentPassword) {
       setPwError("Enter your current password.");
       return;
     }
@@ -177,24 +178,32 @@ export default function ProfilePage() {
         <h2 className="text-lg font-semibold text-white">Change Password</h2>
 
         <form onSubmit={handlePasswordSave} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">Current Password</label>
-            <div className="relative">
-              <input
-                type={showCurrent ? "text" : "password"}
-                value={currentPassword}
-                onChange={(e) => { setCurrentPassword(e.target.value); setPwError(""); setPwSuccess(""); }}
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-10 text-sm text-white placeholder-gray-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              />
-              <button
-                type="button"
-                onClick={() => setShowCurrent((v) => !v)}
-                className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-200"
-              >
-                {showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
+          {!profile.has_password && (
+            <div className="rounded-lg bg-blue-500/10 border border-blue-500/30 px-3 py-2">
+              <p className="text-sm text-blue-400">You signed up with Google and have no password yet. Set one below to also enable email login.</p>
             </div>
-          </div>
+          )}
+
+          {profile.has_password && (
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Current Password</label>
+              <div className="relative">
+                <input
+                  type={showCurrent ? "text" : "password"}
+                  value={currentPassword}
+                  onChange={(e) => { setCurrentPassword(e.target.value); setPwError(""); setPwSuccess(""); }}
+                  className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 pr-10 text-sm text-white placeholder-gray-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCurrent((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-200"
+                >
+                  {showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">New Password</label>

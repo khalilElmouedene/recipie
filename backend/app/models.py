@@ -43,9 +43,21 @@ class UserOut(BaseModel):
     full_name: str
     role: str
     created_at: datetime
+    has_password: bool = False
 
     class Config:
         from_attributes = True
+
+    @classmethod
+    def from_user(cls, user) -> "UserOut":
+        return cls(
+            id=user.id,
+            email=user.email,
+            full_name=user.full_name,
+            role=user.role.value if hasattr(user.role, "value") else user.role,
+            created_at=user.created_at,
+            has_password=bool(user.password_hash),
+        )
 
 
 class UserCreate(BaseModel):
