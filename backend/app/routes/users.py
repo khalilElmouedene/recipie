@@ -3,7 +3,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, delete as sql_delete
+from sqlalchemy import select, delete as sql_delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import hash_password
@@ -80,8 +80,17 @@ async def delete_user(
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
 
     result = await db.execute(select(User).where(User.id == user_id))
-    if not result.scalar_one_or_none():
+    target = result.scalar_one_or_none()
+    if not target:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Prevent deleting the last owner — the system must always have one
+    if target.role == UserRole.owner:
+        owner_count = await db.scalar(
+            select(func.count()).select_from(User).where(User.role == UserRole.owner)
+        )
+        if owner_count <= 1:
+            raise HTTPException(status_code=400, detail="Cannot delete the last owner of the system")
 
     await db.execute(sql_delete(User).where(User.id == user_id))
     await db.commit()

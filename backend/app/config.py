@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     pinterest_client_secret: str = ""
     pinterest_redirect_uri: str = "http://localhost:3000/pinterest/callback"
 
+    # Google OAuth
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:3000/auth/google/callback"
+
     class Config:
         env_file = str(BASE_DIR / ".env")
         env_file_encoding = "utf-8"

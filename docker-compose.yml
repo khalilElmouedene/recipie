@@ -28,6 +28,9 @@ services:
       PINTEREST_CLIENT_ID: ${PINTEREST_CLIENT_ID:-}
       PINTEREST_CLIENT_SECRET: ${PINTEREST_CLIENT_SECRET:-}
       PINTEREST_REDIRECT_URI: ${PINTEREST_REDIRECT_URI:-http://localhost:3000/pinterest/callback}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:3000/auth/google/callback}
     volumes:
       - uploads_data:/app/uploads
     depends_on:

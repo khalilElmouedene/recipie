@@ -67,6 +67,15 @@ export const api = {
 
   me: () => request<UserOut>("/api/auth/me"),
 
+  googleAuthUrl: () =>
+    request<{ url: string; state: string }>("/api/auth/google/url"),
+
+  googleCallback: (code: string, state: string) =>
+    request<{ access_token: string }>("/api/auth/google/callback", {
+      method: "POST",
+      body: JSON.stringify({ code, state }),
+    }),
+
   // ── Users (Owner) ──────────────────────────────────────
   getUsers: () => request<UserOut[]>("/api/users"),
 
