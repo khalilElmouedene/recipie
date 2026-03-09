@@ -16,6 +16,28 @@ function GoogleIcon() {
   );
 }
 
+function getPasswordStrength(pwd: string): { score: number; label: string; color: string } {
+  if (pwd.length === 0) return { score: 0, label: "", color: "" };
+  let score = 0;
+  if (pwd.length >= 8) score++;
+  if (pwd.length >= 12) score++;
+  if (/[A-Z]/.test(pwd)) score++;
+  if (/[0-9]/.test(pwd)) score++;
+  if (/[^A-Za-z0-9]/.test(pwd)) score++;
+
+  if (score <= 1) return { score, label: "Weak", color: "bg-red-500" };
+  if (score <= 2) return { score, label: "Fair", color: "bg-orange-400" };
+  if (score <= 3) return { score, label: "Good", color: "bg-yellow-400" };
+  return { score, label: "Strong", color: "bg-green-500" };
+}
+
+function validatePassword(pwd: string): string | null {
+  if (pwd.length < 8) return "Password must be at least 8 characters";
+  if (!/[A-Z]/.test(pwd)) return "Password must contain at least one uppercase letter";
+  if (!/[0-9]/.test(pwd)) return "Password must contain at least one number";
+  return null;
+}
+
 export default function RegisterPage() {
   const router = useRouter();
   const [fullName, setFullName] = useState("");
@@ -25,9 +47,18 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
 
+  const strength = getPasswordStrength(password);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      setError(pwdError);
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await api.register(email, password, fullName);
@@ -90,10 +121,43 @@ export default function RegisterPage() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} className="input-field" placeholder="••••••••" />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => { setPassword(e.target.value); setError(""); }}
+              required
+              className="input-field"
+              placeholder="••••••••"
+            />
+            {password.length > 0 && (
+              <div className="mt-2">
+                <div className="flex gap-1 mb-1">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div
+                      key={i}
+                      className={`h-1 flex-1 rounded-full transition-colors ${
+                        strength.score >= i ? strength.color : "bg-gray-700"
+                      }`}
+                    />
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400">
+                  Strength: <span className={
+                    strength.score <= 1 ? "text-red-400" :
+                    strength.score <= 2 ? "text-orange-400" :
+                    strength.score <= 3 ? "text-yellow-400" : "text-green-400"
+                  }>{strength.label}</span>
+                  <span className="ml-2 text-gray-500">— min 8 chars, one uppercase, one number</span>
+                </p>
+              </div>
+            )}
           </div>
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && (
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2">
+              <p className="text-sm text-red-400">{error}</p>
+            </div>
+          )}
 
           <button type="submit" disabled={loading} className="btn-primary w-full">
             {loading ? "Creating account..." : "Create account"}
