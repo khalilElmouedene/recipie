@@ -4,7 +4,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { isLoggedIn } from "@/lib/auth";
 import Sidebar from "./Sidebar";
 
-const PUBLIC = ["/login", "/register"];
+const PUBLIC = ["/login", "/register", "/auth/google/callback"];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
