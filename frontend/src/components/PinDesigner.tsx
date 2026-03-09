@@ -7,7 +7,7 @@ import {
   Send, Save, AlignLeft, AlignCenter,
   AlignRight, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown,
 } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, getApiBaseUrl } from "@/lib/api";
 import { useDesignerStore } from "@/store/useDesignerStore";
 import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 
@@ -415,9 +415,9 @@ export default function PinDesigner({
     if (!url) return url;
     if (url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("/")) return url;
     if (url.startsWith(window.location.origin)) return url;
-    const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    if (url.startsWith(api)) return url;
-    return `${api}/api/image-proxy?url=${encodeURIComponent(url)}`;
+    const apiBase = getApiBaseUrl();
+    if (apiBase && url.startsWith(apiBase)) return url;
+    return `${apiBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
   };
 
   // ── Canvas refs ──────────────────────────────────────────────────────────
@@ -487,7 +487,7 @@ export default function PinDesigner({
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/pinterest/status?project_id=${projectId}`,
+        `${getApiBaseUrl()}/pinterest/status?project_id=${projectId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (res.ok) {
@@ -505,7 +505,7 @@ export default function PinDesigner({
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/pinterest/boards?project_id=${projectId}`,
+        `${getApiBaseUrl()}/pinterest/boards?project_id=${projectId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (res.ok) {
@@ -523,7 +523,7 @@ export default function PinDesigner({
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/pinterest/auth-url?project_id=${projectId}`,
+        `${getApiBaseUrl()}/pinterest/auth-url?project_id=${projectId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (res.ok) {
@@ -542,7 +542,7 @@ export default function PinDesigner({
     setPublishing(true);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/pinterest/create-pin`, {
+      const res = await fetch(`${getApiBaseUrl()}/pinterest/create-pin`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({

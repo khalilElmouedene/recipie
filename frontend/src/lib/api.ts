@@ -1,4 +1,15 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+/** In browser: use same-origin (relative URLs) when not on localhost, so production works without rebuild. */
+export function getApiBaseUrl(): string {
+  if (typeof window !== "undefined") {
+    const origin = window.location.origin;
+    if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
+      return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    }
+    return ""; // Same origin – relative URLs
+  }
+  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+}
+const API_URL = getApiBaseUrl();
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;

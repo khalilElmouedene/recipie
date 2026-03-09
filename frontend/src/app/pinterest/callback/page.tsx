@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
+import { getApiBaseUrl } from "@/lib/api";
 
 export default function PinterestCallbackPage() {
   const searchParams = useSearchParams();
@@ -45,7 +46,7 @@ export default function PinterestCallbackPage() {
     const exchangeCode = async () => {
       try {
         const token = localStorage.getItem("token");
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/pinterest/callback`, {
+        const response = await fetch(`${getApiBaseUrl()}/pinterest/callback`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
