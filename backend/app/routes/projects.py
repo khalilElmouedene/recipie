@@ -56,15 +56,17 @@ async def list_projects(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    if user.role == UserRole.owner:
-        result = await db.execute(select(Project).order_by(Project.created_at.desc()))
-    else:
-        result = await db.execute(
-            select(Project)
-            .join(ProjectMember, ProjectMember.project_id == Project.id)
-            .where(ProjectMember.user_id == user.id)
-            .order_by(Project.created_at.desc())
+    # Every user (including owner) sees only their own projects or ones they're a member of
+    result = await db.execute(
+        select(Project)
+        .where(
+            (Project.owner_id == user.id) |
+            (Project.id.in_(
+                select(ProjectMember.project_id).where(ProjectMember.user_id == user.id)
+            ))
         )
+        .order_by(Project.created_at.desc())
+    )
     projects = result.scalars().all()
     return [await _project_out(p, db) for p in projects]
 
@@ -77,6 +79,10 @@ async def create_project(
 ):
     project = Project(name=body.name, description=body.description, owner_id=owner.id)
     db.add(project)
+    await db.flush()  # get project.id before commit
+    # Auto-add creator as admin member so they always appear in the member list
+    member = ProjectMember(project_id=project.id, user_id=owner.id, role=ProjectMemberRole.admin)
+    db.add(member)
     await db.commit()
     row = await db.execute(select(Project).where(Project.id == project.id))
     created = row.scalar_one()
