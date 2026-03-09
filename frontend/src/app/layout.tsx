@@ -6,7 +6,7 @@ import AppShell from "@/components/AppShell";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "RecipeBot - Automation Platform",
+  title: "Recipe Generator",
   description: "Recipe content generation and publishing automation",
 };
 

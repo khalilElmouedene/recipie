@@ -636,9 +636,9 @@ export default function SiteDetailPage() {
                 {r.generated_article && (
                   <button
                     onClick={(e) => { e.stopPropagation(); handlePublishArticleToWordPress(r); }}
-                    disabled={wpPublishingId === r.id}
-                    className="text-gray-500 hover:text-blue-400 p-1 disabled:opacity-50"
-                    title="Publish article to WordPress"
+                    disabled={wpPublishingId === r.id || r.status === "published"}
+                    className="text-gray-500 hover:text-blue-400 p-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={r.status === "published" ? "Already published to WordPress" : "Publish article to WordPress"}
                   >
                     {wpPublishingId === r.id ? <RefreshCw size={16} className="animate-spin" /> : <Globe size={16} />}
                   </button>
