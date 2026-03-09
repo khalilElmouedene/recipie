@@ -78,7 +78,7 @@ async def set_credentials(
             )
         )
         cred = result.scalar_one_or_none()
-        enc = encrypt(item.value)
+        enc = encrypt(item.value.strip())
         if cred:
             cred.encrypted_value = enc
         else:

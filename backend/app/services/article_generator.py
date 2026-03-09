@@ -138,7 +138,7 @@ def generate_for_recipe(
     _log = log or print
     _stop = should_stop or (lambda: False)
 
-    openai_key = credentials.get("openai", "")
+    openai_key = credentials.get("openai", "").strip()
     recipe_title = recipe_text.splitlines()[0].strip() if recipe_text else "Untitled Recipe"
     result: dict = {}
 
