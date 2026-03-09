@@ -9,4 +9,4 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "python -c 'import asyncio; from app.database import init_db; from app import db_models; asyncio.run(init_db())' && alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8000"]
