@@ -488,18 +488,15 @@ export default function SiteDetailPage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-white">{site.domain}</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold text-white truncate">{site.domain}</h1>
           <p className="text-sm text-gray-400 mt-1">
             {recipes.length} recipes &middot; {pendingCount} pending &middot; {generatedCount} generated &middot; {publishedCount} published
             {failedCount > 0 && <span className="text-red-400"> &middot; {failedCount} failed</span>}
           </p>
         </div>
-        <div className="flex gap-2">
-          {/* <button onClick={handleExport} className="btn-secondary flex items-center gap-2">
-            <Download size={16} /> CSV
-          </button> */}
+        <div className="flex flex-wrap gap-2 flex-shrink-0">
           <button onClick={handleExportExcel} className="btn-secondary flex items-center gap-2 border-green-700 text-green-400 hover:text-green-300">
             <Download size={16} /> Excel
           </button>
@@ -509,13 +506,6 @@ export default function SiteDetailPage() {
           >
             <LayoutGrid size={16} /> Pin Designer
           </button>
-          {/* <button
-            onClick={handleOpenBulk}
-            disabled={recipes.filter((r) => r.generated_images).length === 0}
-            className="btn-secondary flex items-center gap-2"
-          >
-            <LayoutGrid size={16} /> Bulk Pins ({recipes.filter((r) => r.generated_images).length})
-          </button> */}
           <button onClick={() => handleRunJob("articles")} disabled={starting || pendingCount === 0} className="btn-primary flex items-center gap-2">
             <Play size={16} /> Generate ({pendingCount})
           </button>
@@ -564,7 +554,7 @@ export default function SiteDetailPage() {
         {recipes.map((r) => (
           <div key={r.id} className="card p-0 overflow-hidden">
             <div
-              className="flex items-center gap-4 p-4 cursor-pointer hover:bg-gray-800/50 transition"
+              className="flex items-center gap-3 p-4 cursor-pointer hover:bg-gray-800/50 transition"
               onClick={() => { setExpandedId(expandedId === r.id ? null : r.id); setDetailTab("article"); }}
             >
               {r.image_url && (
@@ -599,11 +589,11 @@ export default function SiteDetailPage() {
                     </button>
                   </div>
                 )}
-                <div className="flex items-center gap-2 mt-1">
-                  <span className={`text-xs px-2 py-0.5 rounded ${statusColor[r.status] || ""}`}>{r.status}</span>
-                  {r.focus_keyword && <span className="text-xs text-gray-500">{r.focus_keyword}</span>}
-                  {r.category && <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">{r.category}</span>}
-                  {r.wp_permalink && <a href={r.wp_permalink} target="_blank" rel="noopener noreferrer" className="text-xs text-brand-400 hover:underline" onClick={(e) => e.stopPropagation()}>View post</a>}
+                <div className="flex flex-wrap items-center gap-2 mt-1">
+                  <span className={`text-xs px-2 py-0.5 rounded flex-shrink-0 ${statusColor[r.status] || ""}`}>{r.status}</span>
+                  {r.focus_keyword && <span className="text-xs text-gray-500 truncate max-w-[120px]">{r.focus_keyword}</span>}
+                  {r.category && <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 flex-shrink-0">{r.category}</span>}
+                  {r.wp_permalink && <a href={r.wp_permalink} target="_blank" rel="noopener noreferrer" className="text-xs text-brand-400 hover:underline flex-shrink-0" onClick={(e) => e.stopPropagation()}>View post</a>}
                 </div>
                 {r.error_message && <p className="text-xs text-red-400 mt-1">{r.error_message}</p>}
               </div>

@@ -33,11 +33,11 @@ export default function ProjectDetailPage() {
         <ArrowLeft size={16} /> Back to Projects
       </button>
 
-      <div className="mb-6 flex items-start justify-between">
-        <div>
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-white">{project.name}</h1>
           {project.description && <p className="text-sm text-gray-400 mt-1">{project.description}</p>}
-          <div className="flex gap-6 mt-3 text-sm text-gray-400">
+          <div className="flex flex-wrap gap-4 mt-3 text-sm text-gray-400">
             <span>{project.site_count} sites</span>
             <span>{project.member_count} members</span>
             <span>{project.recipe_count} recipes</span>
@@ -47,7 +47,7 @@ export default function ProjectDetailPage() {
         <button
           onClick={() => window.open(api.getProjectExcelExportUrl(id), "_blank")}
           disabled={project.recipe_count === 0}
-          className="btn-secondary flex items-center gap-2 border-green-700 text-green-400 hover:text-green-300 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="btn-secondary flex items-center gap-2 border-green-700 text-green-400 hover:text-green-300 disabled:opacity-40 disabled:cursor-not-allowed self-start flex-shrink-0"
           title="Export all sites as Excel — same format as V1 Project"
         >
           <Download size={16} /> Export All Excel
@@ -256,7 +256,7 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
           <div key={s.id} className="card flex items-center justify-between">
             <Link href={`/projects/${projectId}/sites/${s.id}`} className="flex-1 min-w-0">
               <h3 className="font-semibold text-white hover:text-brand-400 transition">{s.domain}</h3>
-              <p className="text-sm text-gray-400">{s.wp_url} &middot; {(s as any).wp_users?.length || 1} user(s) &middot; {s.recipe_count} recipes</p>
+              <p className="text-sm text-gray-400 truncate">{s.wp_url} &middot; {(s as any).wp_users?.length || 1} user(s) &middot; {s.recipe_count} recipes</p>
             </Link>
             <div className="flex items-center gap-1 flex-shrink-0">
               <button
