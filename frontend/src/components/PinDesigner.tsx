@@ -6,6 +6,7 @@ import {
   Type, Upload, Image as ImageIcon, Minus, Trash2, Square,
   Send, Save, AlignLeft, AlignCenter,
   AlignRight, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown,
+  PanelLeft, PanelRight, Settings,
 } from "lucide-react";
 import { api, getApiBaseUrl } from "@/lib/api";
 import { useDesignerStore } from "@/store/useDesignerStore";
@@ -466,6 +467,8 @@ export default function PinDesigner({
   const [pinLink, setPinLink] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [savingToRecipe, setSavingToRecipe] = useState(false);
+  const [leftPanelOpen, setLeftPanelOpen] = useState(false);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
 
   // ── Mount ────────────────────────────────────────────────────────────────
   useEffect(() => { setMounted(true); }, []);
@@ -1969,45 +1972,46 @@ export default function PinDesigner({
       )}
 
       {/* ── Header ────────────────────────────────────────────────────────── */}
-      <header className="flex items-center justify-between border-b border-gray-800 px-4 py-2 flex-shrink-0">
-        <span className="font-semibold text-white">Pin Designer</span>
+      <header className="flex items-center gap-2 border-b border-gray-800 px-3 py-2 flex-shrink-0">
+        {/* Mobile panel toggles */}
+        <button
+          onClick={() => { setLeftPanelOpen((v) => !v); setRightPanelOpen(false); }}
+          className="md:hidden p-1.5 text-gray-400 hover:text-white rounded"
+          aria-label="Toggle left panel"
+        >
+          <PanelLeft size={18} />
+        </button>
+
+        <span className="font-semibold text-white whitespace-nowrap">Pin Designer</span>
+
         <input
           value={pinName}
           onChange={(e) => setPinName(e.target.value)}
-          className="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm w-64"
+          className="hidden sm:block bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm flex-1 min-w-0 max-w-xs"
           placeholder="Template name"
         />
-        <div className="flex items-center gap-2">
-          <button onClick={handleExport} className="btn-primary flex items-center gap-2 px-3 py-1.5 text-sm">
-            <Download size={16} /> Export
+
+        <div className="flex items-center gap-1.5 ml-auto">
+          <button onClick={handleExport} className="btn-primary flex items-center gap-1.5 px-2.5 py-1.5 text-sm">
+            <Download size={15} /> <span className="hidden sm:inline">Export</span>
           </button>
           {recipeId && (
             <button
               onClick={handleSaveToRecipe}
               disabled={savingToRecipe || !selectedTemplate}
-              className="btn-primary flex items-center gap-2 px-3 py-1.5 text-sm"
+              className="btn-primary flex items-center gap-1.5 px-2.5 py-1.5 text-sm"
             >
-              <Save size={16} /> {savingToRecipe ? "Saving..." : "Save to Recipe"}
+              <Save size={15} /> <span className="hidden sm:inline">{savingToRecipe ? "Saving..." : "Save"}</span>
             </button>
           )}
-          {/* {projectId && (
-            pinterestConnected ? (
-              <button
-                onClick={() => setShowPublishModal(true)}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition"
-              >
-                <Send size={16} /> Publish to Pinterest
-              </button>
-            ) : (
-              <button
-                onClick={connectPinterest}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition"
-              >
-                <Send size={16} /> Connect Pinterest
-              </button>
-            )
-          )} */}
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-white">
+          <button
+            onClick={() => { setRightPanelOpen((v) => !v); setLeftPanelOpen(false); }}
+            className="md:hidden p-1.5 text-gray-400 hover:text-white rounded"
+            aria-label="Toggle properties panel"
+          >
+            <Settings size={18} />
+          </button>
+          <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-white">
             <X size={20} />
           </button>
         </div>
@@ -2084,11 +2088,25 @@ export default function PinDesigner({
       )}
 
       {/* ── Body ──────────────────────────────────────────────────────────── */}
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-1 min-h-0 relative">
+
+        {/* Mobile backdrop for panels */}
+        {(leftPanelOpen || rightPanelOpen) && (
+          <div
+            className="fixed inset-0 z-[55] bg-black/50 md:hidden"
+            onClick={() => { setLeftPanelOpen(false); setRightPanelOpen(false); }}
+          />
+        )}
 
         {/* ── Left Panel ─────────────────────────────────────────────────── */}
-        <aside className="w-64 border-r border-gray-800 flex flex-col flex-shrink-0">
-          <div className="flex border-b border-gray-800">
+        <aside className={[
+          "w-64 border-r border-gray-800 flex flex-col flex-shrink-0 bg-gray-950",
+          "md:relative md:translate-x-0 md:flex",
+          leftPanelOpen
+            ? "fixed inset-y-0 left-0 z-[60] flex"
+            : "hidden md:flex",
+        ].join(" ")}>
+          <div className="flex items-center border-b border-gray-800">
             {(["elements", "layers", "templates"] as const).map((tab) => {
               const Icon = tab === "elements" ? Grid3X3 : tab === "layers" ? Layers : LayoutTemplate;
               return (
@@ -2101,6 +2119,12 @@ export default function PinDesigner({
                 </button>
               );
             })}
+            <button
+              onClick={() => setLeftPanelOpen(false)}
+              className="md:hidden p-2 text-gray-500 hover:text-white"
+            >
+              <X size={16} />
+            </button>
           </div>
 
           <div className="p-3 overflow-y-auto flex-1">
@@ -2241,7 +2265,7 @@ export default function PinDesigner({
             <span className="text-xs text-gray-600 ml-2">Ctrl+scroll to zoom</span>
           </div>
 
-          <div className="p-8 flex justify-center" style={{ minHeight: `${(PIN_H * zoom) / 100 + 64}px` }}>
+          <div className="p-2 sm:p-8 flex justify-center" style={{ minHeight: `${(PIN_H * zoom) / 100 + 64}px` }}>
             {/* Scaled canvas wrapper — ref used for floating toolbar positioning */}
             <div
               ref={canvasWrapperRef}
@@ -2268,8 +2292,21 @@ export default function PinDesigner({
         </main>
 
         {/* ── Right Panel (Properties) ────────────────────────────────────── */}
-        <aside className="w-72 border-l border-gray-800 p-4 overflow-y-auto flex-shrink-0">
-          <h4 className="text-xs font-semibold text-gray-400 uppercase mb-3">Properties</h4>
+        <aside className={[
+          "w-72 border-l border-gray-800 p-4 overflow-y-auto flex-shrink-0 bg-gray-950",
+          rightPanelOpen
+            ? "fixed inset-y-0 right-0 z-[60] flex flex-col"
+            : "hidden md:block",
+        ].join(" ")}>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-xs font-semibold text-gray-400 uppercase">Properties</h4>
+            <button
+              onClick={() => setRightPanelOpen(false)}
+              className="md:hidden p-1 text-gray-500 hover:text-white"
+            >
+              <X size={16} />
+            </button>
+          </div>
 
           {selectedElement ? (
             <div className="space-y-4">

@@ -378,10 +378,6 @@ export default function SiteDetailPage() {
   };
 
   const handleCreatePins = async (recipeId: string) => {
-    if (!selectedBoard) {
-      alert("Please select a board");
-      return;
-    }
     setPinning(true);
     setPinResult(null);
     try {
@@ -789,22 +785,22 @@ export default function SiteDetailPage() {
 
                               {boardsLoading ? (
                                 <p className="text-gray-400 text-sm">Loading boards...</p>
-                              ) : boards.length === 0 ? (
-                                <p className="text-gray-500 text-sm">No Pinterest boards found. Make sure your Pinterest token is set in project Credentials.</p>
                               ) : (
                                 <>
-                                  <div>
-                                    <label className="text-xs text-gray-400 mb-1 block">Board</label>
-                                    <select
-                                      value={selectedBoard}
-                                      onChange={(e) => setSelectedBoard(e.target.value)}
-                                      className="input-field text-sm"
-                                    >
-                                      {boards.map((b) => (
-                                        <option key={b.id} value={b.id}>{b.name}</option>
-                                      ))}
-                                    </select>
-                                  </div>
+                                  {boards.length > 0 && (
+                                    <div>
+                                      <label className="text-xs text-gray-400 mb-1 block">Board</label>
+                                      <select
+                                        value={selectedBoard}
+                                        onChange={(e) => setSelectedBoard(e.target.value)}
+                                        className="input-field text-sm"
+                                      >
+                                        {boards.map((b) => (
+                                          <option key={b.id} value={b.id}>{b.name}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  )}
                                   <div>
                                     <label className="text-xs text-gray-400 mb-1 block">Pin Title</label>
                                     <input
