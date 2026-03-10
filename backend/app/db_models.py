@@ -60,6 +60,7 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
     role: Mapped[UserRole] = mapped_column(SAEnum(UserRole, name="user_role"), nullable=False, default=UserRole.member)
     google_id: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True, index=True)
+    created_by_owner_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     owned_projects: Mapped[list[Project]] = relationship(back_populates="owner", cascade="all, delete-orphan")
@@ -79,10 +80,13 @@ class PasswordSetupToken(Base):
 
 
 class Prompt(Base):
-    """Configurable prompts for AI generation (app-wide)."""
+    """Configurable prompts for AI generation (per owner)."""
     __tablename__ = "prompts"
+    __table_args__ = (UniqueConstraint("owner_id", "key", name="uq_owner_prompt_key"),)
 
-    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
     value: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

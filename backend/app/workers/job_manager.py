@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db_models import (
     Job as JobModel, JobLog, JobStatus, JobType,
-    Site, Recipe, RecipeStatus, Prompt,
+    Site, Recipe, RecipeStatus, Prompt, Project,
 )
 from ..database import SessionLocal
 from ..services.credentials_loader import load_credentials_for_job
@@ -85,11 +85,16 @@ class JobManager:
         if not credentials.get("openai"):
             logger.warning("No OpenAI key found. Loaded keys: %s", list(credentials.keys()))
 
-        # Load configurable prompts
+        # Load configurable prompts (filtered by project owner)
         prompts: dict[str, str] = {}
-        prompt_rows = await db.execute(select(Prompt))
-        for p in prompt_rows.scalars().all():
-            prompts[p.key] = p.value
+        prj_row = await db.execute(select(Project).where(Project.id == project_id))
+        prj = prj_row.scalar_one_or_none()
+        if prj:
+            prompt_rows = await db.execute(
+                select(Prompt).where(Prompt.owner_id == prj.owner_id)
+            )
+            for p in prompt_rows.scalars().all():
+                prompts[p.key] = p.value
 
         if not site_id:
             site_rows = await db.execute(

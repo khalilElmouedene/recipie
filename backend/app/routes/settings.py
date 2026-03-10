@@ -1,5 +1,6 @@
-"""Paramètres / Settings - clés API globales, prompts (non liés aux projets)."""
+"""Paramètres / Settings - clés API globales, prompts (par owner)."""
 from __future__ import annotations
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..crypto import encrypt, decrypt
 from ..database import get_db
 from ..db_models import User, UserCredential, Prompt, UserRole
-from ..dependencies import get_current_user
+from ..dependencies import get_current_user, require_owner
 from ..models import CredentialSet, CredentialOut, PromptOut, PromptsUpdate
 from ..services.prompts import DEFAULT_PROMPTS
 
@@ -33,13 +34,23 @@ def _mask(value: str) -> str:
     return value[:4] + "****" + value[-4:]
 
 
+async def _resolve_owner_id(user: User) -> uuid.UUID:
+    """Return the effective owner_id for credentials/prompts lookup."""
+    if user.role == UserRole.owner:
+        return user.id
+    if user.created_by_owner_id:
+        return user.created_by_owner_id
+    raise HTTPException(status_code=403, detail="No owner associated with this account")
+
+
 @router.get("/credentials", response_model=list[CredentialOut])
 async def list_user_credentials(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    owner_id = await _resolve_owner_id(user)
     result = await db.execute(
-        select(UserCredential).where(UserCredential.user_id == user.id)
+        select(UserCredential).where(UserCredential.user_id == owner_id)
     )
     creds = result.scalars().all()
     out = []
@@ -55,7 +66,7 @@ async def list_user_credentials(
 @router.put("/credentials", response_model=list[CredentialOut])
 async def set_user_credentials(
     body: list[CredentialSet],
-    user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[User, Depends(require_owner)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     for item in body:
@@ -94,18 +105,14 @@ async def set_user_credentials(
     ]
 
 
-def _require_owner_or_admin(user: User) -> None:
-    if user.role not in (UserRole.owner, UserRole.admin):
-        raise HTTPException(status_code=403, detail="Owner or admin access required")
-
-
 @router.get("/prompts", response_model=list[PromptOut])
 async def list_prompts(
-    user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[User, Depends(require_owner)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    _require_owner_or_admin(user)
-    result = await db.execute(select(Prompt))
+    result = await db.execute(
+        select(Prompt).where(Prompt.owner_id == user.id)
+    )
     rows = result.scalars().all()
     out = {r.key: PromptOut(key=r.key, value=r.value, description=r.description or "") for r in rows}
     for key, data in DEFAULT_PROMPTS.items():
@@ -117,21 +124,29 @@ async def list_prompts(
 @router.put("/prompts", response_model=list[PromptOut])
 async def update_prompts(
     body: PromptsUpdate,
-    user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[User, Depends(require_owner)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    _require_owner_or_admin(user)
     for key, value in body.prompts.items():
         if key not in DEFAULT_PROMPTS:
             raise HTTPException(status_code=400, detail=f"Invalid prompt key: {key}")
-        result = await db.execute(select(Prompt).where(Prompt.key == key))
+        result = await db.execute(
+            select(Prompt).where(Prompt.owner_id == user.id, Prompt.key == key)
+        )
         row = result.scalar_one_or_none()
         if row:
             row.value = value
         else:
-            db.add(Prompt(key=key, value=value, description=DEFAULT_PROMPTS[key].get("description", "")))
+            db.add(Prompt(
+                owner_id=user.id,
+                key=key,
+                value=value,
+                description=DEFAULT_PROMPTS[key].get("description", ""),
+            ))
     await db.commit()
-    result = await db.execute(select(Prompt))
+    result = await db.execute(
+        select(Prompt).where(Prompt.owner_id == user.id)
+    )
     rows = result.scalars().all()
     out = {r.key: PromptOut(key=r.key, value=r.value, description=r.description or "") for r in rows}
     for key, data in DEFAULT_PROMPTS.items():

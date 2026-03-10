@@ -21,9 +21,10 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const router = useRouter();
   const role = getUserRole();
 
+  const baseNav = NAV.filter((n) => n.href !== "/settings" || role === "owner");
   const items = role === "owner"
-    ? [...NAV, { href: "/users", label: "Users", icon: Users }]
-    : NAV;
+    ? [...baseNav, { href: "/users", label: "Users", icon: Users }]
+    : baseNav;
 
   return (
     <aside

@@ -25,7 +25,11 @@ async def list_users(
     _owner: Annotated[User, Depends(require_owner)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    result = await db.execute(select(User).order_by(User.created_at.desc()))
+    result = await db.execute(
+        select(User)
+        .where(User.created_by_owner_id == _owner.id)
+        .order_by(User.created_at.desc())
+    )
     return result.scalars().all()
 
 
@@ -47,6 +51,7 @@ async def create_user(
         password_hash=None,
         full_name=body.full_name,
         role=UserRole(body.role),
+        created_by_owner_id=_owner.id,
     )
     db.add(user)
     await db.commit()
@@ -83,7 +88,7 @@ async def update_user_role(
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    if not user:
+    if not user or user.created_by_owner_id != _owner.id:
         raise HTTPException(status_code=404, detail="User not found")
 
     if body.role not in ("owner", "admin", "member"):
@@ -106,7 +111,7 @@ async def delete_user(
 
     result = await db.execute(select(User).where(User.id == user_id))
     target = result.scalar_one_or_none()
-    if not target:
+    if not target or target.created_by_owner_id != owner.id:
         raise HTTPException(status_code=404, detail="User not found")
 
     # Prevent deleting the last owner — the system must always have one

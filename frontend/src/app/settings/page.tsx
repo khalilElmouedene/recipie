@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Key, Save, Bot, Image as ImageIcon, FileJson, Shield, MessageSquare } from "lucide-react";
 import { api, CredentialOut, PromptOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
@@ -52,8 +53,8 @@ const PROMPT_GROUPS: { label: string; keys: string[] }[] = [
 ];
 
 export default function SettingsPage() {
+  const router = useRouter();
   const role = getUserRole();
-  const canEditPrompts = role === "owner" || role === "admin";
 
   const [tab, setTab] = useState<SettingsTab>("credentials");
 
@@ -68,11 +69,12 @@ export default function SettingsPage() {
   const [savingPrompts, setSavingPrompts] = useState(false);
 
   useEffect(() => {
+    if (role !== "owner") { router.push("/"); return; }
     api.getSettingsCredentials().then(setCreds).catch(() => {});
-  }, []);
+  }, [role, router]);
 
   useEffect(() => {
-    if (canEditPrompts && tab === "prompts") {
+    if (tab === "prompts") {
       api.getSettingsPrompts()
         .then((list) => {
           setPrompts(list);
@@ -80,7 +82,9 @@ export default function SettingsPage() {
         })
         .catch(() => {});
     }
-  }, [canEditPrompts, tab]);
+  }, [tab]);
+
+  if (role !== "owner") return null;
 
   const handleSave = async () => {
     const toSave = Object.entries(values)
@@ -114,7 +118,7 @@ export default function SettingsPage() {
 
   const tabs: { key: SettingsTab; label: string; icon: React.ElementType }[] = [
     { key: "credentials", label: "Clés API", icon: Key },
-    ...(canEditPrompts ? [{ key: "prompts" as const, label: "Prompts IA", icon: MessageSquare }] : []),
+    { key: "prompts", label: "Prompts IA", icon: MessageSquare },
   ];
 
   return (
@@ -232,7 +236,7 @@ export default function SettingsPage() {
         </>
       )}
 
-      {tab === "prompts" && canEditPrompts && (
+      {tab === "prompts" && (
         <>
           <div className="card mb-4 flex items-start gap-3 p-4 border-blue-800/50 bg-blue-950/20">
             <MessageSquare size={20} className="text-blue-400 mt-0.5" />
