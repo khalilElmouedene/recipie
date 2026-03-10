@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, MailCheck } from "lucide-react";
+import { Plus, Trash2, MailCheck, RefreshCw } from "lucide-react";
 import { api, UserOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
@@ -14,6 +14,7 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [resending, setResending] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (role !== "owner") { router.push("/"); return; }
@@ -21,6 +22,12 @@ export default function UsersPage() {
   }, [role, router]);
 
   const load = () => api.getUsers().then(setUsers).catch(() => {});
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await api.getUsers().then(setUsers).catch(() => {});
+    setRefreshing(false);
+  };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,9 +79,15 @@ export default function UsersPage() {
           <h1 className="text-2xl font-bold text-white">Users</h1>
           <p className="text-sm text-gray-400 mt-1">{users.length} user{users.length !== 1 ? "s" : ""}</p>
         </div>
-        <button onClick={() => setShowCreate(!showCreate)} className="btn-primary flex items-center gap-2">
-          <Plus size={18} /> <span className="hidden sm:inline">Create User</span><span className="sm:hidden">New</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={handleRefresh} disabled={refreshing} title="Refresh" className="btn-secondary flex items-center gap-2 disabled:opacity-50">
+            <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
+          <button onClick={() => setShowCreate(!showCreate)} className="btn-primary flex items-center gap-2">
+            <Plus size={18} /> <span className="hidden sm:inline">Create User</span><span className="sm:hidden">New</span>
+          </button>
+        </div>
       </div>
 
       {showCreate && (
