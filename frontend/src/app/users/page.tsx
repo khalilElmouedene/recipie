@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, MailCheck } from "lucide-react";
 import { api, UserOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
@@ -13,6 +13,7 @@ export default function UsersPage() {
   const [form, setForm] = useState({ email: "", full_name: "", role: "member" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [resending, setResending] = useState<string | null>(null);
 
   useEffect(() => {
     if (role !== "owner") { router.push("/"); return; }
@@ -49,6 +50,17 @@ export default function UsersPage() {
     } catch (err: any) {
       alert(err.message);
     }
+  };
+
+  const handleResend = async (userId: string) => {
+    setResending(userId);
+    try {
+      await api.resendInvite(userId);
+      alert("Invitation email resent.");
+    } catch (err: any) {
+      alert(err.message);
+    }
+    setResending(null);
   };
 
   if (role !== "owner") return null;
@@ -103,8 +115,9 @@ export default function UsersPage() {
               <th className="px-6 py-3 font-medium">Name</th>
               <th className="px-6 py-3 font-medium">Email</th>
               <th className="px-6 py-3 font-medium">Role</th>
+              <th className="px-6 py-3 font-medium">Status</th>
               <th className="px-6 py-3 font-medium">Joined</th>
-              <th className="px-6 py-3 font-medium w-12"></th>
+              <th className="px-6 py-3 font-medium w-20"></th>
             </tr>
           </thead>
           <tbody>
@@ -123,8 +136,25 @@ export default function UsersPage() {
                     <option value="owner">Owner</option>
                   </select>
                 </td>
-                <td className="px-6 py-3 text-gray-500">{new Date(u.created_at).toLocaleDateString()}</td>
                 <td className="px-6 py-3">
+                  {u.has_password ? (
+                    <span className="text-xs text-green-400">Active</span>
+                  ) : (
+                    <span className="text-xs text-amber-400">Pending</span>
+                  )}
+                </td>
+                <td className="px-6 py-3 text-gray-500">{new Date(u.created_at).toLocaleDateString()}</td>
+                <td className="px-6 py-3 flex items-center gap-1">
+                  {!u.has_password && (
+                    <button
+                      onClick={() => handleResend(u.id)}
+                      disabled={resending === u.id}
+                      title="Resend invite email"
+                      className="text-gray-500 hover:text-blue-400 p-1 disabled:opacity-50"
+                    >
+                      <MailCheck size={16} />
+                    </button>
+                  )}
                   <button onClick={() => handleDelete(u.id)} className="text-gray-500 hover:text-red-400 p-1">
                     <Trash2 size={16} />
                   </button>
@@ -141,13 +171,32 @@ export default function UsersPage() {
           <div key={u.id} className="card p-4 space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-medium text-white truncate">{u.full_name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-medium text-white truncate">{u.full_name}</p>
+                  {u.has_password ? (
+                    <span className="text-xs text-green-400 flex-shrink-0">Active</span>
+                  ) : (
+                    <span className="text-xs text-amber-400 flex-shrink-0">Pending</span>
+                  )}
+                </div>
                 <p className="text-sm text-gray-400 truncate mt-0.5">{u.email}</p>
                 <p className="text-xs text-gray-600 mt-1">{new Date(u.created_at).toLocaleDateString()}</p>
               </div>
-              <button onClick={() => handleDelete(u.id)} className="text-gray-500 hover:text-red-400 p-1 flex-shrink-0">
-                <Trash2 size={16} />
-              </button>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                {!u.has_password && (
+                  <button
+                    onClick={() => handleResend(u.id)}
+                    disabled={resending === u.id}
+                    title="Resend invite"
+                    className="text-gray-500 hover:text-blue-400 p-1 disabled:opacity-50"
+                  >
+                    <MailCheck size={16} />
+                  </button>
+                )}
+                <button onClick={() => handleDelete(u.id)} className="text-gray-500 hover:text-red-400 p-1">
+                  <Trash2 size={16} />
+                </button>
+              </div>
             </div>
             <div>
               <label className="text-xs text-gray-500 mb-1 block">Role</label>

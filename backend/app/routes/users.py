@@ -100,6 +100,36 @@ async def update_user_role(
     return row.scalar_one()
 
 
+@router.post("/{user_id}/resend-invite", status_code=status.HTTP_204_NO_CONTENT)
+async def resend_invite(
+    user_id: uuid.UUID,
+    _owner: Annotated[User, Depends(require_owner)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    target = result.scalar_one_or_none()
+    if not target or target.created_by_owner_id != _owner.id:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.password_hash:
+        raise HTTPException(status_code=400, detail="User has already activated their account")
+
+    # Delete existing tokens and create a fresh one
+    await db.execute(
+        sql_delete(PasswordSetupToken).where(PasswordSetupToken.user_id == user_id)
+    )
+    raw_token = secrets.token_hex(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    db.add(PasswordSetupToken(user_id=user_id, token_hash=token_hash, expires_at=expires_at))
+    await db.commit()
+
+    setup_link = f"{settings.frontend_url}/setup-password?token={raw_token}"
+    try:
+        await send_welcome_email(target.email, target.full_name, setup_link)
+    except Exception as exc:
+        print(f"[email] Failed to resend invite: {exc}")
+
+
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: uuid.UUID,

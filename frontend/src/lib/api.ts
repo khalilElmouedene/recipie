@@ -88,6 +88,9 @@ export const api = {
   deleteUser: (id: string) =>
     request<void>(`/api/users/${id}`, { method: "DELETE" }),
 
+  resendInvite: (id: string) =>
+    request<void>(`/api/users/${id}/resend-invite`, { method: "POST" }),
+
   // ── Projects ───────────────────────────────────────────
   getProjects: () => request<ProjectOut[]>("/api/projects"),
 
