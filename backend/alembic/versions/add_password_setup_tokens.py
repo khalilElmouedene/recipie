@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "aabbcc112233"
-down_revision = "add_prompts_table"
+down_revision = "add_google_oauth"
 branch_labels = None
 depends_on = None
 
