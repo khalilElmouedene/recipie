@@ -260,6 +260,7 @@ export interface UserOut {
   full_name: string;
   role: string;
   created_at: string;
+  has_password: boolean;
 }
 
 export interface ProjectOut {
