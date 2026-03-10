@@ -82,12 +82,12 @@ const emptyWpUser = () => ({ username: "", password: "" });
 function SitesTab({ projectId, role, router }: { projectId: string; role: string | null; router: ReturnType<typeof useRouter> }) {
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState({ domain: "", wp_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[], sheet_name: "", spreadsheet_id: "" });
+  const [form, setForm] = useState({ domain: "", wp_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [loading, setLoading] = useState(false);
   const [publishingSiteId, setPublishingSiteId] = useState<string | null>(null);
   const [detailsSite, setDetailsSite] = useState<SiteOut | null>(null);
   const [editSite, setEditSite] = useState<SiteOut | null>(null);
-  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[], sheet_name: "", spreadsheet_id: "" });
+  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [editing, setEditing] = useState(false);
 
   const load = () => api.getSites(projectId).then(setSites).catch(() => {});
@@ -107,7 +107,7 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
     setLoading(true);
     try {
       await api.createSite(projectId, { ...form, wp_users: validUsers });
-      setForm({ domain: "", wp_url: "", wp_users: [emptyWpUser()], sheet_name: "", spreadsheet_id: "" });
+      setForm({ domain: "", wp_url: "", wp_users: [emptyWpUser()] });
       setShow(false);
       load();
     } catch {}
@@ -141,8 +141,6 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
       domain: s.domain,
       wp_url: s.wp_url,
       wp_users: wpUsers.length ? wpUsers : [emptyWpUser()],
-      sheet_name: s.sheet_name || "",
-      spreadsheet_id: s.spreadsheet_id || "",
     });
   };
 
@@ -160,8 +158,6 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
         domain: editForm.domain,
         wp_url: editForm.wp_url,
         wp_users: validUsers.map((u) => ({ username: u.username, password: u.password })),
-        sheet_name: editForm.sheet_name,
-        spreadsheet_id: editForm.spreadsheet_id,
       };
       await api.updateSite(editSite.id, data);
       setEditSite(null);
@@ -236,14 +232,6 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
                 <Plus size={14} /> Add another user
               </button>
             </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">Sheet Name</label>
-            <input value={form.sheet_name} onChange={(e) => setForm({ ...form, sheet_name: e.target.value })} className="input-field" placeholder="Optional" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">Spreadsheet ID</label>
-            <input value={form.spreadsheet_id} onChange={(e) => setForm({ ...form, spreadsheet_id: e.target.value })} className="input-field" placeholder="Optional" />
           </div>
           <div className="col-span-2">
             <button type="submit" disabled={loading} className="btn-primary">{loading ? "Adding..." : "Add Site"}</button>
@@ -320,18 +308,6 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
                     : (detailsSite as any).wp_username || "—")}
                 </dd>
               </div>
-              {detailsSite.sheet_name && (
-                <div>
-                  <dt className="text-gray-500">Sheet name</dt>
-                  <dd className="text-gray-300">{detailsSite.sheet_name}</dd>
-                </div>
-              )}
-              {detailsSite.spreadsheet_id && (
-                <div>
-                  <dt className="text-gray-500">Spreadsheet ID</dt>
-                  <dd className="text-gray-300 break-all text-xs">{detailsSite.spreadsheet_id}</dd>
-                </div>
-              )}
               <div>
                 <dt className="text-gray-500">Recipes</dt>
                 <dd className="text-gray-300">{detailsSite.recipe_count}</dd>
@@ -407,22 +383,6 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
                     <Plus size={14} /> Add another user
                   </button>
                 </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">Sheet name (optional)</label>
-                <input
-                  value={editForm.sheet_name}
-                  onChange={(e) => setEditForm({ ...editForm, sheet_name: e.target.value })}
-                  className="input-field w-full"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">Spreadsheet ID (optional)</label>
-                <input
-                  value={editForm.spreadsheet_id}
-                  onChange={(e) => setEditForm({ ...editForm, spreadsheet_id: e.target.value })}
-                  className="input-field w-full"
-                />
               </div>
               <div className="flex gap-2 pt-2">
                 <button
