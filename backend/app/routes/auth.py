@@ -1,6 +1,8 @@
 from __future__ import annotations
+import hashlib
 import secrets
 import time
+from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
 import httpx
@@ -12,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth import hash_password, verify_password, create_access_token
 from ..config import settings
 from ..database import get_db
-from ..db_models import User, UserRole
+from ..db_models import User, UserRole, PasswordSetupToken
 from ..dependencies import get_current_user
-from ..models import RegisterRequest, LoginRequest, TokenResponse, UserOut, ProfileUpdate
+from ..models import RegisterRequest, LoginRequest, TokenResponse, UserOut, ProfileUpdate, SetupPasswordRequest
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -112,6 +114,37 @@ async def update_me(
     await db.commit()
     await db.refresh(current_user)
     return UserOut.from_user(current_user)
+
+
+@router.post("/setup-password", response_model=TokenResponse)
+async def setup_password(
+    body: SetupPasswordRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+    result = await db.execute(
+        select(PasswordSetupToken).where(PasswordSetupToken.token_hash == token_hash)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid or expired link")
+    if record.used:
+        raise HTTPException(status_code=400, detail="This link has already been used")
+    now = datetime.now(timezone.utc)
+    if record.expires_at < now:
+        raise HTTPException(status_code=400, detail="This link has expired")
+
+    user_result = await db.execute(select(User).where(User.id == record.user_id))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found")
+
+    user.password_hash = hash_password(body.password)
+    record.used = True
+    await db.commit()
+
+    token = create_access_token(str(user.id), user.role.value)
+    return TokenResponse(access_token=token)
 
 
 # ── Google OAuth ─────────────────────────────────────────────────────────────

@@ -1,5 +1,8 @@
 from __future__ import annotations
+import hashlib
+import secrets
 import uuid
+from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -7,10 +10,12 @@ from sqlalchemy import select, delete as sql_delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import hash_password
+from ..config import settings
 from ..database import get_db
-from ..db_models import User, UserRole
+from ..db_models import User, UserRole, PasswordSetupToken
 from ..dependencies import require_owner
 from ..models import UserOut, UserCreate, UserRoleUpdate
+from ..services.email_service import send_welcome_email
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -39,14 +44,34 @@ async def create_user(
 
     user = User(
         email=body.email,
-        password_hash=hash_password(body.password),
+        password_hash=None,
         full_name=body.full_name,
         role=UserRole(body.role),
     )
     db.add(user)
     await db.commit()
+    await db.refresh(user)
+
+    # Generate invite token
+    raw_token = secrets.token_hex(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    setup_token = PasswordSetupToken(
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=expires_at,
+    )
+    db.add(setup_token)
+    await db.commit()
+
+    setup_link = f"{settings.frontend_url}/setup-password?token={raw_token}"
+    try:
+        await send_welcome_email(user.email, user.full_name, setup_link)
+    except Exception as exc:
+        print(f"[email] Failed to send welcome email: {exc}")
+
     row = await db.execute(select(User).where(User.id == user.id))
-    return row.scalar_one()
+    return UserOut.from_user(row.scalar_one())
 
 
 @router.patch("/{user_id}", response_model=UserOut)

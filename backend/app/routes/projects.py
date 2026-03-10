@@ -8,6 +8,7 @@ from sqlalchemy import select, func, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from ..config import settings
 from ..database import get_db
 from ..db_models import (
     User, UserRole, Project, ProjectMember, ProjectMemberRole,
@@ -17,6 +18,7 @@ from ..dependencies import get_current_user, require_owner, check_project_access
 from ..models import (
     ProjectCreate, ProjectUpdate, ProjectOut, MemberAdd, MemberOut,
 )
+from ..services.email_service import send_project_invite_email
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -173,7 +175,8 @@ async def add_member(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     prj = await db.execute(select(Project).where(Project.id == project_id))
-    if not prj.scalar_one_or_none():
+    prj_obj = prj.scalar_one_or_none()
+    if not prj_obj:
         raise HTTPException(status_code=404, detail="Project not found")
 
     usr = await db.execute(select(User).where(User.id == body.user_id))
@@ -200,6 +203,17 @@ async def add_member(
     )
     db.add(member)
     await db.commit()
+
+    try:
+        await send_project_invite_email(
+            user_obj.email,
+            user_obj.full_name,
+            prj_obj.name,
+            body.role,
+            settings.frontend_url,
+        )
+    except Exception as exc:
+        print(f"[email] Failed to send project invite email: {exc}")
 
     return MemberOut(
         id=member.id,

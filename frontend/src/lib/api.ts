@@ -79,7 +79,7 @@ export const api = {
   // ── Users (Owner) ──────────────────────────────────────
   getUsers: () => request<UserOut[]>("/api/users"),
 
-  createUser: (data: { email: string; password: string; full_name: string; role: string }) =>
+  createUser: (data: { email: string; full_name: string; role: string }) =>
     request<UserOut>("/api/users", { method: "POST", body: JSON.stringify(data) }),
 
   updateUserRole: (id: string, role: string) =>

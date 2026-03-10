@@ -10,7 +10,7 @@ export default function UsersPage() {
   const role = getUserRole();
   const [users, setUsers] = useState<UserOut[]>([]);
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ email: "", password: "", full_name: "", role: "member" });
+  const [form, setForm] = useState({ email: "", full_name: "", role: "member" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -27,7 +27,7 @@ export default function UsersPage() {
     setError("");
     try {
       await api.createUser(form);
-      setForm({ email: "", password: "", full_name: "", role: "member" });
+      setForm({ email: "", full_name: "", role: "member" });
       setShowCreate(false);
       load();
     } catch (err: any) {
@@ -76,10 +76,6 @@ export default function UsersPage() {
             <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required className="input-field" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">Password</label>
-            <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={6} className="input-field" />
-          </div>
-          <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">Role</label>
             <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="input-field">
               <option value="member">Member</option>
@@ -88,6 +84,9 @@ export default function UsersPage() {
             </select>
           </div>
           {error && <p className="col-span-2 text-sm text-red-400">{error}</p>}
+          <div className="col-span-2 rounded-lg bg-blue-500/10 border border-blue-500/30 px-3 py-2">
+            <p className="text-sm text-blue-400">A welcome email with a password setup link will be sent to the user.</p>
+          </div>
           <div className="col-span-2">
             <button type="submit" disabled={loading} className="btn-primary">{loading ? "Creating..." : "Create User"}</button>
           </div>

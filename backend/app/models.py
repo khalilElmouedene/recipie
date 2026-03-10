@@ -62,7 +62,7 @@ class UserOut(BaseModel):
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str | None = None
     full_name: str = Field(min_length=1)
     role: str = "member"
 
@@ -328,3 +328,17 @@ class BulkGeneratePinsResponse(BaseModel):
     generated: int
     failed: int
     pins: list[BulkPinItem]
+
+
+class SetupPasswordRequest(BaseModel):
+    token: str
+    password: str = Field(min_length=8)
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not re.search(r"[0-9]", v):
+            raise ValueError("Password must contain at least one number")
+        return v
