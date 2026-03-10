@@ -30,7 +30,7 @@ async def list_users(
         .where(User.created_by_owner_id == _owner.id)
         .order_by(User.created_at.desc())
     )
-    return result.scalars().all()
+    return [UserOut.from_user(u) for u in result.scalars().all()]
 
 
 @router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -97,7 +97,7 @@ async def update_user_role(
     user.role = UserRole(body.role)
     await db.commit()
     row = await db.execute(select(User).where(User.id == user_id))
-    return row.scalar_one()
+    return UserOut.from_user(row.scalar_one())
 
 
 @router.post("/{user_id}/resend-invite", status_code=status.HTTP_204_NO_CONTENT)
