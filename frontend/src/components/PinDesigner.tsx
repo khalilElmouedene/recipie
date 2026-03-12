@@ -61,7 +61,7 @@ interface TemplateElement {
   radius?: number;
 }
 
-interface PinTemplate {
+export interface PinTemplate {
   id: string;
   name: string;
   description: string;
@@ -75,7 +75,7 @@ interface PinTemplate {
 
 // ─── Templates ───────────────────────────────────────────────────────────────
 
-const TEMPLATES: PinTemplate[] = [
+export const TEMPLATES: PinTemplate[] = [
   {
     id: "canva-brown-bars",
     name: "Canva Style: Brown Band",
@@ -256,6 +256,85 @@ const TEMPLATES: PinTemplate[] = [
   },
 ];
 
+// ─── Standalone template renderer (used for batch Save All) ──────────────────
+
+export async function buildTemplateOnCanvas(
+  fabric: any,
+  canvas: any,
+  template: PinTemplate,
+  images: string[],
+  proxyBase: string,
+  title: string = "Recipe Title",
+): Promise<void> {
+  canvas.clear();
+  canvas.backgroundColor = template.bgColor;
+  let imageIndex = 0;
+
+  const proxyUrl = (url: string) => {
+    if (!url || url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("/")) return url;
+    return `${proxyBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
+  };
+
+  for (const el of template.elements) {
+    if (el.type === "image") {
+      const imageUrl = images.length > 0 ? (images[imageIndex % images.length]?.trim() || "") : "";
+      imageIndex++;
+      if (imageUrl) {
+        try {
+          const img = await fabric.FabricImage.fromURL(proxyUrl(imageUrl), { crossOrigin: "anonymous" });
+          const scale = Math.max(el.width / (img.width || 1), el.height / (img.height || 1));
+          img.set({ left: el.x + el.width / 2, top: el.y + el.height / 2, originX: "center", originY: "center", scaleX: scale, scaleY: scale });
+          (img as any).__pinId = el.id; (img as any).__pinType = "image";
+          const clipRect = new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, absolutePositioned: true, fill: "" });
+          (img as any).clipPath = clipRect;
+          canvas.add(img);
+        } catch {
+          const rect = new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: el.bgColor || "#e0e0e0" });
+          canvas.add(rect);
+        }
+      } else {
+        const rect = new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: el.bgColor || "#e0e0e0" });
+        canvas.add(rect);
+      }
+    } else if (el.type === "band" || el.type === "circle") {
+      const shape = el.type === "circle"
+        ? new fabric.Circle({ left: el.x, top: el.y, radius: el.radius || 60, fill: el.bgColor || "#8b0000", originX: "center", originY: "center" })
+        : new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: el.bgColor || "#ffffff", strokeWidth: 0 });
+      canvas.add(shape);
+    } else if (el.type === "text") {
+      const text = el.id === "title" ? title : (el.defaultText || "");
+      const tb = new fabric.Textbox(text, {
+        left: el.x, top: el.y, width: el.width || 940, originX: "center", originY: "center",
+        fontSize: el.fontSize || 32, fontFamily: "Arial", fontWeight: el.fontWeight || "normal",
+        fontStyle: (el.fontStyle as any) || "normal", fill: el.fill || "#333333", textAlign: el.textAlign || "center",
+      });
+      canvas.add(tb);
+    }
+  }
+
+  // Stretch last element to fill canvas height
+  const objs: any[] = canvas.getObjects();
+  if (objs.length > 0) {
+    const last = objs[objs.length - 1];
+    const bottom = last.originY === "center"
+      ? (last.top ?? 0) + ((last.height ?? 0) * (last.scaleY ?? 1)) / 2
+      : (last.top ?? 0) + (last.height ?? 0) * (last.scaleY ?? 1);
+    const gap = PIN_H - bottom;
+    if (gap > 1) {
+      if (last.type === "image") {
+        const origH = last.height ?? 1;
+        const newSY = (origH * (last.scaleY ?? 1) + gap) / origH;
+        last.set({ scaleY: newSY, top: (last.top ?? 0) + gap / 2 });
+        if (last.clipPath) last.clipPath.set("height", (last.clipPath.height ?? 0) + gap);
+      } else {
+        last.set("height", (last.height ?? 0) + gap);
+      }
+      last.setCoords();
+    }
+  }
+  canvas.renderAll();
+}
+
 // ─── Template Preview ─────────────────────────────────────────────────────────
 
 function TemplatePreview({ layout }: { layout: PinTemplate["previewLayout"] }) {
@@ -386,6 +465,8 @@ function TemplatePreview({ layout }: { layout: PinTemplate["previewLayout"] }) {
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
+export type PinDesignerApi = { getJson: () => string; exportPng: () => string | null };
+
 export interface PinDesignerProps {
   onClose: () => void;
   templateName?: string;
@@ -396,6 +477,16 @@ export interface PinDesignerProps {
   recipeId?: string;
   recipePinTitle?: string;
   recipePinDescription?: string;
+  /** Restore a previously saved canvas JSON (takes priority over initialTemplateId) */
+  initialJson?: string;
+  /** Auto-apply this template on mount (only if no initialJson) */
+  initialTemplateId?: string;
+  /** Called once the canvas is ready, exposes getJson/exportPng */
+  onApiReady?: (api: PinDesignerApi) => void;
+  /** Called when user selects a template, passes the template id */
+  onTemplateSelected?: (templateId: string) => void;
+  /** When true, renders as absolute fill instead of fixed full-screen */
+  embedded?: boolean;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -410,6 +501,11 @@ export default function PinDesigner({
   recipeId,
   recipePinTitle,
   recipePinDescription,
+  initialJson,
+  initialTemplateId,
+  onApiReady,
+  onTemplateSelected,
+  embedded = false,
 }: PinDesignerProps) {
   // Route external image URLs through backend proxy to avoid browser CORS restrictions
   const proxyUrl = (url: string) => {
@@ -1241,9 +1337,42 @@ export default function PinDesigner({
     };
   }, [mounted]);
 
-  // Load template when ready
+  // Restore saved canvas JSON on mount (takes priority over template)
   useEffect(() => {
-    if (canvasReady && selectedTemplate) loadTemplate(selectedTemplate);
+    if (!canvasReady || !initialJson) return;
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    canvas.loadFromJSON(initialJson)
+      .then(() => { canvas.renderAll(); updateLayers(); })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasReady]);
+
+  // Auto-apply initial template (only if no saved JSON)
+  useEffect(() => {
+    if (!canvasReady || initialJson || !initialTemplateId) return;
+    const tmpl = TEMPLATES.find((t) => t.id === initialTemplateId);
+    if (tmpl) setSelectedTemplate(tmpl);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasReady]);
+
+  // Expose API to parent once canvas ready
+  useEffect(() => {
+    if (!canvasReady || !onApiReady) return;
+    onApiReady({
+      getJson: () => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return "{}";
+        return JSON.stringify(canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"]));
+      },
+      exportPng: getExportDataUrl,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasReady]);
+
+  // Load template when ready (skip if initialJson already loaded)
+  useEffect(() => {
+    if (canvasReady && selectedTemplate && !initialJson) loadTemplate(selectedTemplate);
   }, [selectedTemplate, canvasReady]);
 
   // ── Ctrl+wheel zoom ───────────────────────────────────────────────────────
@@ -1831,7 +1960,7 @@ export default function PinDesigner({
 
   if (!mounted) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950 text-white">
+      <div className={`${embedded ? "absolute inset-0" : "fixed inset-0 z-50"} flex items-center justify-center bg-gray-950 text-white`}>
         Loading designer...
       </div>
     );
@@ -1840,7 +1969,7 @@ export default function PinDesigner({
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-gray-950 text-white">
+    <div className={`${embedded ? "absolute inset-0" : "fixed inset-0 z-50"} flex flex-col bg-gray-950 text-white`}>
 
       {/* ── Floating Toolbar ──────────────────────────────────────────────── */}
       {toolbarPos && selectedId && (
@@ -2221,7 +2350,7 @@ export default function PinDesigner({
                     <p className="text-sm font-medium text-white">{t.name}</p>
                     <p className="text-[11px] text-gray-500 mb-2">{t.description}</p>
                     <button
-                      onClick={() => setSelectedTemplate(t)}
+                      onClick={() => { setSelectedTemplate(t); onTemplateSelected?.(t.id); }}
                       className={`text-xs px-3 py-1 rounded ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
                     >
                       {selectedTemplate?.id === t.id ? "✓ Selected" : "Use Template"}
