@@ -658,6 +658,13 @@ export default function PinDesigner({
       }
 
       if (dataUrl) {
+        // Save to recipe
+        if (frame.recipeId) {
+          try {
+            await api.updateRecipe(frame.recipeId, { pin_design_image: dataUrl });
+          } catch { /* skip */ }
+        }
+        // Also download locally
         const a = document.createElement("a");
         a.href = dataUrl;
         a.download = `pin-${String(i + 1).padStart(2, "0")}-${frame.title.replace(/[^a-z0-9]/gi, "_").slice(0, 30)}.png`;
