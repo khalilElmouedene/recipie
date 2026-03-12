@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, FolderKanban, Globe, ChefHat } from "lucide-react";
+import { Plus, FolderKanban, Globe, ChefHat, Copy } from "lucide-react";
 import { api, ProjectOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
@@ -12,9 +12,20 @@ export default function ProjectsPage() {
   const [desc, setDesc] = useState("");
   const [loading, setLoading] = useState(false);
   const role = getUserRole();
+  const [duplicating, setDuplicating] = useState<string | null>(null);
 
   const load = () => api.getProjects().then(setProjects).catch(() => {});
   useEffect(() => { load(); }, []);
+
+  const handleDuplicate = async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    setDuplicating(id);
+    try {
+      await api.duplicateProject(id);
+      load();
+    } catch { }
+    setDuplicating(null);
+  };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,21 +68,33 @@ export default function ProjectsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {projects.map((p) => (
-          <Link key={p.id} href={`/projects/${p.id}`} className="card hover:border-gray-700 transition group">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="h-10 w-10 rounded-lg bg-brand-600/20 flex items-center justify-center text-brand-400">
-                <FolderKanban size={20} />
+          <div key={p.id} className="card hover:border-gray-700 transition group relative">
+            <Link href={`/projects/${p.id}`} className="block">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="h-10 w-10 rounded-lg bg-brand-600/20 flex items-center justify-center text-brand-400">
+                  <FolderKanban size={20} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold text-white group-hover:text-brand-400 transition">{p.name}</h3>
+                  {p.description && <p className="text-xs text-gray-500 truncate max-w-[200px]">{p.description}</p>}
+                </div>
               </div>
-              <div>
-                <h3 className="font-semibold text-white group-hover:text-brand-400 transition">{p.name}</h3>
-                {p.description && <p className="text-xs text-gray-500 truncate max-w-[200px]">{p.description}</p>}
+              <div className="flex gap-4 text-sm text-gray-400">
+                <span className="flex items-center gap-1"><Globe size={14} /> {p.site_count} sites</span>
+                <span className="flex items-center gap-1"><ChefHat size={14} /> {p.recipe_count} recipes</span>
               </div>
-            </div>
-            <div className="flex gap-4 text-sm text-gray-400">
-              <span className="flex items-center gap-1"><Globe size={14} /> {p.site_count} sites</span>
-              <span className="flex items-center gap-1"><ChefHat size={14} /> {p.recipe_count} recipes</span>
-            </div>
-          </Link>
+            </Link>
+            {role === "owner" && (
+              <button
+                onClick={(e) => handleDuplicate(p.id, e)}
+                disabled={duplicating === p.id}
+                title="Duplicate project"
+                className="absolute top-3 right-3 p-1.5 rounded text-gray-500 hover:text-brand-400 hover:bg-gray-800 transition disabled:opacity-40"
+              >
+                <Copy size={15} className={duplicating === p.id ? "animate-pulse" : ""} />
+              </button>
+            )}
+          </div>
         ))}
 
         {projects.length === 0 && (

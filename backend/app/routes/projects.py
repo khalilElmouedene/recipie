@@ -264,6 +264,46 @@ async def export_project_excel(
     )
 
 
+@router.post("/{project_id}/duplicate", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
+async def duplicate_project(
+    project_id: uuid.UUID,
+    owner: Annotated[User, Depends(require_owner)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Create a copy of the project with its sites (no recipes/jobs)."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    new_project = Project(
+        name=f"{source.name} (copy)",
+        description=source.description,
+        owner_id=owner.id,
+    )
+    db.add(new_project)
+    await db.flush()
+
+    # Copy sites (no recipes)
+    sites_result = await db.execute(select(Site).where(Site.project_id == project_id))
+    for s in sites_result.scalars().all():
+        db.add(Site(
+            project_id=new_project.id,
+            domain=s.domain,
+            wp_url=s.wp_url,
+            wp_users_enc=s.wp_users_enc,
+            wp_username=s.wp_username,
+            wp_password_enc=s.wp_password_enc,
+        ))
+
+    # Add owner as admin member
+    db.add(ProjectMember(project_id=new_project.id, user_id=owner.id, role=ProjectMemberRole.admin))
+    await db.commit()
+
+    row = await db.execute(select(Project).where(Project.id == new_project.id))
+    return await _project_out(row.scalar_one(), db)
+
+
 @router.delete("/{project_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_member(
     project_id: uuid.UUID,

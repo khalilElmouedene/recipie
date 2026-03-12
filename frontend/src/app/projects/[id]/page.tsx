@@ -2,11 +2,11 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus } from "lucide-react";
-import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut } from "@/lib/api";
+import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save } from "lucide-react";
+import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
-type Tab = "sites" | "members" | "jobs";
+type Tab = "sites" | "members" | "jobs" | "settings";
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -25,6 +25,7 @@ export default function ProjectDetailPage() {
     { key: "sites", label: "Sites", icon: Globe },
     { key: "members", label: "Members", icon: Users },
     { key: "jobs", label: "Jobs", icon: Briefcase },
+    ...(role === "owner" ? [{ key: "settings" as Tab, label: "Settings", icon: Settings }] : []),
   ];
 
   return (
@@ -71,6 +72,7 @@ export default function ProjectDetailPage() {
       {tab === "sites" && <SitesTab projectId={id} role={role} router={router} />}
       {tab === "members" && <MembersTab projectId={id} role={role} />}
       {tab === "jobs" && <JobsTab projectId={id} />}
+      {tab === "settings" && <SettingsTab />}
     </div>
   );
 }
@@ -507,6 +509,238 @@ function JobsTab({ projectId }: { projectId: string }) {
         </Link>
       ))}
       {jobs.length === 0 && <p className="text-center py-8 text-gray-500">No jobs yet.</p>}
+    </div>
+  );
+}
+
+// ── Settings Tab ─────────────────────────────────────────────────────
+
+const KEY_GROUPS = [
+  {
+    title: "ChatGPT / OpenAI",
+    description: "Key for article and recipe generation",
+    icon: Bot,
+    keys: [
+      { key: "openai", label: "OpenAI API Key", placeholder: "sk-...", type: "password", help: "API key from platform.openai.com" },
+    ],
+  },
+  {
+    title: "Midjourney (Discord)",
+    description: "Discord configuration for Midjourney image generation",
+    icon: ImageIcon,
+    keys: [
+      { key: "discord_auth", label: "Discord Authorization", placeholder: "Authorization token", type: "password" },
+      { key: "discord_app_id", label: "Discord Application ID", placeholder: "App ID", type: "text" },
+      { key: "discord_guild", label: "Discord Guild ID", placeholder: "Server ID", type: "text" },
+      { key: "discord_channel", label: "Discord Channel ID", placeholder: "Channel ID", type: "text" },
+      { key: "mj_version", label: "Midjourney Version", placeholder: "e.g. 6", type: "text" },
+      { key: "mj_id", label: "Midjourney ID", placeholder: "Bot ID", type: "text" },
+    ],
+  },
+  {
+    title: "Google Sheets",
+    description: "Service Account for Google Sheets sync (optional)",
+    icon: FileJson,
+    keys: [
+      { key: "google_sa_json", label: "Service Account JSON", placeholder: "Paste full JSON...", type: "textarea" },
+    ],
+  },
+];
+
+const PROMPT_GROUPS: { label: string; keys: string[] }[] = [
+  { label: "Article generation", keys: ["article"] },
+  { label: "Full recipe", keys: ["full_recipe_system", "full_recipe_user"] },
+  { label: "Recipe JSON (WP Recipe Maker)", keys: ["recipe_json_system", "recipe_json_user"] },
+  { label: "Meta description (SEO)", keys: ["meta_description_system", "meta_description_user"] },
+  { label: "Category", keys: ["category_system", "category_user"] },
+  { label: "Pinterest Pin title", keys: ["pinterest_title_system", "pinterest_title_user"] },
+  { label: "Pinterest Pin description", keys: ["pinterest_description_system", "pinterest_description_user"] },
+  { label: "Pinterest Pin tags", keys: ["pinterest_tags_system", "pinterest_tags_user"] },
+  { label: "Midjourney image prompt", keys: ["midjourney_imagine"] },
+];
+
+type SettingsSubTab = "credentials" | "prompts";
+
+function SettingsTab() {
+  const [subTab, setSubTab] = useState<SettingsSubTab>("credentials");
+
+  // Credentials
+  const [creds, setCreds] = useState<CredentialOut[]>([]);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+
+  // Prompts
+  const [prompts, setPrompts] = useState<PromptOut[]>([]);
+  const [promptValues, setPromptValues] = useState<Record<string, string>>({});
+  const [savingPrompts, setSavingPrompts] = useState(false);
+
+  useEffect(() => {
+    api.getSettingsCredentials().then(setCreds).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (subTab === "prompts") {
+      api.getSettingsPrompts()
+        .then((list) => {
+          setPrompts(list);
+          setPromptValues(Object.fromEntries(list.map((p) => [p.key, p.value])));
+        })
+        .catch(() => {});
+    }
+  }, [subTab]);
+
+  const handleSave = async () => {
+    const toSave = Object.entries(values)
+      .filter(([, v]) => v.trim())
+      .map(([key_type, value]) => ({ key_type, value }));
+    if (!toSave.length) return;
+    setSaving(true);
+    const updated = await api.setSettingsCredentials(toSave);
+    setCreds(updated);
+    setValues({});
+    setSaving(false);
+  };
+
+  const handleSavePrompts = async () => {
+    if (!Object.keys(promptValues).length) return;
+    setSavingPrompts(true);
+    try {
+      const updated = await api.setSettingsPrompts(promptValues);
+      setPrompts(updated);
+    } catch { }
+    setSavingPrompts(false);
+  };
+
+  const getMasked = (key: string) => creds.find((c) => c.key_type === key)?.masked_value || "Not configured";
+  const hasChanges = Object.values(values).some((v) => v.trim());
+  const hasPromptChanges = prompts.some((p) => (promptValues[p.key] ?? p.value) !== p.value);
+
+  const subTabs = [
+    { key: "credentials" as SettingsSubTab, label: "API Keys", icon: Key },
+    { key: "prompts" as SettingsSubTab, label: "AI Prompts", icon: MessageSquare },
+  ];
+
+  return (
+    <div>
+      <div className="flex gap-1 mb-6 border-b border-gray-700">
+        {subTabs.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setSubTab(t.key)}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition border-b-2 -mb-px ${
+              subTab === t.key ? "border-brand-500 text-brand-400" : "border-transparent text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            <t.icon size={16} /> {t.label}
+          </button>
+        ))}
+      </div>
+
+      {subTab === "credentials" && (
+        <>
+          <div className="card mb-4 flex items-start gap-3 p-4 border-amber-800/50 bg-amber-950/20">
+            <Shield size={18} className="text-amber-400 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-amber-200/90">These keys are personal and shared across all your projects.</p>
+          </div>
+          {hasChanges && (
+            <div className="flex justify-end mb-4">
+              <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2">
+                <Save size={16} /> {saving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          )}
+          <div className="space-y-6">
+            {KEY_GROUPS.map((group) => (
+              <div key={group.title} className="card">
+                <div className="flex items-start gap-3 mb-4">
+                  <div className="h-9 w-9 rounded-lg bg-gray-800 flex items-center justify-center text-gray-400 flex-shrink-0">
+                    <group.icon size={18} />
+                  </div>
+                  <div>
+                    <h2 className="font-semibold text-white">{group.title}</h2>
+                    <p className="text-xs text-gray-400">{group.description}</p>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  {group.keys.map((k) => (
+                    <div key={k.key} className="border border-gray-700 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-sm font-medium text-gray-300">{k.label}</label>
+                        <span className="text-xs font-mono text-gray-500">{getMasked(k.key)}</span>
+                      </div>
+                      {k.type === "textarea" ? (
+                        <textarea
+                          value={values[k.key] || ""}
+                          onChange={(e) => setValues({ ...values, [k.key]: e.target.value })}
+                          className="input-field h-20 font-mono text-xs resize-none"
+                          placeholder={k.placeholder}
+                        />
+                      ) : (
+                        <input
+                          type={k.type}
+                          value={values[k.key] || ""}
+                          onChange={(e) => setValues({ ...values, [k.key]: e.target.value })}
+                          className="input-field font-mono text-xs"
+                          placeholder={k.placeholder}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {hasChanges && (
+            <div className="sticky bottom-4 flex justify-end mt-6">
+              <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2 shadow-lg">
+                <Save size={16} /> {saving ? "Saving..." : "Save changes"}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {subTab === "prompts" && (
+        <>
+          {hasPromptChanges && (
+            <div className="flex justify-end mb-4">
+              <button onClick={handleSavePrompts} disabled={savingPrompts} className="btn-primary flex items-center gap-2">
+                <Save size={16} /> {savingPrompts ? "Saving..." : "Save prompts"}
+              </button>
+            </div>
+          )}
+          <div className="space-y-4">
+            {PROMPT_GROUPS.map((group) => (
+              <div key={group.label} className="card">
+                <h2 className="font-semibold text-white mb-3">{group.label}</h2>
+                <div className="space-y-3">
+                  {group.keys.map((key) => {
+                    const p = prompts.find((x) => x.key === key);
+                    return (
+                      <div key={key} className="border border-gray-700 rounded-lg p-3">
+                        <label className="text-xs font-mono text-gray-300 block mb-1.5">{key}</label>
+                        <textarea
+                          value={promptValues[key] ?? p?.value ?? ""}
+                          onChange={(e) => setPromptValues({ ...promptValues, [key]: e.target.value })}
+                          className="input-field w-full h-20 font-mono text-xs resize-y min-h-[72px]"
+                          placeholder="Prompt..."
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          {hasPromptChanges && (
+            <div className="sticky bottom-4 flex justify-end mt-6">
+              <button onClick={handleSavePrompts} disabled={savingPrompts} className="btn-primary flex items-center gap-2 shadow-lg">
+                <Save size={16} /> {savingPrompts ? "Saving..." : "Save prompts"}
+              </button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

@@ -105,6 +105,9 @@ export const api = {
   deleteProject: (id: string) =>
     request<void>(`/api/projects/${id}`, { method: "DELETE" }),
 
+  duplicateProject: (id: string) =>
+    request<ProjectOut>(`/api/projects/${id}/duplicate`, { method: "POST" }),
+
   // ── Members ────────────────────────────────────────────
   getMembers: (projectId: string) => request<MemberOut[]>(`/api/projects/${projectId}/members`),
 

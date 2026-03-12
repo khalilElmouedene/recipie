@@ -1,14 +1,13 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Users, LogOut, Settings, UserCircle, X } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Users, LogOut, UserCircle, X } from "lucide-react";
 import { clearToken, getUserRole } from "@/lib/auth";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/profile", label: "Profile", icon: UserCircle },
-  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 interface SidebarProps {
@@ -21,10 +20,9 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const router = useRouter();
   const role = getUserRole();
 
-  const baseNav = NAV.filter((n) => n.href !== "/settings" || role === "owner");
   const items = role === "owner"
-    ? [...baseNav, { href: "/users", label: "Users", icon: Users }]
-    : baseNav;
+    ? [...NAV, { href: "/users", label: "Users", icon: Users }]
+    : NAV;
 
   return (
     <aside
