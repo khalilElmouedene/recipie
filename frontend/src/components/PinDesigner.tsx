@@ -2768,9 +2768,9 @@ export default function PinDesigner({
                   </div>
                   <div>
                     <label className="text-xs text-gray-400 block mb-2">Choose Image</label>
-                    {recipeImages.length > 0 ? (
+                    {effectiveImages.length > 0 ? (
                       <div className="grid grid-cols-2 gap-2">
-                        {recipeImages.map((url, i) => (
+                        {effectiveImages.map((url, i) => (
                           <button
                             key={i}
                             onClick={() => applyImage(url)}
