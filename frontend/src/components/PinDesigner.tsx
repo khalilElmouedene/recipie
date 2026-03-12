@@ -6,7 +6,7 @@ import {
   Type, Upload, Image as ImageIcon, Minus, Trash2, Square,
   Send, Save, AlignLeft, AlignCenter,
   AlignRight, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown,
-  PanelLeft, PanelRight, Settings,
+  PanelLeft, PanelRight, Settings, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { api, getApiBaseUrl } from "@/lib/api";
 import { useDesignerStore } from "@/store/useDesignerStore";
@@ -467,6 +467,12 @@ function TemplatePreview({ layout }: { layout: PinTemplate["previewLayout"] }) {
 
 export type PinDesignerApi = { getJson: () => string; exportPng: () => string | null };
 
+export interface FrameInfo {
+  recipeId: string;
+  title: string;
+  images: string[];
+}
+
 export interface PinDesignerProps {
   onClose: () => void;
   templateName?: string;
@@ -487,6 +493,8 @@ export interface PinDesignerProps {
   onTemplateSelected?: (templateId: string) => void;
   /** When true, renders as absolute fill instead of fixed full-screen */
   embedded?: boolean;
+  /** Multiple recipe frames for batch design */
+  frames?: FrameInfo[];
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -506,7 +514,18 @@ export default function PinDesigner({
   onApiReady,
   onTemplateSelected,
   embedded = false,
+  frames,
 }: PinDesignerProps) {
+  // ── Multi-frame state ────────────────────────────────────────────────────
+  const [activeFrameIdx, setActiveFrameIdx] = useState(0);
+  const frameJsonsRef = useRef<Record<number, string>>({});
+  const [savingAll, setSavingAll] = useState(false);
+  const [saveAllProgress, setSaveAllProgress] = useState(0);
+
+  // Derive effective images/title from frames prop if present
+  const activeFrame = frames?.[activeFrameIdx];
+  const effectiveImages = activeFrame ? activeFrame.images : recipeImages;
+  const effectiveTitle = activeFrame ? activeFrame.title : initialTitle;
   // Route external image URLs through backend proxy to avoid browser CORS restrictions
   const proxyUrl = (url: string) => {
     if (!url) return url;
@@ -565,6 +584,92 @@ export default function PinDesigner({
   const [savingToRecipe, setSavingToRecipe] = useState(false);
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+
+  // ── Frame switching ──────────────────────────────────────────────────────
+  const switchToFrame = async (newIdx: number) => {
+    if (!frames || newIdx === activeFrameIdx || newIdx < 0 || newIdx >= frames.length) return;
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    // Save current frame JSON
+    frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
+      canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"])
+    );
+
+    setActiveFrameIdx(newIdx);
+    setPinName(frames[newIdx].title);
+
+    const savedJson = frameJsonsRef.current[newIdx];
+    if (savedJson && savedJson !== "{}") {
+      await canvas.loadFromJSON(savedJson);
+      canvas.renderAll();
+      updateLayers();
+    } else if (selectedTemplate) {
+      await loadTemplate(selectedTemplate, frames[newIdx].images, frames[newIdx].title);
+    } else {
+      canvas.clear();
+      canvas.renderAll();
+      updateLayers();
+    }
+  };
+
+  const handleSaveAll = async () => {
+    if (!frames || frames.length === 0) return;
+    const canvas = fabricCanvasRef.current;
+    if (canvas) {
+      frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
+        canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"])
+      );
+    }
+    setSavingAll(true);
+    setSaveAllProgress(0);
+
+    const fabricMod = await import("fabric");
+    const proxyBase = getApiBaseUrl();
+
+    for (let i = 0; i < frames.length; i++) {
+      const frame = frames[i];
+      const savedJson = frameJsonsRef.current[i];
+      setSaveAllProgress(Math.round(((i + 0.5) / frames.length) * 100));
+
+      let dataUrl: string | null = null;
+      const canvasEl = document.createElement("canvas");
+      canvasEl.width = 1000;
+      canvasEl.height = 1500;
+      document.body.appendChild(canvasEl);
+
+      try {
+        const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
+        const fc = new FC(canvasEl, { width: 1000, height: 1500, enableRetinaScaling: false });
+
+        if (savedJson && savedJson !== "{}") {
+          await fc.loadFromJSON(savedJson);
+          fc.renderAll();
+        } else if (selectedTemplate) {
+          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title);
+        }
+
+        fc.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+        fc.renderAll();
+        dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
+        fc.dispose();
+      } catch { /* skip */ } finally {
+        document.body.removeChild(canvasEl);
+      }
+
+      if (dataUrl) {
+        const a = document.createElement("a");
+        a.href = dataUrl;
+        a.download = `pin-${String(i + 1).padStart(2, "0")}-${frame.title.replace(/[^a-z0-9]/gi, "_").slice(0, 30)}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        await new Promise((r) => setTimeout(r, 350));
+      }
+    }
+    setSaveAllProgress(100);
+    setSavingAll(false);
+  };
 
   // ── Mount ────────────────────────────────────────────────────────────────
   useEffect(() => { setMounted(true); }, []);
@@ -944,10 +1049,13 @@ export default function PinDesigner({
 
   // ── Template loading ──────────────────────────────────────────────────────
 
-  const loadTemplate = async (template: PinTemplate) => {
+  const loadTemplate = async (template: PinTemplate, imagesOverride?: string[], titleOverride?: string) => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
+
+    const imgs = imagesOverride ?? effectiveImages;
+    const ttl = titleOverride ?? effectiveTitle;
 
     undoHistoryRef.current = [];
     canvas.clear();
@@ -958,7 +1066,7 @@ export default function PinDesigner({
 
     for (const el of template.elements) {
       if (el.type === "image") {
-        const imageUrl = recipeImages.length > 0 ? (recipeImages[imageIndex % recipeImages.length]?.trim() || "") : "";
+        const imageUrl = imgs.length > 0 ? (imgs[imageIndex % imgs.length]?.trim() || "") : "";
         imageIndex++;
         let imageLoaded = false;
 
@@ -1076,7 +1184,7 @@ export default function PinDesigner({
         (band as any).__pinType = "band";
         canvas.add(band);
       } else if (el.type === "text") {
-        const textContent = el.id === "title" && initialTitle ? initialTitle : (el.defaultText || "Text");
+        const textContent = el.id === "title" && ttl ? ttl : (el.defaultText || "Text");
         const textbox = new fabric.Textbox(
           textContent,
           {
@@ -2121,10 +2229,31 @@ export default function PinDesigner({
         />
 
         <div className="flex items-center gap-1.5 ml-auto">
-          <button onClick={handleExport} className="btn-primary flex items-center gap-1.5 px-2.5 py-1.5 text-sm">
-            <Download size={15} /> <span className="hidden sm:inline">Export</span>
-          </button>
-          {recipeId && (
+          {/* Single-frame export */}
+          {!frames && (
+            <button onClick={handleExport} className="btn-primary flex items-center gap-1.5 px-2.5 py-1.5 text-sm">
+              <Download size={15} /> <span className="hidden sm:inline">Export</span>
+            </button>
+          )}
+          {/* Multi-frame: Save All */}
+          {frames && frames.length > 1 && (
+            <button
+              onClick={handleSaveAll}
+              disabled={savingAll || !selectedTemplate}
+              title={!selectedTemplate ? "Select a template first" : `Download ${frames.length} PNGs`}
+              className="btn-primary flex items-center gap-1.5 px-2.5 py-1.5 text-sm disabled:opacity-40"
+            >
+              <Download size={15} />
+              <span className="hidden sm:inline">{savingAll ? `${saveAllProgress}%` : `Save All (${frames.length})`}</span>
+            </button>
+          )}
+          {/* Single frame in multi mode — export current */}
+          {frames && (
+            <button onClick={handleExport} className="btn-secondary flex items-center gap-1.5 px-2.5 py-1.5 text-sm">
+              <Download size={15} /> <span className="hidden sm:inline">Export</span>
+            </button>
+          )}
+          {recipeId && !frames && (
             <button
               onClick={handleSaveToRecipe}
               disabled={savingToRecipe || !selectedTemplate}
@@ -2145,6 +2274,55 @@ export default function PinDesigner({
           </button>
         </div>
       </header>
+
+      {/* ── Frame Strip (multi-recipe mode) ──────────────────────────────── */}
+      {frames && frames.length > 1 && (
+        <div className="flex-shrink-0 bg-gray-900 border-b border-gray-800 px-3 py-1.5">
+          <div className="flex items-center gap-2">
+            <Layers size={13} className="text-gray-500 flex-shrink-0" />
+            <span className="text-xs text-gray-500 flex-shrink-0 hidden sm:block">{frames.length} frames</span>
+            <div className="flex items-center gap-1 overflow-x-auto flex-1 scrollbar-hide py-0.5">
+              {frames.map((f, i) => (
+                <button
+                  key={f.recipeId}
+                  onClick={() => switchToFrame(i)}
+                  className={`flex-shrink-0 flex items-center gap-1 px-2 py-0.5 rounded text-xs border transition ${
+                    i === activeFrameIdx
+                      ? "border-brand-500 bg-brand-600/15 text-brand-400"
+                      : "border-gray-700 bg-gray-800 text-gray-400 hover:text-gray-200 hover:border-gray-600"
+                  }`}
+                >
+                  <span className="font-semibold">{i + 1}</span>
+                  <span className="max-w-[100px] truncate">{f.title}</span>
+                  {frameJsonsRef.current[i] && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" title="Edited" />
+                  )}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-0.5 flex-shrink-0">
+              <button onClick={() => switchToFrame(activeFrameIdx - 1)} disabled={activeFrameIdx === 0} className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 disabled:opacity-30">
+                <ChevronLeft size={13} />
+              </button>
+              <button onClick={() => switchToFrame(activeFrameIdx + 1)} disabled={activeFrameIdx === frames.length - 1} className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 disabled:opacity-30">
+                <ChevronRight size={13} />
+              </button>
+              {selectedTemplate && (
+                <button
+                  onClick={() => {
+                    frameJsonsRef.current = {};
+                    if (selectedTemplate) loadTemplate(selectedTemplate, effectiveImages, effectiveTitle);
+                  }}
+                  className="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-brand-600/20 text-brand-400 hover:bg-brand-600/30 border border-brand-700 whitespace-nowrap"
+                  title="Clear all edits and re-apply current template to all frames"
+                >
+                  Apply to all
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Pinterest Publish Modal ────────────────────────────────────────── */}
       {showPublishModal && (
@@ -2767,6 +2945,19 @@ export default function PinDesigner({
           )}
         </aside>
       </div>
+
+      {/* ── Save All progress overlay ─────────────────────────────────────── */}
+      {savingAll && (
+        <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 text-center min-w-[200px]">
+            <p className="text-white font-semibold mb-3">Generating {frames?.length} pins…</p>
+            <div className="w-48 bg-gray-700 rounded-full h-2 mx-auto">
+              <div className="bg-brand-500 h-2 rounded-full transition-all" style={{ width: `${saveAllProgress}%` }} />
+            </div>
+            <p className="text-xs text-gray-400 mt-2">{saveAllProgress}%</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
