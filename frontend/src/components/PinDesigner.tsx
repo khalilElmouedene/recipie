@@ -265,6 +265,7 @@ export async function buildTemplateOnCanvas(
   images: string[],
   proxyBase: string,
   title: string = "Recipe Title",
+  website: string = "",
 ): Promise<void> {
   canvas.clear();
   canvas.backgroundColor = template.bgColor;
@@ -302,7 +303,7 @@ export async function buildTemplateOnCanvas(
         : new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: el.bgColor || "#ffffff", strokeWidth: 0 });
       canvas.add(shape);
     } else if (el.type === "text") {
-      const text = el.id === "title" ? title : (el.defaultText || "");
+      const text = el.id === "title" ? title : el.id === "website" ? (website || el.defaultText || "") : (el.defaultText || "");
       const tb = new fabric.Textbox(text, {
         left: el.x, top: el.y, width: el.width || 940, originX: "center", originY: "center",
         fontSize: el.fontSize || 32, fontFamily: "Arial", fontWeight: el.fontWeight || "normal",
@@ -495,6 +496,8 @@ export interface PinDesignerProps {
   embedded?: boolean;
   /** Multiple recipe frames for batch design */
   frames?: FrameInfo[];
+  /** Website/domain to display on pin templates that have a website element */
+  website?: string;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -515,6 +518,7 @@ export default function PinDesigner({
   onTemplateSelected,
   embedded = false,
   frames,
+  website = "",
 }: PinDesignerProps) {
   // ── Multi-frame state ────────────────────────────────────────────────────
   const [activeFrameIdx, setActiveFrameIdx] = useState(0);
@@ -646,7 +650,7 @@ export default function PinDesigner({
           await fc.loadFromJSON(savedJson);
           fc.renderAll();
         } else if (selectedTemplate) {
-          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title);
+          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website);
         }
 
         fc.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
@@ -1056,13 +1060,14 @@ export default function PinDesigner({
 
   // ── Template loading ──────────────────────────────────────────────────────
 
-  const loadTemplate = async (template: PinTemplate, imagesOverride?: string[], titleOverride?: string) => {
+  const loadTemplate = async (template: PinTemplate, imagesOverride?: string[], titleOverride?: string, websiteOverride?: string) => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
 
     const imgs = imagesOverride ?? effectiveImages;
     const ttl = titleOverride ?? effectiveTitle;
+    const siteWebsite = websiteOverride ?? website;
 
     undoHistoryRef.current = [];
     canvas.clear();
@@ -1191,7 +1196,7 @@ export default function PinDesigner({
         (band as any).__pinType = "band";
         canvas.add(band);
       } else if (el.type === "text") {
-        const textContent = el.id === "title" && ttl ? ttl : (el.defaultText || "Text");
+        const textContent = el.id === "title" && ttl ? ttl : el.id === "website" ? (siteWebsite || el.defaultText || "Text") : (el.defaultText || "Text");
         const textbox = new fabric.Textbox(
           textContent,
           {

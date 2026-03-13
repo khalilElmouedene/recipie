@@ -25,10 +25,17 @@ export default function PinDesignerPage() {
 
   const [frames, setFrames] = useState<FrameInfo[]>([]);
   const [singleRecipe, setSingleRecipe] = useState<RecipeOut | null>(null);
+  const [siteDomain, setSiteDomain] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!params.siteId) return;
+
+    // Load site domain for the website element in pin templates
+    api.getSites(params.id).then((sites) => {
+      const found = sites.find((s) => s.id === params.siteId);
+      if (found) setSiteDomain(found.domain || "");
+    }).catch(() => {});
 
     if (recipeParam) {
       // Single-recipe mode: opened from Pinterest tab
@@ -73,6 +80,7 @@ export default function PinDesignerPage() {
         recipePinDescription={singleRecipe.pin_description ?? ""}
         projectId={params.id}
         siteId={params.siteId}
+        website={siteDomain}
         onClose={() => router.push(`/projects/${params.id}/sites/${params.siteId}`)}
       />
     );
@@ -84,6 +92,7 @@ export default function PinDesignerPage() {
       frames={frames}
       projectId={params.id}
       siteId={params.siteId}
+      website={siteDomain}
       onClose={() => router.push(`/projects/${params.id}/sites/${params.siteId}`)}
     />
   );
