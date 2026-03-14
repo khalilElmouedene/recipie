@@ -145,6 +145,13 @@ export const api = {
       body: JSON.stringify({ prompts }),
     }),
 
+  getCustomFonts: () => request<string[]>(`/api/settings/fonts`),
+  setCustomFonts: (fonts: string[]) =>
+    request<string[]>(`/api/settings/fonts`, {
+      method: "PUT",
+      body: JSON.stringify({ fonts }),
+    }),
+
   // ── Sites ──────────────────────────────────────────────
   getSites: (projectId: string) => request<SiteOut[]>(`/api/projects/${projectId}/sites`),
 

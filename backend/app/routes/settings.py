@@ -1,9 +1,11 @@
 """Paramètres / Settings - clés API globales, prompts (par owner)."""
 from __future__ import annotations
+import json
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -153,3 +155,34 @@ async def update_prompts(
         if key not in out:
             out[key] = PromptOut(key=key, value=data["value"], description=data.get("description", ""))
     return list(out.values())
+
+
+# ── Custom Fonts (per user) ──────────────────────────────────────────────────
+
+
+class FontsUpdate(BaseModel):
+    fonts: list[str]
+
+
+@router.get("/fonts", response_model=list[str])
+async def get_fonts(
+    user: Annotated[User, Depends(get_current_user)],
+):
+    if not user.custom_fonts:
+        return []
+    try:
+        return json.loads(user.custom_fonts)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+@router.put("/fonts", response_model=list[str])
+async def set_fonts(
+    body: FontsUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    unique = list(dict.fromkeys(f.strip() for f in body.fonts if f.strip()))
+    user.custom_fonts = json.dumps(unique)
+    await db.commit()
+    return unique

@@ -61,6 +61,7 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(SAEnum(UserRole, name="user_role"), nullable=False, default=UserRole.member)
     google_id: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True, index=True)
     created_by_owner_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    custom_fonts: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     owned_projects: Mapped[list[Project]] = relationship(back_populates="owner", cascade="all, delete-orphan")

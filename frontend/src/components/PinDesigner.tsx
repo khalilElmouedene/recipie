@@ -578,37 +578,38 @@ export default function PinDesigner({
   const [saveAllProgress, setSaveAllProgress] = useState(0);
   const [framePreviews, setFramePreviews] = useState<Record<number, string>>({});
 
-  // ── Custom fonts (persisted to localStorage) ─────────────────────────
-  const FONTS_STORAGE_KEY = "pin_designer_custom_fonts";
-  const [customFonts, setCustomFonts] = useState<string[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const stored = localStorage.getItem(FONTS_STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch { return []; }
-  });
+  // ── Custom fonts (persisted to database) ─────────────────────────────
+  const [customFonts, setCustomFonts] = useState<string[]>([]);
   const [fontInput, setFontInput] = useState("");
   const [fontLoading, setFontLoading] = useState(false);
+  const fontsLoadedRef = useRef(false);
 
-  // Persist whenever customFonts changes
-  useEffect(() => {
-    try { localStorage.setItem(FONTS_STORAGE_KEY, JSON.stringify(customFonts)); } catch {}
-  }, [customFonts]);
+  const injectFontStylesheet = useCallback((fontName: string) => {
+    const family = fontName.replace(/ /g, "+");
+    const linkId = `gfont-${family}`;
+    if (!document.getElementById(linkId)) {
+      const link = document.createElement("link");
+      link.id = linkId;
+      link.rel = "stylesheet";
+      link.href = `https://fonts.googleapis.com/css2?family=${family}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
+      document.head.appendChild(link);
+    }
+  }, []);
 
-  // Re-load Google Font stylesheets for persisted fonts on mount
+  // Load saved fonts from database on mount
   useEffect(() => {
-    customFonts.forEach((fontName) => {
-      const family = fontName.replace(/ /g, "+");
-      const linkId = `gfont-${family}`;
-      if (!document.getElementById(linkId)) {
-        const link = document.createElement("link");
-        link.id = linkId;
-        link.rel = "stylesheet";
-        link.href = `https://fonts.googleapis.com/css2?family=${family}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
-        document.head.appendChild(link);
-      }
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (fontsLoadedRef.current) return;
+    fontsLoadedRef.current = true;
+    api.getCustomFonts()
+      .then((fonts) => {
+        setCustomFonts(fonts);
+        fonts.forEach(injectFontStylesheet);
+      })
+      .catch(() => {});
+  }, [injectFontStylesheet]);
+
+  const saveFontsToDb = useCallback((fonts: string[]) => {
+    api.setCustomFonts(fonts).catch(() => {});
   }, []);
 
   const loadGoogleFont = useCallback(async (fontName: string) => {
@@ -616,22 +617,22 @@ export default function PinDesigner({
     if (!trimmed) return;
     setFontLoading(true);
     try {
-      const family = trimmed.replace(/ /g, "+");
-      const linkId = `gfont-${family}`;
-      if (!document.getElementById(linkId)) {
-        const link = document.createElement("link");
-        link.id = linkId;
-        link.rel = "stylesheet";
-        link.href = `https://fonts.googleapis.com/css2?family=${family}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
-        document.head.appendChild(link);
-      }
+      injectFontStylesheet(trimmed);
       await document.fonts.load(`16px "${trimmed}"`);
       await new Promise((r) => setTimeout(r, 300));
       await document.fonts.ready;
-      setCustomFonts((prev) => prev.includes(trimmed) ? prev : [...prev, trimmed]);
+      setCustomFonts((prev) => {
+        const next = prev.includes(trimmed) ? prev : [...prev, trimmed];
+        saveFontsToDb(next);
+        return next;
+      });
       setFontInput("");
     } catch {
-      setCustomFonts((prev) => prev.includes(trimmed) ? prev : [...prev, trimmed]);
+      setCustomFonts((prev) => {
+        const next = prev.includes(trimmed) ? prev : [...prev, trimmed];
+        saveFontsToDb(next);
+        return next;
+      });
       setFontInput("");
     } finally {
       setFontLoading(false);
