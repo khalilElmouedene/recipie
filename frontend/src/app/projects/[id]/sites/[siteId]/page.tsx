@@ -55,6 +55,9 @@ export default function SiteDetailPage() {
   const [pinDesignLink, setPinDesignLink] = useState("");
   const [pinDesignSaving, setPinDesignSaving] = useState(false);
 
+  // Designer mode picker
+  const [designerModeOpen, setDesignerModeOpen] = useState(false);
+
   // Bulk Pin Generator (site-level)
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkTemplate, setBulkTemplate] = useState("");
@@ -497,7 +500,7 @@ export default function SiteDetailPage() {
             <Download size={16} /> Excel
           </button>
           <button
-            onClick={() => router.push(`/projects/${projectId}/sites/${siteId}/designer`)}
+            onClick={() => setDesignerModeOpen(true)}
             className="btn-secondary flex items-center gap-2 border-green-700 text-green-400 hover:text-green-300"
           >
             <LayoutGrid size={16} /> Pin Designer
@@ -952,6 +955,54 @@ export default function SiteDetailPage() {
         ))}
         {recipes.length === 0 && <p className="text-center py-8 text-gray-500">No recipes yet. Add one above.</p>}
       </div>
+
+      {/* Designer Mode Picker */}
+      {designerModeOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 rounded-xl border border-gray-700 max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                <LayoutGrid size={20} /> Choose Designer Mode
+              </h3>
+              <button onClick={() => setDesignerModeOpen(false)} className="text-gray-500 hover:text-gray-300">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <button
+                onClick={() => {
+                  setDesignerModeOpen(false);
+                  router.push(`/projects/${projectId}/sites/${siteId}/designer?mode=bulk`);
+                }}
+                className="flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-gray-700 hover:border-brand-500 hover:bg-brand-500/5 transition group"
+              >
+                <div className="w-14 h-14 rounded-xl bg-brand-500/10 flex items-center justify-center group-hover:bg-brand-500/20 transition">
+                  <LayoutGrid size={28} className="text-brand-400" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-semibold text-white mb-1">Bulk Designer</p>
+                  <p className="text-xs text-gray-400">View and edit all recipes at once in a grid layout</p>
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  setDesignerModeOpen(false);
+                  router.push(`/projects/${projectId}/sites/${siteId}/designer`);
+                }}
+                className="flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-gray-700 hover:border-cyan-500 hover:bg-cyan-500/5 transition group"
+              >
+                <div className="w-14 h-14 rounded-xl bg-cyan-500/10 flex items-center justify-center group-hover:bg-cyan-500/20 transition">
+                  <Pencil size={28} className="text-cyan-400" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-semibold text-white mb-1">One by One</p>
+                  <p className="text-xs text-gray-400">Switch between recipes with tabs for detailed editing</p>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bulk Pin Generator */}
       {bulkOpen && (
