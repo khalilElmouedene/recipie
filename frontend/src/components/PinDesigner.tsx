@@ -271,9 +271,30 @@ export async function buildTemplateOnCanvas(
   canvas.backgroundColor = template.bgColor;
   let imageIndex = 0;
 
-  const proxyUrl = (url: string) => {
-    if (!url || url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("/")) return url;
-    return `${proxyBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+  const fetchAsDataUrl = async (url: string): Promise<string> => {
+    const proxyEndpoint = `${proxyBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(proxyEndpoint, { headers });
+    if (!res.ok) throw new Error(`Proxy fetch failed: ${res.status}`);
+    const blob = await res.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  const resolveImageUrl = async (url: string): Promise<string> => {
+    if (!url) return url;
+    if (url.startsWith("data:") || url.startsWith("blob:")) return url;
+    if (url.startsWith("/")) return url;
+    if (proxyBase && url.startsWith(proxyBase)) return url;
+    try { if (typeof window !== "undefined" && url.startsWith(window.location.origin)) return url; } catch {}
+    return fetchAsDataUrl(url);
   };
 
   for (const el of template.elements) {
@@ -282,7 +303,8 @@ export async function buildTemplateOnCanvas(
       imageIndex++;
       if (imageUrl) {
         try {
-          const img = await fabric.FabricImage.fromURL(proxyUrl(imageUrl), { crossOrigin: "anonymous" });
+          const resolved = await resolveImageUrl(imageUrl);
+          const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
           const scale = Math.max(el.width / (img.width || 1), el.height / (img.height || 1));
           img.set({ left: el.x + el.width / 2, top: el.y + el.height / 2, originX: "center", originY: "center", scaleX: scale, scaleY: scale });
           (img as any).__pinId = el.id; (img as any).__pinType = "image";
