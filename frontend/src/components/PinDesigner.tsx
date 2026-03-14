@@ -2613,94 +2613,104 @@ export default function PinDesigner({
             )}
           </div>
 
-          {/* Multi-page vertical layout OR single canvas */}
           {frames && frames.length > 1 ? (
-            <div className="p-4 sm:p-8 space-y-6">
-              {frames.map((f, i) => (
-                <div key={f.recipeId} className="flex flex-col items-center">
-                  {/* Page label */}
-                  <div className={`w-full flex items-center gap-2 mb-2 ${i === activeFrameIdx ? "text-brand-400" : "text-gray-500"}`}
-                       style={{ maxWidth: `${Math.max(PIN_W * zoom / 100, 300)}px` }}>
+            /* ── Multi-page vertical layout ─────────────────────────────────── */
+            <div className="p-4 sm:p-6 flex flex-col items-center gap-4">
+              {/* Preview pages BEFORE active */}
+              {frames.slice(0, activeFrameIdx).map((f, i) => (
+                <div key={f.recipeId} className="flex flex-col items-center w-full" style={{ maxWidth: `${Math.max(PIN_W * zoom / 100, 280)}px` }}>
+                  <div className="w-full flex items-center gap-2 mb-1 text-gray-500">
                     <span className="text-xs font-semibold">Page {i + 1}</span>
-                    <span className="text-xs truncate max-w-[200px]">{f.title}</span>
-                    {frameJsonsRef.current[i] && i !== activeFrameIdx && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" title="Edited" />
-                    )}
+                    <span className="text-xs truncate flex-1">{f.title}</span>
+                    {frameJsonsRef.current[i] && <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" title="Edited" />}
                   </div>
-
-                  {i === activeFrameIdx ? (
-                    /* Active page: live canvas */
-                    <div style={{ minHeight: `${(PIN_H * zoom) / 100 + 4}px` }}>
-                      <div
-                        ref={canvasWrapperRef}
-                        style={{
-                          transform: `scale(${zoom / 100})`,
-                          transformOrigin: "top center",
-                          width: PIN_W,
-                          height: PIN_H,
-                        }}
-                        className="shadow-2xl rounded-lg overflow-hidden border-2 border-brand-500 flex-shrink-0 relative"
-                      >
-                        <canvas ref={canvasRef} />
-                        {!selectedTemplate && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 rounded-lg">
-                            <div className="text-center px-6 py-4">
-                              <LayoutTemplate size={48} className="mx-auto text-gray-500 mb-3" />
-                              <p className="text-gray-400 font-medium">Select a template to get started</p>
-                              <p className="text-sm text-gray-500 mt-1">Choose from the Templates panel on the left</p>
-                            </div>
-                          </div>
-                        )}
+                  <div
+                    onClick={() => switchToFrame(i)}
+                    className="cursor-pointer group w-full"
+                    style={{ height: `${PIN_H * zoom / 100}px`, overflow: "hidden" }}
+                  >
+                    <div style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top center", width: PIN_W, height: PIN_H, margin: "0 auto" }}
+                         className="shadow-lg rounded-lg overflow-hidden border-2 border-gray-700 group-hover:border-gray-500 transition relative">
+                      {framePreviews[i] ? (
+                        <img src={framePreviews[i]} alt={f.title} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full bg-gray-800 flex items-center justify-center">
+                          <p className="text-sm text-gray-600">Click to edit</p>
+                        </div>
+                      )}
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition flex items-center justify-center">
+                        <span className="opacity-0 group-hover:opacity-100 transition text-white text-sm font-medium bg-black/60 px-3 py-1.5 rounded-lg">Click to edit</span>
                       </div>
                     </div>
-                  ) : (
-                    /* Non-active page: preview image (click to switch) */
+                  </div>
+                </div>
+              ))}
+
+              {/* ── Active page: live canvas (stable DOM position) ────────── */}
+              <div className="flex flex-col items-center w-full" style={{ maxWidth: `${Math.max(PIN_W * zoom / 100, 280)}px` }}>
+                <div className="w-full flex items-center gap-2 mb-1 text-brand-400">
+                  <span className="text-xs font-semibold">Page {activeFrameIdx + 1}</span>
+                  <span className="text-xs truncate flex-1">{effectiveTitle}</span>
+                </div>
+                <div style={{ height: `${PIN_H * zoom / 100}px`, overflow: "visible", width: "100%" }}>
+                  <div
+                    ref={canvasWrapperRef}
+                    style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top center", width: PIN_W, height: PIN_H, margin: "0 auto" }}
+                    className="shadow-2xl rounded-lg overflow-hidden border-2 border-brand-500 relative"
+                  >
+                    <canvas ref={canvasRef} />
+                    {!selectedTemplate && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 rounded-lg">
+                        <div className="text-center px-6 py-4">
+                          <LayoutTemplate size={48} className="mx-auto text-gray-500 mb-3" />
+                          <p className="text-gray-400 font-medium">Select a template to get started</p>
+                          <p className="text-sm text-gray-500 mt-1">Choose from the Templates panel on the left</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Preview pages AFTER active */}
+              {frames.slice(activeFrameIdx + 1).map((f, sliceI) => {
+                const i = activeFrameIdx + 1 + sliceI;
+                return (
+                  <div key={f.recipeId} className="flex flex-col items-center w-full" style={{ maxWidth: `${Math.max(PIN_W * zoom / 100, 280)}px` }}>
+                    <div className="w-full flex items-center gap-2 mb-1 text-gray-500">
+                      <span className="text-xs font-semibold">Page {i + 1}</span>
+                      <span className="text-xs truncate flex-1">{f.title}</span>
+                      {frameJsonsRef.current[i] && <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" title="Edited" />}
+                    </div>
                     <div
                       onClick={() => switchToFrame(i)}
-                      className="cursor-pointer group"
-                      style={{ minHeight: `${(PIN_H * zoom) / 100 + 4}px` }}
+                      className="cursor-pointer group w-full"
+                      style={{ height: `${PIN_H * zoom / 100}px`, overflow: "hidden" }}
                     >
-                      <div
-                        style={{
-                          transform: `scale(${zoom / 100})`,
-                          transformOrigin: "top center",
-                          width: PIN_W,
-                          height: PIN_H,
-                        }}
-                        className="shadow-lg rounded-lg overflow-hidden border-2 border-gray-700 group-hover:border-gray-500 transition relative flex-shrink-0"
-                      >
+                      <div style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top center", width: PIN_W, height: PIN_H, margin: "0 auto" }}
+                           className="shadow-lg rounded-lg overflow-hidden border-2 border-gray-700 group-hover:border-gray-500 transition relative">
                         {framePreviews[i] ? (
                           <img src={framePreviews[i]} alt={f.title} className="w-full h-full object-cover" />
                         ) : (
                           <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                            <div className="text-center">
-                              <ImageIcon size={48} className="mx-auto text-gray-700 mb-2" />
-                              <p className="text-sm text-gray-600">Click to edit Page {i + 1}</p>
-                            </div>
+                            <p className="text-sm text-gray-600">Click to edit</p>
                           </div>
                         )}
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition flex items-center justify-center">
-                          <span className="opacity-0 group-hover:opacity-100 transition text-white text-sm font-medium bg-black/60 px-4 py-2 rounded-lg">
-                            Click to edit
-                          </span>
+                          <span className="opacity-0 group-hover:opacity-100 transition text-white text-sm font-medium bg-black/60 px-3 py-1.5 rounded-lg">Click to edit</span>
                         </div>
                       </div>
                     </div>
-                  )}
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           ) : (
-            /* Single canvas (no frames or single frame) */
+            /* ── Single canvas (no frames) ──────────────────────────────────── */
             <div className="p-2 sm:p-8 flex justify-center" style={{ minHeight: `${(PIN_H * zoom) / 100 + 64}px` }}>
               <div
                 ref={canvasWrapperRef}
-                style={{
-                  transform: `scale(${zoom / 100})`,
-                  transformOrigin: "top center",
-                  width: PIN_W,
-                  height: PIN_H,
-                }}
+                style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top center", width: PIN_W, height: PIN_H }}
                 className="shadow-2xl rounded-lg overflow-hidden border-2 border-gray-600 flex-shrink-0 relative"
               >
                 <canvas ref={canvasRef} />
