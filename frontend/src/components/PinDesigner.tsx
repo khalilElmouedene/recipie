@@ -256,6 +256,18 @@ export const TEMPLATES: PinTemplate[] = [
   },
 ];
 
+// ─── Bulk style overrides (shared across all recipes in bulk mode) ────────────
+
+export interface BulkOverrides {
+  fontFamily?: string;
+  fontSize?: number;
+  fontWeight?: string;
+  titleColor?: string;
+  bandColor?: string;
+  websiteText?: string;
+  bgColor?: string;
+}
+
 // ─── Standalone template renderer (used for batch Save All) ──────────────────
 
 export async function buildTemplateOnCanvas(
@@ -266,9 +278,10 @@ export async function buildTemplateOnCanvas(
   proxyBase: string,
   title: string = "Recipe Title",
   website: string = "",
+  overrides?: BulkOverrides,
 ): Promise<void> {
   canvas.clear();
-  canvas.backgroundColor = template.bgColor;
+  canvas.backgroundColor = overrides?.bgColor || template.bgColor;
   let imageIndex = 0;
 
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
@@ -297,6 +310,13 @@ export async function buildTemplateOnCanvas(
     return fetchAsDataUrl(url);
   };
 
+  const oFont = overrides?.fontFamily;
+  const oSize = overrides?.fontSize;
+  const oWeight = overrides?.fontWeight;
+  const oTitleColor = overrides?.titleColor;
+  const oBandColor = overrides?.bandColor;
+  const oWebsite = overrides?.websiteText;
+
   for (const el of template.elements) {
     if (el.type === "image") {
       const imageUrl = images.length > 0 ? (images[imageIndex % images.length]?.trim() || "") : "";
@@ -320,16 +340,24 @@ export async function buildTemplateOnCanvas(
         canvas.add(rect);
       }
     } else if (el.type === "band" || el.type === "circle") {
+      const bandFill = (el.id === "textBand" && oBandColor) ? oBandColor : (el.bgColor || (el.type === "circle" ? "#8b0000" : "#ffffff"));
       const shape = el.type === "circle"
-        ? new fabric.Circle({ left: el.x, top: el.y, radius: el.radius || 60, fill: el.bgColor || "#8b0000", originX: "center", originY: "center" })
-        : new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: el.bgColor || "#ffffff", strokeWidth: 0 });
+        ? new fabric.Circle({ left: el.x, top: el.y, radius: el.radius || 60, fill: bandFill, originX: "center", originY: "center" })
+        : new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: bandFill, strokeWidth: 0 });
       canvas.add(shape);
     } else if (el.type === "text") {
-      const text = el.id === "title" ? title : el.id === "website" ? (website || el.defaultText || "") : (el.defaultText || "");
+      const isTitle = el.id === "title" || el.id === "title1" || el.id === "title2";
+      const isWebsite = el.id === "website";
+      const text = isTitle ? title : isWebsite ? (oWebsite || website || el.defaultText || "") : (el.defaultText || "");
+      const fill = isTitle && oTitleColor ? oTitleColor : (el.fill || "#333333");
       const tb = new fabric.Textbox(text, {
         left: el.x, top: el.y, width: el.width || 940, originX: "center", originY: "center",
-        fontSize: el.fontSize || 32, fontFamily: "Arial", fontWeight: el.fontWeight || "normal",
-        fontStyle: (el.fontStyle as any) || "normal", fill: el.fill || "#333333", textAlign: el.textAlign || "center",
+        fontSize: (isTitle && oSize) ? oSize : (el.fontSize || 32),
+        fontFamily: oFont || "Arial",
+        fontWeight: (isTitle && oWeight) ? oWeight : (el.fontWeight || "normal"),
+        fontStyle: (el.fontStyle as any) || "normal",
+        fill,
+        textAlign: el.textAlign || "center",
       });
       canvas.add(tb);
     }

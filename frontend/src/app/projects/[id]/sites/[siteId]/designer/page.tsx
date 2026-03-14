@@ -7,6 +7,7 @@ import PinDesigner, {
   TEMPLATES,
   PinTemplate,
   buildTemplateOnCanvas,
+  BulkOverrides,
 } from "@/components/PinDesigner";
 import { api, getApiBaseUrl, RecipeOut } from "@/lib/api";
 import {
@@ -16,8 +17,8 @@ import {
   Loader2,
   CheckCircle,
   Image as ImageIcon,
-  Pencil,
-  X,
+  Type,
+  Palette,
 } from "lucide-react";
 
 function getRecipeImages(r: RecipeOut): string[] {
@@ -39,14 +40,12 @@ function getRecipeImages(r: RecipeOut): string[] {
 
 function BulkDesigner({
   frames,
-  recipes,
   projectId,
   siteId,
   website,
   onClose,
 }: {
   frames: FrameInfo[];
-  recipes: RecipeOut[];
   projectId: string;
   siteId: string;
   website: string;
@@ -58,57 +57,71 @@ function BulkDesigner({
   const [savingAll, setSavingAll] = useState(false);
   const [saveProgress, setSaveProgress] = useState(0);
   const [savedCount, setSavedCount] = useState(0);
-  const abortRef = useRef(false);
+  const generationIdRef = useRef(0);
 
-  // Which recipe is open in the full editor (index or null)
-  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  // Left panel tab: "templates" or "style"
+  const [leftTab, setLeftTab] = useState<"templates" | "style">("templates");
 
-  const generateSinglePreview = useCallback(
-    async (idx: number, template: PinTemplate) => {
+  // Shared style overrides
+  const [overrides, setOverrides] = useState<BulkOverrides>({});
+
+  const updateOverride = <K extends keyof BulkOverrides>(key: K, val: BulkOverrides[K]) => {
+    setOverrides((prev) => ({ ...prev, [key]: val }));
+  };
+
+  // Generate all previews with current template + overrides
+  const generateAllPreviews = useCallback(
+    async (template: PinTemplate, ovr: BulkOverrides) => {
+      const genId = ++generationIdRef.current;
+      setGenerating(true);
+      setPreviews({});
       const fabricMod = await import("fabric");
       const proxyBase = getApiBaseUrl();
-      const frame = frames[idx];
 
-      const canvasEl = document.createElement("canvas");
-      canvasEl.width = 1000;
-      canvasEl.height = 1500;
-      document.body.appendChild(canvasEl);
+      for (let i = 0; i < frames.length; i++) {
+        if (generationIdRef.current !== genId) return;
+        const frame = frames[i];
+        const canvasEl = document.createElement("canvas");
+        canvasEl.width = 1000;
+        canvasEl.height = 1500;
+        document.body.appendChild(canvasEl);
 
-      try {
-        const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
-        const fc = new FC(canvasEl, { width: 1000, height: 1500, enableRetinaScaling: false });
-        await buildTemplateOnCanvas(fabricMod, fc, template, frame.images, proxyBase, frame.title, website);
-        fc.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
-        fc.renderAll();
-        const dataUrl = fc.toDataURL({ format: "png", multiplier: 0.3 });
-        setPreviews((prev) => ({ ...prev, [idx]: dataUrl }));
-        fc.dispose();
-      } catch { /* skip */ } finally {
-        document.body.removeChild(canvasEl);
+        try {
+          const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
+          const fc = new FC(canvasEl, { width: 1000, height: 1500, enableRetinaScaling: false });
+          await buildTemplateOnCanvas(fabricMod, fc, template, frame.images, proxyBase, frame.title, ovr.websiteText || website, ovr);
+          fc.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+          fc.renderAll();
+          const dataUrl = fc.toDataURL({ format: "png", multiplier: 0.3 });
+          if (generationIdRef.current === genId) {
+            setPreviews((prev) => ({ ...prev, [i]: dataUrl }));
+          }
+          fc.dispose();
+        } catch { /* skip */ } finally {
+          document.body.removeChild(canvasEl);
+        }
+        await new Promise((r) => setTimeout(r, 30));
       }
+
+      if (generationIdRef.current === genId) setGenerating(false);
     },
     [frames, website]
   );
 
-  const generatePreviews = useCallback(
-    async (template: PinTemplate) => {
-      setGenerating(true);
-      setPreviews({});
-
-      for (let i = 0; i < frames.length; i++) {
-        if (abortRef.current) break;
-        await generateSinglePreview(i, template);
-        await new Promise((r) => setTimeout(r, 50));
-      }
-
-      setGenerating(false);
-    },
-    [frames, generateSinglePreview]
-  );
+  // Re-generate when overrides change (debounced)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!selectedTemplate) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      generateAllPreviews(selectedTemplate, overrides);
+    }, 400);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [overrides, selectedTemplate, generateAllPreviews]);
 
   const handleSelectTemplate = (t: PinTemplate) => {
     setSelectedTemplate(t);
-    generatePreviews(t);
+    generateAllPreviews(t, overrides);
   };
 
   const handleSaveAll = async () => {
@@ -133,7 +146,7 @@ function BulkDesigner({
       try {
         const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
         const fc = new FC(canvasEl, { width: 1000, height: 1500, enableRetinaScaling: false });
-        await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website);
+        await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, overrides.websiteText || website, overrides);
         fc.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
         fc.renderAll();
         dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
@@ -161,46 +174,11 @@ function BulkDesigner({
     setSavingAll(false);
   };
 
-  const handleCloseEditor = async (idx: number) => {
-    setEditingIdx(null);
-    // Refresh the preview for the recipe that was just edited
-    const recipe = await api.getRecipe(frames[idx].recipeId).catch(() => null);
-    if (recipe?.pin_design_image && !recipe.pin_design_image.startsWith("{")) {
-      setPreviews((prev) => ({ ...prev, [idx]: recipe.pin_design_image! }));
-    } else if (selectedTemplate) {
-      await generateSinglePreview(idx, selectedTemplate);
-    }
-  };
-
-  // If editing a specific recipe, show the full PinDesigner
-  if (editingIdx !== null) {
-    const frame = frames[editingIdx];
-    const recipe = recipes.find((r) => r.id === frame.recipeId);
-    return (
-      <PinDesigner
-        recipeId={frame.recipeId}
-        recipeImages={frame.images}
-        initialTitle={frame.title}
-        initialJson={recipe?.pin_design_image?.startsWith("{") ? recipe.pin_design_image : undefined}
-        initialTemplateId={selectedTemplate?.id}
-        recipePinTitle={recipe?.pin_title ?? ""}
-        recipePinDescription={recipe?.pin_description ?? ""}
-        projectId={projectId}
-        siteId={siteId}
-        website={website}
-        onClose={() => handleCloseEditor(editingIdx)}
-      />
-    );
-  }
-
   return (
     <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col">
       {/* Header */}
       <header className="flex items-center gap-3 border-b border-gray-800 px-4 py-3 flex-shrink-0">
-        <button
-          onClick={onClose}
-          className="flex items-center gap-1.5 text-gray-400 hover:text-white transition text-sm"
-        >
+        <button onClick={onClose} className="flex items-center gap-1.5 text-gray-400 hover:text-white transition text-sm">
           <ArrowLeft size={16} /> Back
         </button>
         <span className="font-semibold text-white text-lg">Bulk Pin Designer</span>
@@ -226,30 +204,224 @@ function BulkDesigner({
       </header>
 
       <div className="flex flex-1 min-h-0">
-        {/* Template Sidebar */}
-        <aside className="w-64 border-r border-gray-800 flex flex-col flex-shrink-0 bg-gray-950">
-          <div className="px-3 py-3 border-b border-gray-800">
-            <div className="flex items-center gap-2 text-sm text-gray-400">
-              <LayoutTemplate size={14} />
-              <span className="font-medium">Templates</span>
-            </div>
+        {/* Left Sidebar: Templates + Style */}
+        <aside className="w-72 border-r border-gray-800 flex flex-col flex-shrink-0 bg-gray-950">
+          {/* Tab buttons */}
+          <div className="flex border-b border-gray-800">
+            <button
+              onClick={() => setLeftTab("templates")}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition ${
+                leftTab === "templates" ? "text-brand-400 border-b-2 border-brand-500" : "text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              <LayoutTemplate size={14} /> Templates
+            </button>
+            <button
+              onClick={() => setLeftTab("style")}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition ${
+                leftTab === "style" ? "text-brand-400 border-b-2 border-brand-500" : "text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              <Palette size={14} /> Style
+            </button>
           </div>
-          <div className="p-3 space-y-3 overflow-y-auto flex-1">
-            <p className="text-xs text-gray-500">Select a template to preview all recipes:</p>
-            {TEMPLATES.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => handleSelectTemplate(t)}
-                className={`w-full rounded-lg border-2 p-2 text-left transition ${
-                  selectedTemplate?.id === t.id
-                    ? "border-brand-500 bg-brand-500/10"
-                    : "border-gray-700 hover:border-gray-500"
-                }`}
-              >
-                <p className="text-xs font-medium text-white truncate">{t.name}</p>
-                <p className="text-[10px] text-gray-500 mt-0.5 truncate">{t.description}</p>
-              </button>
-            ))}
+
+          <div className="overflow-y-auto flex-1 p-3">
+            {/* Templates tab */}
+            {leftTab === "templates" && (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500 mb-2">Select a template to apply to all recipes:</p>
+                {TEMPLATES.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => handleSelectTemplate(t)}
+                    className={`w-full rounded-lg border-2 p-2.5 text-left transition ${
+                      selectedTemplate?.id === t.id
+                        ? "border-brand-500 bg-brand-500/10"
+                        : "border-gray-700 hover:border-gray-500"
+                    }`}
+                  >
+                    <p className="text-xs font-medium text-white truncate">{t.name}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5 truncate">{t.description}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Style tab */}
+            {leftTab === "style" && (
+              <div className="space-y-5">
+                {!selectedTemplate && (
+                  <p className="text-xs text-yellow-500/80 bg-yellow-500/10 rounded-lg px-3 py-2">
+                    Select a template first, then customize the style here.
+                  </p>
+                )}
+
+                {/* Font Family */}
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide block mb-1.5">
+                    <Type size={10} className="inline mr-1" />Font Family
+                  </label>
+                  <select
+                    value={overrides.fontFamily || ""}
+                    onChange={(e) => updateOverride("fontFamily", e.target.value || undefined)}
+                    className="input-field text-sm w-full"
+                    disabled={!selectedTemplate}
+                  >
+                    <option value="">Template default</option>
+                    <optgroup label="Canva templates">
+                      <option value="Triumvirate Compressed">Triumvirate Compressed</option>
+                      <option value="Quintus Regular">Quintus Regular</option>
+                      <option value="Penumbra Sans Std">Penumbra Sans Std</option>
+                    </optgroup>
+                    <optgroup label="System fonts">
+                      <option value="Arial">Arial</option>
+                      <option value="Georgia">Georgia</option>
+                      <option value="Times New Roman">Times New Roman</option>
+                      <option value="Verdana">Verdana</option>
+                      <option value="Courier New">Courier New</option>
+                      <option value="Impact">Impact</option>
+                    </optgroup>
+                  </select>
+                </div>
+
+                {/* Font Size */}
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide block mb-1.5">Title Font Size</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={16}
+                      max={80}
+                      step={2}
+                      value={overrides.fontSize || 40}
+                      onChange={(e) => updateOverride("fontSize", Number(e.target.value))}
+                      className="flex-1 accent-brand-500"
+                      disabled={!selectedTemplate}
+                    />
+                    <input
+                      type="number"
+                      min={16}
+                      max={80}
+                      value={overrides.fontSize || 40}
+                      onChange={(e) => updateOverride("fontSize", Number(e.target.value))}
+                      className="input-field text-sm w-16 text-center"
+                      disabled={!selectedTemplate}
+                    />
+                  </div>
+                </div>
+
+                {/* Font Weight */}
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide block mb-1.5">Title Font Weight</label>
+                  <div className="flex gap-1">
+                    {(["normal", "bold"] as const).map((w) => (
+                      <button
+                        key={w}
+                        onClick={() => updateOverride("fontWeight", w)}
+                        disabled={!selectedTemplate}
+                        className={`flex-1 py-1.5 text-xs rounded-lg border transition capitalize ${
+                          (overrides.fontWeight || "normal") === w
+                            ? "border-brand-500 bg-brand-500/15 text-brand-400"
+                            : "border-gray-700 text-gray-400 hover:border-gray-500"
+                        } disabled:opacity-40`}
+                      >
+                        {w}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Title Color */}
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide block mb-1.5">Title Color</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={overrides.titleColor || "#333333"}
+                      onChange={(e) => updateOverride("titleColor", e.target.value)}
+                      className="w-8 h-8 rounded border border-gray-700 cursor-pointer bg-transparent"
+                      disabled={!selectedTemplate}
+                    />
+                    <input
+                      type="text"
+                      value={overrides.titleColor || ""}
+                      onChange={(e) => updateOverride("titleColor", e.target.value || undefined)}
+                      className="input-field text-sm flex-1"
+                      placeholder="Template default"
+                      disabled={!selectedTemplate}
+                    />
+                  </div>
+                </div>
+
+                {/* Band Color */}
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide block mb-1.5">Band Color</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={overrides.bandColor || "#ffffff"}
+                      onChange={(e) => updateOverride("bandColor", e.target.value)}
+                      className="w-8 h-8 rounded border border-gray-700 cursor-pointer bg-transparent"
+                      disabled={!selectedTemplate}
+                    />
+                    <input
+                      type="text"
+                      value={overrides.bandColor || ""}
+                      onChange={(e) => updateOverride("bandColor", e.target.value || undefined)}
+                      className="input-field text-sm flex-1"
+                      placeholder="Template default"
+                      disabled={!selectedTemplate}
+                    />
+                  </div>
+                </div>
+
+                {/* Background Color */}
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide block mb-1.5">Background Color</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={overrides.bgColor || "#ffffff"}
+                      onChange={(e) => updateOverride("bgColor", e.target.value)}
+                      className="w-8 h-8 rounded border border-gray-700 cursor-pointer bg-transparent"
+                      disabled={!selectedTemplate}
+                    />
+                    <input
+                      type="text"
+                      value={overrides.bgColor || ""}
+                      onChange={(e) => updateOverride("bgColor", e.target.value || undefined)}
+                      className="input-field text-sm flex-1"
+                      placeholder="Template default"
+                      disabled={!selectedTemplate}
+                    />
+                  </div>
+                </div>
+
+                {/* Website Text */}
+                <div>
+                  <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide block mb-1.5">Website Text</label>
+                  <input
+                    type="text"
+                    value={overrides.websiteText || ""}
+                    onChange={(e) => updateOverride("websiteText", e.target.value || undefined)}
+                    className="input-field text-sm w-full"
+                    placeholder={website || "WWW.YOURSITE.COM"}
+                    disabled={!selectedTemplate}
+                  />
+                </div>
+
+                {/* Reset */}
+                {selectedTemplate && Object.keys(overrides).some((k) => (overrides as any)[k] !== undefined) && (
+                  <button
+                    onClick={() => setOverrides({})}
+                    className="w-full text-xs text-gray-500 hover:text-gray-300 py-2 border border-gray-700 rounded-lg hover:border-gray-500 transition"
+                  >
+                    Reset to template defaults
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </aside>
 
@@ -262,55 +434,46 @@ function BulkDesigner({
               <p className="text-gray-600 text-sm mt-1">Choose a template from the left panel to preview all your recipes</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
-              {frames.map((frame, i) => (
-                <div
-                  key={frame.recipeId}
-                  className="group rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden hover:border-brand-500/60 transition cursor-pointer"
-                  onClick={() => setEditingIdx(i)}
-                >
-                  <div className="aspect-[2/3] bg-gray-800 relative overflow-hidden">
-                    {previews[i] ? (
-                      <img src={previews[i]} alt={frame.title} className="w-full h-full object-cover" />
-                    ) : generating ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                        <Loader2 size={24} className="text-brand-400 animate-spin" />
-                        <span className="text-xs text-gray-500">Generating...</span>
-                      </div>
-                    ) : (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <ImageIcon size={32} className="text-gray-700" />
-                      </div>
-                    )}
-                    {/* Hover overlay with edit button */}
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
-                      <div className="opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center gap-2">
-                        <div className="w-10 h-10 rounded-full bg-brand-500/90 flex items-center justify-center">
-                          <Pencil size={18} className="text-white" />
-                        </div>
-                        <span className="text-xs font-medium text-white bg-black/50 px-2 py-0.5 rounded">Click to edit</span>
-                      </div>
-                    </div>
-                    {previews[i] && (
-                      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition">
-                        <CheckCircle size={18} className="text-green-400 drop-shadow" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-3">
-                    <p className="text-xs text-white font-medium truncate">{frame.title}</p>
-                    <p className="text-[10px] text-gray-500 mt-0.5">Recipe {i + 1}</p>
-                  </div>
+            <>
+              {generating && (
+                <div className="flex items-center gap-2 mb-4 px-1">
+                  <Loader2 size={14} className="text-brand-400 animate-spin" />
+                  <span className="text-xs text-gray-400">Updating {frames.length} previews...</span>
                 </div>
-              ))}
-            </div>
-          )}
-
-          {generating && (
-            <div className="flex items-center justify-center gap-2 mt-6">
-              <Loader2 size={16} className="text-brand-400 animate-spin" />
-              <span className="text-sm text-gray-400">Generating previews for {frames.length} recipes...</span>
-            </div>
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
+                {frames.map((frame, i) => (
+                  <div
+                    key={frame.recipeId}
+                    className="group rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden hover:border-gray-600 transition"
+                  >
+                    <div className="aspect-[2/3] bg-gray-800 relative overflow-hidden">
+                      {previews[i] ? (
+                        <img src={previews[i]} alt={frame.title} className="w-full h-full object-cover" />
+                      ) : generating ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                          <Loader2 size={24} className="text-brand-400 animate-spin" />
+                          <span className="text-xs text-gray-500">Generating...</span>
+                        </div>
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <ImageIcon size={32} className="text-gray-700" />
+                        </div>
+                      )}
+                      {previews[i] && (
+                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition">
+                          <CheckCircle size={18} className="text-green-400 drop-shadow" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-3">
+                      <p className="text-xs text-white font-medium truncate">{frame.title}</p>
+                      <p className="text-[10px] text-gray-500 mt-0.5">Recipe {i + 1}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </main>
       </div>
@@ -328,7 +491,6 @@ export default function PinDesignerPage() {
   const modeParam = searchParams.get("mode");
 
   const [frames, setFrames] = useState<FrameInfo[]>([]);
-  const [allRecipes, setAllRecipes] = useState<RecipeOut[]>([]);
   const [singleRecipe, setSingleRecipe] = useState<RecipeOut | null>(null);
   const [siteDomain, setSiteDomain] = useState("");
   const [loading, setLoading] = useState(true);
@@ -358,7 +520,6 @@ export default function PinDesignerPage() {
             (r) => r.status === "generated" || r.status === "published"
           );
           const source = generated.length > 0 ? generated : all;
-          setAllRecipes(source);
           setFrames(
             source.map((r) => ({
               recipeId: r.id,
@@ -385,22 +546,14 @@ export default function PinDesignerPage() {
       <PinDesigner
         recipeId={singleRecipe.id}
         recipeImages={getRecipeImages(singleRecipe)}
-        initialTitle={
-          singleRecipe.recipe_text?.split("\n")[0]?.trim() || "Recipe"
-        }
-        initialJson={
-          singleRecipe.pin_design_image?.startsWith("{")
-            ? singleRecipe.pin_design_image
-            : undefined
-        }
+        initialTitle={singleRecipe.recipe_text?.split("\n")[0]?.trim() || "Recipe"}
+        initialJson={singleRecipe.pin_design_image?.startsWith("{") ? singleRecipe.pin_design_image : undefined}
         recipePinTitle={singleRecipe.pin_title ?? ""}
         recipePinDescription={singleRecipe.pin_description ?? ""}
         projectId={params.id}
         siteId={params.siteId}
         website={siteDomain}
-        onClose={() =>
-          router.push(`/projects/${params.id}/sites/${params.siteId}`)
-        }
+        onClose={() => router.push(`/projects/${params.id}/sites/${params.siteId}`)}
       />
     );
   }
@@ -409,13 +562,10 @@ export default function PinDesignerPage() {
     return (
       <BulkDesigner
         frames={frames}
-        recipes={allRecipes}
         projectId={params.id}
         siteId={params.siteId}
         website={siteDomain}
-        onClose={() =>
-          router.push(`/projects/${params.id}/sites/${params.siteId}`)
-        }
+        onClose={() => router.push(`/projects/${params.id}/sites/${params.siteId}`)}
       />
     );
   }
@@ -426,9 +576,7 @@ export default function PinDesignerPage() {
       projectId={params.id}
       siteId={params.siteId}
       website={siteDomain}
-      onClose={() =>
-        router.push(`/projects/${params.id}/sites/${params.siteId}`)
-      }
+      onClose={() => router.push(`/projects/${params.id}/sites/${params.siteId}`)}
     />
   );
 }
