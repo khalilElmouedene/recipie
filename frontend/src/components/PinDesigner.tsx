@@ -575,6 +575,7 @@ export default function PinDesigner({
   const frameJsonsRef = useRef<Record<number, string>>({});
   const [savingAll, setSavingAll] = useState(false);
   const [saveAllProgress, setSaveAllProgress] = useState(0);
+  const [framePreviews, setFramePreviews] = useState<Record<number, string>>({});
 
   // Derive effective images/title from frames prop if present
   const activeFrame = frames?.[activeFrameIdx];
@@ -649,6 +650,16 @@ export default function PinDesigner({
     frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
       canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"])
     );
+
+    // Generate preview of current frame before switching
+    try {
+      canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+      canvas.renderAll();
+      const preview = canvas.toDataURL({ format: "png", multiplier: 0.25 });
+      canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", true));
+      canvas.renderAll();
+      setFramePreviews((prev) => ({ ...prev, [activeFrameIdx]: preview }));
+    } catch { /* skip */ }
 
     setActiveFrameIdx(newIdx);
     setPinName(frames[newIdx].title);
@@ -2315,6 +2326,20 @@ export default function PinDesigner({
               <Download size={15} /> <span className="hidden sm:inline">Export</span>
             </button>
           )}
+          {/* Apply template to all pages */}
+          {frames && frames.length > 1 && selectedTemplate && (
+            <button
+              onClick={() => {
+                frameJsonsRef.current = {};
+                setFramePreviews({});
+                loadTemplate(selectedTemplate, effectiveImages, effectiveTitle);
+              }}
+              className="btn-secondary flex items-center gap-1.5 px-2.5 py-1.5 text-sm border-brand-700 text-brand-400"
+              title="Clear all edits and re-apply current template to all pages"
+            >
+              <span className="hidden sm:inline">Apply to all</span>
+            </button>
+          )}
           {recipeId && !frames && (
             <button
               onClick={handleSaveToRecipe}
@@ -2336,55 +2361,6 @@ export default function PinDesigner({
           </button>
         </div>
       </header>
-
-      {/* ── Frame Strip (multi-recipe mode) ──────────────────────────────── */}
-      {frames && frames.length > 1 && (
-        <div className="flex-shrink-0 bg-gray-900 border-b border-gray-800 px-3 py-1.5">
-          <div className="flex items-center gap-2">
-            <Layers size={13} className="text-gray-500 flex-shrink-0" />
-            <span className="text-xs text-gray-500 flex-shrink-0 hidden sm:block">{frames.length} frames</span>
-            <div className="flex items-center gap-1 overflow-x-auto flex-1 scrollbar-hide py-0.5">
-              {frames.map((f, i) => (
-                <button
-                  key={f.recipeId}
-                  onClick={() => switchToFrame(i)}
-                  className={`flex-shrink-0 flex items-center gap-1 px-2 py-0.5 rounded text-xs border transition ${
-                    i === activeFrameIdx
-                      ? "border-brand-500 bg-brand-600/15 text-brand-400"
-                      : "border-gray-700 bg-gray-800 text-gray-400 hover:text-gray-200 hover:border-gray-600"
-                  }`}
-                >
-                  <span className="font-semibold">{i + 1}</span>
-                  <span className="max-w-[100px] truncate">{f.title}</span>
-                  {frameJsonsRef.current[i] && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" title="Edited" />
-                  )}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-0.5 flex-shrink-0">
-              <button onClick={() => switchToFrame(activeFrameIdx - 1)} disabled={activeFrameIdx === 0} className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 disabled:opacity-30">
-                <ChevronLeft size={13} />
-              </button>
-              <button onClick={() => switchToFrame(activeFrameIdx + 1)} disabled={activeFrameIdx === frames.length - 1} className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 disabled:opacity-30">
-                <ChevronRight size={13} />
-              </button>
-              {selectedTemplate && (
-                <button
-                  onClick={() => {
-                    frameJsonsRef.current = {};
-                    if (selectedTemplate) loadTemplate(selectedTemplate, effectiveImages, effectiveTitle);
-                  }}
-                  className="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-brand-600/20 text-brand-400 hover:bg-brand-600/30 border border-brand-700 whitespace-nowrap"
-                  title="Clear all edits and re-apply current template to all frames"
-                >
-                  Apply to all
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Pinterest Publish Modal ────────────────────────────────────────── */}
       {showPublishModal && (
@@ -2632,32 +2608,114 @@ export default function PinDesigner({
               <ZoomIn size={18} />
             </button>
             <span className="text-xs text-gray-600 ml-2">Ctrl+scroll to zoom</span>
+            {frames && frames.length > 1 && (
+              <span className="text-xs text-gray-500 ml-2">Pages {activeFrameIdx + 1} / {frames.length}</span>
+            )}
           </div>
 
-          <div className="p-2 sm:p-8 flex justify-center" style={{ minHeight: `${(PIN_H * zoom) / 100 + 64}px` }}>
-            {/* Scaled canvas wrapper — ref used for floating toolbar positioning */}
-            <div
-              ref={canvasWrapperRef}
-              style={{
-                transform: `scale(${zoom / 100})`,
-                transformOrigin: "top center",
-                width: PIN_W,
-                height: PIN_H,
-              }}
-              className="shadow-2xl rounded-lg overflow-hidden border-2 border-gray-600 flex-shrink-0 relative"
-            >
-              <canvas ref={canvasRef} />
-              {!selectedTemplate && (
-                <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 rounded-lg">
-                  <div className="text-center px-6 py-4">
-                    <LayoutTemplate size={48} className="mx-auto text-gray-500 mb-3" />
-                    <p className="text-gray-400 font-medium">Select a template to get started</p>
-                    <p className="text-sm text-gray-500 mt-1">Choose from the Templates panel on the left</p>
+          {/* Multi-page vertical layout OR single canvas */}
+          {frames && frames.length > 1 ? (
+            <div className="p-4 sm:p-8 space-y-6">
+              {frames.map((f, i) => (
+                <div key={f.recipeId} className="flex flex-col items-center">
+                  {/* Page label */}
+                  <div className={`w-full flex items-center gap-2 mb-2 ${i === activeFrameIdx ? "text-brand-400" : "text-gray-500"}`}
+                       style={{ maxWidth: `${Math.max(PIN_W * zoom / 100, 300)}px` }}>
+                    <span className="text-xs font-semibold">Page {i + 1}</span>
+                    <span className="text-xs truncate max-w-[200px]">{f.title}</span>
+                    {frameJsonsRef.current[i] && i !== activeFrameIdx && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" title="Edited" />
+                    )}
                   </div>
+
+                  {i === activeFrameIdx ? (
+                    /* Active page: live canvas */
+                    <div style={{ minHeight: `${(PIN_H * zoom) / 100 + 4}px` }}>
+                      <div
+                        ref={canvasWrapperRef}
+                        style={{
+                          transform: `scale(${zoom / 100})`,
+                          transformOrigin: "top center",
+                          width: PIN_W,
+                          height: PIN_H,
+                        }}
+                        className="shadow-2xl rounded-lg overflow-hidden border-2 border-brand-500 flex-shrink-0 relative"
+                      >
+                        <canvas ref={canvasRef} />
+                        {!selectedTemplate && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 rounded-lg">
+                            <div className="text-center px-6 py-4">
+                              <LayoutTemplate size={48} className="mx-auto text-gray-500 mb-3" />
+                              <p className="text-gray-400 font-medium">Select a template to get started</p>
+                              <p className="text-sm text-gray-500 mt-1">Choose from the Templates panel on the left</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    /* Non-active page: preview image (click to switch) */
+                    <div
+                      onClick={() => switchToFrame(i)}
+                      className="cursor-pointer group"
+                      style={{ minHeight: `${(PIN_H * zoom) / 100 + 4}px` }}
+                    >
+                      <div
+                        style={{
+                          transform: `scale(${zoom / 100})`,
+                          transformOrigin: "top center",
+                          width: PIN_W,
+                          height: PIN_H,
+                        }}
+                        className="shadow-lg rounded-lg overflow-hidden border-2 border-gray-700 group-hover:border-gray-500 transition relative flex-shrink-0"
+                      >
+                        {framePreviews[i] ? (
+                          <img src={framePreviews[i]} alt={f.title} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full bg-gray-800 flex items-center justify-center">
+                            <div className="text-center">
+                              <ImageIcon size={48} className="mx-auto text-gray-700 mb-2" />
+                              <p className="text-sm text-gray-600">Click to edit Page {i + 1}</p>
+                            </div>
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition flex items-center justify-center">
+                          <span className="opacity-0 group-hover:opacity-100 transition text-white text-sm font-medium bg-black/60 px-4 py-2 rounded-lg">
+                            Click to edit
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+              ))}
             </div>
-          </div>
+          ) : (
+            /* Single canvas (no frames or single frame) */
+            <div className="p-2 sm:p-8 flex justify-center" style={{ minHeight: `${(PIN_H * zoom) / 100 + 64}px` }}>
+              <div
+                ref={canvasWrapperRef}
+                style={{
+                  transform: `scale(${zoom / 100})`,
+                  transformOrigin: "top center",
+                  width: PIN_W,
+                  height: PIN_H,
+                }}
+                className="shadow-2xl rounded-lg overflow-hidden border-2 border-gray-600 flex-shrink-0 relative"
+              >
+                <canvas ref={canvasRef} />
+                {!selectedTemplate && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 rounded-lg">
+                    <div className="text-center px-6 py-4">
+                      <LayoutTemplate size={48} className="mx-auto text-gray-500 mb-3" />
+                      <p className="text-gray-400 font-medium">Select a template to get started</p>
+                      <p className="text-sm text-gray-500 mt-1">Choose from the Templates panel on the left</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </main>
 
         {/* ── Right Panel (Properties) ────────────────────────────────────── */}
