@@ -578,10 +578,38 @@ export default function PinDesigner({
   const [saveAllProgress, setSaveAllProgress] = useState(0);
   const [framePreviews, setFramePreviews] = useState<Record<number, string>>({});
 
-  // ── Custom fonts ──────────────────────────────────────────────────────
-  const [customFonts, setCustomFonts] = useState<string[]>([]);
+  // ── Custom fonts (persisted to localStorage) ─────────────────────────
+  const FONTS_STORAGE_KEY = "pin_designer_custom_fonts";
+  const [customFonts, setCustomFonts] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const stored = localStorage.getItem(FONTS_STORAGE_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
   const [fontInput, setFontInput] = useState("");
   const [fontLoading, setFontLoading] = useState(false);
+
+  // Persist whenever customFonts changes
+  useEffect(() => {
+    try { localStorage.setItem(FONTS_STORAGE_KEY, JSON.stringify(customFonts)); } catch {}
+  }, [customFonts]);
+
+  // Re-load Google Font stylesheets for persisted fonts on mount
+  useEffect(() => {
+    customFonts.forEach((fontName) => {
+      const family = fontName.replace(/ /g, "+");
+      const linkId = `gfont-${family}`;
+      if (!document.getElementById(linkId)) {
+        const link = document.createElement("link");
+        link.id = linkId;
+        link.rel = "stylesheet";
+        link.href = `https://fonts.googleapis.com/css2?family=${family}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
+        document.head.appendChild(link);
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadGoogleFont = useCallback(async (fontName: string) => {
     const trimmed = fontName.trim();
@@ -603,7 +631,6 @@ export default function PinDesigner({
       setCustomFonts((prev) => prev.includes(trimmed) ? prev : [...prev, trimmed]);
       setFontInput("");
     } catch {
-      // Font may still work even if load() rejects
       setCustomFonts((prev) => prev.includes(trimmed) ? prev : [...prev, trimmed]);
       setFontInput("");
     } finally {
