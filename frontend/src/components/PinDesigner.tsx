@@ -7,6 +7,7 @@ import {
   Send, Save, AlignLeft, AlignCenter,
   AlignRight, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown,
   PanelLeft, PanelRight, Settings, ChevronLeft, ChevronRight,
+  Plus, Loader2,
 } from "lucide-react";
 import { api, getApiBaseUrl } from "@/lib/api";
 import { useDesignerStore } from "@/store/useDesignerStore";
@@ -576,6 +577,39 @@ export default function PinDesigner({
   const [savingAll, setSavingAll] = useState(false);
   const [saveAllProgress, setSaveAllProgress] = useState(0);
   const [framePreviews, setFramePreviews] = useState<Record<number, string>>({});
+
+  // ── Custom fonts ──────────────────────────────────────────────────────
+  const [customFonts, setCustomFonts] = useState<string[]>([]);
+  const [fontInput, setFontInput] = useState("");
+  const [fontLoading, setFontLoading] = useState(false);
+
+  const loadGoogleFont = useCallback(async (fontName: string) => {
+    const trimmed = fontName.trim();
+    if (!trimmed) return;
+    setFontLoading(true);
+    try {
+      const family = trimmed.replace(/ /g, "+");
+      const linkId = `gfont-${family}`;
+      if (!document.getElementById(linkId)) {
+        const link = document.createElement("link");
+        link.id = linkId;
+        link.rel = "stylesheet";
+        link.href = `https://fonts.googleapis.com/css2?family=${family}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
+        document.head.appendChild(link);
+      }
+      await document.fonts.load(`16px "${trimmed}"`);
+      await new Promise((r) => setTimeout(r, 300));
+      await document.fonts.ready;
+      setCustomFonts((prev) => prev.includes(trimmed) ? prev : [...prev, trimmed]);
+      setFontInput("");
+    } catch {
+      // Font may still work even if load() rejects
+      setCustomFonts((prev) => prev.includes(trimmed) ? prev : [...prev, trimmed]);
+      setFontInput("");
+    } finally {
+      setFontLoading(false);
+    }
+  }, []);
 
   // Derive effective images/title from frames prop if present
   const activeFrame = frames?.[activeFrameIdx];
@@ -2816,7 +2850,12 @@ export default function PinDesigner({
                       <div>
                         <label className="text-[10px] text-gray-500">Font Family</label>
                         <select value={textProps.fontFamily} onChange={(e) => updateTextProperty("fontFamily", e.target.value)} className="input-field text-sm w-full">
-                          <optgroup label="Canva templates">
+                          {customFonts.length > 0 && (
+                            <optgroup label="Your fonts">
+                              {customFonts.map((f) => <option key={f} value={f}>{f}</option>)}
+                            </optgroup>
+                          )}
+                          <optgroup label="Template fonts">
                             <option value="Triumvirate Compressed">Triumvirate Compressed</option>
                             <option value="Quintus Regular">Quintus Regular</option>
                             <option value="Penumbra Sans Std">Penumbra Sans Std</option>
@@ -2830,6 +2869,24 @@ export default function PinDesigner({
                             <option value="Impact">Impact</option>
                           </optgroup>
                         </select>
+                        <div className="flex gap-1 mt-1.5">
+                          <input
+                            type="text"
+                            value={fontInput}
+                            onChange={(e) => setFontInput(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") loadGoogleFont(fontInput); }}
+                            placeholder="Add Google Font..."
+                            className="input-field text-xs flex-1 py-1"
+                          />
+                          <button
+                            onClick={() => loadGoogleFont(fontInput)}
+                            disabled={fontLoading || !fontInput.trim()}
+                            className="p-1.5 rounded bg-brand-600 hover:bg-brand-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                            title="Load font"
+                          >
+                            {fontLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                          </button>
+                        </div>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>

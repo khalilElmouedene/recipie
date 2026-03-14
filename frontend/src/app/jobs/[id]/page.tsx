@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Square, CheckCircle, XCircle, Clock, Loader2 } from "lucide-react";
+import { ArrowLeft, Square, CheckCircle, XCircle, Clock, Loader2, X } from "lucide-react";
 import { api, JobOut, getWsUrl } from "@/lib/api";
 
 // ── Step definitions (7 steps per recipe) ───────────────────────────────────
@@ -85,6 +85,40 @@ export default function JobDetailPage() {
   const [job, setJob] = useState<JobOut | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const logRef = useRef<HTMLDivElement>(null);
+  const prevStatusRef = useRef<string | undefined>(undefined);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // Fire browser notification + in-app toast when job finishes
+  useEffect(() => {
+    if (!job) return;
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = job.status;
+    if (prev === "running" && job.status !== "running") {
+      const isSuccess = job.status === "completed";
+      const msg = isSuccess
+        ? "Generation completed successfully!"
+        : job.status === "failed"
+          ? "Generation failed."
+          : "Generation stopped.";
+
+      setToast({ message: msg, type: isSuccess ? "success" : job.status === "failed" ? "error" : "info" });
+      setTimeout(() => setToast(null), 6000);
+
+      if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
+        new Notification(`Job ${job.status}`, {
+          body: msg,
+          icon: "/favicon.ico",
+        });
+      }
+    }
+  }, [job?.status]);
 
   useEffect(() => {
     api.getJob(id).then(setJob).catch(() => router.push("/"));
@@ -98,7 +132,6 @@ export default function JobDetailPage() {
     ws.onmessage = (e) => {
       if (!e.data) return;
       setLogs((prev) => [...prev, e.data]);
-      // Detect final log lines and poll immediately so UI updates without waiting for ws.onclose
       if (
         e.data.includes("Job completed successfully") ||
         e.data.includes("Job stopped") ||
@@ -109,7 +142,6 @@ export default function JobDetailPage() {
     };
 
     ws.onclose = () => {
-      // Retry a couple of times in case the DB hasn't committed yet
       const poll = (attempts: number) => {
         api.getJob(id).then((j) => {
           setJob(j);
@@ -142,7 +174,23 @@ export default function JobDetailPage() {
   if (!job) return <div className="text-gray-400 p-6">Loading…</div>;
 
   return (
-    <div>
+    <div className="relative">
+      {/* Toast notification */}
+      {toast && (
+        <div className={`fixed top-6 right-6 z-[100] flex items-center gap-3 px-5 py-3 rounded-xl shadow-2xl border backdrop-blur-sm animate-in slide-in-from-top-2 transition-all duration-300 ${
+          toast.type === "success" ? "bg-green-950/90 border-green-700/50 text-green-200" :
+          toast.type === "error" ? "bg-red-950/90 border-red-700/50 text-red-200" :
+          "bg-blue-950/90 border-blue-700/50 text-blue-200"
+        }`}>
+          {toast.type === "success" && <CheckCircle size={18} className="text-green-400 flex-shrink-0" />}
+          {toast.type === "error" && <XCircle size={18} className="text-red-400 flex-shrink-0" />}
+          {toast.type === "info" && <Clock size={18} className="text-blue-400 flex-shrink-0" />}
+          <span className="text-sm font-medium">{toast.message}</span>
+          <button onClick={() => setToast(null)} className="ml-2 text-gray-400 hover:text-white transition">
+            <X size={14} />
+          </button>
+        </div>
+      )}
       <button onClick={() => router.back()} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4">
         <ArrowLeft size={16} /> Back
       </button>

@@ -67,8 +67,38 @@ export default function SiteDetailPage() {
   const [activeJob, setActiveJob] = useState<JobOut | null>(null);
   const [activeJobLastLog, setActiveJobLastLog] = useState<string>("");
   const activeJobWsRef = useRef<WebSocket | null>(null);
+  const prevActiveJobStatusRef = useRef<string | undefined>(undefined);
+  const [jobToast, setJobToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
 
   const loadRecipes = () => api.getRecipes(siteId).then(setRecipes).catch(() => {});
+
+  // Request notification permission
+  useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // Fire notification when active job finishes
+  useEffect(() => {
+    if (!activeJob) return;
+    const prev = prevActiveJobStatusRef.current;
+    prevActiveJobStatusRef.current = activeJob.status;
+    if (prev === "running" && activeJob.status !== "running") {
+      const isSuccess = activeJob.status === "completed";
+      const msg = isSuccess
+        ? "Generation completed successfully!"
+        : activeJob.status === "failed"
+          ? "Generation failed."
+          : "Generation stopped.";
+      setJobToast({ message: msg, type: isSuccess ? "success" : activeJob.status === "failed" ? "error" : "info" });
+      setTimeout(() => setJobToast(null), 6000);
+
+      if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
+        new Notification(`Job ${activeJob.status}`, { body: msg, icon: "/favicon.ico" });
+      }
+    }
+  }, [activeJob?.status]);
 
   // Sync pin design form when expanded recipe changes (auto-fill from generated data)
   useEffect(() => {
@@ -411,7 +441,23 @@ export default function SiteDetailPage() {
   if (!site) return <div className="text-gray-400">Loading...</div>;
 
   return (
-    <div>
+    <div className="relative">
+      {/* Job completion toast */}
+      {jobToast && (
+        <div className={`fixed top-6 right-6 z-[100] flex items-center gap-3 px-5 py-3 rounded-xl shadow-2xl border backdrop-blur-sm transition-all duration-300 ${
+          jobToast.type === "success" ? "bg-green-950/90 border-green-700/50 text-green-200" :
+          jobToast.type === "error" ? "bg-red-950/90 border-red-700/50 text-red-200" :
+          "bg-blue-950/90 border-blue-700/50 text-blue-200"
+        }`}>
+          {jobToast.type === "success" && <CheckCircle size={18} className="text-green-400 flex-shrink-0" />}
+          {jobToast.type === "error" && <XCircle size={18} className="text-red-400 flex-shrink-0" />}
+          {jobToast.type === "info" && <Loader2 size={18} className="text-blue-400 flex-shrink-0" />}
+          <span className="text-sm font-medium">{jobToast.message}</span>
+          <button onClick={() => setJobToast(null)} className="ml-2 text-gray-400 hover:text-white transition">
+            <X size={14} />
+          </button>
+        </div>
+      )}
       <button onClick={() => router.push(`/projects/${projectId}`)} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4">
         <ArrowLeft size={16} /> Back to Project
       </button>
