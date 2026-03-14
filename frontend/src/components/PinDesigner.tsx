@@ -7,7 +7,7 @@ import {
   Send, Save, AlignLeft, AlignCenter,
   AlignRight, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown,
   PanelLeft, PanelRight, Settings, ChevronLeft, ChevronRight,
-  Plus, Loader2,
+  Plus, Loader2, ALargeSmall, Check,
 } from "lucide-react";
 import { api, getApiBaseUrl } from "@/lib/api";
 import { useDesignerStore } from "@/store/useDesignerStore";
@@ -1747,6 +1747,21 @@ export default function PinDesigner({
     canvas.renderAll();
   };
 
+  const applyFontToAllText = (fontFamily: string) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    saveUndoState();
+    const textObjs = canvas.getObjects().filter((o: any) => o.__pinType === "text");
+    if (textObjs.length === 0) return;
+    textObjs.forEach((obj: any) => {
+      obj.set("fontFamily", fontFamily);
+      if (typeof obj.initDimensions === "function") obj.initDimensions();
+      obj.setCoords();
+    });
+    setTextProps({ fontFamily });
+    canvas.renderAll();
+  };
+
   const addTextElement = () => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
@@ -2486,8 +2501,8 @@ export default function PinDesigner({
             : "hidden md:flex",
         ].join(" ")}>
           <div className="flex items-center border-b border-gray-800">
-            {(["elements", "layers", "templates"] as const).map((tab) => {
-              const Icon = tab === "elements" ? Grid3X3 : tab === "layers" ? Layers : LayoutTemplate;
+            {(["elements", "layers", "templates", "fonts"] as const).map((tab) => {
+              const Icon = tab === "elements" ? Grid3X3 : tab === "layers" ? Layers : tab === "fonts" ? ALargeSmall : LayoutTemplate;
               return (
                 <button
                   key={tab}
@@ -2625,6 +2640,92 @@ export default function PinDesigner({
                     {l.label}
                   </button>
                 ))}
+              </div>
+            )}
+
+            {/* Fonts Tab */}
+            {leftTab === "fonts" && (
+              <div className="space-y-4">
+                <p className="text-xs text-gray-400 mb-1">Select a font to apply to <strong>all</strong> text elements:</p>
+
+                {/* Google Font loader */}
+                <div>
+                  <label className="text-[10px] text-gray-500 block mb-1">Add Google Font</label>
+                  <div className="flex gap-1">
+                    <input
+                      type="text"
+                      value={fontInput}
+                      onChange={(e) => setFontInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") loadGoogleFont(fontInput); }}
+                      placeholder="e.g. Playfair Display"
+                      className="input-field text-xs flex-1 py-1.5"
+                    />
+                    <button
+                      onClick={() => loadGoogleFont(fontInput)}
+                      disabled={fontLoading || !fontInput.trim()}
+                      className="p-1.5 rounded bg-brand-600 hover:bg-brand-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                      title="Load font"
+                    >
+                      {fontLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Custom / loaded fonts */}
+                {customFonts.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1.5">Your Fonts</p>
+                    <div className="space-y-0.5">
+                      {customFonts.map((f) => (
+                        <button
+                          key={f}
+                          onClick={() => { applyFontToAllText(f); }}
+                          className={`w-full text-left px-3 py-2 rounded text-sm flex items-center justify-between transition ${textProps.fontFamily === f ? "bg-brand-500/20 text-brand-400 border border-brand-500/40" : "text-gray-300 hover:bg-gray-800"}`}
+                          style={{ fontFamily: `"${f}", sans-serif` }}
+                        >
+                          <span>{f}</span>
+                          {textProps.fontFamily === f && <Check size={14} className="text-brand-400 flex-shrink-0" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Template fonts */}
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1.5">Template Fonts</p>
+                  <div className="space-y-0.5">
+                    {["Triumvirate Compressed", "Quintus Regular", "Penumbra Sans Std"].map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => { applyFontToAllText(f); }}
+                        className={`w-full text-left px-3 py-2 rounded text-sm flex items-center justify-between transition ${textProps.fontFamily === f ? "bg-brand-500/20 text-brand-400 border border-brand-500/40" : "text-gray-300 hover:bg-gray-800"}`}
+                        style={{ fontFamily: `"${f}", sans-serif` }}
+                      >
+                        <span>{f}</span>
+                        {textProps.fontFamily === f && <Check size={14} className="text-brand-400 flex-shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* System fonts */}
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1.5">System Fonts</p>
+                  <div className="space-y-0.5">
+                    {["Arial", "Georgia", "Times New Roman", "Verdana", "Courier New", "Impact"].map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => { applyFontToAllText(f); }}
+                        className={`w-full text-left px-3 py-2 rounded text-sm flex items-center justify-between transition ${textProps.fontFamily === f ? "bg-brand-500/20 text-brand-400 border border-brand-500/40" : "text-gray-300 hover:bg-gray-800"}`}
+                        style={{ fontFamily: `"${f}", sans-serif` }}
+                      >
+                        <span>{f}</span>
+                        {textProps.fontFamily === f && <Check size={14} className="text-brand-400 flex-shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
           </div>

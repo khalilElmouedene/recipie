@@ -3,7 +3,7 @@ import { subscribeWithSelector } from "zustand/middleware";
 
 export type ActiveTool = "select" | "text" | "image" | "band" | "frame";
 export type StrokeStyle = "solid" | "dashed" | "dotted";
-export type LeftTab = "elements" | "layers" | "templates";
+export type LeftTab = "elements" | "layers" | "templates" | "fonts";
 
 export interface Layer {
   id: string;
