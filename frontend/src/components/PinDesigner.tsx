@@ -1761,18 +1761,46 @@ export default function PinDesigner({
     canvas.renderAll();
   };
 
-  const updateTextProperty = (property: string, value: any) => {
+  const updateTextProperty = (property: string, value: any, applyToAllPages = false) => {
     const canvas = fabricCanvasRef.current;
     const obj = getSelectedObject();
     if (!canvas || !obj || obj.__pinType !== "text") return;
     saveUndoState();
     const propName = property === "fill" ? "fill" : property;
     const propValue = property === "fontSize" ? parseInt(value) : value;
-    obj.set(propName, propValue);
-    if (typeof obj.initDimensions === "function") obj.initDimensions();
-    obj.setCoords();
+    if (applyToAllPages) {
+      canvas.getObjects().filter((o: any) => o.__pinType === "text").forEach((o: any) => {
+        o.set(propName, propValue);
+        if (typeof o.initDimensions === "function") o.initDimensions();
+        o.setCoords();
+      });
+      updateTextPropsInFrameJsons({ [propName]: propValue });
+    } else {
+      obj.set(propName, propValue);
+      if (typeof obj.initDimensions === "function") obj.initDimensions();
+      obj.setCoords();
+    }
     setTextProps({ [property === "fill" ? "textColor" : property]: propValue });
     canvas.renderAll();
+  };
+
+  const updateTextPropsInFrameJsons = (props: Record<string, any>) => {
+    const refs = frameJsonsRef.current;
+    for (const idx of Object.keys(refs)) {
+      try {
+        const data = JSON.parse(refs[Number(idx)]);
+        if (data.objects) {
+          data.objects.forEach((obj: any) => {
+            if (obj.__pinType === "text") {
+              for (const [k, v] of Object.entries(props)) {
+                obj[k] = v;
+              }
+            }
+          });
+          refs[Number(idx)] = JSON.stringify(data);
+        }
+      } catch { /* skip corrupted frame */ }
+    }
   };
 
   const applyFontToAllText = (fontFamily: string) => {
@@ -1780,7 +1808,6 @@ export default function PinDesigner({
     if (!canvas) return;
     saveUndoState();
     const textObjs = canvas.getObjects().filter((o: any) => o.__pinType === "text");
-    if (textObjs.length === 0) return;
     textObjs.forEach((obj: any) => {
       obj.set("fontFamily", fontFamily);
       if (typeof obj.initDimensions === "function") obj.initDimensions();
@@ -1788,6 +1815,7 @@ export default function PinDesigner({
     });
     setTextProps({ fontFamily });
     canvas.renderAll();
+    updateTextPropsInFrameJsons({ fontFamily });
   };
 
   const addTextElement = () => {
@@ -2643,7 +2671,14 @@ export default function PinDesigner({
                     <p className="text-sm font-medium text-white">{t.name}</p>
                     <p className="text-[11px] text-gray-500 mb-2">{t.description}</p>
                     <button
-                      onClick={() => { setSelectedTemplate(t); onTemplateSelected?.(t.id); }}
+                      onClick={() => {
+                        setSelectedTemplate(t);
+                        onTemplateSelected?.(t.id);
+                        if (frames && frames.length > 1) {
+                          frameJsonsRef.current = {};
+                          setFramePreviews({});
+                        }
+                      }}
                       className={`text-xs px-3 py-1 rounded ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
                     >
                       {selectedTemplate?.id === t.id ? "✓ Selected" : "Use Template"}
@@ -2978,7 +3013,7 @@ export default function PinDesigner({
                     <div className="space-y-2">
                       <div>
                         <label className="text-[10px] text-gray-500">Font Family</label>
-                        <select value={textProps.fontFamily} onChange={(e) => updateTextProperty("fontFamily", e.target.value)} className="input-field text-sm w-full">
+                        <select value={textProps.fontFamily} onChange={(e) => updateTextProperty("fontFamily", e.target.value, true)} className="input-field text-sm w-full">
                           {customFonts.length > 0 && (
                             <optgroup label="Your fonts">
                               {customFonts.map((f) => <option key={f} value={f}>{f}</option>)}
@@ -3020,11 +3055,11 @@ export default function PinDesigner({
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-[10px] text-gray-500">Font Size</label>
-                          <input type="number" value={textProps.fontSize} onChange={(e) => updateTextProperty("fontSize", e.target.value)} className="input-field text-sm w-full" min="8" max="200" />
+                          <input type="number" value={textProps.fontSize} onChange={(e) => updateTextProperty("fontSize", e.target.value, true)} className="input-field text-sm w-full" min="8" max="200" />
                         </div>
                         <div>
                           <label className="text-[10px] text-gray-500">Font Weight</label>
-                          <select value={textProps.fontWeight} onChange={(e) => updateTextProperty("fontWeight", e.target.value)} className="input-field text-sm w-full">
+                          <select value={textProps.fontWeight} onChange={(e) => updateTextProperty("fontWeight", e.target.value, true)} className="input-field text-sm w-full">
                             <option value="normal">Normal</option>
                             <option value="bold">Bold</option>
                           </select>
