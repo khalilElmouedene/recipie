@@ -175,7 +175,8 @@ export const api = {
     ),
 
   // ── Recipes ────────────────────────────────────────────
-  getRecipes: (siteId: string) => request<RecipeOut[]>(`/api/sites/${siteId}/recipes`),
+  getRecipes: (siteId: string, summary = true) =>
+    request<RecipeOut[]>(`/api/sites/${siteId}/recipes${summary ? "?summary=true" : ""}`),
 
   getRecipe: (recipeId: string) => request<RecipeOut>(`/api/recipes/${recipeId}`),
 

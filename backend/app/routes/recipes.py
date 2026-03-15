@@ -92,6 +92,7 @@ async def list_recipes(
     site_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    summary: bool = Query(default=False, description="Return lightweight rows without heavy generated text fields"),
 ):
     result = await db.execute(select(Site).where(Site.id == site_id))
     site = result.scalar_one_or_none()
@@ -99,6 +100,53 @@ async def list_recipes(
         raise HTTPException(status_code=404, detail="Site not found")
 
     await check_project_access(site.project_id, user, db)
+
+    if summary:
+        rows = await db.execute(
+            select(
+                Recipe.id,
+                Recipe.site_id,
+                Recipe.created_by,
+                Recipe.image_url,
+                Recipe.recipe_text,
+                Recipe.status,
+                Recipe.focus_keyword,
+                Recipe.category,
+                Recipe.generated_images,
+                Recipe.wp_post_id,
+                Recipe.wp_permalink,
+                Recipe.pin_design_image,
+                Recipe.pin_title,
+                Recipe.pin_description,
+                Recipe.pin_blog_link,
+                Recipe.error_message,
+                Recipe.created_at,
+            )
+            .where(Recipe.site_id == site_id)
+            .order_by(Recipe.created_at.desc())
+        )
+        out: list[dict] = []
+        for row in rows:
+            out.append({
+                "id": row.id,
+                "site_id": row.site_id,
+                "created_by": row.created_by,
+                "image_url": row.image_url,
+                "recipe_text": row.recipe_text,
+                "status": row.status.value if hasattr(row.status, "value") else row.status,
+                "focus_keyword": row.focus_keyword,
+                "category": row.category,
+                "generated_images": row.generated_images,
+                "wp_post_id": row.wp_post_id,
+                "wp_permalink": row.wp_permalink,
+                "pin_design_image": row.pin_design_image,
+                "pin_title": row.pin_title,
+                "pin_description": row.pin_description,
+                "pin_blog_link": row.pin_blog_link,
+                "error_message": row.error_message,
+                "created_at": row.created_at,
+            })
+        return out
 
     result = await db.execute(
         select(Recipe).where(Recipe.site_id == site_id).order_by(Recipe.created_at.desc())

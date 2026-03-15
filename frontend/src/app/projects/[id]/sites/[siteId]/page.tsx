@@ -69,8 +69,30 @@ export default function SiteDetailPage() {
   const activeJobWsRef = useRef<WebSocket | null>(null);
   const prevActiveJobStatusRef = useRef<string | undefined>(undefined);
   const [jobToast, setJobToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
+  const detailsLoadedRef = useRef<Set<string>>(new Set());
+  const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
 
-  const loadRecipes = () => api.getRecipes(siteId).then(setRecipes).catch(() => {});
+  const loadRecipes = () =>
+    api.getRecipes(siteId, true)
+      .then((rows) => {
+        setRecipes(rows);
+        detailsLoadedRef.current.clear();
+      })
+      .catch(() => {});
+
+  const ensureRecipeDetails = useCallback(async (recipeId: string) => {
+    if (detailsLoadedRef.current.has(recipeId)) return;
+    setLoadingDetailId(recipeId);
+    try {
+      const full = await api.getRecipe(recipeId);
+      setRecipes((prev) => prev.map((r) => (r.id === recipeId ? full : r)));
+      detailsLoadedRef.current.add(recipeId);
+    } catch {
+      // Keep summary row if details fail
+    } finally {
+      setLoadingDetailId((cur) => (cur === recipeId ? null : cur));
+    }
+  }, []);
 
   // Request notification permission
   useEffect(() => {
@@ -597,7 +619,12 @@ export default function SiteDetailPage() {
           <div key={r.id} className="card p-0 overflow-hidden">
             <div
               className="flex items-center gap-3 p-4 cursor-pointer hover:bg-gray-800/50 transition"
-              onClick={() => { setExpandedId(expandedId === r.id ? null : r.id); setDetailTab("article"); }}
+              onClick={() => {
+                const nextId = expandedId === r.id ? null : r.id;
+                setExpandedId(nextId);
+                setDetailTab("article");
+                if (nextId) ensureRecipeDetails(nextId);
+              }}
             >
               {r.image_url && (
                 <img src={r.image_url} alt="" className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
@@ -698,6 +725,9 @@ export default function SiteDetailPage() {
                   ))}
                 </div>
                 <div className="p-4 max-h-[600px] overflow-y-auto">
+                  {loadingDetailId === r.id && (
+                    <p className="text-sm text-gray-500 mb-3">Loading recipe details...</p>
+                  )}
                   {detailTab === "article" && (
                     <div>
                       {r.generated_article ? (
