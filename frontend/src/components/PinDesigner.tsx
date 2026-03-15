@@ -2533,7 +2533,7 @@ export default function PinDesigner({
             </button>
           )}
           {/* Apply template to all pages */}
-          {frames && frames.length > 1 && selectedTemplate && (
+          {/* {frames && frames.length > 1 && selectedTemplate && (
             <button
               onClick={() => {
                 frameJsonsRef.current = {};
@@ -2546,7 +2546,7 @@ export default function PinDesigner({
             >
               <span className="hidden sm:inline">Apply to all</span>
             </button>
-          )}
+          )} */}
           {recipeId && !frames && (
             <button
               onClick={handleSaveToRecipe}
