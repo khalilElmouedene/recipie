@@ -1815,7 +1815,7 @@ export default function PinDesigner({
         if (typeof o.initDimensions === "function") o.initDimensions();
         o.setCoords();
       });
-      updateTextPropsInFrameJsons({ [propName]: propValue });
+      updateTextPropsInAllFrames({ [propName]: propValue });
     } else {
       obj.set(propName, propValue);
       if (typeof obj.initDimensions === "function") obj.initDimensions();
@@ -1825,45 +1825,46 @@ export default function PinDesigner({
     canvas.renderAll();
   };
 
-  const updateTextPropsInFrameJsons = (props: Record<string, any>) => {
+  const updateTextPropsInAllFrames = async (props: Record<string, any>) => {
+    if (!frames || frames.length <= 1 || !selectedTemplate) return;
     const refs = frameJsonsRef.current;
-    for (const idx of Object.keys(refs)) {
-      try {
-        const data = JSON.parse(refs[Number(idx)]);
-        if (data.objects) {
-          data.objects.forEach((obj: any) => {
-            if (obj.__pinType === "text") {
-              for (const [k, v] of Object.entries(props)) {
-                obj[k] = v;
-              }
-            }
-          });
-          refs[Number(idx)] = JSON.stringify(data);
-        }
-      } catch { /* skip corrupted frame */ }
-    }
-    refreshFramePreviews();
-  };
-
-  const refreshFramePreviews = async () => {
-    const refs = frameJsonsRef.current;
-    const indices = Object.keys(refs).map(Number).filter((i) => i !== activeFrameIdx);
-    if (indices.length === 0) return;
     const fabricMod = await import("fabric");
+    const proxyBase = getApiBaseUrl();
     const newPreviews: Record<number, string> = {};
 
-    for (const i of indices) {
-      const json = refs[i];
-      if (!json || json === "{}") continue;
+    for (let i = 0; i < frames.length; i++) {
+      if (i === activeFrameIdx) continue;
+      const frame = frames[i];
       const canvasEl = document.createElement("canvas");
       canvasEl.width = PIN_W;
       canvasEl.height = PIN_H;
       canvasEl.style.display = "none";
       document.body.appendChild(canvasEl);
+
       try {
         const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
         const fc = new FC(canvasEl, { width: PIN_W, height: PIN_H, enableRetinaScaling: false });
-        await fc.loadFromJSON(json);
+
+        const savedJson = refs[i];
+        if (savedJson && savedJson !== "{}") {
+          await fc.loadFromJSON(savedJson);
+        } else {
+          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website);
+        }
+
+        fc.getObjects().filter((o: any) => o.__pinType === "text").forEach((o: any) => {
+          for (const [k, v] of Object.entries(props)) {
+            o.set(k, v);
+            if (typeof o.initDimensions === "function") o.initDimensions();
+            o.setCoords();
+          }
+        });
+        fc.renderAll();
+
+        refs[i] = JSON.stringify(
+          fc.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"])
+        );
+
         fc.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
         fc.renderAll();
         newPreviews[i] = fc.toDataURL({ format: "png", multiplier: 0.5 });
@@ -1880,15 +1881,14 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
     saveUndoState();
-    const textObjs = canvas.getObjects().filter((o: any) => o.__pinType === "text");
-    textObjs.forEach((obj: any) => {
+    canvas.getObjects().filter((o: any) => o.__pinType === "text").forEach((obj: any) => {
       obj.set("fontFamily", fontFamily);
       if (typeof obj.initDimensions === "function") obj.initDimensions();
       obj.setCoords();
     });
     setTextProps({ fontFamily });
     canvas.renderAll();
-    updateTextPropsInFrameJsons({ fontFamily });
+    updateTextPropsInAllFrames({ fontFamily });
   };
 
   const addTextElement = () => {
