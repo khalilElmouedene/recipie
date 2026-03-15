@@ -360,6 +360,9 @@ export async function buildTemplateOnCanvas(
         fill,
         textAlign: el.textAlign || "center",
       });
+      (tb as any).__pinId = el.id;
+      (tb as any).__pinLabel = el.label;
+      (tb as any).__pinType = "text";
       canvas.add(tb);
     }
   }
@@ -729,6 +732,7 @@ export default function PinDesigner({
     const savedJson = frameJsonsRef.current[newIdx];
     if (savedJson && savedJson !== "{}") {
       await canvas.loadFromJSON(savedJson);
+      normalizeCanvasObjectMetadata();
       canvas.renderAll();
       updateLayers();
     } else if (selectedTemplate) {
@@ -1201,6 +1205,30 @@ export default function PinDesigner({
     if (!canvas) return;
     const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel);
     setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType })));
+  };
+
+  // Repair old JSON objects missing pin metadata so selection/properties keep working.
+  const normalizeCanvasObjectMetadata = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    const objs = canvas.getObjects() as any[];
+    objs.forEach((o, idx) => {
+      if (o.__isLabel) return;
+      if (!o.__pinType) {
+        if (o.type === "textbox") o.__pinType = "text";
+        else if (o.type === "image") o.__pinType = "image";
+        else if (o.type === "circle") o.__pinType = "shape";
+        else if (o.type === "rect") o.__pinType = "band";
+      }
+      if (!o.__pinId) o.__pinId = `${o.__pinType || o.type || "obj"}_${idx}_${Date.now()}`;
+      if (!o.__pinLabel) {
+        if (o.__pinType === "text") o.__pinLabel = "Text";
+        else if (o.__pinType === "image") o.__pinLabel = "Image";
+        else if (o.__pinType === "band") o.__pinLabel = "Band";
+        else if (o.__pinType === "shape") o.__pinLabel = "Shape";
+        else o.__pinLabel = o.__pinId;
+      }
+    });
   };
 
   const getSelectedObject = () => {
@@ -1810,7 +1838,7 @@ export default function PinDesigner({
     const propName = property === "fill" ? "fill" : property;
     const propValue = property === "fontSize" ? parseInt(value) : value;
     if (applyToAllPages) {
-      canvas.getObjects().filter((o: any) => o.__pinType === "text").forEach((o: any) => {
+      canvas.getObjects().filter((o: any) => o.__pinType === "text" || o.type === "textbox").forEach((o: any) => {
         o.set(propName, propValue);
         if (typeof o.initDimensions === "function") o.initDimensions();
         o.setCoords();
@@ -1852,7 +1880,7 @@ export default function PinDesigner({
           await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website);
         }
 
-        fc.getObjects().filter((o: any) => o.__pinType === "text").forEach((o: any) => {
+        fc.getObjects().filter((o: any) => o.__pinType === "text" || o.type === "textbox").forEach((o: any) => {
           for (const [k, v] of Object.entries(props)) {
             o.set(k, v);
             if (typeof o.initDimensions === "function") o.initDimensions();
@@ -1881,7 +1909,7 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
     saveUndoState();
-    canvas.getObjects().filter((o: any) => o.__pinType === "text").forEach((obj: any) => {
+    canvas.getObjects().filter((o: any) => o.__pinType === "text" || o.type === "textbox").forEach((obj: any) => {
       obj.set("fontFamily", fontFamily);
       if (typeof obj.initDimensions === "function") obj.initDimensions();
       obj.setCoords();
