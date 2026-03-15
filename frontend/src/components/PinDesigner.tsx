@@ -717,7 +717,7 @@ export default function PinDesigner({
     try {
       canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
       canvas.renderAll();
-      const preview = canvas.toDataURL({ format: "png", multiplier: 0.25 });
+      const preview = canvas.toDataURL({ format: "png", multiplier: 0.5 });
       canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", true));
       canvas.renderAll();
       setFramePreviews((prev) => ({ ...prev, [activeFrameIdx]: preview }));
@@ -738,6 +738,44 @@ export default function PinDesigner({
       canvas.renderAll();
       updateLayers();
     }
+  };
+
+  const generateAllFramePreviews = async (template: PinTemplate) => {
+    if (!frames || frames.length <= 1) return;
+    const fabricMod = await import("fabric");
+    const proxyBase = getApiBaseUrl();
+    const newPreviews: Record<number, string> = {};
+
+    for (let i = 0; i < frames.length; i++) {
+      if (i === activeFrameIdx) continue;
+      const frame = frames[i];
+      const savedJson = frameJsonsRef.current[i];
+      const canvasEl = document.createElement("canvas");
+      canvasEl.width = PIN_W;
+      canvasEl.height = PIN_H;
+      canvasEl.style.display = "none";
+      document.body.appendChild(canvasEl);
+
+      try {
+        const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
+        const fc = new FC(canvasEl, { width: PIN_W, height: PIN_H, enableRetinaScaling: false });
+
+        if (savedJson && savedJson !== "{}") {
+          await fc.loadFromJSON(savedJson);
+        } else {
+          await buildTemplateOnCanvas(fabricMod, fc, template, frame.images, proxyBase, frame.title, website);
+        }
+
+        fc.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+        fc.renderAll();
+        newPreviews[i] = fc.toDataURL({ format: "png", multiplier: 0.5 });
+        fc.dispose();
+      } catch { /* skip */ } finally {
+        document.body.removeChild(canvasEl);
+      }
+    }
+
+    setFramePreviews((prev) => ({ ...prev, ...newPreviews }));
   };
 
   const handleSaveAll = async () => {
@@ -1615,7 +1653,10 @@ export default function PinDesigner({
 
   // Load template when ready (skip if initialJson already loaded)
   useEffect(() => {
-    if (canvasReady && selectedTemplate && !initialJson) loadTemplate(selectedTemplate);
+    if (canvasReady && selectedTemplate && !initialJson) {
+      loadTemplate(selectedTemplate);
+      if (frames && frames.length > 1) generateAllFramePreviews(selectedTemplate);
+    }
   }, [selectedTemplate, canvasReady]);
 
   // ── Ctrl+wheel zoom ───────────────────────────────────────────────────────
@@ -1801,6 +1842,38 @@ export default function PinDesigner({
         }
       } catch { /* skip corrupted frame */ }
     }
+    refreshFramePreviews();
+  };
+
+  const refreshFramePreviews = async () => {
+    const refs = frameJsonsRef.current;
+    const indices = Object.keys(refs).map(Number).filter((i) => i !== activeFrameIdx);
+    if (indices.length === 0) return;
+    const fabricMod = await import("fabric");
+    const newPreviews: Record<number, string> = {};
+
+    for (const i of indices) {
+      const json = refs[i];
+      if (!json || json === "{}") continue;
+      const canvasEl = document.createElement("canvas");
+      canvasEl.width = PIN_W;
+      canvasEl.height = PIN_H;
+      canvasEl.style.display = "none";
+      document.body.appendChild(canvasEl);
+      try {
+        const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
+        const fc = new FC(canvasEl, { width: PIN_W, height: PIN_H, enableRetinaScaling: false });
+        await fc.loadFromJSON(json);
+        fc.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+        fc.renderAll();
+        newPreviews[i] = fc.toDataURL({ format: "png", multiplier: 0.5 });
+        fc.dispose();
+      } catch { /* skip */ } finally {
+        document.body.removeChild(canvasEl);
+      }
+    }
+
+    setFramePreviews((prev) => ({ ...prev, ...newPreviews }));
   };
 
   const applyFontToAllText = (fontFamily: string) => {
@@ -2438,6 +2511,7 @@ export default function PinDesigner({
                 frameJsonsRef.current = {};
                 setFramePreviews({});
                 loadTemplate(selectedTemplate, effectiveImages, effectiveTitle);
+                generateAllFramePreviews(selectedTemplate);
               }}
               className="btn-secondary flex items-center gap-1.5 px-2.5 py-1.5 text-sm border-brand-700 text-brand-400"
               title="Clear all edits and re-apply current template to all pages"
@@ -2677,6 +2751,7 @@ export default function PinDesigner({
                         if (frames && frames.length > 1) {
                           frameJsonsRef.current = {};
                           setFramePreviews({});
+                          generateAllFramePreviews(t);
                         }
                       }}
                       className={`text-xs px-3 py-1 rounded ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
