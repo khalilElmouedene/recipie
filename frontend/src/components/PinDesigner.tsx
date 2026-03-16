@@ -347,9 +347,26 @@ export async function buildTemplateOnCanvas(
         : new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: bandFill, strokeWidth: 0 });
       canvas.add(shape);
     } else if (el.type === "text") {
-      const isTitle = el.id === "title" || el.id === "title1" || el.id === "title2";
+      const titleLines = (title || "")
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const firstLine = titleLines[0] || title || "";
+      const secondLine = titleLines[1] || "";
+      const thirdLine = titleLines[2] || "";
+      const isTitle = el.id === "title" || el.id === "title1" || el.id === "title2" || el.id === "title3";
       const isWebsite = el.id === "website";
-      const text = isTitle ? title : isWebsite ? (oWebsite || website || el.defaultText || "") : (el.defaultText || "");
+      const text = el.id === "title"
+        ? (title || el.defaultText || "")
+        : el.id === "title1"
+          ? (firstLine || el.defaultText || "")
+          : el.id === "title2"
+            ? secondLine
+            : el.id === "title3"
+              ? thirdLine
+              : isWebsite
+                ? (oWebsite || website || el.defaultText || "")
+                : (el.defaultText || "");
       const fill = isTitle && oTitleColor ? oTitleColor : (el.fill || "#333333");
       const tb = new fabric.Textbox(text, {
         left: el.x, top: el.y, width: el.width || 940, originX: "center", originY: "center",
@@ -1385,7 +1402,24 @@ export default function PinDesigner({
         (band as any).__pinType = "band";
         canvas.add(band);
       } else if (el.type === "text") {
-        const textContent = el.id === "title" && ttl ? ttl : el.id === "website" ? (siteWebsite || el.defaultText || "Text") : (el.defaultText || "Text");
+        const titleLines = (ttl || "")
+          .split(/\r?\n/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const firstLine = titleLines[0] || ttl || "";
+        const secondLine = titleLines[1] || "";
+        const thirdLine = titleLines[2] || "";
+        const textContent = el.id === "title"
+          ? (ttl || el.defaultText || "Text")
+          : el.id === "title1"
+            ? (firstLine || el.defaultText || "Text")
+            : el.id === "title2"
+              ? secondLine
+              : el.id === "title3"
+                ? thirdLine
+                : el.id === "website"
+                  ? (siteWebsite || el.defaultText || "Text")
+                  : (el.defaultText || "Text");
         const textbox = new fabric.Textbox(
           textContent,
           {
