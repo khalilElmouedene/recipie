@@ -281,6 +281,29 @@ class JobOut(BaseModel):
         from_attributes = True
 
 
+class GeneratedJobRecipeOut(BaseModel):
+    id: uuid.UUID
+    site_id: uuid.UUID
+    site_domain: str
+    recipe_text: str
+    status: str
+    wp_permalink: str | None = None
+    created_at: datetime
+
+
+class PublishScheduleOut(BaseModel):
+    enabled: bool
+    interval_hours: int
+    next_run_at: datetime | None = None
+    last_run_at: datetime | None = None
+    last_error: str | None = None
+
+
+class PublishScheduleUpdate(BaseModel):
+    enabled: bool
+    interval_hours: int = Field(ge=1, le=168)
+
+
 class JobLogOut(BaseModel):
     id: int
     message: str

@@ -122,6 +122,9 @@ class Project(Base):
     credentials: Mapped[list[ProjectCredential]] = relationship(back_populates="project", cascade="all, delete-orphan")
     sites: Mapped[list[Site]] = relationship(back_populates="project", cascade="all, delete-orphan")
     jobs: Mapped[list[Job]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    publish_schedule: Mapped["ProjectPublishSchedule | None"] = relationship(
+        back_populates="project", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class ProjectMember(Base):
@@ -174,6 +177,7 @@ class Recipe(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
     site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_by_job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True, index=True)
     image_url: Mapped[str] = mapped_column(Text, nullable=False)
     recipe_text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[RecipeStatus] = mapped_column(SAEnum(RecipeStatus, name="recipe_status"), default=RecipeStatus.pending)
@@ -225,3 +229,20 @@ class JobLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     job: Mapped[Job] = relationship(back_populates="logs")
+
+
+class ProjectPublishSchedule(Base):
+    __tablename__ = "project_publish_schedules"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_project_publish_schedule"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    interval_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+    project: Mapped[Project] = relationship(back_populates="publish_schedule")

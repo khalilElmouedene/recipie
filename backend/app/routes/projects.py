@@ -12,11 +12,12 @@ from ..config import settings
 from ..database import get_db
 from ..db_models import (
     User, UserRole, Project, ProjectMember, ProjectMemberRole,
-    Site, Recipe, Job,
+    Site, Recipe, Job, ProjectPublishSchedule,
 )
 from ..dependencies import get_current_user, require_owner, check_project_access
 from ..models import (
     ProjectCreate, ProjectUpdate, ProjectOut, MemberAdd, MemberOut,
+    PublishScheduleOut, PublishScheduleUpdate,
 )
 from ..services.email_service import send_project_invite_email
 
@@ -326,3 +327,64 @@ async def remove_member(
         )
     )
     await db.commit()
+
+
+@router.get("/{project_id}/publish-schedule", response_model=PublishScheduleOut)
+async def get_publish_schedule(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    await check_project_access(project_id, user, db)
+    row = await db.execute(select(ProjectPublishSchedule).where(ProjectPublishSchedule.project_id == project_id))
+    s = row.scalar_one_or_none()
+    if not s:
+        return PublishScheduleOut(enabled=False, interval_hours=4, next_run_at=None, last_run_at=None, last_error=None)
+    return PublishScheduleOut(
+        enabled=s.enabled,
+        interval_hours=s.interval_hours,
+        next_run_at=s.next_run_at,
+        last_run_at=s.last_run_at,
+        last_error=s.last_error,
+    )
+
+
+@router.put("/{project_id}/publish-schedule", response_model=PublishScheduleOut)
+async def set_publish_schedule(
+    project_id: uuid.UUID,
+    body: PublishScheduleUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    await check_project_access(project_id, user, db, require_roles=[ProjectMemberRole.admin])
+    row = await db.execute(select(ProjectPublishSchedule).where(ProjectPublishSchedule.project_id == project_id))
+    s = row.scalar_one_or_none()
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    if not s:
+        s = ProjectPublishSchedule(
+            project_id=project_id,
+            enabled=body.enabled,
+            interval_hours=body.interval_hours,
+            next_run_at=(now + timedelta(hours=body.interval_hours)) if body.enabled else None,
+            last_error=None,
+        )
+        db.add(s)
+    else:
+        prev_enabled = s.enabled
+        prev_interval = s.interval_hours
+        s.enabled = body.enabled
+        s.interval_hours = body.interval_hours
+        if not body.enabled:
+            s.next_run_at = None
+        elif (not prev_enabled) or (prev_interval != body.interval_hours) or (s.next_run_at is None):
+            s.next_run_at = now + timedelta(hours=body.interval_hours)
+        s.last_error = None
+    await db.commit()
+    return PublishScheduleOut(
+        enabled=s.enabled,
+        interval_hours=s.interval_hours,
+        next_run_at=s.next_run_at,
+        last_run_at=s.last_run_at,
+        last_error=s.last_error,
+    )

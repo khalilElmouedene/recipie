@@ -7,9 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..db_models import User, Job, JobLog, JobType, JobStatus, Project
+from ..db_models import User, Job, JobLog, JobType, JobStatus, Project, Recipe, Site
 from ..dependencies import get_current_user, check_project_access
-from ..models import JobStart, JobOut, JobLogOut
+from ..models import JobStart, JobOut, JobLogOut, GeneratedJobRecipeOut
 from ..workers.job_manager import job_manager
 
 router = APIRouter(tags=["jobs"])
@@ -97,6 +97,40 @@ async def get_job_logs(
         select(JobLog).where(JobLog.job_id == job_id).order_by(JobLog.created_at.asc())
     )
     return logs.scalars().all()
+
+
+@router.get("/api/jobs/{job_id}/generated-recipes", response_model=list[GeneratedJobRecipeOut])
+async def get_job_generated_recipes(
+    job_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await check_project_access(job.project_id, user, db)
+
+    rows = await db.execute(
+        select(Recipe, Site.domain)
+        .join(Site, Recipe.site_id == Site.id)
+        .where(Recipe.created_by_job_id == job_id)
+        .order_by(Site.domain.asc(), Recipe.created_at.asc())
+    )
+    out: list[GeneratedJobRecipeOut] = []
+    for recipe, domain in rows.all():
+        out.append(
+            GeneratedJobRecipeOut(
+                id=recipe.id,
+                site_id=recipe.site_id,
+                site_domain=domain,
+                recipe_text=recipe.recipe_text,
+                status=recipe.status.value if hasattr(recipe.status, "value") else str(recipe.status),
+                wp_permalink=recipe.wp_permalink,
+                created_at=recipe.created_at,
+            )
+        )
+    return out
 
 
 @router.post("/api/jobs/{job_id}/stop", response_model=JobOut)

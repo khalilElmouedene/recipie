@@ -164,6 +164,7 @@ class JobManager:
                     new_recipe = Recipe(
                         site_id=s.id,
                         created_by=db_job.created_by,
+                        created_by_job_id=db_job.id,
                         image_url=image_url,
                         recipe_text=recipe_text,
                         status=RecipeStatus.generating,

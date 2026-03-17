@@ -108,6 +108,15 @@ export const api = {
   duplicateProject: (id: string) =>
     request<ProjectOut>(`/api/projects/${id}/duplicate`, { method: "POST" }),
 
+  getPublishSchedule: (projectId: string) =>
+    request<PublishScheduleOut>(`/api/projects/${projectId}/publish-schedule`),
+
+  setPublishSchedule: (projectId: string, data: PublishScheduleUpdate) =>
+    request<PublishScheduleOut>(`/api/projects/${projectId}/publish-schedule`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
   // ── Members ────────────────────────────────────────────
   getMembers: (projectId: string) => request<MemberOut[]>(`/api/projects/${projectId}/members`),
 
@@ -250,6 +259,9 @@ export const api = {
 
   getJobLogs: (jobId: string) => request<JobLogOut[]>(`/api/jobs/${jobId}/logs`),
 
+  getJobGeneratedRecipes: (jobId: string) =>
+    request<GeneratedJobRecipeOut[]>(`/api/jobs/${jobId}/generated-recipes`),
+
   stopJob: (jobId: string) =>
     request<JobOut>(`/api/jobs/${jobId}/stop`, { method: "POST" }),
 
@@ -375,6 +387,29 @@ export interface JobOut {
 export interface SharedRecipeInput {
   image_url: string;
   recipe_text: string;
+}
+
+export interface GeneratedJobRecipeOut {
+  id: string;
+  site_id: string;
+  site_domain: string;
+  recipe_text: string;
+  status: string;
+  wp_permalink: string | null;
+  created_at: string;
+}
+
+export interface PublishScheduleOut {
+  enabled: boolean;
+  interval_hours: number;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_error: string | null;
+}
+
+export interface PublishScheduleUpdate {
+  enabled: boolean;
+  interval_hours: number;
 }
 
 export interface JobLogOut {

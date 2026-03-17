@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 import os
 from pathlib import Path
 from fastapi import FastAPI
@@ -42,7 +43,12 @@ async def lifespan(app: FastAPI):
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     await init_db()
     await _migrate_prompts()
+    from app.services.publish_scheduler import run_publish_scheduler
+    stop_event = asyncio.Event()
+    scheduler_task = asyncio.create_task(run_publish_scheduler(stop_event))
     yield
+    stop_event.set()
+    await scheduler_task
 
 
 _debug = os.getenv("APP_ENV", "production").lower() != "production"

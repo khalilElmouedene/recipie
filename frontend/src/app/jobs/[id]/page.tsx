@@ -204,11 +204,21 @@ export default function JobDetailPage() {
             <span className="text-sm text-gray-400">{new Date(job.created_at).toLocaleString()}</span>
           </div>
         </div>
-        {job.status === "running" && (
-          <button onClick={() => api.stopJob(id).then(setJob)} className="btn-danger flex items-center gap-2">
-            <Square size={16} /> Stop Job
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {job.job_type === "articles_all_sites" && job.status !== "running" && (
+            <button
+              onClick={() => router.push(`/jobs/${id}/results`)}
+              className="btn-secondary"
+            >
+              View Generated Recipes
+            </button>
+          )}
+          {job.status === "running" && (
+            <button onClick={() => api.stopJob(id).then(setJob)} className="btn-danger flex items-center gap-2">
+              <Square size={16} /> Stop Job
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Current action banner */}
