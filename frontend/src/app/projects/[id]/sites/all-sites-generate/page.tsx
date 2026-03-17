@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Plus, Trash2, Send } from "lucide-react";
-import { api, SharedRecipeInput, SiteOut, JobOut } from "@/lib/api";
+import { ArrowLeft, Plus, Trash2, Send, Save } from "lucide-react";
+import { api, SharedRecipeInput, SiteOut, JobOut, PublishScheduleOut } from "@/lib/api";
 
 export default function AllSitesGeneratePage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -12,11 +12,22 @@ export default function AllSitesGeneratePage() {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<SharedRecipeInput[]>([{ image_url: "", recipe_text: "" }]);
   const [history, setHistory] = useState<JobOut[]>([]);
+  const [schedule, setSchedule] = useState<PublishScheduleOut | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [intervalHours, setIntervalHours] = useState(4);
+  const [savingSchedule, setSavingSchedule] = useState(false);
 
   useEffect(() => {
     api.getSites(projectId).then(setSites).catch(() => {});
     api.getProjectJobs(projectId)
       .then((jobs) => setHistory(jobs.filter((j) => j.job_type === "articles_all_sites")))
+      .catch(() => {});
+    api.getPublishSchedule(projectId)
+      .then((s) => {
+        setSchedule(s);
+        setEnabled(s.enabled);
+        setIntervalHours(s.interval_hours || 4);
+      })
       .catch(() => {});
   }, [projectId]);
 
@@ -49,6 +60,18 @@ export default function AllSitesGeneratePage() {
     }
   };
 
+  const saveSchedule = async () => {
+    setSavingSchedule(true);
+    try {
+      const s = await api.setPublishSchedule(projectId, { enabled, interval_hours: intervalHours });
+      setSchedule(s);
+    } catch (e: any) {
+      alert(e?.message || "Failed to save publish schedule");
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
+
   return (
     <div>
       <button
@@ -66,6 +89,39 @@ export default function AllSitesGeneratePage() {
         <p className="text-xs text-gray-500 mt-2">
           Sites: {sites.length} · Valid recipe inputs: {validCount} · Planned article generations: {validCount * sites.length}
         </p>
+      </div>
+
+      <div className="card mb-5">
+        <h2 className="text-sm font-semibold text-gray-300 mb-2">Publishing Schedule</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Queue mode: the scheduler publishes one article every interval across all sites. Example: 12 articles = 12 intervals.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <label className="flex items-center gap-2 text-sm text-gray-200">
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            Enable scheduler
+          </label>
+          <label className="text-sm text-gray-300">
+            Interval (hours)
+            <input
+              type="number"
+              min={1}
+              max={168}
+              value={intervalHours}
+              onChange={(e) => setIntervalHours(Number(e.target.value || 4))}
+              className="input-field mt-1"
+            />
+          </label>
+          <div className="flex md:justify-end">
+            <button onClick={saveSchedule} disabled={savingSchedule} className="btn-secondary flex items-center gap-2 w-full md:w-auto justify-center">
+              <Save size={14} /> {savingSchedule ? "Saving..." : "Save Schedule"}
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 mt-2">
+          {schedule?.next_run_at ? `Next run: ${new Date(schedule.next_run_at).toLocaleString()}` : "No next run scheduled"}
+        </p>
+        {schedule?.last_error && <p className="text-xs text-red-400 mt-1">Last scheduler message: {schedule.last_error}</p>}
       </div>
 
       <div className="card mb-5">

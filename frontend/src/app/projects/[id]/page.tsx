@@ -45,14 +45,25 @@ export default function ProjectDetailPage() {
             <span>{project.job_count} jobs</span>
           </div>
         </div>
-        <button
-          onClick={() => window.open(api.getProjectExcelExportUrl(id), "_blank")}
-          disabled={project.recipe_count === 0}
-          className="btn-secondary flex items-center gap-2 border-green-700 text-green-400 hover:text-green-300 disabled:opacity-40 disabled:cursor-not-allowed self-start flex-shrink-0"
-          title="Export all sites as Excel — same format as V1 Project"
-        >
-          <Download size={16} /> Export All Excel
-        </button>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          {tab === "sites" && (role === "owner" || role === "admin") && (
+            <button
+              onClick={() => router.push(`/projects/${id}/sites/all-sites-generate`)}
+              className="btn-secondary flex items-center justify-center gap-2 border-brand-700 text-brand-400 hover:text-brand-300 w-full sm:w-auto"
+              title="Open all-sites generation page"
+            >
+              <Send size={16} /> Generate All Sites
+            </button>
+          )}
+          <button
+            onClick={() => window.open(api.getProjectExcelExportUrl(id), "_blank")}
+            disabled={project.recipe_count === 0}
+            className="btn-secondary flex items-center justify-center gap-2 border-green-700 text-green-400 hover:text-green-300 disabled:opacity-40 disabled:cursor-not-allowed w-full sm:w-auto"
+            title="Export all sites as Excel — same format as V1 Project"
+          >
+            <Download size={16} /> Export All Excel
+          </button>
+        </div>
       </div>
 
       <div className="flex gap-1 border-b border-gray-800 mb-6">
@@ -182,16 +193,6 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
         )}
         {sites.length >= MAX_SITES_PER_PROJECT && (role === "owner" || role === "admin") && (
           <span className="text-sm text-amber-400">Maximum {MAX_SITES_PER_PROJECT} sites par projet</span>
-        )}
-        {(role === "owner" || role === "admin") && (
-          <button
-            onClick={() => router.push(`/projects/${projectId}/sites/all-sites-generate`)}
-            disabled={sites.length === 0}
-            className="btn-secondary flex items-center gap-2 border-brand-700 text-brand-400 hover:text-brand-300 disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Open all-sites generation page"
-          >
-            <Send size={18} /> Generate All Sites
-          </button>
         )}
       </div>
 
