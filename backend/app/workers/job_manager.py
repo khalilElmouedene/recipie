@@ -250,12 +250,20 @@ class JobManager:
         self._running[job_id_str] = rj
 
         def _run():
-            from ..services.article_generator import process_recipes_from_db, generate_for_recipe
+            from ..services.article_generator import process_recipes_from_db, generate_for_recipe, generate_images_only
             from ..services.publisher import publish_recipes_from_db
 
             def _on_recipe_done(recipe_id: str, fields: dict):
                 future = asyncio.run_coroutine_threadsafe(
                     _update_recipe(recipe_id, fields, db_job.job_type),
+                    main_loop,
+                )
+                future.result()
+
+            def _on_progress(current: int, total: int):
+                rj.set_progress(current, total)
+                future = asyncio.run_coroutine_threadsafe(
+                    _persist_progress(job_id_str, current, total),
                     main_loop,
                 )
                 future.result()
@@ -275,7 +283,7 @@ class JobManager:
                         prompts=prompts,
                         log=rj.log,
                         should_stop=rj.should_stop,
-                        on_progress=rj.set_progress,
+                        on_progress=_on_progress,
                         on_recipe_done=_on_recipe_done,
                     )
                 elif db_job.job_type == JobType.publisher:
@@ -284,7 +292,7 @@ class JobManager:
                         site_config=site_config,
                         log=rj.log,
                         should_stop=rj.should_stop,
-                        on_progress=rj.set_progress,
+                        on_progress=_on_progress,
                         on_recipe_done=_on_recipe_done,
                     )
                 else:
@@ -294,23 +302,25 @@ class JobManager:
                         )
                     total = len(recipes_data)
                     done = 0
+                    # Phase 1: generate all site-specific articles first (no Midjourney)
                     for group in multi_site_groups:
                         if rj.should_stop():
                             break
-                        shared_images: str | None = None
                         rj.log(f"Input recipe {group['idx']}: processing {len(group['items'])} sites")
-                        for i, item in enumerate(group["items"]):
+                        for item in group["items"]:
                             if rj.should_stop():
                                 break
+                            rj.log("=" * 50)
+                            rj.log(f"RECIPE {done + 1}/{total}: {item['recipe_text'].splitlines()[0]}")
+                            rj.log("=" * 50)
                             run_creds = dict(credentials)
-                            if i > 0:
-                                # Generate Midjourney only once (first site), reuse for others
-                                run_creds["discord_auth"] = ""
-                                run_creds["discord_app_id"] = ""
-                                run_creds["discord_guild"] = ""
-                                run_creds["discord_channel"] = ""
-                                run_creds["mj_version"] = ""
-                                run_creds["mj_id"] = ""
+                            # Always skip Midjourney in phase 1
+                            run_creds["discord_auth"] = ""
+                            run_creds["discord_app_id"] = ""
+                            run_creds["discord_guild"] = ""
+                            run_creds["discord_channel"] = ""
+                            run_creds["mj_version"] = ""
+                            run_creds["mj_id"] = ""
                             generated = generate_for_recipe(
                                 recipe_id=item["id"],
                                 recipe_text=item["recipe_text"],
@@ -321,13 +331,27 @@ class JobManager:
                                 log=rj.log,
                                 should_stop=rj.should_stop,
                             )
-                            if i == 0:
-                                shared_images = generated.get("generated_images")
-                            elif shared_images:
-                                generated["generated_images"] = shared_images
                             _on_recipe_done(item["id"], generated)
                             done += 1
-                            rj.set_progress(done, total)
+                            _on_progress(done, total)
+
+                    # Phase 2: generate images once per shared input and fan out
+                    if not rj.should_stop():
+                        for group in multi_site_groups:
+                            rj.log(f"Input recipe {group['idx']}: generating shared images once for all sites")
+                            shared_images = generate_images_only(
+                                recipe_title=group["recipe_text"].splitlines()[0].strip(),
+                                image_url=group["image_url"],
+                                credentials=credentials,
+                                prompts=prompts,
+                                log=rj.log,
+                                should_stop=rj.should_stop,
+                            )
+                            if shared_images:
+                                for item in group["items"]:
+                                    _on_recipe_done(item["id"], {"generated_images": shared_images})
+                            if rj.should_stop():
+                                break
 
                 final_status = JobStatus.stopped if rj.should_stop() else JobStatus.completed
                 rj.log("Job completed successfully" if final_status == JobStatus.completed else "Job stopped")
@@ -383,6 +407,17 @@ class JobManager:
                     .values(status=RecipeStatus.pending)
                 )
                 await session.commit()
+
+        async def _persist_progress(jid: str, current: int, total: int):
+            async with SessionLocal() as session:
+                result = await session.execute(
+                    select(JobModel).where(JobModel.id == uuid.UUID(jid))
+                )
+                job = result.scalar_one_or_none()
+                if job:
+                    job.current_row = current
+                    job.total_rows = total
+                    await session.commit()
 
         def _finalize(jid: str, status: JobStatus, logs: list[str], error: str | None = None):
             future = asyncio.run_coroutine_threadsafe(

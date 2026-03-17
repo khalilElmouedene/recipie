@@ -217,6 +217,33 @@ def generate_for_recipe(
         return result
 
 
+def generate_images_only(
+    recipe_title: str,
+    image_url: str,
+    credentials: dict,
+    prompts: dict[str, str] | None = None,
+    log: Callable[[str], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> str | None:
+    """Generate Midjourney images only and return JSON string urls (or None)."""
+    _log = log or print
+    _stop = should_stop or (lambda: False)
+    discord_auth = credentials.get("discord_auth", "")
+    if not discord_auth or not image_url:
+        _log("Skipping Midjourney (no Discord credentials configured)")
+        return None
+    if _stop():
+        return None
+    _log("Waiting for Midjourney queue slot (one recipe at a time)...")
+    with _midjourney_lock:
+        if _stop():
+            return None
+        _log("Midjourney slot acquired — generating images...")
+        img_urls = midjourney.generate_images(recipe_title, image_url, credentials, prompts=prompts, wait_time=190, log=_log)
+        cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
+        return json.dumps(cached_urls)
+
+
 def process_recipes_from_db(
     recipes: list[dict],
     site_domain: str,
