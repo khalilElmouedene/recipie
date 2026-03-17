@@ -388,3 +388,37 @@ async def set_publish_schedule(
         last_run_at=s.last_run_at,
         last_error=s.last_error,
     )
+
+
+@router.post("/{project_id}/publish-schedule/start-now", response_model=PublishScheduleOut)
+async def start_publish_schedule_now(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    await check_project_access(project_id, user, db, require_roles=[ProjectMemberRole.admin])
+    row = await db.execute(select(ProjectPublishSchedule).where(ProjectPublishSchedule.project_id == project_id))
+    s = row.scalar_one_or_none()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    if not s:
+        s = ProjectPublishSchedule(
+            project_id=project_id,
+            enabled=True,
+            interval_hours=4,
+            next_run_at=now,
+            last_error=None,
+        )
+        db.add(s)
+    else:
+        s.enabled = True
+        s.next_run_at = now
+        s.last_error = None
+    await db.commit()
+    return PublishScheduleOut(
+        enabled=s.enabled,
+        interval_hours=s.interval_hours,
+        next_run_at=s.next_run_at,
+        last_run_at=s.last_run_at,
+        last_error=s.last_error,
+    )

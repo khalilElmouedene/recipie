@@ -16,6 +16,7 @@ export default function AllSitesGeneratePage() {
   const [enabled, setEnabled] = useState(false);
   const [intervalHours, setIntervalHours] = useState(4);
   const [savingSchedule, setSavingSchedule] = useState(false);
+  const [startingPublish, setStartingPublish] = useState(false);
 
   useEffect(() => {
     api.getSites(projectId).then(setSites).catch(() => {});
@@ -72,6 +73,20 @@ export default function AllSitesGeneratePage() {
     }
   };
 
+  const startPublishingNow = async () => {
+    setStartingPublish(true);
+    try {
+      const s = await api.startPublishScheduleNow(projectId);
+      setSchedule(s);
+      setEnabled(s.enabled);
+      setIntervalHours(s.interval_hours || 4);
+    } catch (e: any) {
+      alert(e?.message || "Failed to start publishing queue");
+    } finally {
+      setStartingPublish(false);
+    }
+  };
+
   return (
     <div>
       <button
@@ -112,9 +127,17 @@ export default function AllSitesGeneratePage() {
               className="input-field mt-1"
             />
           </label>
-          <div className="flex md:justify-end">
+          <div className="flex md:justify-end gap-2 flex-wrap">
             <button onClick={saveSchedule} disabled={savingSchedule} className="btn-secondary flex items-center gap-2 w-full md:w-auto justify-center">
               <Save size={14} /> {savingSchedule ? "Saving..." : "Save Schedule"}
+            </button>
+            <button
+              onClick={startPublishingNow}
+              disabled={startingPublish}
+              className="btn-primary flex items-center gap-2 w-full md:w-auto justify-center"
+              title="Start queue immediately (publishes one article now, then continues by interval)"
+            >
+              <Send size={14} /> {startingPublish ? "Starting..." : "Start Publishing"}
             </button>
           </div>
         </div>

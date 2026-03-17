@@ -117,6 +117,11 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  startPublishScheduleNow: (projectId: string) =>
+    request<PublishScheduleOut>(`/api/projects/${projectId}/publish-schedule/start-now`, {
+      method: "POST",
+    }),
+
   // ── Members ────────────────────────────────────────────
   getMembers: (projectId: string) => request<MemberOut[]>(`/api/projects/${projectId}/members`),
 
