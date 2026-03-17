@@ -195,6 +195,11 @@ class RecipeCreate(BaseModel):
     recipe_text: str
 
 
+class SharedRecipeInput(BaseModel):
+    image_url: str
+    recipe_text: str
+
+
 class RecipeUpdate(BaseModel):
     recipe_text: str | None = None
     generated_images: str | None = None
@@ -257,6 +262,7 @@ class JobStart(BaseModel):
     job_type: str
     site_id: uuid.UUID | None = None
     recipe_id: uuid.UUID | None = None
+    shared_recipes: list[SharedRecipeInput] | None = None
 
 
 class JobOut(BaseModel):

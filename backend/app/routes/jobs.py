@@ -28,8 +28,13 @@ async def start_job(
     if not prj.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Project not found")
 
-    if body.job_type not in ("articles", "publisher"):
+    if body.job_type not in ("articles", "publisher", "articles_all_sites"):
         raise HTTPException(status_code=400, detail="Invalid job type")
+    if body.job_type == "articles_all_sites":
+        if body.site_id or body.recipe_id:
+            raise HTTPException(status_code=400, detail="articles_all_sites does not accept site_id/recipe_id")
+        if not body.shared_recipes:
+            raise HTTPException(status_code=400, detail="shared_recipes is required for articles_all_sites")
 
     job = Job(
         project_id=project_id,
@@ -43,7 +48,7 @@ async def start_job(
     row = await db.execute(select(Job).where(Job.id == job.id))
     job = row.scalar_one()
 
-    await job_manager.start_job(job, body.site_id, body.recipe_id, db)
+    await job_manager.start_job(job, body.site_id, body.recipe_id, db, body.shared_recipes)
 
     row2 = await db.execute(select(Job).where(Job.id == job.id))
     return row2.scalar_one()

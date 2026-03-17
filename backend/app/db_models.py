@@ -33,6 +33,7 @@ class RecipeStatus(str, enum.Enum):
 class JobType(str, enum.Enum):
     articles = "articles"
     publisher = "publisher"
+    articles_all_sites = "articles_all_sites"
 
 
 class JobStatus(str, enum.Enum):

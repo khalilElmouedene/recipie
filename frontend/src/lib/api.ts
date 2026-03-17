@@ -243,7 +243,7 @@ export const api = {
   // ── Jobs ───────────────────────────────────────────────
   getProjectJobs: (projectId: string) => request<JobOut[]>(`/api/projects/${projectId}/jobs`),
 
-  startJob: (projectId: string, data: { job_type: string; site_id?: string; recipe_id?: string }) =>
+  startJob: (projectId: string, data: { job_type: string; site_id?: string; recipe_id?: string; shared_recipes?: SharedRecipeInput[] }) =>
     request<JobOut>(`/api/projects/${projectId}/jobs`, { method: "POST", body: JSON.stringify(data) }),
 
   getJob: (jobId: string) => request<JobOut>(`/api/jobs/${jobId}`),
@@ -370,6 +370,11 @@ export interface JobOut {
   error: string | null;
   created_at: string;
   finished_at: string | null;
+}
+
+export interface SharedRecipeInput {
+  image_url: string;
+  recipe_text: string;
 }
 
 export interface JobLogOut {

@@ -73,6 +73,7 @@ class JobManager:
         site_id: uuid.UUID | None,
         recipe_id: uuid.UUID | None,
         db: AsyncSession,
+        shared_recipes: list[Any] | None = None,
     ):
         """Load credentials + recipes from DB and launch a background thread."""
         main_loop = asyncio.get_running_loop()
@@ -96,7 +97,24 @@ class JobManager:
             for p in prompt_rows.scalars().all():
                 prompts[p.key] = p.value
 
-        if not site_id:
+        if db_job.job_type == JobType.articles_all_sites:
+            site_rows = await db.execute(
+                select(Site).where(Site.project_id == project_id).order_by(Site.created_at.asc())
+            )
+            sites = site_rows.scalars().all()
+            if not sites:
+                db_job.status = JobStatus.failed
+                db_job.error = "No sites configured for this project"
+                db_job.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                return
+            if not shared_recipes:
+                db_job.status = JobStatus.failed
+                db_job.error = "No shared recipes provided"
+                db_job.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                return
+        elif not site_id:
             site_rows = await db.execute(
                 select(Site).where(Site.project_id == project_id).limit(1)
             )
@@ -124,10 +142,55 @@ class JobManager:
 
         if db_job.job_type == JobType.articles:
             target_status = RecipeStatus.pending
-        else:
+        elif db_job.job_type == JobType.publisher:
             target_status = RecipeStatus.generated
 
-        if recipe_id and db_job.job_type == JobType.articles:
+        recipes_data: list[dict] = []
+        multi_site_groups: list[dict] = []
+        site_domain = ""
+        if db_job.job_type == JobType.articles_all_sites:
+            created_recipe_ids: list[uuid.UUID] = []
+            for idx, item in enumerate(shared_recipes or []):
+                if isinstance(item, dict):
+                    recipe_text = str(item.get("recipe_text", "")).strip()
+                    image_url = str(item.get("image_url", "")).strip()
+                else:
+                    recipe_text = str(getattr(item, "recipe_text", "")).strip()
+                    image_url = str(getattr(item, "image_url", "")).strip()
+                if not recipe_text or not image_url:
+                    continue
+                group_items: list[dict] = []
+                for s in sites:
+                    new_recipe = Recipe(
+                        site_id=s.id,
+                        created_by=db_job.created_by,
+                        image_url=image_url,
+                        recipe_text=recipe_text,
+                        status=RecipeStatus.generating,
+                    )
+                    db.add(new_recipe)
+                    await db.flush()
+                    created_recipe_ids.append(new_recipe.id)
+                    group_items.append(
+                        {
+                            "id": str(new_recipe.id),
+                            "site_domain": s.domain,
+                            "recipe_text": recipe_text,
+                            "image_url": image_url,
+                            "group_idx": idx + 1,
+                        }
+                    )
+                if group_items:
+                    multi_site_groups.append({"idx": idx + 1, "items": group_items, "recipe_text": recipe_text, "image_url": image_url})
+            if not multi_site_groups:
+                db_job.status = JobStatus.failed
+                db_job.error = "No valid shared recipes to process"
+                db_job.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                return
+            recipes_data = [{"id": str(rid)} for rid in created_recipe_ids]
+            await db.commit()
+        elif recipe_id and db_job.job_type == JobType.articles:
             recipe_query = (
                 select(Recipe)
                 .where(
@@ -146,47 +209,48 @@ class JobManager:
             if recipe_id:
                 recipe_query = recipe_query.where(Recipe.id == recipe_id)
 
-        recipe_rows = await db.execute(recipe_query)
-        recipes_raw = recipe_rows.scalars().all()
-        if not recipes_raw:
-            db_job.status = JobStatus.failed
-            status_label = "pending" if db_job.job_type == JobType.articles else "generated"
-            if recipe_id:
-                db_job.error = f"Recipe not found or not in '{status_label}' status"
-            else:
-                db_job.error = f"No {status_label} recipes found for this site"
-            db_job.finished_at = datetime.now(timezone.utc)
-            await db.commit()
-            return
+        if db_job.job_type != JobType.articles_all_sites:
+            recipe_rows = await db.execute(recipe_query)
+            recipes_raw = recipe_rows.scalars().all()
+            if not recipes_raw:
+                db_job.status = JobStatus.failed
+                status_label = "pending" if db_job.job_type == JobType.articles else "generated"
+                if recipe_id:
+                    db_job.error = f"Recipe not found or not in '{status_label}' status"
+                else:
+                    db_job.error = f"No {status_label} recipes found for this site"
+                db_job.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                return
 
-        recipes_data = [
-            {
-                "id": str(r.id),
-                "recipe_text": r.recipe_text,
-                "image_url": r.image_url,
-                "generated_article": r.generated_article,
-                "generated_json": r.generated_json,
-                "focus_keyword": r.focus_keyword,
-                "meta_description": r.meta_description,
-                "category": r.category,
-                "generated_images": r.generated_images,
-            }
-            for r in recipes_raw
-        ]
+            recipes_data = [
+                {
+                    "id": str(r.id),
+                    "recipe_text": r.recipe_text,
+                    "image_url": r.image_url,
+                    "generated_article": r.generated_article,
+                    "generated_json": r.generated_json,
+                    "focus_keyword": r.focus_keyword,
+                    "meta_description": r.meta_description,
+                    "category": r.category,
+                    "generated_images": r.generated_images,
+                }
+                for r in recipes_raw
+            ]
 
-        if db_job.job_type == JobType.articles:
-            recipe_ids = [r.id for r in recipes_raw]
-            await db.execute(
-                update(Recipe)
-                .where(Recipe.id.in_(recipe_ids))
-                .values(status=RecipeStatus.generating)
-            )
+            if db_job.job_type == JobType.articles:
+                recipe_ids = [r.id for r in recipes_raw]
+                await db.execute(
+                    update(Recipe)
+                    .where(Recipe.id.in_(recipe_ids))
+                    .values(status=RecipeStatus.generating)
+                )
 
         rj = RunningJob(db_job.id)
         self._running[job_id_str] = rj
 
         def _run():
-            from ..services.article_generator import process_recipes_from_db
+            from ..services.article_generator import process_recipes_from_db, generate_for_recipe
             from ..services.publisher import publish_recipes_from_db
 
             def _on_recipe_done(recipe_id: str, fields: dict):
@@ -214,7 +278,7 @@ class JobManager:
                         on_progress=rj.set_progress,
                         on_recipe_done=_on_recipe_done,
                     )
-                else:
+                elif db_job.job_type == JobType.publisher:
                     publish_recipes_from_db(
                         recipes=recipes_data,
                         site_config=site_config,
@@ -223,16 +287,57 @@ class JobManager:
                         on_progress=rj.set_progress,
                         on_recipe_done=_on_recipe_done,
                     )
+                else:
+                    if not credentials.get("openai"):
+                        raise ValueError(
+                            "OpenAI API key not found. Go to Paramètres → Clés API, paste your OpenAI key (sk-...), and click Enregistrer."
+                        )
+                    total = len(recipes_data)
+                    done = 0
+                    for group in multi_site_groups:
+                        if rj.should_stop():
+                            break
+                        shared_images: str | None = None
+                        rj.log(f"Input recipe {group['idx']}: processing {len(group['items'])} sites")
+                        for i, item in enumerate(group["items"]):
+                            if rj.should_stop():
+                                break
+                            run_creds = dict(credentials)
+                            if i > 0:
+                                # Generate Midjourney only once (first site), reuse for others
+                                run_creds["discord_auth"] = ""
+                                run_creds["discord_app_id"] = ""
+                                run_creds["discord_guild"] = ""
+                                run_creds["discord_channel"] = ""
+                                run_creds["mj_version"] = ""
+                                run_creds["mj_id"] = ""
+                            generated = generate_for_recipe(
+                                recipe_id=item["id"],
+                                recipe_text=item["recipe_text"],
+                                image_url=item["image_url"],
+                                site_domain=item["site_domain"],
+                                credentials=run_creds,
+                                prompts=prompts,
+                                log=rj.log,
+                                should_stop=rj.should_stop,
+                            )
+                            if i == 0:
+                                shared_images = generated.get("generated_images")
+                            elif shared_images:
+                                generated["generated_images"] = shared_images
+                            _on_recipe_done(item["id"], generated)
+                            done += 1
+                            rj.set_progress(done, total)
 
                 final_status = JobStatus.stopped if rj.should_stop() else JobStatus.completed
                 rj.log("Job completed successfully" if final_status == JobStatus.completed else "Job stopped")
-                if rj.should_stop() and db_job.job_type == JobType.articles:
+                if rj.should_stop() and db_job.job_type in (JobType.articles, JobType.articles_all_sites):
                     _revert_generating(recipes_data)
                 _finalize(job_id_str, final_status, rj._logs)
 
             except Exception as e:
                 rj.log(f"Job failed: {e}")
-                if db_job.job_type == JobType.articles:
+                if db_job.job_type in (JobType.articles, JobType.articles_all_sites):
                     _revert_generating(recipes_data)
                 _finalize(job_id_str, JobStatus.failed, rj._logs, error=str(e))
 
@@ -250,7 +355,7 @@ class JobManager:
 
                 if "error_message" in fields and fields["error_message"]:
                     recipe.status = RecipeStatus.failed
-                elif job_type == JobType.articles:
+                elif job_type in (JobType.articles, JobType.articles_all_sites):
                     recipe.status = RecipeStatus.generated
                 elif job_type == JobType.publisher:
                     recipe.status = RecipeStatus.published
