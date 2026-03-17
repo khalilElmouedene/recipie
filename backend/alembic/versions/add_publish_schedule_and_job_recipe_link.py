@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "add_publish_schedule_and_job_recipe_link"
+revision = "add_publish_sched_job_link"
 down_revision = "add_articles_all_sites_job_type"
 branch_labels = None
 depends_on = None
