@@ -183,14 +183,6 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
         {sites.length >= MAX_SITES_PER_PROJECT && (role === "owner" || role === "admin") && (
           <span className="text-sm text-amber-400">Maximum {MAX_SITES_PER_PROJECT} sites par projet</span>
         )}
-        <button
-          onClick={() => window.open(api.getProjectExcelExportUrl(projectId), "_blank")}
-          disabled={sites.length === 0}
-          className="btn-secondary flex items-center gap-2 border-green-700 text-green-400 hover:text-green-300 disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Export all sites to one Excel file (one sheet per site)"
-        >
-          <Download size={18} /> Export All Excel
-        </button>
         {(role === "owner" || role === "admin") && (
           <button
             onClick={() => router.push(`/projects/${projectId}/sites/all-sites-generate`)}

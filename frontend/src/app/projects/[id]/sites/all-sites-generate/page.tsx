@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Trash2, Send } from "lucide-react";
-import { api, SharedRecipeInput, SiteOut } from "@/lib/api";
+import { api, SharedRecipeInput, SiteOut, JobOut } from "@/lib/api";
 
 export default function AllSitesGeneratePage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -11,9 +11,13 @@ export default function AllSitesGeneratePage() {
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<SharedRecipeInput[]>([{ image_url: "", recipe_text: "" }]);
+  const [history, setHistory] = useState<JobOut[]>([]);
 
   useEffect(() => {
     api.getSites(projectId).then(setSites).catch(() => {});
+    api.getProjectJobs(projectId)
+      .then((jobs) => setHistory(jobs.filter((j) => j.job_type === "articles_all_sites")))
+      .catch(() => {});
   }, [projectId]);
 
   const validCount = rows
@@ -62,6 +66,34 @@ export default function AllSitesGeneratePage() {
         <p className="text-xs text-gray-500 mt-2">
           Sites: {sites.length} · Valid recipe inputs: {validCount} · Planned article generations: {validCount * sites.length}
         </p>
+      </div>
+
+      <div className="card mb-5">
+        <h2 className="text-sm font-semibold text-gray-300 mb-2">History</h2>
+        {history.length === 0 ? (
+          <p className="text-sm text-gray-500">No previous all-sites jobs yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {history.map((j) => (
+              <div key={j.id} className="rounded border border-gray-700 p-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-white">Job {j.id.slice(0, 8)} · {j.status}</p>
+                  <p className="text-xs text-gray-400">{new Date(j.created_at).toLocaleString()}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => router.push(`/jobs/${j.id}`)} className="btn-secondary text-xs px-2 py-1">
+                    Logs
+                  </button>
+                  {j.status !== "running" && (
+                    <button onClick={() => router.push(`/jobs/${j.id}/results`)} className="btn-secondary text-xs px-2 py-1">
+                      Results
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="space-y-3">
