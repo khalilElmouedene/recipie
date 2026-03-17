@@ -87,11 +87,6 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
   const [form, setForm] = useState({ domain: "", wp_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [loading, setLoading] = useState(false);
   const [publishingSiteId, setPublishingSiteId] = useState<string | null>(null);
-  const [showAllSitesJob, setShowAllSitesJob] = useState(false);
-  const [allSitesJobLoading, setAllSitesJobLoading] = useState(false);
-  const [sharedRecipes, setSharedRecipes] = useState<{ image_url: string; recipe_text: string }[]>([
-    { image_url: "", recipe_text: "" },
-  ]);
   const [detailsSite, setDetailsSite] = useState<SiteOut | null>(null);
   const [editSite, setEditSite] = useState<SiteOut | null>(null);
   const [editForm, setEditForm] = useState({ domain: "", wp_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
@@ -130,34 +125,6 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
       alert(e.message || "Failed to start publish job");
     } finally {
       setPublishingSiteId(null);
-    }
-  };
-
-  const handleRunAllSitesJob = async () => {
-    const valid = sharedRecipes
-      .map((r) => ({ image_url: r.image_url.trim(), recipe_text: r.recipe_text.trim() }))
-      .filter((r) => r.image_url && r.recipe_text);
-    if (!valid.length) {
-      alert("Add at least one recipe with image URL and recipe text.");
-      return;
-    }
-    if (sites.length === 0) {
-      alert("Add at least one site first.");
-      return;
-    }
-    setAllSitesJobLoading(true);
-    try {
-      const job = await api.startJob(projectId, {
-        job_type: "articles_all_sites",
-        shared_recipes: valid,
-      });
-      setShowAllSitesJob(false);
-      setSharedRecipes([{ image_url: "", recipe_text: "" }]);
-      router.push(`/jobs/${job.id}`);
-    } catch (e: any) {
-      alert(e.message || "Failed to start all-sites generation job");
-    } finally {
-      setAllSitesJobLoading(false);
     }
   };
 
@@ -226,10 +193,10 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
         </button>
         {(role === "owner" || role === "admin") && (
           <button
-            onClick={() => setShowAllSitesJob(true)}
+            onClick={() => router.push(`/projects/${projectId}/sites/all-sites-generate`)}
             disabled={sites.length === 0}
             className="btn-secondary flex items-center gap-2 border-brand-700 text-brand-400 hover:text-brand-300 disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Create recipes for all sites and run one job"
+            title="Open all-sites generation page"
           >
             <Send size={18} /> Generate All Sites
           </button>
@@ -450,69 +417,6 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
         </div>
       )}
 
-      {showAllSitesJob && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-gray-900 rounded-xl border border-gray-700 max-w-3xl w-full p-6 max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-white">Generate Articles For All Sites</h3>
-              <button onClick={() => setShowAllSitesJob(false)} className="text-gray-500 hover:text-white">
-                <X size={18} />
-              </button>
-            </div>
-            <p className="text-sm text-gray-400 mb-4">
-              For each recipe input, the system generates one article per site, and generates images once then reuses them across all sites.
-            </p>
-            <div className="space-y-3">
-              {sharedRecipes.map((r, idx) => (
-                <div key={idx} className="border border-gray-700 rounded-lg p-3 space-y-2">
-                  <p className="text-xs text-gray-500">Recipe Input #{idx + 1}</p>
-                  <input
-                    value={r.image_url}
-                    onChange={(e) => setSharedRecipes((prev) => prev.map((x, i) => i === idx ? { ...x, image_url: e.target.value } : x))}
-                    className="input-field"
-                    placeholder="Image URL"
-                  />
-                  <textarea
-                    value={r.recipe_text}
-                    onChange={(e) => setSharedRecipes((prev) => prev.map((x, i) => i === idx ? { ...x, recipe_text: e.target.value } : x))}
-                    className="input-field"
-                    placeholder="Recipe text/title"
-                    rows={3}
-                  />
-                  {sharedRecipes.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => setSharedRecipes((prev) => prev.filter((_, i) => i !== idx))}
-                      className="text-xs text-red-400 hover:text-red-300"
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={() => setSharedRecipes((prev) => [...prev, { image_url: "", recipe_text: "" }])}
-              className="mt-3 text-sm text-brand-400 hover:text-brand-300 flex items-center gap-1"
-            >
-              <Plus size={14} /> Add another recipe input
-            </button>
-            <div className="flex items-center justify-between mt-6">
-              <p className="text-xs text-gray-500">
-                Sites: {sites.length} · Total article generations = valid inputs x sites
-              </p>
-              <button
-                onClick={handleRunAllSitesJob}
-                disabled={allSitesJobLoading}
-                className="btn-primary"
-              >
-                {allSitesJobLoading ? "Starting..." : "Run All Sites Job"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
