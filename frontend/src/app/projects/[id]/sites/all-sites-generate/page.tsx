@@ -8,10 +8,10 @@ import {
   Trash2,
   Send,
   Save,
-  List,
-  LayoutGrid,
   ImageIcon,
   ExternalLink,
+  List,
+  LayoutGrid,
 } from "lucide-react";
 import {
   api,
@@ -56,9 +56,10 @@ export default function AllSitesGeneratePage() {
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [startingPublish, setStartingPublish] = useState(false);
 
-  const [historyView, setHistoryView] = useState<"compact" | "detailed">("compact");
   const [jobRecipeMap, setJobRecipeMap] = useState<Record<string, GeneratedJobRecipeOut[]>>({});
   const [loadingDetail, setLoadingDetail] = useState(false);
+  /** Summary = short page; Recipe cards = full list (can be very long with many sites × recipes) */
+  const [showRecipeCards, setShowRecipeCards] = useState(false);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [deletingRecipeId, setDeletingRecipeId] = useState<string | null>(null);
 
@@ -80,9 +81,16 @@ export default function AllSitesGeneratePage() {
       .catch(() => {});
   }, [projectId, loadHistory]);
 
+  const historyJobIds = history.map((j) => j.id).join(",");
+
   useEffect(() => {
-    if (historyView !== "detailed" || history.length === 0) {
-      if (historyView === "compact") setJobRecipeMap({});
+    if (history.length === 0) {
+      setJobRecipeMap({});
+      setLoadingDetail(false);
+      return;
+    }
+    if (!showRecipeCards) {
+      setLoadingDetail(false);
       return;
     }
     let cancelled = false;
@@ -104,7 +112,7 @@ export default function AllSitesGeneratePage() {
     return () => {
       cancelled = true;
     };
-  }, [historyView, history]);
+  }, [showRecipeCards, historyJobIds, history.length]);
 
   const validCount = rows
     .map((r) => ({ image_url: r.image_url.trim(), recipe_text: r.recipe_text.trim() }))
@@ -203,7 +211,7 @@ export default function AllSitesGeneratePage() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-1 sm:px-0">
+    <div>
       <button
         onClick={() => router.push(`/projects/${projectId}`)}
         className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4"
@@ -273,35 +281,43 @@ export default function AllSitesGeneratePage() {
       <div className="card mb-5">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
           <h2 className="text-sm font-semibold text-gray-300">History</h2>
-          <div className="flex items-center gap-1 p-0.5 rounded-lg bg-gray-800/80 border border-gray-700 w-fit">
-            <button
-              type="button"
-              onClick={() => setHistoryView("compact")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${
-                historyView === "compact"
-                  ? "bg-brand-600 text-white"
-                  : "text-gray-400 hover:text-gray-200"
-              }`}
+          {history.length > 0 && (
+            <div
+              className="flex items-center gap-1 p-0.5 rounded-lg bg-gray-800/80 border border-gray-700 w-fit"
+              role="group"
+              aria-label="History display mode"
             >
-              <List size={14} /> Simple
-            </button>
-            <button
-              type="button"
-              onClick={() => setHistoryView("detailed")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${
-                historyView === "detailed"
-                  ? "bg-brand-600 text-white"
-                  : "text-gray-400 hover:text-gray-200"
-              }`}
-            >
-              <LayoutGrid size={14} /> Recipe cards
-            </button>
-          </div>
+              <button
+                type="button"
+                onClick={() => setShowRecipeCards(false)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                  !showRecipeCards ? "bg-brand-600 text-white" : "text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <List size={14} /> Summary
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowRecipeCards(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                  showRecipeCards ? "bg-brand-600 text-white" : "text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <LayoutGrid size={14} /> Recipe cards
+              </button>
+            </div>
+          )}
         </div>
+        {!showRecipeCards && history.length > 0 && (
+          <p className="text-xs text-gray-500 mb-3">
+            Summary keeps the page short. Use <strong className="text-gray-400">Recipe cards</strong> to see every
+            recipe per site (long list with many runs).
+          </p>
+        )}
 
         {history.length === 0 ? (
           <p className="text-sm text-gray-500">No previous all-sites jobs yet.</p>
-        ) : historyView === "compact" ? (
+        ) : !showRecipeCards ? (
           <div className="space-y-2">
             {history.map((j) => (
               <div
@@ -311,13 +327,16 @@ export default function AllSitesGeneratePage() {
                 <div className="min-w-0">
                   <p className="text-sm text-white font-medium">
                     Job <span className="font-mono text-brand-300">{j.id.slice(0, 8)}</span>
-                    <span
-                      className={`ml-2 text-[10px] uppercase px-2 py-0.5 rounded border ${statusClass(j.status)}`}
-                    >
+                    <span className={`ml-2 text-[10px] uppercase px-2 py-0.5 rounded border ${statusClass(j.status)}`}>
                       {j.status}
                     </span>
                   </p>
-                  <p className="text-xs text-gray-500 mt-0.5">{new Date(j.created_at).toLocaleString()}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {new Date(j.created_at).toLocaleString()}
+                    {j.total_rows != null && j.total_rows > 0 && (
+                      <span className="ml-2 text-gray-400">· {j.total_rows} recipe{j.total_rows !== 1 ? "s" : ""}</span>
+                    )}
+                  </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button onClick={() => router.push(`/jobs/${j.id}`)} className="btn-secondary text-xs px-3 py-1.5">
@@ -355,7 +374,7 @@ export default function AllSitesGeneratePage() {
         ) : (
           <div className="space-y-8">
             {loadingDetail && (
-              <p className="text-sm text-gray-500 text-center py-4">Loading recipe cards…</p>
+              <p className="text-sm text-gray-500 py-4">Loading recipe cards…</p>
             )}
             {!loadingDetail &&
               history.map((j) => {
@@ -373,18 +392,24 @@ export default function AllSitesGeneratePage() {
                           {new Date(j.created_at).toLocaleString()}
                         </span>
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2 items-center">
                         <button
                           onClick={() => router.push(`/jobs/${j.id}`)}
-                          className="text-xs text-brand-400 hover:text-brand-300"
+                          className="btn-secondary text-xs px-2 py-1"
                         >
                           Logs
                         </button>
                         {j.status !== "running" && (
                           <>
                             <button
+                              onClick={() => router.push(`/jobs/${j.id}/results`)}
+                              className="btn-secondary text-xs px-2 py-1"
+                            >
+                              Results
+                            </button>
+                            <button
                               onClick={() => router.push(`/projects/${projectId}/sites/all-sites-pins/${j.id}`)}
-                              className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1"
+                              className="btn-secondary text-xs px-2 py-1 flex items-center gap-1 border-purple-700/50 text-purple-300"
                             >
                               <ImageIcon size={12} /> Pin designer
                             </button>
@@ -392,9 +417,9 @@ export default function AllSitesGeneratePage() {
                               <button
                                 onClick={() => deleteJob(j.id)}
                                 disabled={deletingJobId === j.id}
-                                className="text-xs text-red-400 hover:text-red-300"
+                                className="text-xs px-2 py-1 rounded-lg border border-red-900/50 text-red-400 hover:bg-red-950/30 disabled:opacity-50"
                               >
-                                Delete run
+                                {deletingJobId === j.id ? "…" : "Delete run"}
                               </button>
                             )}
                           </>
