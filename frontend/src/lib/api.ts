@@ -270,6 +270,9 @@ export const api = {
   stopJob: (jobId: string) =>
     request<JobOut>(`/api/jobs/${jobId}/stop`, { method: "POST" }),
 
+  deleteJob: (jobId: string) =>
+    request<void>(`/api/jobs/${jobId}`, { method: "DELETE" }),
+
   // ── Dashboard ──────────────────────────────────────────
   getDashboard: () => request<DashboardStats>("/api/dashboard"),
 };
@@ -401,6 +404,9 @@ export interface GeneratedJobRecipeOut {
   recipe_text: string;
   status: string;
   wp_permalink: string | null;
+  image_url?: string;
+  generated_images?: string | null;
+  category?: string | null;
   created_at: string;
 }
 

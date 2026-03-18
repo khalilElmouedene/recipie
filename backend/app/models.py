@@ -288,6 +288,9 @@ class GeneratedJobRecipeOut(BaseModel):
     recipe_text: str
     status: str
     wp_permalink: str | None = None
+    image_url: str = ""
+    generated_images: str | None = None
+    category: str | None = None
     created_at: datetime
 
 

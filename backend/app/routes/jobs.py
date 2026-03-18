@@ -3,11 +3,11 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..db_models import User, Job, JobLog, JobType, JobStatus, Project, Recipe, Site
+from ..db_models import User, Job, JobLog, JobType, JobStatus, Project, Recipe, Site, ProjectMemberRole
 from ..dependencies import get_current_user, check_project_access
 from ..models import JobStart, JobOut, JobLogOut, GeneratedJobRecipeOut
 from ..workers.job_manager import job_manager
@@ -127,10 +127,36 @@ async def get_job_generated_recipes(
                 recipe_text=recipe.recipe_text,
                 status=recipe.status.value if hasattr(recipe.status, "value") else str(recipe.status),
                 wp_permalink=recipe.wp_permalink,
+                image_url=recipe.image_url or "",
+                generated_images=recipe.generated_images,
+                category=recipe.category,
                 created_at=recipe.created_at,
             )
         )
     return out
+
+
+@router.delete("/api/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_job_and_linked_recipes(
+    job_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await check_project_access(job.project_id, user, db, require_roles=[ProjectMemberRole.admin])
+    if job.job_type != JobType.articles_all_sites:
+        raise HTTPException(
+            status_code=400,
+            detail="Only articles_all_sites jobs can be deleted from this action",
+        )
+    if job.status == JobStatus.running:
+        raise HTTPException(status_code=400, detail="Stop the job before deleting")
+    await db.execute(sql_delete(Recipe).where(Recipe.created_by_job_id == job_id))
+    await db.execute(sql_delete(Job).where(Job.id == job_id))
+    await db.commit()
 
 
 @router.post("/api/jobs/{job_id}/stop", response_model=JobOut)
