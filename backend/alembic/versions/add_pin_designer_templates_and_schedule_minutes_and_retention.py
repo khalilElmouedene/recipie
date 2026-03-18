@@ -1,6 +1,6 @@
 """add Pin Designer templates, minutes-based scheduling, and image retention
 
-Revision ID: add_pin_designer_templates_and_minutes_retention
+Revision ID: add_pin_templates_min_ret
 Revises: add_publish_sched_job_link
 Create Date: 2026-03-18
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision = "add_pin_designer_templates_and_minutes_retention"
+revision = "add_pin_templates_min_ret"
 down_revision = "add_publish_sched_job_link"
 branch_labels = None
 depends_on = None
