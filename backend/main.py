@@ -44,11 +44,14 @@ async def lifespan(app: FastAPI):
     await init_db()
     await _migrate_prompts()
     from app.services.publish_scheduler import run_publish_scheduler
+    from app.services.image_retention_scheduler import run_image_retention_scheduler
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(run_publish_scheduler(stop_event))
+    retention_task = asyncio.create_task(run_image_retention_scheduler(stop_event))
     yield
     stop_event.set()
     await scheduler_task
+    await retention_task
 
 
 _debug = os.getenv("APP_ENV", "production").lower() != "production"
@@ -80,6 +83,7 @@ from app.routes.jobs import router as jobs_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.pinterest import router as pinterest_router
 from app.routes.settings import router as settings_router
+from app.routes.pin_designer_templates import router as pin_designer_templates_router
 from app.ws.logs import router as ws_router
 
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
@@ -94,4 +98,5 @@ app.include_router(jobs_router)
 app.include_router(dashboard_router)
 app.include_router(pinterest_router)
 app.include_router(settings_router)
+app.include_router(pin_designer_templates_router)
 app.include_router(ws_router)

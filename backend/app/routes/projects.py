@@ -339,10 +339,18 @@ async def get_publish_schedule(
     row = await db.execute(select(ProjectPublishSchedule).where(ProjectPublishSchedule.project_id == project_id))
     s = row.scalar_one_or_none()
     if not s:
-        return PublishScheduleOut(enabled=False, interval_hours=4, next_run_at=None, last_run_at=None, last_error=None)
+        return PublishScheduleOut(
+            enabled=False,
+            interval_minutes=240,
+            image_retention_days=4,
+            next_run_at=None,
+            last_run_at=None,
+            last_error=None,
+        )
     return PublishScheduleOut(
         enabled=s.enabled,
-        interval_hours=s.interval_hours,
+        interval_minutes=s.interval_minutes,
+        image_retention_days=s.image_retention_days,
         next_run_at=s.next_run_at,
         last_run_at=s.last_run_at,
         last_error=s.last_error,
@@ -365,25 +373,28 @@ async def set_publish_schedule(
         s = ProjectPublishSchedule(
             project_id=project_id,
             enabled=body.enabled,
-            interval_hours=body.interval_hours,
-            next_run_at=(now + timedelta(hours=body.interval_hours)) if body.enabled else None,
+            interval_minutes=body.interval_minutes,
+            image_retention_days=body.image_retention_days,
+            next_run_at=(now + timedelta(minutes=body.interval_minutes)) if body.enabled else None,
             last_error=None,
         )
         db.add(s)
     else:
         prev_enabled = s.enabled
-        prev_interval = s.interval_hours
+        prev_interval = s.interval_minutes
         s.enabled = body.enabled
-        s.interval_hours = body.interval_hours
+        s.interval_minutes = body.interval_minutes
+        s.image_retention_days = body.image_retention_days
         if not body.enabled:
             s.next_run_at = None
-        elif (not prev_enabled) or (prev_interval != body.interval_hours) or (s.next_run_at is None):
-            s.next_run_at = now + timedelta(hours=body.interval_hours)
+        elif (not prev_enabled) or (prev_interval != body.interval_minutes) or (s.next_run_at is None):
+            s.next_run_at = now + timedelta(minutes=body.interval_minutes)
         s.last_error = None
     await db.commit()
     return PublishScheduleOut(
         enabled=s.enabled,
-        interval_hours=s.interval_hours,
+        interval_minutes=s.interval_minutes,
+        image_retention_days=s.image_retention_days,
         next_run_at=s.next_run_at,
         last_run_at=s.last_run_at,
         last_error=s.last_error,
@@ -405,7 +416,8 @@ async def start_publish_schedule_now(
         s = ProjectPublishSchedule(
             project_id=project_id,
             enabled=True,
-            interval_hours=4,
+            interval_minutes=240,
+            image_retention_days=4,
             next_run_at=now,
             last_error=None,
         )
@@ -417,7 +429,8 @@ async def start_publish_schedule_now(
     await db.commit()
     return PublishScheduleOut(
         enabled=s.enabled,
-        interval_hours=s.interval_hours,
+        interval_minutes=s.interval_minutes,
+        image_retention_days=s.image_retention_days,
         next_run_at=s.next_run_at,
         last_run_at=s.last_run_at,
         last_error=s.last_error,

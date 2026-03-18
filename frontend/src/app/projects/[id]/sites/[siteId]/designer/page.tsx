@@ -100,6 +100,7 @@ export default function PinDesignerPage() {
         recipeImages={getRecipeImages(singleRecipe)}
         initialTitle={singleRecipe.recipe_text?.split("\n")[0]?.trim() || "Recipe"}
         initialJson={singleRecipe.pin_design_image?.startsWith("{") ? singleRecipe.pin_design_image : undefined}
+        initialTemplateId={singleRecipe.pin_template_id || undefined}
         recipePinTitle={singleRecipe.pin_title ?? ""}
         recipePinDescription={singleRecipe.pin_description ?? ""}
         projectId={params.id}

@@ -207,6 +207,7 @@ class RecipeUpdate(BaseModel):
     pin_title: str | None = None
     pin_description: str | None = None
     pin_blog_link: str | None = None
+    pin_template_id: str | None = None
 
 
 class PinterestPinRequest(BaseModel):
@@ -251,6 +252,7 @@ class RecipeOut(BaseModel):
     pin_title: str | None = None
     pin_description: str | None = None
     pin_blog_link: str | None = None
+    pin_template_id: str | None = None
     error_message: str | None = None
     created_at: datetime
 
@@ -291,12 +293,14 @@ class GeneratedJobRecipeOut(BaseModel):
     image_url: str = ""
     generated_images: str | None = None
     category: str | None = None
+    pin_template_id: str | None = None
     created_at: datetime
 
 
 class PublishScheduleOut(BaseModel):
     enabled: bool
-    interval_hours: int
+    interval_minutes: int
+    image_retention_days: int = 4
     next_run_at: datetime | None = None
     last_run_at: datetime | None = None
     last_error: str | None = None
@@ -304,7 +308,55 @@ class PublishScheduleOut(BaseModel):
 
 class PublishScheduleUpdate(BaseModel):
     enabled: bool
-    interval_hours: int = Field(ge=1, le=168)
+    interval_minutes: int = Field(ge=1, le=10080)
+    image_retention_days: int = Field(ge=1, le=3650)
+
+
+# ── Pin Designer Templates (user-created layouts) ───────────────────────────
+
+class PinDesignerTemplateElement(BaseModel):
+    id: str
+    type: str  # "image" | "text" | "band" | "frame" | "circle"
+    label: str
+    x: float
+    y: float
+    width: float
+    height: float
+
+    defaultText: str | None = None
+    fontSize: int | None = None
+    fontWeight: str | None = None
+    fontStyle: str | None = None
+    fill: str | None = None
+    bgColor: str | None = None
+    textAlign: str | None = None
+    radius: float | None = None
+    strokeWidth: float | None = None
+    strokeStyle: dict | str | None = None
+
+
+class PinDesignerTemplateOut(BaseModel):
+    id: uuid.UUID
+    owner_id: uuid.UUID
+    name: str
+    description: str | None = None
+    bgColor: str
+    previewLayout: str | None = None
+    elements: list[PinDesignerTemplateElement]
+
+
+class PinDesignerTemplateCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = None
+    bgColor: str = Field(min_length=1, max_length=50)
+    elements: list[PinDesignerTemplateElement]
+
+
+class PinDesignerTemplateUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    bgColor: str | None = None
+    elements: list[PinDesignerTemplateElement] | None = None
 
 
 class JobLogOut(BaseModel):

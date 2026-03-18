@@ -204,6 +204,7 @@ export const api = {
     pin_title?: string;
     pin_description?: string;
     pin_blog_link?: string;
+    pin_template_id?: string;
   }) =>
     request<RecipeOut>(`/api/recipes/${recipeId}`, { method: "PATCH", body: JSON.stringify(data) }),
 
@@ -226,6 +227,16 @@ export const api = {
 
   // ── Pin Generator ──────────────────────────────────────
   getPinTemplates: () => request<PinTemplate[]>("/api/pin-templates"),
+
+  // ── Pin Designer Templates (user-created layouts) ──────────────────────
+  getPinDesignerTemplates: () => request<PinDesignerTemplateOut[]>("/api/pin-designer-templates"),
+  createPinDesignerTemplate: (data: PinDesignerTemplateCreate) =>
+    request<PinDesignerTemplateOut>("/api/pin-designer-templates", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  deletePinDesignerTemplate: (templateId: string) =>
+    request<void>(`/api/pin-designer-templates/${templateId}`, { method: "DELETE" }),
 
   generatePin: (recipeId: string, data: GeneratePinRequest) =>
     request<GeneratePinResponse>(`/api/recipes/${recipeId}/generate-pin`, {
@@ -375,6 +386,7 @@ export interface RecipeOut {
   pin_title: string | null;
   pin_description: string | null;
   pin_blog_link: string | null;
+  pin_template_id: string | null;
   error_message: string | null;
   created_at: string;
 }
@@ -407,12 +419,14 @@ export interface GeneratedJobRecipeOut {
   image_url?: string;
   generated_images?: string | null;
   category?: string | null;
+  pin_template_id?: string | null;
   created_at: string;
 }
 
 export interface PublishScheduleOut {
   enabled: boolean;
-  interval_hours: number;
+  interval_minutes: number;
+  image_retention_days: number;
   next_run_at: string | null;
   last_run_at: string | null;
   last_error: string | null;
@@ -420,7 +434,45 @@ export interface PublishScheduleOut {
 
 export interface PublishScheduleUpdate {
   enabled: boolean;
-  interval_hours: number;
+  interval_minutes: number;
+  image_retention_days: number;
+}
+
+export interface PinDesignerTemplateElement {
+  id: string;
+  type: string;
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  defaultText?: string | null;
+  fontSize?: number | null;
+  fontWeight?: string | null;
+  fontStyle?: string | null;
+  fill?: string | null;
+  bgColor?: string | null;
+  textAlign?: string | null;
+  radius?: number | null;
+  strokeWidth?: number | null;
+  strokeStyle?: Record<string, unknown> | string | null;
+}
+
+export interface PinDesignerTemplateOut {
+  id: string;
+  owner_id: string;
+  name: string;
+  description: string | null;
+  bgColor: string;
+  previewLayout: string | null;
+  elements: PinDesignerTemplateElement[];
+}
+
+export interface PinDesignerTemplateCreate {
+  name: string;
+  description: string | null;
+  bgColor: string;
+  elements: PinDesignerTemplateElement[];
 }
 
 export interface JobLogOut {

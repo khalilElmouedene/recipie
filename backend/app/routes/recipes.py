@@ -119,6 +119,7 @@ async def list_recipes(
                 Recipe.pin_title,
                 Recipe.pin_description,
                 Recipe.pin_blog_link,
+                Recipe.pin_template_id,
                 Recipe.error_message,
                 Recipe.created_at,
             )
@@ -143,6 +144,7 @@ async def list_recipes(
                 "pin_title": row.pin_title,
                 "pin_description": row.pin_description,
                 "pin_blog_link": row.pin_blog_link,
+                "pin_template_id": row.pin_template_id,
                 "error_message": row.error_message,
                 "created_at": row.created_at,
             })
@@ -229,6 +231,8 @@ async def update_recipe(
         recipe.pin_description = body.pin_description
     if body.pin_blog_link is not None:
         recipe.pin_blog_link = body.pin_blog_link
+    if body.pin_template_id is not None:
+        recipe.pin_template_id = body.pin_template_id
 
     await db.commit()
     row = await db.execute(select(Recipe).where(Recipe.id == recipe_id))

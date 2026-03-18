@@ -44,7 +44,9 @@ function rgbaToHex(rgba: string): { hex: string; alpha: number } {
 
 interface TemplateElement {
   id: string;
-  type: "image" | "text" | "band" | "frame" | "circle";
+  // `type` comes from stored template data; runtime behavior relies on
+  // string comparisons inside the template loader.
+  type: string;
   label: string;
   x: number;
   y: number;
@@ -628,6 +630,13 @@ export default function PinDesigner({
       .catch(() => {});
   }, [injectFontStylesheet]);
 
+  // Load user-created Pin Designer templates
+  useEffect(() => {
+    api.getPinDesignerTemplates()
+      .then((t) => setCustomTemplates(t as PinTemplate[]))
+      .catch(() => {});
+  }, []);
+
   const saveFontsToDb = useCallback((fonts: string[]) => {
     api.setCustomFonts(fonts).catch(() => {});
   }, []);
@@ -686,6 +695,9 @@ export default function PinDesigner({
   const selectedIdRef = useRef<string | null>(null);
   const activeObjRef = useRef<any>(null);
   const transformSaveDoneRef = useRef(false);
+  // When creating a new custom template, we don't want to re-apply it to the canvas,
+  // otherwise we'd lose any "image pan within the frame" edits.
+  const skipTemplateAutoApplyRef = useRef(false);
 
   // ── Zustand store ───────────────────────────────────────────────────────
   const {
@@ -706,6 +718,8 @@ export default function PinDesigner({
   const [mounted, setMounted] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<PinTemplate | null>(null);
+  const [customTemplates, setCustomTemplates] = useState<PinTemplate[]>([]);
+  const allTemplates: PinTemplate[] = [...TEMPLATES, ...customTemplates];
   const [pinName, setPinName] = useState(templateName);
 
   // Pinterest
@@ -847,7 +861,10 @@ export default function PinDesigner({
         // Save to recipe
         if (frame.recipeId) {
           try {
-            await api.updateRecipe(frame.recipeId, { pin_design_image: dataUrl });
+              await api.updateRecipe(frame.recipeId, {
+                pin_design_image: dataUrl,
+                pin_template_id: selectedTemplate?.id,
+              });
           } catch { /* skip */ }
         }
         // Also download locally
@@ -967,6 +984,151 @@ export default function PinDesigner({
 
   // ── Canvas helpers ────────────────────────────────────────────────────────
 
+  const extractTemplateElementsFromCanvas = (): TemplateElement[] => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return [];
+
+    const objs: any[] = canvas.getObjects?.() || [];
+    const elements: TemplateElement[] = [];
+
+    for (const o of objs) {
+      if (!o) continue;
+      if (o.__isLabel) continue;
+      const pinId = o.__pinId;
+      if (!pinId) continue;
+
+      const pinType = o.__pinType;
+      const label: string = o.__pinLabel || pinId;
+
+      // Only persist element types supported by the template loader.
+      if (pinType === "image") {
+        let x = typeof o.left === "number" ? o.left : 0;
+        let y = typeof o.top === "number" ? o.top : 0;
+        let width = typeof o.width === "number" ? o.width * (o.scaleX ?? 1) : 0;
+        let height = typeof o.height === "number" ? o.height * (o.scaleY ?? 1) : 0;
+        let bgColor: string | undefined = typeof o.fill === "string" ? o.fill : undefined;
+
+        if (o.clipPath && typeof o.clipPath.left === "number" && typeof o.clipPath.top === "number") {
+          const clip = o.clipPath;
+          x = clip.left ?? x;
+          y = clip.top ?? y;
+          width = typeof clip.width === "number" ? clip.width : width;
+          height = typeof clip.height === "number" ? clip.height : height;
+          // Clip rect fill is usually empty; keep placeholder bg.
+          bgColor = bgColor || "#e0e0e0";
+        }
+
+        elements.push({
+          id: String(pinId),
+          type: "image",
+          label,
+          x,
+          y,
+          width,
+          height,
+          bgColor,
+        });
+      } else if (pinType === "text") {
+        elements.push({
+          id: String(pinId),
+          type: "text",
+          label,
+          x: typeof o.left === "number" ? o.left : 0,
+          y: typeof o.top === "number" ? o.top : 0,
+          width: typeof o.width === "number" ? o.width : 940,
+          height: typeof o.height === "number" ? o.height : 0,
+          defaultText: o.text ?? "",
+          fontSize: typeof o.fontSize === "number" ? o.fontSize : undefined,
+          fontWeight: o.fontWeight != null ? String(o.fontWeight) : undefined,
+          fontStyle: o.fontStyle != null ? String(o.fontStyle) : undefined,
+          fill: typeof o.fill === "string" ? o.fill : undefined,
+          textAlign: o.textAlign != null ? String(o.textAlign) : undefined,
+        });
+      } else if (pinType === "band") {
+        const isCircle = o.type === "circle";
+        if (isCircle) {
+          const radius = typeof o.radius === "number" ? o.radius : 60;
+          const diameter = radius * 2;
+          elements.push({
+            id: String(pinId),
+            type: "circle",
+            label,
+            x: typeof o.left === "number" ? o.left : 0,
+            y: typeof o.top === "number" ? o.top : 0,
+            width: diameter,
+            height: diameter,
+            radius,
+            bgColor: typeof o.fill === "string" ? o.fill : undefined,
+          });
+        } else {
+          elements.push({
+            id: String(pinId),
+            type: "band",
+            label,
+            x: typeof o.left === "number" ? o.left : 0,
+            y: typeof o.top === "number" ? o.top : 0,
+            width: typeof o.width === "number" ? o.width * (o.scaleX ?? 1) : 0,
+            height: typeof o.height === "number" ? o.height * (o.scaleY ?? 1) : 0,
+            bgColor: typeof o.fill === "string" ? o.fill : undefined,
+          });
+        }
+      }
+    }
+
+    // Keep bottom-most element last so the loader's stretch logic works better.
+    elements.sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || (a.height ?? 0) - (b.height ?? 0));
+    return elements;
+  };
+
+  const extractCanvasBgColor = (): string => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return "#ffffff";
+    const bg = canvas.backgroundColor;
+    return typeof bg === "string" ? bg : "#ffffff";
+  };
+
+  const handleSaveCurrentAsTemplate = async () => {
+    const name = window.prompt("Template name?");
+    if (!name?.trim()) return;
+    const description = window.prompt("Template description (optional)?") ?? "";
+
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    const elements = extractTemplateElementsFromCanvas();
+    if (!elements.length) {
+      alert("No supported elements found on the canvas. Add image/text/band/circle and try again.");
+      return;
+    }
+
+    try {
+      const created = await api.createPinDesignerTemplate({
+        name: name.trim(),
+        description: description.trim() ? description.trim() : null,
+        bgColor: extractCanvasBgColor(),
+        elements: elements as any,
+      });
+
+      skipTemplateAutoApplyRef.current = true;
+      setCustomTemplates((prev) => [created as unknown as PinTemplate, ...prev]);
+      setSelectedTemplate(created as unknown as PinTemplate);
+      onTemplateSelected?.(created.id);
+      setPinName(name.trim());
+    } catch (e: any) {
+      alert(e?.message || "Failed to save template");
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId: string) => {
+    if (!confirm("Delete this template?")) return;
+    try {
+      await api.deletePinDesignerTemplate(templateId);
+      setCustomTemplates((prev) => prev.filter((t) => t.id !== templateId));
+      if (selectedTemplate?.id === templateId) setSelectedTemplate(null);
+    } catch (e: any) {
+      alert(e?.message || "Failed to delete template");
+    }
+  };
+
   const getExportDataUrl = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return null;
@@ -1002,6 +1164,7 @@ export default function PinDesigner({
         pin_design_image: data,
         pin_title: recipePinTitle || initialTitle,
         pin_description: recipePinDescription || initialTitle,
+        pin_template_id: selectedTemplate?.id,
       });
       alert("Design saved to recipe.");
     } catch (err: any) {
@@ -1694,10 +1857,9 @@ export default function PinDesigner({
   // Auto-apply initial template (only if no saved JSON)
   useEffect(() => {
     if (!canvasReady || initialJson || !initialTemplateId) return;
-    const tmpl = TEMPLATES.find((t) => t.id === initialTemplateId);
+    const tmpl = allTemplates.find((t) => t.id === initialTemplateId);
     if (tmpl) setSelectedTemplate(tmpl);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canvasReady]);
+  }, [canvasReady, initialJson, initialTemplateId, customTemplates]);
 
   // Expose API to parent once canvas ready
   useEffect(() => {
@@ -1716,10 +1878,14 @@ export default function PinDesigner({
   // Load template when ready (skip if initialJson already loaded)
   useEffect(() => {
     if (canvasReady && selectedTemplate && !initialJson) {
+      if (skipTemplateAutoApplyRef.current) {
+        skipTemplateAutoApplyRef.current = false;
+        return;
+      }
       loadTemplate(selectedTemplate);
       if (frames && frames.length > 1) generateAllFramePreviews(selectedTemplate);
     }
-  }, [selectedTemplate, canvasReady]);
+  }, [selectedTemplate, canvasReady, initialJson]);
 
   // ── Ctrl+wheel zoom ───────────────────────────────────────────────────────
 
@@ -2791,37 +2957,99 @@ export default function PinDesigner({
             {/* Templates Tab */}
             {leftTab === "templates" && (
               <div className="space-y-3">
-                <p className="text-xs text-gray-400 mb-2">Choose a template:</p>
-                {TEMPLATES.map((t) => (
-                  <div
-                    key={t.id}
-                    className={`rounded-lg border-2 p-3 cursor-pointer transition ${selectedTemplate?.id === t.id ? "border-brand-500 bg-brand-500/10" : "border-gray-700 hover:border-gray-500"}`}
-                  >
-                    <div className="h-28 rounded bg-gray-800 mb-2 overflow-hidden flex items-center justify-center">
-                      {t.exampleImage ? (
-                        <img src={t.exampleImage} alt={t.name} className="h-full w-full object-contain object-top" />
-                      ) : (
-                        <TemplatePreview layout={t.previewLayout} />
-                      )}
-                    </div>
-                    <p className="text-sm font-medium text-white">{t.name}</p>
-                    <p className="text-[11px] text-gray-500 mb-2">{t.description}</p>
-                    <button
-                      onClick={() => {
-                        setSelectedTemplate(t);
-                        onTemplateSelected?.(t.id);
-                        if (frames && frames.length > 1) {
-                          frameJsonsRef.current = {};
-                          setFramePreviews({});
-                          generateAllFramePreviews(t);
-                        }
-                      }}
-                      className={`text-xs px-3 py-1 rounded ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
+                <div className="space-y-2">
+                  <p className="text-xs text-gray-400">Built-in templates</p>
+                  {TEMPLATES.map((t) => (
+                    <div
+                      key={t.id}
+                      className={`rounded-lg border-2 p-3 cursor-pointer transition ${selectedTemplate?.id === t.id ? "border-brand-500 bg-brand-500/10" : "border-gray-700 hover:border-gray-500"}`}
                     >
-                      {selectedTemplate?.id === t.id ? "✓ Selected" : "Use Template"}
+                      <div className="h-28 rounded bg-gray-800 mb-2 overflow-hidden flex items-center justify-center">
+                        {t.exampleImage ? (
+                          <img src={t.exampleImage} alt={t.name} className="h-full w-full object-contain object-top" />
+                        ) : (
+                          <TemplatePreview layout={t.previewLayout} />
+                        )}
+                      </div>
+                      <p className="text-sm font-medium text-white">{t.name}</p>
+                      <p className="text-[11px] text-gray-500 mb-2">{t.description}</p>
+                      <button
+                        onClick={() => {
+                          setSelectedTemplate(t);
+                          onTemplateSelected?.(t.id);
+                          if (frames && frames.length > 1) {
+                            frameJsonsRef.current = {};
+                            setFramePreviews({});
+                            generateAllFramePreviews(t);
+                          }
+                        }}
+                        className={`text-xs px-3 py-1 rounded ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
+                      >
+                        {selectedTemplate?.id === t.id ? "✓ Selected" : "Use Template"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-3 border-t border-gray-800 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-gray-400">My templates</p>
+                    <button
+                      onClick={handleSaveCurrentAsTemplate}
+                      className="text-xs px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200"
+                      title="Save current canvas layout as a reusable template"
+                    >
+                      Save
                     </button>
                   </div>
-                ))}
+
+                  {customTemplates.length === 0 ? (
+                    <p className="text-[11px] text-gray-500">No custom templates yet. Start from a built-in one, edit, then click Save.</p>
+                  ) : (
+                    customTemplates.map((t) => (
+                      <div
+                        key={t.id}
+                        className={`rounded-lg border-2 p-3 cursor-pointer transition ${selectedTemplate?.id === t.id ? "border-brand-500 bg-brand-500/10" : "border-gray-700 hover:border-gray-500"}`}
+                      >
+                        <div className="h-28 rounded bg-gray-800 mb-2 overflow-hidden flex items-center justify-center">
+                          {t.exampleImage ? (
+                            <img src={t.exampleImage} alt={t.name} className="h-full w-full object-contain object-top" />
+                          ) : (
+                            <TemplatePreview layout={t.previewLayout} />
+                          )}
+                        </div>
+                        <p className="text-sm font-medium text-white flex items-center justify-between gap-2">
+                          <span className="truncate">{t.name}</span>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              await handleDeleteTemplate(t.id);
+                            }}
+                            className="text-gray-400 hover:text-red-400 p-1 rounded hover:bg-red-950/20"
+                            title="Delete template"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </p>
+                        <p className="text-[11px] text-gray-500 mb-2">{t.description}</p>
+                        <button
+                          onClick={() => {
+                            setSelectedTemplate(t);
+                            onTemplateSelected?.(t.id);
+                            if (frames && frames.length > 1) {
+                              frameJsonsRef.current = {};
+                              setFramePreviews({});
+                              generateAllFramePreviews(t);
+                            }
+                          }}
+                          className={`text-xs px-3 py-1 rounded ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
+                        >
+                          {selectedTemplate?.id === t.id ? "✓ Selected" : "Use Template"}
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             )}
 

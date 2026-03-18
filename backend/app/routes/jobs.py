@@ -130,6 +130,7 @@ async def get_job_generated_recipes(
                 image_url=recipe.image_url or "",
                 generated_images=recipe.generated_images,
                 category=recipe.category,
+                pin_template_id=recipe.pin_template_id,
                 created_at=recipe.created_at,
             )
         )

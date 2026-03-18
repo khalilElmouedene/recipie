@@ -64,7 +64,8 @@ export default function AllSitesGeneratePage() {
   const [history, setHistory] = useState<JobOut[]>([]);
   const [schedule, setSchedule] = useState<PublishScheduleOut | null>(null);
   const [enabled, setEnabled] = useState(false);
-  const [intervalHours, setIntervalHours] = useState(4);
+  const [intervalMinutes, setIntervalMinutes] = useState(240);
+  const [imageRetentionDays, setImageRetentionDays] = useState(4);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [startingPublish, setStartingPublish] = useState(false);
 
@@ -107,7 +108,8 @@ export default function AllSitesGeneratePage() {
       .then((s) => {
         setSchedule(s);
         setEnabled(s.enabled);
-        setIntervalHours(s.interval_hours || 4);
+        setIntervalMinutes(s.interval_minutes || 240);
+        setImageRetentionDays(s.image_retention_days || 4);
       })
       .catch(() => {});
   }, [projectId, loadHistory]);
@@ -173,7 +175,11 @@ export default function AllSitesGeneratePage() {
   const saveSchedule = async () => {
     setSavingSchedule(true);
     try {
-      const s = await api.setPublishSchedule(projectId, { enabled, interval_hours: intervalHours });
+      const s = await api.setPublishSchedule(projectId, {
+        enabled,
+        interval_minutes: intervalMinutes,
+        image_retention_days: imageRetentionDays,
+      });
       setSchedule(s);
     } catch (e: any) {
       alert(e?.message || "Failed to save publish schedule");
@@ -188,7 +194,8 @@ export default function AllSitesGeneratePage() {
       const s = await api.startPublishScheduleNow(projectId);
       setSchedule(s);
       setEnabled(s.enabled);
-      setIntervalHours(s.interval_hours || 4);
+      setIntervalMinutes(s.interval_minutes || 240);
+      setImageRetentionDays(s.image_retention_days || 4);
     } catch (e: any) {
       alert(e?.message || "Failed to start publishing queue");
     } finally {
@@ -302,15 +309,27 @@ export default function AllSitesGeneratePage() {
             Enable scheduler
           </label>
           <label className="text-sm text-gray-300">
-            Interval (hours)
+            Interval (minutes)
             <input
               type="number"
               min={1}
-              max={168}
-              value={intervalHours}
-              onChange={(e) => setIntervalHours(Number(e.target.value || 4))}
+              max={10080}
+              value={intervalMinutes}
+              onChange={(e) => setIntervalMinutes(Number(e.target.value || 240))}
               className="input-field mt-1"
             />
+
+            <div className="mt-3">
+              Delete recipe images after (days)
+              <input
+                type="number"
+                min={1}
+                max={3650}
+                value={imageRetentionDays}
+                onChange={(e) => setImageRetentionDays(Number(e.target.value || 4))}
+                className="input-field mt-1"
+              />
+            </div>
           </label>
           <div className="flex md:justify-end gap-2 flex-wrap">
             <button

@@ -194,6 +194,9 @@ class Recipe(Base):
     pin_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
     pin_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     pin_blog_link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Which Pin Designer template was used to generate `pin_design_image`
+    # (built-in templates use their built-in ids; custom templates use DB ids).
+    pin_template_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
@@ -238,11 +241,36 @@ class ProjectPublishSchedule(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    interval_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    # Scheduler granularity in minutes.
+    # Historical values were stored as hours; a migration should convert them (interval_hours * 60).
+    interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=240)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # How long generated recipe images (cached on disk under /uploads) are kept.
+    image_retention_days: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     project: Mapped[Project] = relationship(back_populates="publish_schedule")
+
+
+class PinDesignerTemplate(Base):
+    __tablename__ = "pin_designer_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Background color (hex or CSS color string) used by Fabric as canvas background.
+    bg_color: Mapped[str] = mapped_column(String(50), nullable=False, default="#ffffff")
+
+    # Template element model (list of {type, id, x, y, width, height, ...}).
+    # Stored as JSON text because the schema is flexible and evolves with the designer.
+    elements_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Used by UI for quick preview. Optional.
+    example_image: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

@@ -12,7 +12,8 @@ export default function JobResultsPage() {
   const [recipes, setRecipes] = useState<GeneratedJobRecipeOut[]>([]);
   const [schedule, setSchedule] = useState<PublishScheduleOut | null>(null);
   const [enabled, setEnabled] = useState(false);
-  const [intervalHours, setIntervalHours] = useState(4);
+  const [intervalMinutes, setIntervalMinutes] = useState(240);
+  const [imageRetentionDays, setImageRetentionDays] = useState(4);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,7 +28,8 @@ export default function JobResultsPage() {
       .then((s) => {
         setSchedule(s);
         setEnabled(s.enabled);
-        setIntervalHours(s.interval_hours || 4);
+        setIntervalMinutes(s.interval_minutes || 240);
+        setImageRetentionDays(s.image_retention_days || 4);
       })
       .catch(() => {});
   }, [job?.project_id]);
@@ -47,7 +49,11 @@ export default function JobResultsPage() {
     setSaving(true);
     setError(null);
     try {
-      const s = await api.setPublishSchedule(job.project_id, { enabled, interval_hours: intervalHours });
+      const s = await api.setPublishSchedule(job.project_id, {
+        enabled,
+        interval_minutes: intervalMinutes,
+        image_retention_days: imageRetentionDays,
+      });
       setSchedule(s);
     } catch (e: any) {
       setError(e?.message || "Failed to save publish schedule");
@@ -82,15 +88,27 @@ export default function JobResultsPage() {
             Enable scheduler
           </label>
           <label className="text-sm text-gray-300">
-            Interval (hours)
+            Interval (minutes)
             <input
               type="number"
               min={1}
-              max={168}
-              value={intervalHours}
-              onChange={(e) => setIntervalHours(Number(e.target.value || 4))}
+              max={10080}
+              value={intervalMinutes}
+              onChange={(e) => setIntervalMinutes(Number(e.target.value || 240))}
               className="input-field mt-1"
             />
+
+            <div className="mt-3">
+              Delete recipe images after (days)
+              <input
+                type="number"
+                min={1}
+                max={3650}
+                value={imageRetentionDays}
+                onChange={(e) => setImageRetentionDays(Number(e.target.value || 4))}
+                className="input-field mt-1"
+              />
+            </div>
           </label>
           <div className="text-xs text-gray-400 self-end">
             {schedule?.next_run_at ? `Next run: ${new Date(schedule.next_run_at).toLocaleString()}` : "No next run scheduled"}

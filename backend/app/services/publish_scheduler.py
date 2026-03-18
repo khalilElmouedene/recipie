@@ -38,7 +38,7 @@ async def run_publish_scheduler(stop_event: asyncio.Event) -> None:
                     )
                     pair = recipe_row.first()
                     s.last_run_at = now
-                    s.next_run_at = now + timedelta(hours=max(1, s.interval_hours))
+                    s.next_run_at = now + timedelta(minutes=max(1, s.interval_minutes))
                     if not pair:
                         s.last_error = "No generated recipe available to publish"
                         continue
@@ -75,11 +75,12 @@ async def run_publish_scheduler(stop_event: asyncio.Event) -> None:
                         s.last_error = None
                 except Exception as exc:
                     s.last_run_at = now
-                    s.next_run_at = now + timedelta(hours=max(1, s.interval_hours))
+                    s.next_run_at = now + timedelta(minutes=max(1, s.interval_minutes))
                     s.last_error = str(exc)
             await db.commit()
 
         try:
-            await asyncio.wait_for(stop_event.wait(), timeout=30)
+            # Poll frequently to keep minute-based scheduling responsive.
+            await asyncio.wait_for(stop_event.wait(), timeout=10)
         except asyncio.TimeoutError:
             pass
