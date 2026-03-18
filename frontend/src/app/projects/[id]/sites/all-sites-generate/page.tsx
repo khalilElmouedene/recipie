@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -10,8 +10,10 @@ import {
   Save,
   ImageIcon,
   ExternalLink,
-  List,
-  LayoutGrid,
+  ChevronDown,
+  ChevronUp,
+  Globe,
+  RefreshCw,
 } from "lucide-react";
 import {
   api,
@@ -20,8 +22,10 @@ import {
   JobOut,
   PublishScheduleOut,
   GeneratedJobRecipeOut,
+  RecipeOut,
 } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
+import { sanitizeHtml } from "@/lib/sanitize";
 
 function thumbUrl(r: GeneratedJobRecipeOut): string | null {
   if (r.generated_images) {
@@ -39,6 +43,14 @@ function statusClass(st: string) {
   if (st === "failed") return "bg-red-600/20 text-red-400 border-red-800/40";
   return "bg-gray-700 text-gray-300 border-gray-600";
 }
+
+const statusColor: Record<string, string> = {
+  pending: "bg-gray-700 text-gray-300",
+  generating: "bg-blue-600/20 text-blue-400",
+  generated: "bg-cyan-600/20 text-cyan-400",
+  published: "bg-green-600/20 text-green-400",
+  failed: "bg-red-600/20 text-red-400",
+};
 
 export default function AllSitesGeneratePage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -58,16 +70,35 @@ export default function AllSitesGeneratePage() {
 
   const [jobRecipeMap, setJobRecipeMap] = useState<Record<string, GeneratedJobRecipeOut[]>>({});
   const [loadingDetail, setLoadingDetail] = useState(false);
-  /** Summary = short page; Recipe cards = full list (can be very long with many sites × recipes) */
-  const [showRecipeCards, setShowRecipeCards] = useState(false);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [deletingRecipeId, setDeletingRecipeId] = useState<string | null>(null);
+
+  const [expandedRecipeId, setExpandedRecipeId] = useState<string | null>(null);
+  const [detailTab, setDetailTab] = useState<"article" | "recipe" | "seo" | "images">("article");
+  const [recipeFullById, setRecipeFullById] = useState<Record<string, RecipeOut>>({});
+  const [loadingRecipeDetailId, setLoadingRecipeDetailId] = useState<string | null>(null);
+  const [wpPublishingId, setWpPublishingId] = useState<string | null>(null);
+  const detailsLoadedRef = useRef<Set<string>>(new Set());
 
   const loadHistory = useCallback(() => {
     api.getProjectJobs(projectId)
       .then((jobs) => setHistory(jobs.filter((j) => j.job_type === "articles_all_sites")))
       .catch(() => {});
   }, [projectId]);
+
+  const ensureRecipeFull = useCallback(async (recipeId: string) => {
+    if (detailsLoadedRef.current.has(recipeId)) return;
+    setLoadingRecipeDetailId(recipeId);
+    try {
+      const full = await api.getRecipe(recipeId);
+      setRecipeFullById((m) => ({ ...m, [recipeId]: full }));
+      detailsLoadedRef.current.add(recipeId);
+    } catch {
+      /* keep row without full detail */
+    } finally {
+      setLoadingRecipeDetailId((c) => (c === recipeId ? null : c));
+    }
+  }, []);
 
   useEffect(() => {
     api.getSites(projectId).then(setSites).catch(() => {});
@@ -86,10 +117,6 @@ export default function AllSitesGeneratePage() {
   useEffect(() => {
     if (history.length === 0) {
       setJobRecipeMap({});
-      setLoadingDetail(false);
-      return;
-    }
-    if (!showRecipeCards) {
       setLoadingDetail(false);
       return;
     }
@@ -112,7 +139,7 @@ export default function AllSitesGeneratePage() {
     return () => {
       cancelled = true;
     };
-  }, [showRecipeCards, historyJobIds, history.length]);
+  }, [historyJobIds, history.length]);
 
   const validCount = rows
     .map((r) => ({ image_url: r.image_url.trim(), recipe_text: r.recipe_text.trim() }))
@@ -171,12 +198,7 @@ export default function AllSitesGeneratePage() {
 
   const deleteJob = async (jobId: string) => {
     if (!canAdmin) return;
-    if (
-      !confirm(
-        "Delete this run and all recipes created by it? This cannot be undone."
-      )
-    )
-      return;
+    if (!confirm("Delete this run and all recipes created by it? This cannot be undone.")) return;
     setDeletingJobId(jobId);
     try {
       await api.deleteJob(jobId);
@@ -199,6 +221,13 @@ export default function AllSitesGeneratePage() {
     setDeletingRecipeId(recipeId);
     try {
       await api.deleteRecipe(recipeId);
+      detailsLoadedRef.current.delete(recipeId);
+      setRecipeFullById((m) => {
+        const n = { ...m };
+        delete n[recipeId];
+        return n;
+      });
+      if (expandedRecipeId === recipeId) setExpandedRecipeId(null);
       setJobRecipeMap((m) => ({
         ...m,
         [jobId]: (m[jobId] || []).filter((r) => r.id !== recipeId),
@@ -208,6 +237,37 @@ export default function AllSitesGeneratePage() {
     } finally {
       setDeletingRecipeId(null);
     }
+  };
+
+  const handlePublishWp = async (recipeId: string) => {
+    setWpPublishingId(recipeId);
+    try {
+      let full = recipeFullById[recipeId];
+      if (!full) {
+        full = await api.getRecipe(recipeId);
+        setRecipeFullById((m) => ({ ...m, [recipeId]: full }));
+        detailsLoadedRef.current.add(recipeId);
+      }
+      if (!full.generated_article) {
+        alert("No article to publish.");
+        return;
+      }
+      const data = await api.publishRecipeArticle(recipeId);
+      alert(`Published!\n${data.wp_permalink}`);
+      const updated = await api.getRecipe(recipeId);
+      setRecipeFullById((m) => ({ ...m, [recipeId]: updated }));
+    } catch (e: any) {
+      alert(e?.message || "Publish failed");
+    } finally {
+      setWpPublishingId(null);
+    }
+  };
+
+  const toggleExpand = (recipeId: string) => {
+    const next = expandedRecipeId === recipeId ? null : recipeId;
+    setExpandedRecipeId(next);
+    setDetailTab("article");
+    if (next) void ensureRecipeFull(next);
   };
 
   return (
@@ -279,234 +339,297 @@ export default function AllSitesGeneratePage() {
       </div>
 
       <div className="card mb-5">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
-          <h2 className="text-sm font-semibold text-gray-300">History</h2>
-          {history.length > 0 && (
-            <div
-              className="flex items-center gap-1 p-0.5 rounded-lg bg-gray-800/80 border border-gray-700 w-fit"
-              role="group"
-              aria-label="History display mode"
-            >
-              <button
-                type="button"
-                onClick={() => setShowRecipeCards(false)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${
-                  !showRecipeCards ? "bg-brand-600 text-white" : "text-gray-400 hover:text-gray-200"
-                }`}
-              >
-                <List size={14} /> Summary
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowRecipeCards(true)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${
-                  showRecipeCards ? "bg-brand-600 text-white" : "text-gray-400 hover:text-gray-200"
-                }`}
-              >
-                <LayoutGrid size={14} /> Recipe cards
-              </button>
-            </div>
-          )}
-        </div>
-        {!showRecipeCards && history.length > 0 && (
-          <p className="text-xs text-gray-500 mb-3">
-            Summary keeps the page short. Use <strong className="text-gray-400">Recipe cards</strong> to see every
-            recipe per site (long list with many runs).
-          </p>
-        )}
+        <h2 className="text-lg font-semibold text-white mb-3">History</h2>
+        <p className="text-xs text-gray-500 mb-4">
+          Click a recipe row to expand — <strong className="text-gray-400">Article</strong>,{" "}
+          <strong className="text-gray-400">Recipe</strong> (full text + WP JSON), <strong className="text-gray-400">SEO</strong>,{" "}
+          <strong className="text-gray-400">Images</strong>.
+        </p>
 
         {history.length === 0 ? (
           <p className="text-sm text-gray-500">No previous all-sites jobs yet.</p>
-        ) : !showRecipeCards ? (
-          <div className="space-y-2">
-            {history.map((j) => (
-              <div
-                key={j.id}
-                className="rounded-xl border border-gray-700/80 bg-gray-900/40 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm text-white font-medium">
-                    Job <span className="font-mono text-brand-300">{j.id.slice(0, 8)}</span>
-                    <span className={`ml-2 text-[10px] uppercase px-2 py-0.5 rounded border ${statusClass(j.status)}`}>
-                      {j.status}
-                    </span>
-                  </p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {new Date(j.created_at).toLocaleString()}
-                    {j.total_rows != null && j.total_rows > 0 && (
-                      <span className="ml-2 text-gray-400">· {j.total_rows} recipe{j.total_rows !== 1 ? "s" : ""}</span>
-                    )}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button onClick={() => router.push(`/jobs/${j.id}`)} className="btn-secondary text-xs px-3 py-1.5">
-                    Logs
-                  </button>
-                  {j.status !== "running" && (
-                    <>
-                      <button
-                        onClick={() => router.push(`/jobs/${j.id}/results`)}
-                        className="btn-secondary text-xs px-3 py-1.5"
-                      >
-                        Results
-                      </button>
-                      <button
-                        onClick={() => router.push(`/projects/${projectId}/sites/all-sites-pins/${j.id}`)}
-                        className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1 border-purple-700/50 text-purple-300"
-                      >
-                        <ImageIcon size={12} /> Pin designer
-                      </button>
-                      {canAdmin && (
-                        <button
-                          onClick={() => deleteJob(j.id)}
-                          disabled={deletingJobId === j.id}
-                          className="text-xs px-3 py-1.5 rounded-lg border border-red-900/50 text-red-400 hover:bg-red-950/30 disabled:opacity-50"
-                        >
-                          {deletingJobId === j.id ? "…" : "Delete run"}
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
+        ) : loadingDetail ? (
+          <p className="text-sm text-gray-500 py-4">Loading recipes…</p>
         ) : (
           <div className="space-y-8">
-            {loadingDetail && (
-              <p className="text-sm text-gray-500 py-4">Loading recipe cards…</p>
-            )}
-            {!loadingDetail &&
-              history.map((j) => {
-                const recipes = jobRecipeMap[j.id] || [];
-                return (
-                  <div key={j.id} className="border border-gray-800 rounded-xl overflow-hidden">
-                    <div className="bg-gray-800/50 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <span className="text-xs text-gray-500">Job</span>{" "}
-                        <span className="font-mono text-sm text-white">{j.id.slice(0, 8)}</span>
-                        <span className={`ml-2 text-[10px] uppercase px-2 py-0.5 rounded border ${statusClass(j.status)}`}>
-                          {j.status}
-                        </span>
-                        <span className="text-xs text-gray-500 ml-2">
-                          {new Date(j.created_at).toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-2 items-center">
-                        <button
-                          onClick={() => router.push(`/jobs/${j.id}`)}
-                          className="btn-secondary text-xs px-2 py-1"
-                        >
-                          Logs
-                        </button>
-                        {j.status !== "running" && (
-                          <>
-                            <button
-                              onClick={() => router.push(`/jobs/${j.id}/results`)}
-                              className="btn-secondary text-xs px-2 py-1"
-                            >
-                              Results
-                            </button>
-                            <button
-                              onClick={() => router.push(`/projects/${projectId}/sites/all-sites-pins/${j.id}`)}
-                              className="btn-secondary text-xs px-2 py-1 flex items-center gap-1 border-purple-700/50 text-purple-300"
-                            >
-                              <ImageIcon size={12} /> Pin designer
-                            </button>
-                            {canAdmin && (
-                              <button
-                                onClick={() => deleteJob(j.id)}
-                                disabled={deletingJobId === j.id}
-                                className="text-xs px-2 py-1 rounded-lg border border-red-900/50 text-red-400 hover:bg-red-950/30 disabled:opacity-50"
-                              >
-                                {deletingJobId === j.id ? "…" : "Delete run"}
-                              </button>
-                            )}
-                          </>
-                        )}
-                      </div>
+            {history.map((j) => {
+              const recipes = jobRecipeMap[j.id] || [];
+              return (
+                <div key={j.id} className="border border-gray-800 rounded-xl overflow-hidden">
+                  <div className="bg-gray-800/50 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-xs text-gray-500">Job</span>{" "}
+                      <span className="font-mono text-sm text-white">{j.id.slice(0, 8)}</span>
+                      <span className={`ml-2 text-[10px] uppercase px-2 py-0.5 rounded border ${statusClass(j.status)}`}>
+                        {j.status}
+                      </span>
+                      <span className="text-xs text-gray-500 ml-2">{new Date(j.created_at).toLocaleString()}</span>
                     </div>
-                    <div className="p-2 sm:p-3 space-y-2">
-                      {recipes.length === 0 && !loadingDetail ? (
-                        <p className="text-xs text-gray-600 py-2">No recipes linked.</p>
-                      ) : (
-                        recipes.map((r) => {
-                          const thumb = thumbUrl(r);
-                          const title = r.recipe_text?.split("\n")[0]?.trim() || "Recipe";
-                          return (
-                            <div
-                              key={r.id}
-                              className="flex gap-3 rounded-lg border border-gray-700/60 bg-gray-950/50 p-2 sm:p-3 items-center"
+                    <div className="flex flex-wrap gap-2 items-center">
+                      <button onClick={() => router.push(`/jobs/${j.id}`)} className="btn-secondary text-xs px-2 py-1">
+                        Logs
+                      </button>
+                      {j.status !== "running" && (
+                        <>
+                          <button
+                            onClick={() => router.push(`/jobs/${j.id}/results`)}
+                            className="btn-secondary text-xs px-2 py-1"
+                          >
+                            Results
+                          </button>
+                          <button
+                            onClick={() => router.push(`/projects/${projectId}/sites/all-sites-pins/${j.id}`)}
+                            className="btn-secondary text-xs px-2 py-1 flex items-center gap-1 border-purple-700/50 text-purple-300"
+                          >
+                            <ImageIcon size={12} /> Pin designer
+                          </button>
+                          {canAdmin && (
+                            <button
+                              onClick={() => deleteJob(j.id)}
+                              disabled={deletingJobId === j.id}
+                              className="text-xs px-2 py-1 rounded-lg border border-red-900/50 text-red-400 hover:bg-red-950/30 disabled:opacity-50"
                             >
-                              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-lg bg-gray-800 flex-shrink-0 overflow-hidden border border-gray-700">
+                              {deletingJobId === j.id ? "…" : "Delete run"}
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="p-2 sm:p-3 space-y-2">
+                    {recipes.length === 0 ? (
+                      <p className="text-xs text-gray-600 py-2">No recipes linked.</p>
+                    ) : (
+                      recipes.map((row) => {
+                        const thumb = thumbUrl(row);
+                        const title = row.recipe_text?.split("\n")[0]?.trim() || "Recipe";
+                        const r = recipeFullById[row.id];
+                        const isOpen = expandedRecipeId === row.id;
+                        return (
+                          <div key={row.id} className="card p-0 overflow-hidden border-gray-700/60">
+                            <div
+                              className="flex items-center gap-3 p-4 cursor-pointer hover:bg-gray-800/50 transition"
+                              onClick={() => toggleExpand(row.id)}
+                            >
+                              <div className="w-12 h-12 rounded-lg bg-gray-800 overflow-hidden flex-shrink-0 border border-gray-700">
                                 {thumb ? (
                                   // eslint-disable-next-line @next/next/no-img-element
                                   <img src={thumb} alt="" className="w-full h-full object-cover" />
                                 ) : (
-                                  <div className="w-full h-full flex items-center justify-center text-gray-600 text-[10px]">
-                                    No img
+                                  <div className="w-full h-full flex items-center justify-center text-[9px] text-gray-600">
+                                    —
                                   </div>
                                 )}
                               </div>
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium text-white line-clamp-2">{title}</p>
-                                <p className="text-[11px] text-gray-500 truncate mt-0.5">{r.site_domain}</p>
-                                <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                                  <span
-                                    className={`text-[10px] px-2 py-0.5 rounded border ${statusClass(r.status)}`}
-                                  >
-                                    {r.status}
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm text-white font-medium truncate">{title}</p>
+                                <div className="flex flex-wrap items-center gap-2 mt-1">
+                                  <span className={`text-xs px-2 py-0.5 rounded ${statusColor[row.status] || statusColor.pending}`}>
+                                    {row.status}
                                   </span>
-                                  {r.category && (
-                                    <span className="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400">
-                                      {r.category}
-                                    </span>
+                                  <span className="text-xs text-gray-500 truncate max-w-[180px]">{row.site_domain}</span>
+                                  {r?.focus_keyword && (
+                                    <span className="text-xs text-gray-500 truncate max-w-[140px]">{r.focus_keyword}</span>
                                   )}
-                                  {r.wp_permalink && (
+                                  {row.category && (
+                                    <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">{row.category}</span>
+                                  )}
+                                  {(r?.wp_permalink || row.wp_permalink) && (
                                     <a
-                                      href={r.wp_permalink}
+                                      href={r?.wp_permalink || row.wp_permalink || "#"}
                                       target="_blank"
                                       rel="noreferrer"
-                                      className="text-[10px] text-sky-400 flex items-center gap-0.5"
+                                      className="text-xs text-brand-400 hover:underline"
+                                      onClick={(e) => e.stopPropagation()}
                                     >
-                                      <ExternalLink size={10} /> Post
+                                      View post
                                     </a>
                                   )}
                                 </div>
                               </div>
-                              <div className="flex flex-col sm:flex-row gap-1 flex-shrink-0">
+                              <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                                {(row.status === "generated" || row.status === "published") && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void handlePublishWp(row.id);
+                                    }}
+                                    disabled={wpPublishingId === row.id || row.status === "published"}
+                                    className="text-gray-500 hover:text-blue-400 p-1 disabled:opacity-40"
+                                    title={row.status === "published" ? "Published" : "Publish to WordPress"}
+                                  >
+                                    {wpPublishingId === row.id ? (
+                                      <RefreshCw size={16} className="animate-spin" />
+                                    ) : (
+                                      <Globe size={16} />
+                                    )}
+                                  </button>
+                                )}
                                 <button
-                                  type="button"
                                   onClick={() =>
-                                    router.push(
-                                      `/projects/${projectId}/sites/${r.site_id}/designer?recipe=${r.id}`
-                                    )
+                                    router.push(`/projects/${projectId}/sites/${row.site_id}/designer?recipe=${row.id}`)
                                   }
-                                  className="p-2 rounded-lg text-gray-400 hover:text-purple-400 hover:bg-gray-800"
+                                  className="text-gray-500 hover:text-purple-400 p-1"
                                   title="Pin designer"
                                 >
-                                  <ImageIcon size={18} />
+                                  <ImageIcon size={16} />
                                 </button>
                                 {canAdmin && (
                                   <button
-                                    type="button"
-                                    onClick={() => deleteRecipe(j.id, r.id)}
-                                    disabled={deletingRecipeId === r.id}
-                                    className="p-2 rounded-lg text-gray-500 hover:text-red-400 hover:bg-gray-800 disabled:opacity-40"
-                                    title="Delete recipe"
+                                    onClick={() => deleteRecipe(j.id, row.id)}
+                                    disabled={deletingRecipeId === row.id}
+                                    className="text-gray-500 hover:text-red-400 p-1 disabled:opacity-40"
                                   >
                                     <Trash2 size={16} />
                                   </button>
                                 )}
                               </div>
+                              {isOpen ? (
+                                <ChevronUp size={16} className="text-gray-500 flex-shrink-0" />
+                              ) : (
+                                <ChevronDown size={16} className="text-gray-500 flex-shrink-0" />
+                              )}
                             </div>
-                          );
-                        })
-                      )}
-                    </div>
+
+                            {isOpen && (
+                              <div className="border-t border-gray-800">
+                                <div className="flex gap-1 px-4 pt-3 border-b border-gray-800 overflow-x-auto">
+                                  {(["article", "recipe", "seo", "images"] as const).map((tab) => (
+                                    <button
+                                      key={tab}
+                                      onClick={() => setDetailTab(tab)}
+                                      className={`px-3 py-2 text-xs font-medium border-b-2 transition capitalize whitespace-nowrap ${
+                                        detailTab === tab
+                                          ? "border-brand-500 text-brand-400"
+                                          : "border-transparent text-gray-500 hover:text-gray-300"
+                                      }`}
+                                    >
+                                      {tab === "seo" ? "SEO" : tab}
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="p-4 max-h-[560px] overflow-y-auto">
+                                  {loadingRecipeDetailId === row.id && (
+                                    <p className="text-sm text-gray-500 mb-3">Loading details…</p>
+                                  )}
+                                  {!r && loadingRecipeDetailId !== row.id && (
+                                    <p className="text-sm text-gray-500">Could not load recipe details.</p>
+                                  )}
+                                  {r && detailTab === "article" && (
+                                    <div>
+                                      {r.generated_article ? (
+                                        <div
+                                          className="prose prose-invert prose-sm max-w-none text-sm text-gray-300"
+                                          dangerouslySetInnerHTML={{ __html: sanitizeHtml(r.generated_article) }}
+                                        />
+                                      ) : r.status === "failed" ? (
+                                        <div className="text-sm">
+                                          <p className="text-red-400 font-medium">Generation failed.</p>
+                                          {r.error_message && <p className="text-gray-400 mt-1">{r.error_message}</p>}
+                                        </div>
+                                      ) : (
+                                        <p className="text-gray-500 text-sm">No article yet.</p>
+                                      )}
+                                    </div>
+                                  )}
+                                  {r && detailTab === "recipe" && (
+                                    <div>
+                                      {r.generated_full_recipe && (
+                                        <div className="mb-4">
+                                          <h4 className="text-xs font-semibold text-gray-400 uppercase mb-2">Full recipe</h4>
+                                          <pre className="text-xs text-gray-300 whitespace-pre-wrap bg-gray-950 rounded-lg p-3">
+                                            {r.generated_full_recipe}
+                                          </pre>
+                                        </div>
+                                      )}
+                                      {r.generated_json ? (
+                                        <div>
+                                          <h4 className="text-xs font-semibold text-gray-400 uppercase mb-2">WP Recipe JSON</h4>
+                                          <pre className="text-xs text-gray-300 whitespace-pre-wrap bg-gray-950 rounded-lg p-3 font-mono overflow-x-auto">
+                                            {r.generated_json}
+                                          </pre>
+                                        </div>
+                                      ) : (
+                                        !r.generated_full_recipe && (
+                                          <p className="text-gray-500 text-sm">No recipe JSON yet.</p>
+                                        )
+                                      )}
+                                    </div>
+                                  )}
+                                  {r && detailTab === "seo" && (
+                                    <div className="space-y-3">
+                                      <div>
+                                        <span className="text-xs font-semibold text-gray-400 uppercase">Focus keyword</span>
+                                        <p className="text-sm text-gray-300 mt-1">{r.focus_keyword || "—"}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-xs font-semibold text-gray-400 uppercase">Meta description</span>
+                                        <p className="text-sm text-gray-300 mt-1">{r.meta_description || "—"}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-xs font-semibold text-gray-400 uppercase">Category</span>
+                                        <p className="text-sm text-gray-300 mt-1">{r.category || "—"}</p>
+                                      </div>
+                                      {r.wp_post_id && (
+                                        <div>
+                                          <span className="text-xs font-semibold text-gray-400 uppercase">WordPress</span>
+                                          <p className="text-sm text-gray-300 mt-1">
+                                            ID: {r.wp_post_id} —{" "}
+                                            <a
+                                              href={r.wp_permalink || "#"}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="text-brand-400 hover:underline"
+                                            >
+                                              {r.wp_permalink}
+                                            </a>
+                                          </p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {r && detailTab === "images" && (
+                                    <div>
+                                      <div className="mb-3">
+                                        <span className="text-xs font-semibold text-gray-400 uppercase">Source image</span>
+                                        {r.image_url && (
+                                          // eslint-disable-next-line @next/next/no-img-element
+                                          <img src={r.image_url} alt="" className="mt-2 max-w-xs rounded-lg" />
+                                        )}
+                                      </div>
+                                      {r.generated_images && (
+                                        <div>
+                                          <span className="text-xs font-semibold text-gray-400 uppercase mb-2 block">
+                                            Generated (Midjourney)
+                                          </span>
+                                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                            {(() => {
+                                              try {
+                                                const imgs: string[] = JSON.parse(r.generated_images);
+                                                return imgs.map((url: string, i: number) => (
+                                                  // eslint-disable-next-line @next/next/no-img-element
+                                                  <img key={i} src={url} alt="" className="rounded-lg w-full" />
+                                                ));
+                                              } catch {
+                                                return <p className="text-gray-500 text-sm">Could not parse images.</p>;
+                                              }
+                                            })()}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
-                );
-              })}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
