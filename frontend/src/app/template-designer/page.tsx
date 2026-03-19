@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState, Suspense } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Save,
@@ -47,6 +47,8 @@ const SYSTEM_FONTS = [
 
 function TemplateDesignerInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const editingTemplateId = searchParams.get("templateId");
 
   // Canvas
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -81,6 +83,7 @@ function TemplateDesignerInner() {
 
   // Saving
   const [saving, setSaving] = useState(false);
+  const [editingLoaded, setEditingLoaded] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -221,6 +224,87 @@ function TemplateDesignerInner() {
   function getActive(): any | null {
     return fabricRef.current?.getActiveObject() ?? null;
   }
+
+  const loadExistingTemplate = useCallback(async () => {
+    if (!editingTemplateId || editingLoaded) return;
+    const canvas = fabricRef.current;
+    const fabric = fabricLibRef.current;
+    if (!canvas || !fabric) return;
+
+    try {
+      const all = await api.getPinDesignerTemplates();
+      const tmpl = all.find((t) => t.id === editingTemplateId);
+      if (!tmpl) return;
+
+      setTemplateName(tmpl.name);
+      setBgColor(tmpl.bgColor || "#ffffff");
+
+      canvas.clear();
+      canvas.set("backgroundColor", tmpl.bgColor || "#ffffff");
+
+      for (const el of tmpl.elements || []) {
+        if (el.type === "text") {
+          const tb = new fabric.Textbox(el.defaultText || "Text", {
+            left: el.x ?? PIN_W / 2,
+            top: el.y ?? PIN_H / 2,
+            width: el.width || 800,
+            fontSize: el.fontSize || 48,
+            fontFamily: el.fontFamily || "Arial",
+            fontWeight: el.fontWeight || "normal",
+            fontStyle: el.fontStyle || "normal",
+            fill: el.fill || "#333333",
+            textAlign: (el.textAlign as any) || "center",
+            originX: "center",
+            originY: "center",
+            editable: true,
+          });
+          (tb as any).__id = el.id || uid("text");
+          (tb as any).__ttype = "text";
+          canvas.add(tb);
+        } else if (el.type === "image") {
+          const rect = new fabric.Rect({
+            left: el.x ?? 100,
+            top: el.y ?? 100,
+            width: el.width || 400,
+            height: el.height || 300,
+            fill: el.bgColor || "#e8e8e8",
+            stroke: "#aaaaaa",
+            strokeWidth: 3,
+            strokeUniform: true,
+            strokeDashArray: [10, 6],
+            originX: "left",
+            originY: "top",
+          });
+          (rect as any).__id = el.id || uid("image");
+          (rect as any).__ttype = "image";
+          canvas.add(rect);
+        } else if (el.type === "band") {
+          const rect = new fabric.Rect({
+            left: el.x ?? 0,
+            top: el.y ?? 0,
+            width: el.width || PIN_W,
+            height: el.height || 120,
+            fill: el.bgColor || "#4a90d9",
+            originX: "left",
+            originY: "top",
+          });
+          (rect as any).__id = el.id || uid("band");
+          (rect as any).__ttype = "band";
+          canvas.add(rect);
+        }
+      }
+
+      canvas.renderAll();
+      setEditingLoaded(true);
+    } catch {
+      // ignore
+    }
+  }, [editingTemplateId, editingLoaded]);
+
+  useEffect(() => {
+    if (!canvasReady) return;
+    void loadExistingTemplate();
+  }, [canvasReady, loadExistingTemplate]);
 
   // ── Add elements ───────────────────────────────────────────────────────────
   function addText() {
@@ -494,13 +578,19 @@ function TemplateDesignerInner() {
     }
     setSaving(true);
     try {
-      await api.createPinDesignerTemplate({
+      const payload = {
         name: templateName.trim() || "My Template",
         description: null,
         bgColor,
         elements: elements as any,
-      });
-      alert(`Template "${templateName.trim() || "My Template"}" saved! You can now use it in the Pin Designer.`);
+      };
+      if (editingTemplateId) {
+        await api.updatePinDesignerTemplate(editingTemplateId, payload);
+        alert(`Template "${templateName.trim() || "My Template"}" updated.`);
+      } else {
+        await api.createPinDesignerTemplate(payload);
+        alert(`Template "${templateName.trim() || "My Template"}" saved! You can now use it in the Pin Designer.`);
+      }
       router.back();
     } catch (e: any) {
       alert(e?.message || "Failed to save template");
@@ -561,7 +651,7 @@ function TemplateDesignerInner() {
             disabled={saving}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-sm text-white transition disabled:opacity-50"
           >
-            <Save size={14} /> {saving ? "Saving…" : "Save"}
+            <Save size={14} /> {saving ? "Saving…" : (editingTemplateId ? "Update" : "Save")}
           </button>
           <button
             onClick={() => router.back()}

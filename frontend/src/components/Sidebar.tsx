@@ -21,8 +21,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const role = getUserRole();
 
   const items = role === "owner"
-    ? [...NAV, { href: "/users", label: "Users", icon: Users }, { href: "/settings", label: "Settings", icon: Settings }]
-    : [...NAV, { href: "/settings", label: "Settings", icon: Settings }];
+    ? [...NAV, { href: "/users", label: "Users", icon: Users }, { href: "/settings", label: "Pin Designer Templates", icon: Settings }]
+    : [...NAV, { href: "/settings", label: "Pin Designer Templates", icon: Settings }];
 
   return (
     <aside

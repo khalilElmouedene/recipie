@@ -13,6 +13,7 @@ from ..dependencies import get_current_user
 from ..models import (
     PinDesignerTemplateCreate,
     PinDesignerTemplateOut,
+    PinDesignerTemplateUpdate,
 )
 
 router = APIRouter(tags=["pin-designer-templates"])
@@ -120,4 +121,66 @@ async def delete_pin_designer_template(
     await db.delete(tmpl)
     await db.commit()
     return None
+
+
+@router.put("/api/pin-designer-templates/{template_id}", response_model=PinDesignerTemplateOut)
+async def update_pin_designer_template(
+    template_id: str,
+    body: PinDesignerTemplateUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        import uuid as _uuid
+
+        tid = _uuid.UUID(template_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid template id")
+
+    row = await db.execute(
+        select(PinDesignerTemplate).where(
+            PinDesignerTemplate.id == tid,
+            PinDesignerTemplate.owner_id == user.id,
+        )
+    )
+    tmpl = row.scalar_one_or_none()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    if body.name is not None:
+        normalized_name = body.name.strip()
+        if not normalized_name:
+            raise HTTPException(status_code=400, detail="Template name is required")
+        existing_row = await db.execute(
+            select(PinDesignerTemplate.id).where(
+                PinDesignerTemplate.owner_id == user.id,
+                PinDesignerTemplate.id != tid,
+                func.lower(PinDesignerTemplate.name) == normalized_name.lower(),
+            )
+        )
+        if existing_row.scalar_one_or_none():
+            raise HTTPException(
+                status_code=409,
+                detail=f'Template name "{normalized_name}" already exists. Choose a different name.',
+            )
+        tmpl.name = normalized_name
+
+    if body.description is not None:
+        tmpl.description = body.description
+    if body.bgColor is not None:
+        tmpl.bg_color = body.bgColor
+    if body.elements is not None:
+        tmpl.elements_json = json.dumps([e.model_dump() for e in body.elements])
+
+    await db.commit()
+    await db.refresh(tmpl)
+    return PinDesignerTemplateOut(
+        id=tmpl.id,
+        owner_id=tmpl.owner_id,
+        name=tmpl.name,
+        description=tmpl.description,
+        bgColor=tmpl.bg_color,
+        previewLayout="simple",
+        elements=_parse_elements(tmpl.elements_json),
+    )
 

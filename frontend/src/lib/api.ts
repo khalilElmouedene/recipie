@@ -235,6 +235,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  updatePinDesignerTemplate: (templateId: string, data: PinDesignerTemplateCreate) =>
+    request<PinDesignerTemplateOut>(`/api/pin-designer-templates/${templateId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
   deletePinDesignerTemplate: (templateId: string) =>
     request<void>(`/api/pin-designer-templates/${templateId}`, { method: "DELETE" }),
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LayoutTemplate, Plus, Trash2 } from "lucide-react";
+import { LayoutTemplate, Plus, Trash2, Pencil } from "lucide-react";
 import { api, PinDesignerTemplateOut } from "@/lib/api";
 
 export default function SettingsPage() {
@@ -92,17 +92,24 @@ export default function SettingsPage() {
             >
               <p className="text-sm font-medium text-white truncate">{tmpl.name}</p>
               <div className="flex items-center justify-between">
-                <p className="text-[11px] text-gray-500">
-                  {tmpl.elements.length} element{tmpl.elements.length !== 1 ? "s" : ""}
-                </p>
-                <button
-                  onClick={() => handleDeleteTemplate(tmpl.id)}
-                  disabled={deletingId === tmpl.id}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-900/60 text-red-300 text-[11px] hover:bg-red-900 transition disabled:opacity-50"
-                >
-                  <Trash2 size={11} />
-                  {deletingId === tmpl.id ? "Deleting…" : "Delete"}
-                </button>
+                <p className="text-[11px] text-gray-500">{tmpl.elements.length} element{tmpl.elements.length !== 1 ? "s" : ""}</p>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => router.push(`/template-designer?templateId=${tmpl.id}`)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 text-[11px] hover:bg-gray-700 transition"
+                  >
+                    <Pencil size={11} />
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDeleteTemplate(tmpl.id)}
+                    disabled={deletingId === tmpl.id}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-900/60 text-red-300 text-[11px] hover:bg-red-900 transition disabled:opacity-50"
+                  >
+                    <Trash2 size={11} />
+                    {deletingId === tmpl.id ? "Deleting…" : "Delete"}
+                  </button>
+                </div>
               </div>
             </div>
           ))}
