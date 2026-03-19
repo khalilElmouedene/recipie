@@ -140,45 +140,6 @@ function TemplateDesignerInner() {
       .catch(() => {});
   }, [injectFontStylesheet]);
 
-  const normalizeImageZoneRect = useCallback((obj: any) => {
-    if (!obj || obj.__ttype !== "image" || obj.type !== "rect") return;
-    const scaledW = Math.max(40, Math.round((obj.width ?? 0) * (obj.scaleX ?? 1)));
-    const scaledH = Math.max(40, Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)));
-    obj.set({
-      width: scaledW,
-      height: scaledH,
-      scaleX: 1,
-      scaleY: 1,
-      strokeUniform: true,
-    });
-    obj.setCoords();
-  }, []);
-
-  const constrainObjectToCanvas = useCallback((obj: any) => {
-    const canvas = fabricRef.current;
-    if (!canvas || !obj) return;
-    const canvasW = canvas.getWidth();
-    const canvasH = canvas.getHeight();
-    const rect = obj.getBoundingRect(true, true);
-
-    if (rect.width > canvasW || rect.height > canvasH) {
-      const sx = (obj.scaleX ?? 1) * Math.min(1, canvasW / Math.max(1, rect.width));
-      const sy = (obj.scaleY ?? 1) * Math.min(1, canvasH / Math.max(1, rect.height));
-      obj.set({ scaleX: sx, scaleY: sy });
-      obj.setCoords();
-    }
-
-    const r2 = obj.getBoundingRect(true, true);
-    let nextLeft = obj.left ?? 0;
-    let nextTop = obj.top ?? 0;
-    if (r2.left < 0) nextLeft += -r2.left;
-    if (r2.top < 0) nextTop += -r2.top;
-    if (r2.left + r2.width > canvasW) nextLeft -= (r2.left + r2.width - canvasW);
-    if (r2.top + r2.height > canvasH) nextTop -= (r2.top + r2.height - canvasH);
-    obj.set({ left: nextLeft, top: nextTop });
-    obj.setCoords();
-  }, []);
-
   // ── Canvas init ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!mounted || !canvasRef.current || fabricRef.current) return;
@@ -213,24 +174,6 @@ function TemplateDesignerInner() {
           const t = e.target;
           if (t?.__ttype === "text") setText(t.text ?? "");
         });
-        canvas.on("object:moving", (e: any) => {
-          const obj = e.target;
-          if (!obj) return;
-          constrainObjectToCanvas(obj);
-        });
-        canvas.on("object:scaling", (e: any) => {
-          const obj = e.target;
-          if (!obj) return;
-          constrainObjectToCanvas(obj);
-        });
-        canvas.on("object:modified", (e: any) => {
-          const obj = e.target;
-          if (obj?.__ttype === "image" && obj.type === "rect") {
-            normalizeImageZoneRect(obj);
-            constrainObjectToCanvas(obj);
-            canvas.renderAll();
-          }
-        });
 
         setCanvasReady(true);
       } catch (err) {
@@ -245,7 +188,7 @@ function TemplateDesignerInner() {
         fabricRef.current = null;
       }
     };
-  }, [mounted, normalizeImageZoneRect, constrainObjectToCanvas]);
+  }, [mounted]);
 
   // Sync bg color to canvas
   useEffect(() => {
@@ -308,8 +251,8 @@ function TemplateDesignerInner() {
     const fabric = fabricLibRef.current;
     if (!canvas || !fabric) return;
     const rect = new fabric.Rect({
-      left: (PIN_W - 800) / 2,
-      top: PIN_H / 3 - 300,
+      left: PIN_W / 2,
+      top: PIN_H / 3,
       width: 800,
       height: 600,
       fill: "#e8e8e8",
@@ -317,8 +260,8 @@ function TemplateDesignerInner() {
       strokeWidth: 3,
       strokeUniform: true,
       strokeDashArray: [10, 6],
-      originX: "left",
-      originY: "top",
+      originX: "center",
+      originY: "center",
     });
     (rect as any).__id = uid("image");
     (rect as any).__ttype = "image";
