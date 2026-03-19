@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -63,9 +63,25 @@ async def create_pin_designer_template(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    normalized_name = body.name.strip()
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Template name is required")
+
+    existing_row = await db.execute(
+        select(PinDesignerTemplate.id).where(
+            PinDesignerTemplate.owner_id == user.id,
+            func.lower(PinDesignerTemplate.name) == normalized_name.lower(),
+        )
+    )
+    if existing_row.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409,
+            detail=f'Template name "{normalized_name}" already exists. Choose a different name.',
+        )
+
     tmpl = PinDesignerTemplate(
         owner_id=user.id,
-        name=body.name,
+        name=normalized_name,
         description=body.description,
         bg_color=body.bgColor,
         elements_json=json.dumps([e.model_dump() for e in body.elements]),
