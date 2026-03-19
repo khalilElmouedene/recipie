@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Users, LogOut, UserCircle, X } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Users, LogOut, UserCircle, X, Settings } from "lucide-react";
 import { clearToken, getUserRole } from "@/lib/auth";
 
 const NAV = [
@@ -21,8 +21,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const role = getUserRole();
 
   const items = role === "owner"
-    ? [...NAV, { href: "/users", label: "Users", icon: Users }]
-    : NAV;
+    ? [...NAV, { href: "/users", label: "Users", icon: Users }, { href: "/settings", label: "Settings", icon: Settings }]
+    : [...NAV, { href: "/settings", label: "Settings", icon: Settings }];
 
   return (
     <aside
