@@ -50,6 +50,8 @@ export default function SettingsPage() {
   const [cleanupError, setCleanupError] = useState("");
   const [retentionDays, setRetentionDays] = useState(4);
   const [publishedOnly, setPublishedOnly] = useState(true);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [confirmDeleteInput, setConfirmDeleteInput] = useState("");
 
   useEffect(() => {
     api
@@ -188,13 +190,14 @@ export default function SettingsPage() {
       return;
     }
     if (mode === "all_published") {
-      const confirmation = prompt(
-        "Dangerous action: this will delete ALL published recipes and their generated images across all projects.\nType DELETE to confirm."
-      );
-      if (confirmation !== "DELETE") {
-        return;
-      }
+      setConfirmDeleteOpen(true);
+      setConfirmDeleteInput("");
+      return;
     }
+    await executeCleanup(mode);
+  };
+
+  const executeCleanup = async (mode: "retention" | "all_published") => {
     setCleanupLoading(true);
     setCleanupError("");
     setCleanupMessage("");
@@ -494,6 +497,51 @@ export default function SettingsPage() {
             </div>
           )}
         </section>
+      )}
+
+      {confirmDeleteOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-xl border border-red-800/60 bg-gray-900 p-5 space-y-4 shadow-2xl">
+            <h3 className="text-lg font-semibold text-white">Confirm destructive delete</h3>
+            <p className="text-sm text-gray-300">
+              This will delete ALL published recipes and their generated images across all your projects.
+            </p>
+            <p className="text-xs text-red-300">
+              Type <span className="font-bold">DELETE</span> to continue.
+            </p>
+            <input
+              value={confirmDeleteInput}
+              onChange={(e) => setConfirmDeleteInput(e.target.value)}
+              placeholder="Type DELETE"
+              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+            />
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  if (cleanupLoading) return;
+                  setConfirmDeleteOpen(false);
+                  setConfirmDeleteInput("");
+                }}
+                className="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={cleanupLoading || confirmDeleteInput !== "DELETE"}
+                onClick={async () => {
+                  setConfirmDeleteOpen(false);
+                  setConfirmDeleteInput("");
+                  await executeCleanup("all_published");
+                }}
+                className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {cleanupLoading ? "Running..." : "Delete Now"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
