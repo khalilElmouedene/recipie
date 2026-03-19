@@ -79,6 +79,8 @@ export default function AllSitesGeneratePage() {
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [deletingRecipeId, setDeletingRecipeId] = useState<string | null>(null);
 
+  const [collapsedJobs, setCollapsedJobs] = useState<Set<string>>(new Set());
+  const [collapsedJobs, setCollapsedJobs] = useState<Set<string>>(new Set());
   const [expandedRecipeId, setExpandedRecipeId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<"article" | "recipe" | "seo" | "images">("article");
   const [recipeFullById, setRecipeFullById] = useState<Record<string, RecipeOut>>({});
@@ -229,27 +231,32 @@ export default function AllSitesGeneratePage() {
       }
 
       const ws = wb.Sheets[firstSheet];
-      const matrix = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
-      if (!matrix.length) {
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+      if (!rawRows.length) {
         alert("No rows found in Excel.");
         return;
       }
 
       const normalize = (v: unknown) => String(v ?? "").trim();
       const normKey = (k: string) => k.toLowerCase().replace(/[\s-]+/g, "_");
-      const header = (matrix[0] || []).map((h) => normKey(normalize(h)));
-      const imageColIdx = header.indexOf("image_url");
-      const textColIdx = header.indexOf("recipe_text");
-      if (imageColIdx === -1 || textColIdx === -1) {
-        alert('Invalid template. Required columns are exactly: "image_url" and "recipe_text".');
-        return;
-      }
-      const dataRows = matrix.slice(1);
-      const imported: SharedRecipeInput[] = dataRows
+
+      const imported: SharedRecipeInput[] = rawRows
         .map((row) => {
-          const r = Array.isArray(row) ? row : [];
-          const imageUrl = normalize(r[imageColIdx]);
-          const recipeText = normalize(r[textColIdx]);
+          const mapped: Record<string, string> = {};
+          Object.entries(row).forEach(([k, v]) => {
+            mapped[normKey(k)] = normalize(v);
+          });
+          const imageUrl =
+            mapped.image_url ||
+            mapped.image ||
+            mapped.url ||
+            "";
+          const recipeText =
+            mapped.recipe_text ||
+            mapped.recipe ||
+            mapped.text ||
+            mapped.title ||
+            "";
           return { image_url: imageUrl, recipe_text: recipeText };
         })
         .filter((r) => r.image_url && r.recipe_text);
@@ -271,16 +278,16 @@ export default function AllSitesGeneratePage() {
 
   const downloadExcelTemplate = () => {
     const templateRows = [
-      { image_url: "https://example.com/image-1.jpg", recipe_text: "Recipe title or full recipe text" },
-      { image_url: "https://example.com/image-2.jpg", recipe_text: "Another recipe text" },
+      { image_url: 'https://example.com/image-1.jpg', recipe_text: 'Recipe title or full recipe text' },
+      { image_url: 'https://example.com/image-2.jpg', recipe_text: 'Another recipe text' },
     ];
     const ws = XLSX.utils.json_to_sheet(templateRows, {
-      header: ["image_url", "recipe_text"],
+      header: ['image_url', 'recipe_text'],
       skipHeader: false,
     });
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "recipes");
-    XLSX.writeFile(wb, "recipe_input_template.xlsx");
+    XLSX.utils.book_append_sheet(wb, ws, 'recipes');
+    XLSX.writeFile(wb, 'recipe_input_template.xlsx');
   };
 
   const deleteJob = async (jobId: string) => {
@@ -348,6 +355,15 @@ export default function AllSitesGeneratePage() {
     } finally {
       setWpPublishingId(null);
     }
+  };
+
+  const toggleCollapseJob = (jobId: string) => {
+    setCollapsedJobs((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
   };
 
   const toggleExpand = (recipeId: string) => {
@@ -431,7 +447,7 @@ export default function AllSitesGeneratePage() {
           type="button"
           onClick={downloadExcelTemplate}
           className="btn-secondary flex items-center gap-2"
-          title='Download required Excel template (image_url, recipe_text)'
+          title="Download required Excel template (image_url, recipe_text)"
         >
           <Download size={16} /> Download Excel Template
         </button>
@@ -455,9 +471,6 @@ export default function AllSitesGeneratePage() {
           <Send size={16} /> {loading ? "Starting..." : "Run All Sites Job"}
         </button>
       </div>
-      <p className="text-xs text-gray-500 mb-8">
-        Excel import requires these exact columns in row 1: <span className="font-mono">image_url</span> and <span className="font-mono">recipe_text</span>.
-      </p>
 
       {/* ── 2. History ── */}
       <div className="card mb-5">
@@ -514,10 +527,19 @@ export default function AllSitesGeneratePage() {
                               {deletingJobId === j.id ? "…" : "Delete run"}
                             </button>
                           )}
+                          <button
+                            onClick={() => toggleCollapseJob(j.id)}
+                            className="text-xs px-2 py-1 rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800 flex items-center gap-1"
+                            title={collapsedJobs.has(j.id) ? "Expand recipes" : "Collapse recipes"}
+                          >
+                            {collapsedJobs.has(j.id) ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+                            {collapsedJobs.has(j.id) ? `Show ${(jobRecipeMap[j.id] || []).length} recipes` : "Collapse"}
+                          </button>
                         </>
                       )}
                     </div>
                   </div>
+                  {!collapsedJobs.has(j.id) && (
                   <div className="p-2 sm:p-3 space-y-2">
                     {recipes.length === 0 ? (
                       <p className="text-xs text-gray-600 py-2">No recipes linked.</p>
@@ -749,6 +771,7 @@ export default function AllSitesGeneratePage() {
                       })
                     )}
                   </div>
+                  )}
                 </div>
               );
             })}
