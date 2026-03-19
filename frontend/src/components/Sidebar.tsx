@@ -7,7 +7,7 @@ import { clearToken, getUserRole } from "@/lib/auth";
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderKanban },
-  { href: "/template-designer", label: "Own Template", icon: LayoutTemplate },
+  { href: "/pin-designer-templates", label: "Own Templates", icon: LayoutTemplate },
 ];
 
 interface SidebarProps {
