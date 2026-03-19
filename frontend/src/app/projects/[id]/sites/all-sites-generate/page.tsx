@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import * as XLSX from "xlsx";
 import {
   ArrowLeft,
   Plus,
   Trash2,
   Send,
   Save,
+  Upload,
   ImageIcon,
   ExternalLink,
   ChevronDown,
@@ -68,6 +70,8 @@ export default function AllSitesGeneratePage() {
   const [imageRetentionDays, setImageRetentionDays] = useState(4);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [startingPublish, setStartingPublish] = useState(false);
+  const [importingExcel, setImportingExcel] = useState(false);
+  const excelInputRef = useRef<HTMLInputElement>(null);
 
   const [jobRecipeMap, setJobRecipeMap] = useState<Record<string, GeneratedJobRecipeOut[]>>({});
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -146,6 +150,15 @@ export default function AllSitesGeneratePage() {
   const validCount = rows
     .map((r) => ({ image_url: r.image_url.trim(), recipe_text: r.recipe_text.trim() }))
     .filter((r) => r.image_url && r.recipe_text).length;
+  const hasRunningGeneration = history.some((j) => j.status === "running" || j.status === "pending");
+  const hasAnyGeneratedRecipes = Object.values(jobRecipeMap).some((arr) =>
+    arr.some((r) => r.status === "generated" || r.status === "published")
+  );
+
+  const canStartPublishing =
+    !startingPublish &&
+    !hasRunningGeneration &&
+    hasAnyGeneratedRecipes;
 
   const handleRun = async () => {
     const valid = rows
@@ -200,6 +213,63 @@ export default function AllSitesGeneratePage() {
       alert(e?.message || "Failed to start publishing queue");
     } finally {
       setStartingPublish(false);
+    }
+  };
+
+  const handleExcelImport = async (file: File) => {
+    setImportingExcel(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: "array" });
+      const firstSheet = wb.SheetNames[0];
+      if (!firstSheet) {
+        alert("Excel file has no sheet.");
+        return;
+      }
+
+      const ws = wb.Sheets[firstSheet];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+      if (!rawRows.length) {
+        alert("No rows found in Excel.");
+        return;
+      }
+
+      const normalize = (v: unknown) => String(v ?? "").trim();
+      const normKey = (k: string) => k.toLowerCase().replace(/[\s-]+/g, "_");
+
+      const imported: SharedRecipeInput[] = rawRows
+        .map((row) => {
+          const mapped: Record<string, string> = {};
+          Object.entries(row).forEach(([k, v]) => {
+            mapped[normKey(k)] = normalize(v);
+          });
+          const imageUrl =
+            mapped.image_url ||
+            mapped.image ||
+            mapped.url ||
+            "";
+          const recipeText =
+            mapped.recipe_text ||
+            mapped.recipe ||
+            mapped.text ||
+            mapped.title ||
+            "";
+          return { image_url: imageUrl, recipe_text: recipeText };
+        })
+        .filter((r) => r.image_url && r.recipe_text);
+
+      if (!imported.length) {
+        alert('No valid rows found. Required columns: "image_url" and "recipe_text".');
+        return;
+      }
+
+      setRows(imported);
+      alert(`Imported ${imported.length} recipe input(s) from Excel.`);
+    } catch (e: any) {
+      alert(e?.message || "Failed to import Excel file");
+    } finally {
+      setImportingExcel(false);
+      if (excelInputRef.current) excelInputRef.current.value = "";
     }
   };
 
@@ -341,14 +411,27 @@ export default function AllSitesGeneratePage() {
             </button>
             <button
               onClick={startPublishingNow}
-              disabled={startingPublish}
+              disabled={!canStartPublishing}
               className="btn-primary flex items-center gap-2 w-full md:w-auto justify-center"
-              title="Start queue immediately (publishes one article now, then continues by interval)"
+              title={
+                hasRunningGeneration
+                  ? "Wait until generation job finishes"
+                  : !hasAnyGeneratedRecipes
+                    ? "Generate recipes first"
+                    : "Start queue immediately (publishes one article now, then continues by interval)"
+              }
             >
               <Send size={14} /> {startingPublish ? "Starting..." : "Start Publishing"}
             </button>
           </div>
         </div>
+        {!canStartPublishing && (
+          <p className="text-xs text-amber-400 mt-2">
+            {hasRunningGeneration
+              ? "Start Publishing becomes available after generation finishes."
+              : "Generate at least one recipe first."}
+          </p>
+        )}
         <p className="text-xs text-gray-500 mt-2">
           {schedule?.next_run_at ? `Next run: ${new Date(schedule.next_run_at).toLocaleString()}` : "No next run scheduled"}
         </p>
@@ -690,6 +773,25 @@ export default function AllSitesGeneratePage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2 mt-4">
+        <input
+          ref={excelInputRef}
+          type="file"
+          accept=".xlsx,.xls"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void handleExcelImport(file);
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => excelInputRef.current?.click()}
+          disabled={importingExcel}
+          className="btn-secondary flex items-center gap-2"
+          title='Import Excel columns: "image_url", "recipe_text"'
+        >
+          <Upload size={16} /> {importingExcel ? "Importing..." : "Upload Excel"}
+        </button>
         <button
           type="button"
           onClick={() => setRows((prev) => [...prev, { image_url: "", recipe_text: "" }])}

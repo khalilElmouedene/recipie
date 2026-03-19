@@ -36,7 +36,7 @@ export default function SettingsPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Settings</h1>
+        <h1 className="text-2xl font-bold text-white">Pin Designer Templates</h1>
         <p className="text-sm text-gray-400 mt-1">Manage your templates for the Pin Designer.</p>
       </div>
 
@@ -77,7 +77,7 @@ export default function SettingsPage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           <button
             onClick={() => router.push("/template-designer")}
-            className="aspect-[2/3] rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-500 hover:bg-gray-900/40 transition-all flex flex-col items-center justify-center gap-2 text-gray-500 hover:text-white group"
+            className="h-24 rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-500 hover:bg-gray-900/40 transition-all flex flex-col items-center justify-center gap-2 text-gray-500 hover:text-white group"
           >
             <div className="w-10 h-10 rounded-xl border-2 border-dashed border-current flex items-center justify-center group-hover:border-brand-400">
               <Plus size={22} />

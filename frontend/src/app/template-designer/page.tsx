@@ -7,6 +7,7 @@ import {
   Save,
   Download,
   Type,
+  Globe,
   Image as ImageIcon,
   Minus,
   Trash2,
@@ -285,6 +286,30 @@ function TemplateDesignerInner() {
     (rect as any).__ttype = "band";
     canvas.add(rect);
     canvas.setActiveObject(rect);
+    canvas.renderAll();
+  }
+
+  function addWebsiteLink() {
+    const canvas = fabricRef.current;
+    const fabric = fabricLibRef.current;
+    if (!canvas || !fabric) return;
+    const tb = new fabric.Textbox("WWW.YOURSITE.COM", {
+      left: PIN_W / 2,
+      top: PIN_H - 60,
+      width: 900,
+      fontSize: 26,
+      fontFamily,
+      fontWeight: "bold",
+      fill: "#ffffff",
+      textAlign: "center",
+      originX: "center",
+      originY: "center",
+      editable: true,
+    });
+    (tb as any).__id = uid("website");
+    (tb as any).__ttype = "text";
+    canvas.add(tb);
+    canvas.setActiveObject(tb);
     canvas.renderAll();
   }
 
@@ -605,6 +630,15 @@ function TemplateDesignerInner() {
                 <Upload size={22} className="text-gray-400 group-hover:text-white transition" />
                 <span className="text-[11px] text-gray-400 group-hover:text-white transition">
                   Upload Image
+                </span>
+              </button>
+              <button
+                onClick={addWebsiteLink}
+                className="col-span-2 flex items-center justify-center gap-2 py-3 rounded-xl border border-gray-700 hover:border-brand-500 hover:bg-gray-900 transition-all group"
+              >
+                <Globe size={18} className="text-gray-400 group-hover:text-white transition" />
+                <span className="text-[11px] text-gray-400 group-hover:text-white transition">
+                  Add Website Link
                 </span>
               </button>
             </div>
