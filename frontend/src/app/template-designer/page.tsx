@@ -22,6 +22,7 @@ import { api } from "@/lib/api";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
+const SELECTION_ACCENT = "#2563eb";
 
 let _uid = 0;
 function uid(prefix: string) {
@@ -163,6 +164,22 @@ function TemplateDesignerInner() {
     }
   }, []);
 
+  const applySelectionVisuals = useCallback((obj: any) => {
+    if (!obj) return;
+    obj.set({
+      hasControls: true,
+      hasBorders: true,
+      borderColor: SELECTION_ACCENT,
+      cornerColor: SELECTION_ACCENT,
+      cornerStrokeColor: "#ffffff",
+      cornerStyle: "circle",
+      transparentCorners: false,
+      cornerSize: 16,
+      borderScaleFactor: 2,
+      padding: 8,
+    });
+  }, []);
+
   // ── Canvas init ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!mounted || !canvasRef.current || fabricRef.current) return;
@@ -179,16 +196,25 @@ function TemplateDesignerInner() {
           height: PIN_H,
           backgroundColor: "#ffffff",
           preserveObjectStacking: true,
+          selectionColor: "rgba(37, 99, 235, 0.15)",
+          selectionBorderColor: SELECTION_ACCENT,
+          selectionLineWidth: 2,
         });
         fabricRef.current = canvas;
 
         canvas.on("selection:created", (e: any) => {
           const obj = e.selected?.[0];
-          if (obj) syncSel(obj);
+          if (obj) {
+            applySelectionVisuals(obj);
+            syncSel(obj);
+          }
         });
         canvas.on("selection:updated", (e: any) => {
           const obj = e.selected?.[0];
-          if (obj) syncSel(obj);
+          if (obj) {
+            applySelectionVisuals(obj);
+            syncSel(obj);
+          }
         });
         canvas.on("selection:cleared", () => {
           setSelType(null);
@@ -235,7 +261,7 @@ function TemplateDesignerInner() {
         fabricRef.current = null;
       }
     };
-  }, [mounted, saveUndoState]);
+  }, [mounted, saveUndoState, applySelectionVisuals]);
 
   // Sync bg color to canvas
   useEffect(() => {
@@ -338,6 +364,7 @@ function TemplateDesignerInner() {
           });
           (tb as any).__id = el.id || uid("text");
           (tb as any).__ttype = "text";
+          applySelectionVisuals(tb);
           canvas.add(tb);
         } else if (el.type === "image") {
           const rect = new fabric.Rect({
@@ -355,6 +382,7 @@ function TemplateDesignerInner() {
           });
           (rect as any).__id = el.id || uid("image");
           (rect as any).__ttype = "image";
+          applySelectionVisuals(rect);
           canvas.add(rect);
         } else if (el.type === "band") {
           const rect = new fabric.Rect({
@@ -368,6 +396,7 @@ function TemplateDesignerInner() {
           });
           (rect as any).__id = el.id || uid("band");
           (rect as any).__ttype = "band";
+          applySelectionVisuals(rect);
           canvas.add(rect);
         }
       }
@@ -379,7 +408,7 @@ function TemplateDesignerInner() {
     } catch {
       // ignore
     }
-  }, [editingTemplateId, editingLoaded, saveUndoState]);
+  }, [editingTemplateId, editingLoaded, saveUndoState, applySelectionVisuals]);
 
   useEffect(() => {
     if (!canvasReady) return;
@@ -407,6 +436,7 @@ function TemplateDesignerInner() {
     });
     (tb as any).__id = uid("text");
     (tb as any).__ttype = "text";
+    applySelectionVisuals(tb);
     canvas.add(tb);
     canvas.setActiveObject(tb);
     canvas.renderAll();
@@ -432,6 +462,7 @@ function TemplateDesignerInner() {
     });
     (rect as any).__id = uid("image");
     (rect as any).__ttype = "image";
+    applySelectionVisuals(rect);
     canvas.add(rect);
     canvas.setActiveObject(rect);
     canvas.renderAll();
@@ -451,6 +482,7 @@ function TemplateDesignerInner() {
     });
     (rect as any).__id = uid("band");
     (rect as any).__ttype = "band";
+    applySelectionVisuals(rect);
     canvas.add(rect);
     canvas.setActiveObject(rect);
     canvas.renderAll();
@@ -476,6 +508,7 @@ function TemplateDesignerInner() {
     });
     (tb as any).__id = uid("website");
     (tb as any).__ttype = "text";
+    applySelectionVisuals(tb);
     canvas.add(tb);
     canvas.setActiveObject(tb);
     canvas.renderAll();
@@ -511,6 +544,7 @@ function TemplateDesignerInner() {
       });
       (img as any).__id = uid("bg");
       (img as any).__ttype = "asset";
+      applySelectionVisuals(img);
       canvas.insertAt(0, img);
       canvas.renderAll();
     };
@@ -546,6 +580,7 @@ function TemplateDesignerInner() {
       });
       (img as any).__id = uid("img");
       (img as any).__ttype = "asset";
+      applySelectionVisuals(img);
       canvas.add(img);
       canvas.setActiveObject(img);
       canvas.renderAll();
