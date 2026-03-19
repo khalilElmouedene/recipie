@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from random import randint
 from typing import Callable
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -70,6 +71,71 @@ def _fetch_sitemap_urls(sitemap_url: str) -> list[str]:
     ]
 
 
+def _parse_sitemap_xml(xml_content: bytes) -> tuple[list[str], list[str]]:
+    """Parse sitemap XML content and return (child_sitemaps, page_urls)."""
+    try:
+        root = ET.fromstring(xml_content)
+    except Exception:
+        return [], []
+
+    child_sitemaps: list[str] = []
+    page_urls: list[str] = []
+
+    # Namespace-agnostic parsing to support various WP/SEO plugins.
+    for el in root.iter():
+        tag = (el.tag or "").lower()
+        text = (el.text or "").strip()
+        if not text:
+            continue
+        if tag.endswith("loc"):
+            parent_tag = (getattr(el, "getparent", lambda: None)() or None)
+            # xml.etree does not provide parent access; infer by root type below.
+            # We'll classify using root tag instead of parent.
+            if "sitemapindex" in (root.tag or "").lower():
+                child_sitemaps.append(text)
+            else:
+                page_urls.append(text)
+
+    # Fallback split for sitemap indexes where above inference may mix links.
+    if "sitemapindex" in (root.tag or "").lower():
+        return child_sitemaps, []
+
+    return [], page_urls
+
+
+def _extract_same_domain_links_from_html(html: str, site_domain: str) -> list[str]:
+    """Best-effort fallback if sitemap is unavailable."""
+    if not html:
+        return []
+    base_host = (urlparse(site_domain).hostname or "").lower()
+    if not base_host:
+        return []
+
+    hrefs = re.findall(r'href=["\']([^"\']+)["\']', html, flags=re.IGNORECASE)
+    seen: set[str] = set()
+    out: list[str] = []
+    for href in hrefs:
+        abs_url = urljoin(site_domain + "/", href.strip())
+        parsed = urlparse(abs_url)
+        if parsed.scheme not in ("http", "https"):
+            continue
+        host = (parsed.hostname or "").lower()
+        if not host:
+            continue
+        if host != base_host and host != f"www.{base_host}" and base_host != f"www.{host}":
+            continue
+        if parsed.path in ("", "/", "/#"):
+            continue
+        clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
+        if clean_url in seen:
+            continue
+        seen.add(clean_url)
+        out.append(clean_url)
+        if len(out) >= 50:
+            break
+    return out
+
+
 def get_sitemap_links(site_domain: str) -> list[str]:
     """
     Try multiple common sitemap locations for the site and return up to 50 post URLs.
@@ -79,45 +145,87 @@ def get_sitemap_links(site_domain: str) -> list[str]:
         site_domain = "https://" + site_domain
     site_domain = site_domain.rstrip("/")
 
-    candidates = [
-        f"{site_domain}/post-sitemap.xml",
-        f"{site_domain}/post-sitemap1.xml",
-        f"{site_domain}/sitemap.xml",
-        f"{site_domain}/sitemap_index.xml",
-    ]
+    parsed = urlparse(site_domain)
+    host = parsed.netloc
+    scheme_variants = [parsed.scheme]
+    if parsed.scheme == "https":
+        scheme_variants.append("http")
+    elif parsed.scheme == "http":
+        scheme_variants.append("https")
 
-    ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    domain_variants = []
+    for scheme in scheme_variants:
+        domain_variants.append(f"{scheme}://{host}".rstrip("/"))
+        if host.startswith("www."):
+            domain_variants.append(f"{scheme}://{host[4:]}".rstrip("/"))
+        else:
+            domain_variants.append(f"{scheme}://www.{host}".rstrip("/"))
+
+    # Preserve order and uniqueness.
+    domain_variants = list(dict.fromkeys(domain_variants))
     headers = {"User-Agent": "Mozilla/5.0"}
+    candidates: list[str] = []
+    for base in domain_variants:
+        candidates.extend([
+            f"{base}/post-sitemap.xml",
+            f"{base}/post-sitemap1.xml",
+            f"{base}/wp-sitemap.xml",
+            f"{base}/wp-sitemap-posts-post-1.xml",
+            f"{base}/sitemap.xml",
+            f"{base}/sitemap_index.xml",
+        ])
+
+    # Also read robots.txt sitemap hints.
+    for base in domain_variants:
+        try:
+            robots = requests.get(f"{base}/robots.txt", timeout=10, headers=headers)
+            if robots.status_code == 200 and robots.text:
+                for line in robots.text.splitlines():
+                    if line.lower().startswith("sitemap:"):
+                        sm = line.split(":", 1)[1].strip()
+                        if sm:
+                            candidates.append(sm)
+        except Exception:
+            pass
+
+    candidates = list(dict.fromkeys(candidates))
 
     for url in candidates:
         try:
             r = requests.get(url, timeout=15, headers=headers)
             if r.status_code != 200:
                 continue
-            root = ET.fromstring(r.content)
-            # Sitemap index: contains <sitemap><loc>...</loc></sitemap>
-            child_sitemaps = [
-                loc.text
-                for sm in root.findall(".//s:sitemap", ns)
-                if (loc := sm.find("s:loc", ns)) is not None and loc.text
-            ]
+            child_sitemaps, page_urls = _parse_sitemap_xml(r.content)
             if child_sitemaps:
-                # Use the first child sitemap (usually post-sitemap.xml or similar)
                 links: list[str] = []
-                for child_url in child_sitemaps[:3]:
+                for child_url in child_sitemaps[:8]:
                     try:
-                        links.extend(_fetch_sitemap_urls(child_url))
+                        child_resp = requests.get(child_url, timeout=15, headers=headers)
+                        if child_resp.status_code != 200:
+                            continue
+                        _, child_urls = _parse_sitemap_xml(child_resp.content)
+                        links.extend(child_urls)
                     except Exception:
                         pass
                     if len(links) >= 50:
                         break
                 if links:
-                    return links[:50]
+                    return list(dict.fromkeys(links))[:50]
             else:
-                # Direct sitemap file
-                links = _fetch_sitemap_urls(url)
-                if links:
-                    return links[:50]
+                if page_urls:
+                    return list(dict.fromkeys(page_urls))[:50]
+        except Exception:
+            continue
+
+    # Fallback: crawl homepage links if all sitemap variants fail.
+    for base in domain_variants:
+        try:
+            r = requests.get(base, timeout=15, headers=headers)
+            if r.status_code != 200:
+                continue
+            links = _extract_same_domain_links_from_html(r.text, base)
+            if links:
+                return links[:50]
         except Exception:
             continue
 
