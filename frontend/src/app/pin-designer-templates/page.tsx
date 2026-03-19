@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LayoutTemplate, Plus, Trash2, Pencil } from "lucide-react";
+import { LayoutTemplate, Plus, Trash2, Pencil, Copy } from "lucide-react";
 import { api, PinDesignerTemplateOut } from "@/lib/api";
 
 export default function PinDesignerTemplatesPage() {
@@ -11,6 +11,7 @@ export default function PinDesignerTemplatesPage() {
   const [templates, setTemplates] = useState<PinDesignerTemplateOut[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [cloningId, setCloningId] = useState<string | null>(null);
 
   useEffect(() => {
     setTemplatesLoading(true);
@@ -31,6 +32,39 @@ export default function PinDesignerTemplatesPage() {
       // ignore
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleCloneTemplate = async (tmpl: PinDesignerTemplateOut) => {
+    const existingNames = new Set(templates.map((t) => t.name.trim().toLowerCase()));
+    let suggestedName = `${tmpl.name} Copy`;
+    let copyIndex = 2;
+    while (existingNames.has(suggestedName.trim().toLowerCase())) {
+      suggestedName = `${tmpl.name} Copy ${copyIndex}`;
+      copyIndex += 1;
+    }
+
+    const nextName = prompt("Enter new name for cloned template:", suggestedName);
+    if (!nextName) return;
+    const cleanName = nextName.trim();
+    if (!cleanName) {
+      alert("Template name cannot be empty.");
+      return;
+    }
+
+    setCloningId(tmpl.id);
+    try {
+      const created = await api.createPinDesignerTemplate({
+        name: cleanName,
+        description: tmpl.description,
+        bgColor: tmpl.bgColor,
+        elements: tmpl.elements,
+      });
+      setTemplates((prev) => [created, ...prev]);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to clone template.");
+    } finally {
+      setCloningId(null);
     }
   };
 
@@ -100,6 +134,14 @@ export default function PinDesignerTemplatesPage() {
                   >
                     <Pencil size={11} />
                     Edit
+                  </button>
+                  <button
+                    onClick={() => handleCloneTemplate(tmpl)}
+                    disabled={cloningId === tmpl.id}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-900/60 text-sky-200 text-[11px] hover:bg-sky-900 transition disabled:opacity-50"
+                  >
+                    <Copy size={11} />
+                    {cloningId === tmpl.id ? "Cloning..." : "Clone"}
                   </button>
                   <button
                     onClick={() => handleDeleteTemplate(tmpl.id)}
