@@ -80,7 +80,6 @@ export default function AllSitesGeneratePage() {
   const [deletingRecipeId, setDeletingRecipeId] = useState<string | null>(null);
 
   const [collapsedJobs, setCollapsedJobs] = useState<Set<string>>(new Set());
-  const [collapsedJobs, setCollapsedJobs] = useState<Set<string>>(new Set());
   const [expandedRecipeId, setExpandedRecipeId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<"article" | "recipe" | "seo" | "images">("article");
   const [recipeFullById, setRecipeFullById] = useState<Record<string, RecipeOut>>({});
@@ -815,6 +814,13 @@ export default function AllSitesGeneratePage() {
             </div>
           </label>
           <div className="flex md:justify-end gap-2 flex-wrap">
+            <button
+              onClick={() => router.push(`/projects/${projectId}/image-cleanup`)}
+              className="btn-secondary flex items-center gap-2 w-full md:w-auto justify-center border-amber-700/50 text-amber-300"
+              title="Open advanced image cleanup controls"
+            >
+              <Trash2 size={14} /> Image Cleanup
+            </button>
             <button
               onClick={saveSchedule}
               disabled={savingSchedule}

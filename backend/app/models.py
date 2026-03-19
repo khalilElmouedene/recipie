@@ -312,6 +312,20 @@ class PublishScheduleUpdate(BaseModel):
     image_retention_days: int = Field(ge=1, le=3650)
 
 
+class ImageCleanupRunRequest(BaseModel):
+    # If true, delete images for all published recipes regardless of age.
+    delete_all_published: bool = False
+    # Used when delete_all_published is false.
+    published_only: bool = True
+    retention_days: int | None = Field(default=None, ge=1, le=3650)
+
+
+class ImageCleanupRunResult(BaseModel):
+    recipes_updated: int
+    files_deleted: int
+    mode: str
+
+
 # ── Pin Designer Templates (user-created layouts) ───────────────────────────
 
 class PinDesignerTemplateElement(BaseModel):

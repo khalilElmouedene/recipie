@@ -121,6 +121,11 @@ export const api = {
     request<PublishScheduleOut>(`/api/projects/${projectId}/publish-schedule/start-now`, {
       method: "POST",
     }),
+  runProjectImageCleanup: (projectId: string, data: ImageCleanupRunRequest) =>
+    request<ImageCleanupRunResult>(`/api/projects/${projectId}/image-cleanup/run`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   // ── Members ────────────────────────────────────────────
   getMembers: (projectId: string) => request<MemberOut[]>(`/api/projects/${projectId}/members`),
@@ -441,6 +446,18 @@ export interface PublishScheduleUpdate {
   enabled: boolean;
   interval_minutes: number;
   image_retention_days: number;
+}
+
+export interface ImageCleanupRunRequest {
+  delete_all_published?: boolean;
+  published_only?: boolean;
+  retention_days?: number | null;
+}
+
+export interface ImageCleanupRunResult {
+  recipes_updated: number;
+  files_deleted: number;
+  mode: string;
 }
 
 export interface PinDesignerTemplateElement {

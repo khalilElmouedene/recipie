@@ -3045,13 +3045,6 @@ export default function PinDesigner({
                         key={t.id}
                         className={`rounded-lg border-2 p-3 cursor-pointer transition ${selectedTemplate?.id === t.id ? "border-brand-500 bg-brand-500/10" : "border-gray-700 hover:border-gray-500"}`}
                       >
-                        <div className="h-28 rounded bg-gray-800 mb-2 overflow-hidden flex items-center justify-center">
-                          {t.exampleImage ? (
-                            <img src={t.exampleImage} alt={t.name} className="h-full w-full object-contain object-top" />
-                          ) : (
-                            <TemplatePreview layout={t.previewLayout} />
-                          )}
-                        </div>
                         <p className="text-sm font-medium text-white flex items-center justify-between gap-2">
                           <span className="truncate">{t.name}</span>
                           <button
@@ -3065,7 +3058,6 @@ export default function PinDesigner({
                             <Trash2 size={14} />
                           </button>
                         </p>
-                        <p className="text-[11px] text-gray-500 mb-2">{t.description}</p>
                         <button
                           onClick={() => {
                             setSelectedTemplate(t);

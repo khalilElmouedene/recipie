@@ -122,6 +122,84 @@ async def _cleanup_once() -> int:
     return recipes_updated
 
 
+async def cleanup_project_generated_images(
+    project_id: Any,
+    *,
+    retention_days: int | None = None,
+    published_only: bool = True,
+    delete_all_published: bool = False,
+) -> dict[str, int]:
+    """
+    Manual cleanup helper for one project.
+    - delete_all_published=True: clear images for all published recipes now.
+    - otherwise: clear images older than retention_days for selected statuses.
+    """
+    now = datetime.now(timezone.utc)
+    recipes_updated = 0
+    files_deleted = 0
+
+    async with SessionLocal() as db:
+        stmt = (
+            select(Recipe, Site.project_id)
+            .join(Site, Recipe.site_id == Site.id)
+            .where(
+                Site.project_id == project_id,
+                Recipe.generated_images.isnot(None),
+            )
+        )
+
+        if delete_all_published:
+            stmt = stmt.where(Recipe.status == RecipeStatus.published)
+        else:
+            statuses = [RecipeStatus.published] if published_only else [
+                RecipeStatus.generated, RecipeStatus.published, RecipeStatus.failed
+            ]
+            stmt = stmt.where(Recipe.status.in_(statuses))
+            if retention_days is not None:
+                threshold = now - timedelta(days=max(1, retention_days))
+                stmt = stmt.where(Recipe.created_at <= threshold)
+
+        candidates = (await db.execute(stmt)).all()
+        files_to_delete: set[Path] = set()
+        to_update: list[Recipe] = []
+
+        for recipe, _ in candidates:
+            try:
+                urls = json.loads(recipe.generated_images) if recipe.generated_images else []
+            except Exception:
+                urls = []
+
+            if isinstance(urls, list):
+                for u in urls:
+                    if not isinstance(u, str):
+                        continue
+                    fn = _extract_upload_filename(u)
+                    if fn:
+                        files_to_delete.add(UPLOADS_DIR / fn)
+
+            to_update.append(recipe)
+
+        for p in files_to_delete:
+            try:
+                if p.exists():
+                    p.unlink()
+                    files_deleted += 1
+            except Exception:
+                pass
+
+        for r in to_update:
+            try:
+                r.generated_images = None
+                recipes_updated += 1
+            except Exception:
+                pass
+
+        if to_update:
+            await db.commit()
+
+    return {"recipes_updated": recipes_updated, "files_deleted": files_deleted}
+
+
 async def run_image_retention_scheduler(stop_event: asyncio.Event) -> None:
     """
     Background loop to periodically run cache cleanup.

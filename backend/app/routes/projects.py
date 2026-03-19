@@ -18,8 +18,10 @@ from ..dependencies import get_current_user, require_owner, check_project_access
 from ..models import (
     ProjectCreate, ProjectUpdate, ProjectOut, MemberAdd, MemberOut,
     PublishScheduleOut, PublishScheduleUpdate,
+    ImageCleanupRunRequest, ImageCleanupRunResult,
 )
 from ..services.email_service import send_project_invite_email
+from ..services.image_retention_scheduler import cleanup_project_generated_images
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -434,4 +436,34 @@ async def start_publish_schedule_now(
         next_run_at=s.next_run_at,
         last_run_at=s.last_run_at,
         last_error=s.last_error,
+    )
+
+
+@router.post("/{project_id}/image-cleanup/run", response_model=ImageCleanupRunResult)
+async def run_image_cleanup_now(
+    project_id: uuid.UUID,
+    body: ImageCleanupRunRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    await check_project_access(project_id, user, db, require_roles=[ProjectMemberRole.admin])
+    schedule_row = await db.execute(
+        select(ProjectPublishSchedule).where(ProjectPublishSchedule.project_id == project_id)
+    )
+    s = schedule_row.scalar_one_or_none()
+    effective_days = body.retention_days if body.retention_days is not None else (
+        s.image_retention_days if s else 4
+    )
+    result = await cleanup_project_generated_images(
+        project_id,
+        retention_days=effective_days,
+        published_only=body.published_only,
+        delete_all_published=body.delete_all_published,
+    )
+    return ImageCleanupRunResult(
+        recipes_updated=result["recipes_updated"],
+        files_deleted=result["files_deleted"],
+        mode="delete_all_published" if body.delete_all_published else (
+            "retention_published_only" if body.published_only else "retention_all_statuses"
+        ),
     )
