@@ -154,6 +154,31 @@ function TemplateDesignerInner() {
     obj.setCoords();
   }, []);
 
+  const constrainObjectToCanvas = useCallback((obj: any) => {
+    const canvas = fabricRef.current;
+    if (!canvas || !obj) return;
+    const canvasW = canvas.getWidth();
+    const canvasH = canvas.getHeight();
+    const rect = obj.getBoundingRect(true, true);
+
+    if (rect.width > canvasW || rect.height > canvasH) {
+      const sx = (obj.scaleX ?? 1) * Math.min(1, canvasW / Math.max(1, rect.width));
+      const sy = (obj.scaleY ?? 1) * Math.min(1, canvasH / Math.max(1, rect.height));
+      obj.set({ scaleX: sx, scaleY: sy });
+      obj.setCoords();
+    }
+
+    const r2 = obj.getBoundingRect(true, true);
+    let nextLeft = obj.left ?? 0;
+    let nextTop = obj.top ?? 0;
+    if (r2.left < 0) nextLeft += -r2.left;
+    if (r2.top < 0) nextTop += -r2.top;
+    if (r2.left + r2.width > canvasW) nextLeft -= (r2.left + r2.width - canvasW);
+    if (r2.top + r2.height > canvasH) nextTop -= (r2.top + r2.height - canvasH);
+    obj.set({ left: nextLeft, top: nextTop });
+    obj.setCoords();
+  }, []);
+
   // ── Canvas init ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!mounted || !canvasRef.current || fabricRef.current) return;
@@ -188,10 +213,21 @@ function TemplateDesignerInner() {
           const t = e.target;
           if (t?.__ttype === "text") setText(t.text ?? "");
         });
+        canvas.on("object:moving", (e: any) => {
+          const obj = e.target;
+          if (!obj) return;
+          constrainObjectToCanvas(obj);
+        });
+        canvas.on("object:scaling", (e: any) => {
+          const obj = e.target;
+          if (!obj) return;
+          constrainObjectToCanvas(obj);
+        });
         canvas.on("object:modified", (e: any) => {
           const obj = e.target;
           if (obj?.__ttype === "image" && obj.type === "rect") {
             normalizeImageZoneRect(obj);
+            constrainObjectToCanvas(obj);
             canvas.renderAll();
           }
         });
@@ -209,7 +245,7 @@ function TemplateDesignerInner() {
         fabricRef.current = null;
       }
     };
-  }, [mounted, normalizeImageZoneRect]);
+  }, [mounted, normalizeImageZoneRect, constrainObjectToCanvas]);
 
   // Sync bg color to canvas
   useEffect(() => {
@@ -219,8 +255,12 @@ function TemplateDesignerInner() {
   }, [bgColor, canvasReady]);
 
   function syncSel(obj: any) {
-    const t = obj.__ttype as SelType;
-    setSelType(t ?? null);
+    const rawType = obj?.__ttype;
+    const t: SelType =
+      rawType === "text" || rawType === "image" || rawType === "band"
+        ? rawType
+        : null;
+    setSelType(t);
     if (t === "text") {
       setText(obj.text ?? "");
       setFontSize(obj.fontSize ?? 48);
@@ -268,8 +308,8 @@ function TemplateDesignerInner() {
     const fabric = fabricLibRef.current;
     if (!canvas || !fabric) return;
     const rect = new fabric.Rect({
-      left: PIN_W / 2,
-      top: PIN_H / 3,
+      left: (PIN_W - 800) / 2,
+      top: PIN_H / 3 - 300,
       width: 800,
       height: 600,
       fill: "#e8e8e8",
@@ -277,8 +317,8 @@ function TemplateDesignerInner() {
       strokeWidth: 3,
       strokeUniform: true,
       strokeDashArray: [10, 6],
-      originX: "center",
-      originY: "center",
+      originX: "left",
+      originY: "top",
     });
     (rect as any).__id = uid("image");
     (rect as any).__ttype = "image";
@@ -333,7 +373,7 @@ function TemplateDesignerInner() {
         selectable: true,
       });
       (img as any).__id = uid("bg");
-      (img as any).__ttype = "image";
+      (img as any).__ttype = "asset";
       canvas.insertAt(0, img);
       canvas.renderAll();
     };
@@ -367,7 +407,7 @@ function TemplateDesignerInner() {
         scaleY: scale,
       });
       (img as any).__id = uid("img");
-      (img as any).__ttype = "image";
+      (img as any).__ttype = "asset";
       canvas.add(img);
       canvas.setActiveObject(img);
       canvas.renderAll();
@@ -429,13 +469,17 @@ function TemplateDesignerInner() {
       const y = oy === "center" ? (o.top ?? 0) - h / 2 : (o.top ?? 0);
 
       if (type === "text") {
+        const cp = typeof o.getCenterPoint === "function"
+          ? o.getCenterPoint()
+          : { x: o.left ?? 0, y: o.top ?? 0 };
         results.push({
           id: o.__id,
           type: "text",
           label: String(o.text ?? "Text").slice(0, 30) || "Text",
-          x,
-          y,
-          width: o.width ?? 800,
+          // PinDesigner text layout uses center coordinates.
+          x: cp.x,
+          y: cp.y,
+          width: w || o.width || 800,
           height: h,
           defaultText: o.text ?? "",
           fontSize: o.fontSize ?? 48,
@@ -446,6 +490,7 @@ function TemplateDesignerInner() {
           textAlign: o.textAlign ?? "center",
         });
       } else if (type === "image") {
+        if (o.type !== "rect") continue;
         results.push({
           id: o.__id,
           type: "image",
