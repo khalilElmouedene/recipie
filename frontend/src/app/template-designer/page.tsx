@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState, Suspense } from "react";
+import React, { useCallback, useEffect, useRef, useState, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -14,6 +14,7 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
+  Loader2,
   X,
 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -27,6 +28,21 @@ function uid(prefix: string) {
 }
 
 type SelType = "text" | "image" | "band" | null;
+
+const TEMPLATE_FONTS = [
+  "Triumvirate Compressed",
+  "Quintus Regular",
+  "Penumbra Sans Std",
+];
+
+const SYSTEM_FONTS = [
+  "Arial",
+  "Georgia",
+  "Times New Roman",
+  "Verdana",
+  "Courier New",
+  "Impact",
+];
 
 function TemplateDesignerInner() {
   const router = useRouter();
@@ -54,6 +70,10 @@ function TemplateDesignerInner() {
   const [textAlign, setTextAlign] = useState("center");
   const [fontWeight, setFontWeight] = useState("normal");
   const [fontStyle, setFontStyle] = useState("normal");
+  const [fontFamily, setFontFamily] = useState("Arial");
+  const [customFonts, setCustomFonts] = useState<string[]>([]);
+  const [fontInput, setFontInput] = useState("");
+  const [fontLoading, setFontLoading] = useState(false);
 
   // Band / image zone color
   const [elemColor, setElemColor] = useState("#4a90d9");
@@ -63,6 +83,75 @@ function TemplateDesignerInner() {
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  const injectFontStylesheet = useCallback((fontName: string) => {
+    const family = fontName.trim().replace(/ /g, "+");
+    if (!family) return;
+    const linkId = `gfont-${family}`;
+    if (!document.getElementById(linkId)) {
+      const link = document.createElement("link");
+      link.id = linkId;
+      link.rel = "stylesheet";
+      link.href = `https://fonts.googleapis.com/css2?family=${family}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
+      document.head.appendChild(link);
+    }
+  }, []);
+
+  const saveFontsToDb = useCallback((fonts: string[]) => {
+    api.setCustomFonts(fonts).catch(() => {});
+  }, []);
+
+  const loadGoogleFont = useCallback(async (fontName: string) => {
+    const trimmed = fontName.trim();
+    if (!trimmed) return;
+    setFontLoading(true);
+    try {
+      injectFontStylesheet(trimmed);
+      await document.fonts.load(`16px "${trimmed}"`);
+      await document.fonts.ready;
+      setCustomFonts((prev) => {
+        const next = prev.includes(trimmed) ? prev : [...prev, trimmed];
+        saveFontsToDb(next);
+        return next;
+      });
+      setFontFamily(trimmed);
+      applyText({ fontFamily: trimmed });
+      setFontInput("");
+    } catch {
+      setCustomFonts((prev) => {
+        const next = prev.includes(trimmed) ? prev : [...prev, trimmed];
+        saveFontsToDb(next);
+        return next;
+      });
+      setFontInput("");
+    } finally {
+      setFontLoading(false);
+    }
+  }, [injectFontStylesheet, saveFontsToDb]);
+
+  useEffect(() => {
+    Promise.all(TEMPLATE_FONTS.map((f) => document.fonts.load(`16px "${f}"`))).catch(() => {});
+    api.getCustomFonts()
+      .then((fonts) => {
+        setCustomFonts(fonts);
+        fonts.forEach(injectFontStylesheet);
+      })
+      .catch(() => {});
+  }, [injectFontStylesheet]);
+
+  const normalizeImageZoneRect = useCallback((obj: any) => {
+    if (!obj || obj.__ttype !== "image" || obj.type !== "rect") return;
+    const scaledW = Math.max(40, Math.round((obj.width ?? 0) * (obj.scaleX ?? 1)));
+    const scaledH = Math.max(40, Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)));
+    obj.set({
+      width: scaledW,
+      height: scaledH,
+      scaleX: 1,
+      scaleY: 1,
+      strokeUniform: true,
+    });
+    obj.setCoords();
   }, []);
 
   // ── Canvas init ────────────────────────────────────────────────────────────
@@ -99,6 +188,13 @@ function TemplateDesignerInner() {
           const t = e.target;
           if (t?.__ttype === "text") setText(t.text ?? "");
         });
+        canvas.on("object:modified", (e: any) => {
+          const obj = e.target;
+          if (obj?.__ttype === "image" && obj.type === "rect") {
+            normalizeImageZoneRect(obj);
+            canvas.renderAll();
+          }
+        });
 
         setCanvasReady(true);
       } catch (err) {
@@ -113,7 +209,7 @@ function TemplateDesignerInner() {
         fabricRef.current = null;
       }
     };
-  }, [mounted]);
+  }, [mounted, normalizeImageZoneRect]);
 
   // Sync bg color to canvas
   useEffect(() => {
@@ -132,6 +228,7 @@ function TemplateDesignerInner() {
       setTextAlign(obj.textAlign ?? "center");
       setFontWeight(obj.fontWeight ?? "normal");
       setFontStyle(obj.fontStyle ?? "normal");
+      setFontFamily(obj.fontFamily ?? "Arial");
     } else if (t === "band" || t === "image") {
       setElemColor(typeof obj.fill === "string" ? obj.fill : "#4a90d9");
     }
@@ -151,7 +248,7 @@ function TemplateDesignerInner() {
       top: PIN_H / 2 - 50,
       width: 800,
       fontSize: 64,
-      fontFamily: "Arial",
+      fontFamily,
       fontWeight: "bold",
       fill: "#333333",
       textAlign: "center",
@@ -178,6 +275,7 @@ function TemplateDesignerInner() {
       fill: "#e8e8e8",
       stroke: "#aaaaaa",
       strokeWidth: 3,
+      strokeUniform: true,
       strokeDashArray: [10, 6],
       originX: "center",
       originY: "center",
@@ -343,6 +441,7 @@ function TemplateDesignerInner() {
           fontSize: o.fontSize ?? 48,
           fontWeight: o.fontWeight ?? "normal",
           fontStyle: o.fontStyle ?? "normal",
+          fontFamily: o.fontFamily ?? "Arial",
           fill: typeof o.fill === "string" ? o.fill : "#333333",
           textAlign: o.textAlign ?? "center",
         });
@@ -408,6 +507,14 @@ function TemplateDesignerInner() {
   }
 
   const zoomPct = zoom / 100;
+  const allFonts = Array.from(
+    new Set([
+      fontFamily,
+      ...customFonts,
+      ...TEMPLATE_FONTS,
+      ...SYSTEM_FONTS,
+    ].filter(Boolean))
+  );
 
   return (
     <div className="fixed inset-0 bg-gray-950 flex flex-col text-white z-50">
@@ -693,6 +800,52 @@ function TemplateDesignerInner() {
                   <span className="text-xs font-mono text-gray-400">
                     {textColor}
                   </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1.5">
+                  Font Family
+                </label>
+                <select
+                  value={fontFamily}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setFontFamily(next);
+                    applyText({ fontFamily: next });
+                  }}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
+                  style={{ fontFamily: `"${fontFamily}", sans-serif` }}
+                >
+                  {allFonts.map((f) => (
+                    <option key={f} value={f} style={{ fontFamily: `"${f}", sans-serif` }}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1">
+                  Add Google Font
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    value={fontInput}
+                    onChange={(e) => setFontInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") loadGoogleFont(fontInput);
+                    }}
+                    placeholder="e.g. Playfair Display"
+                    className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
+                  />
+                  <button
+                    onClick={() => loadGoogleFont(fontInput)}
+                    disabled={fontLoading || !fontInput.trim()}
+                    className="px-2 py-1.5 rounded bg-brand-600 hover:bg-brand-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  >
+                    {fontLoading ? <Loader2 size={13} className="animate-spin" /> : "Add"}
+                  </button>
                 </div>
               </div>
 

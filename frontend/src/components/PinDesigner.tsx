@@ -53,6 +53,7 @@ interface TemplateElement {
   width: number;
   height: number;
   defaultText?: string;
+  fontFamily?: string;
   fontSize?: number;
   fontWeight?: string;
   fontStyle?: string;
@@ -1038,6 +1039,7 @@ export default function PinDesigner({
           width: typeof o.width === "number" ? o.width : 940,
           height: typeof o.height === "number" ? o.height : 0,
           defaultText: o.text ?? "",
+          fontFamily: o.fontFamily != null ? String(o.fontFamily) : undefined,
           fontSize: typeof o.fontSize === "number" ? o.fontSize : undefined,
           fontWeight: o.fontWeight != null ? String(o.fontWeight) : undefined,
           fontStyle: o.fontStyle != null ? String(o.fontStyle) : undefined,
@@ -1590,7 +1592,7 @@ export default function PinDesigner({
             top: el.y,
             width: el.width || 940,
             fontSize: el.fontSize || 32,
-            fontFamily: "Arial",
+            fontFamily: el.fontFamily || "Arial",
             fontWeight: el.fontWeight || "normal",
             fontStyle: (el.fontStyle as any) || "normal",
             fill: el.fill || "#333333",

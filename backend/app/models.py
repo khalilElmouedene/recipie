@@ -324,6 +324,7 @@ class PinDesignerTemplateElement(BaseModel):
     height: float
 
     defaultText: str | None = None
+    fontFamily: str | None = None
     fontSize: int | None = None
     fontWeight: str | None = None
     fontStyle: str | None = None

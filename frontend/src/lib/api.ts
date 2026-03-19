@@ -447,6 +447,7 @@ export interface PinDesignerTemplateElement {
   width: number;
   height: number;
   defaultText?: string | null;
+  fontFamily?: string | null;
   fontSize?: number | null;
   fontWeight?: string | null;
   fontStyle?: string | null;
