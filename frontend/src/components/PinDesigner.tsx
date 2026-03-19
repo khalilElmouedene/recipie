@@ -1480,8 +1480,14 @@ export default function PinDesigner({
             const imgW = img.width || 1;
             const imgH = img.height || 1;
 
-            // Cover fit: fill zone completely, crop overflow
-            const scale = Math.max(zoneW / imgW, zoneH / imgH);
+            // Cover fit + a small overflow margin so users can pan both axes.
+            const panMarginPx = Math.max(24, Math.min(zoneW, zoneH) * 0.06);
+            const scale = Math.max(
+              zoneW / imgW,
+              zoneH / imgH,
+              (zoneW + panMarginPx) / imgW,
+              (zoneH + panMarginPx) / imgH
+            );
             img.set({
               left: el.x + zoneW / 2,
               top: el.y + zoneH / 2,
@@ -2393,8 +2399,14 @@ export default function PinDesigner({
 
         const imgW = img.width || 1;
         const imgH = img.height || 1;
-        // Cover fit
-        const scale = Math.max(zoneW / imgW, zoneH / imgH);
+        // Cover fit + small overflow margin to enable left/right and up/down panning.
+        const panMarginPx = Math.max(24, Math.min(zoneW, zoneH) * 0.06);
+        const scale = Math.max(
+          zoneW / imgW,
+          zoneH / imgH,
+          (zoneW + panMarginPx) / imgW,
+          (zoneH + panMarginPx) / imgH
+        );
         img.set({
           left: zoneLeft + zoneW / 2,
           top: zoneTop + zoneH / 2,
