@@ -284,6 +284,11 @@ export async function buildTemplateOnCanvas(
   website: string = "",
   overrides?: BulkOverrides,
 ): Promise<void> {
+  const isCustomTemplateId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(template.id || "")
+  );
+  const shouldAutoStretchLastElement = !isCustomTemplateId;
+
   canvas.clear();
   canvas.backgroundColor = overrides?.bgColor || template.bgColor;
   let imageIndex = 0;
@@ -323,6 +328,10 @@ export async function buildTemplateOnCanvas(
 
   for (const el of template.elements) {
     if (el.type === "image") {
+      const legacyAssetId = String(el.id || "");
+      if (legacyAssetId.startsWith("bg_") || legacyAssetId.startsWith("img_")) {
+        continue;
+      }
       const imageUrl = images.length > 0 ? (images[imageIndex % images.length]?.trim() || "") : "";
       imageIndex++;
       if (imageUrl) {
@@ -374,7 +383,7 @@ export async function buildTemplateOnCanvas(
       const tb = new fabric.Textbox(text, {
         left: el.x, top: el.y, width: el.width || 940, originX: "center", originY: "center",
         fontSize: (isTitle && oSize) ? oSize : (el.fontSize || 32),
-        fontFamily: oFont || "Arial",
+        fontFamily: oFont || el.fontFamily || "Arial",
         fontWeight: (isTitle && oWeight) ? oWeight : (el.fontWeight || "normal"),
         fontStyle: (el.fontStyle as any) || "normal",
         fill,
@@ -387,24 +396,26 @@ export async function buildTemplateOnCanvas(
     }
   }
 
-  // Stretch last element to fill canvas height
-  const objs: any[] = canvas.getObjects();
-  if (objs.length > 0) {
-    const last = objs[objs.length - 1];
-    const bottom = last.originY === "center"
-      ? (last.top ?? 0) + ((last.height ?? 0) * (last.scaleY ?? 1)) / 2
-      : (last.top ?? 0) + (last.height ?? 0) * (last.scaleY ?? 1);
-    const gap = PIN_H - bottom;
-    if (gap > 1) {
-      if (last.type === "image") {
-        const origH = last.height ?? 1;
-        const newSY = (origH * (last.scaleY ?? 1) + gap) / origH;
-        last.set({ scaleY: newSY, top: (last.top ?? 0) + gap / 2 });
-        if (last.clipPath) last.clipPath.set("height", (last.clipPath.height ?? 0) + gap);
-      } else {
-        last.set("height", (last.height ?? 0) + gap);
+  if (shouldAutoStretchLastElement) {
+    // Keep old behavior for built-ins only.
+    const objs: any[] = canvas.getObjects();
+    if (objs.length > 0) {
+      const last = objs[objs.length - 1];
+      const bottom = last.originY === "center"
+        ? (last.top ?? 0) + ((last.height ?? 0) * (last.scaleY ?? 1)) / 2
+        : (last.top ?? 0) + (last.height ?? 0) * (last.scaleY ?? 1);
+      const gap = PIN_H - bottom;
+      if (gap > 1) {
+        if (last.type === "image") {
+          const origH = last.height ?? 1;
+          const newSY = (origH * (last.scaleY ?? 1) + gap) / origH;
+          last.set({ scaleY: newSY, top: (last.top ?? 0) + gap / 2 });
+          if (last.clipPath) last.clipPath.set("height", (last.clipPath.height ?? 0) + gap);
+        } else {
+          last.set("height", (last.height ?? 0) + gap);
+        }
+        last.setCoords();
       }
-      last.setCoords();
     }
   }
   canvas.renderAll();
@@ -1439,6 +1450,10 @@ export default function PinDesigner({
     const imgs = imagesOverride ?? effectiveImages;
     const ttl = titleOverride ?? effectiveTitle;
     const siteWebsite = websiteOverride ?? website;
+    const isCustomTemplateId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      String(template.id || "")
+    );
+    const shouldAutoStretchLastElement = !isCustomTemplateId;
 
     undoHistoryRef.current = [];
     canvas.clear();
@@ -1449,6 +1464,10 @@ export default function PinDesigner({
 
     for (const el of template.elements) {
       if (el.type === "image") {
+        const legacyAssetId = String(el.id || "");
+        if (legacyAssetId.startsWith("bg_") || legacyAssetId.startsWith("img_")) {
+          continue;
+        }
         const imageUrl = imgs.length > 0 ? (imgs[imageIndex % imgs.length]?.trim() || "") : "";
         imageIndex++;
         let imageLoaded = false;
@@ -1612,38 +1631,39 @@ export default function PinDesigner({
     }
 
 
-    // ── Stretch the last image/band element to fill the full canvas height ──
-    // This eliminates the empty background gap at the bottom of the pin.
-    const contentObjs = canvas.getObjects().filter(
-      (o: any) => (o.__pinType === "image" || o.__pinType === "band") && !o.__isLabel
-    );
-    if (contentObjs.length > 0) {
-      const last = contentObjs[contentObjs.length - 1] as any;
+    if (shouldAutoStretchLastElement) {
+      // Keep historical behavior for built-ins only.
+      const contentObjs = canvas.getObjects().filter(
+        (o: any) => (o.__pinType === "image" || o.__pinType === "band") && !o.__isLabel
+      );
+      if (contentObjs.length > 0) {
+        const last = contentObjs[contentObjs.length - 1] as any;
 
-      // Compute the current bottom edge of this object
-      let bottomEdge: number;
-      if (last.originY === "center") {
-        // FabricImage loaded with originY:"center"
-        bottomEdge = (last.top ?? 0) + ((last.height ?? 0) * (last.scaleY ?? 1)) / 2;
-      } else {
-        // Rect (band / placeholder) with default top-left origin
-        bottomEdge = (last.top ?? 0) + (last.height ?? 0) * (last.scaleY ?? 1);
-      }
-
-      const gap = PIN_H - bottomEdge;
-      if (gap > 1) {
-        if (last.type === "image") {
-          const origH = last.height ?? 1;
-          const curScaleY = last.scaleY ?? 1;
-          const newScaleY = (origH * curScaleY + gap) / origH;
-          last.set({ scaleY: newScaleY, top: (last.top ?? 0) + gap / 2 });
-          // Grow the clip zone to match the stretched image height
-          if (last.clipPath) last.clipPath.set("height", (last.clipPath.height ?? 0) + gap);
+        // Compute the current bottom edge of this object
+        let bottomEdge: number;
+        if (last.originY === "center") {
+          // FabricImage loaded with originY:"center"
+          bottomEdge = (last.top ?? 0) + ((last.height ?? 0) * (last.scaleY ?? 1)) / 2;
         } else {
-          last.set("height", (last.height ?? 0) + gap);
-          if (last.clipPath) last.clipPath.set("height", (last.clipPath.height ?? 0) + gap);
+          // Rect (band / placeholder) with default top-left origin
+          bottomEdge = (last.top ?? 0) + (last.height ?? 0) * (last.scaleY ?? 1);
         }
-        last.setCoords();
+
+        const gap = PIN_H - bottomEdge;
+        if (gap > 1) {
+          if (last.type === "image") {
+            const origH = last.height ?? 1;
+            const curScaleY = last.scaleY ?? 1;
+            const newScaleY = (origH * curScaleY + gap) / origH;
+            last.set({ scaleY: newScaleY, top: (last.top ?? 0) + gap / 2 });
+            // Grow the clip zone to match the stretched image height
+            if (last.clipPath) last.clipPath.set("height", (last.clipPath.height ?? 0) + gap);
+          } else {
+            last.set("height", (last.height ?? 0) + gap);
+            if (last.clipPath) last.clipPath.set("height", (last.clipPath.height ?? 0) + gap);
+          }
+          last.setCoords();
+        }
       }
     }
 
