@@ -84,6 +84,11 @@ function TemplateDesignerInner() {
   // Saving
   const [saving, setSaving] = useState(false);
   const [editingLoaded, setEditingLoaded] = useState(false);
+  const undoHistoryRef = useRef<string[]>([]);
+  const isRestoringRef = useRef(false);
+  const transformSaveDoneRef = useRef(false);
+  const UNDO_CUSTOM_KEYS = ["__id", "__ttype"];
+  const MAX_UNDO = 50;
 
   useEffect(() => {
     setMounted(true);
@@ -144,6 +149,20 @@ function TemplateDesignerInner() {
       .catch(() => {});
   }, [injectFontStylesheet]);
 
+  const saveUndoState = useCallback(() => {
+    const canvas = fabricRef.current;
+    if (!canvas || isRestoringRef.current) return;
+    try {
+      const json = JSON.stringify(canvas.toObject(UNDO_CUSTOM_KEYS));
+      const history = undoHistoryRef.current;
+      if (history.length > 0 && history[history.length - 1] === json) return;
+      history.push(json);
+      if (history.length > MAX_UNDO) history.shift();
+    } catch {
+      // ignore
+    }
+  }, []);
+
   // ── Canvas init ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!mounted || !canvasRef.current || fabricRef.current) return;
@@ -178,6 +197,30 @@ function TemplateDesignerInner() {
           const t = e.target;
           if (t?.__ttype === "text") setText(t.text ?? "");
         });
+        canvas.on("object:moving", () => {
+          if (!transformSaveDoneRef.current) {
+            transformSaveDoneRef.current = true;
+            saveUndoState();
+          }
+        });
+        canvas.on("object:scaling", () => {
+          if (!transformSaveDoneRef.current) {
+            transformSaveDoneRef.current = true;
+            saveUndoState();
+          }
+        });
+        canvas.on("object:rotating", () => {
+          if (!transformSaveDoneRef.current) {
+            transformSaveDoneRef.current = true;
+            saveUndoState();
+          }
+        });
+        canvas.on("object:modified", () => {
+          transformSaveDoneRef.current = false;
+        });
+
+        // Seed undo stack with initial empty canvas.
+        saveUndoState();
 
         setCanvasReady(true);
       } catch (err) {
@@ -192,7 +235,7 @@ function TemplateDesignerInner() {
         fabricRef.current = null;
       }
     };
-  }, [mounted]);
+  }, [mounted, saveUndoState]);
 
   // Sync bg color to canvas
   useEffect(() => {
@@ -224,6 +267,41 @@ function TemplateDesignerInner() {
   function getActive(): any | null {
     return fabricRef.current?.getActiveObject() ?? null;
   }
+
+  const performUndo = useCallback(async () => {
+    const canvas = fabricRef.current;
+    if (!canvas || isRestoringRef.current) return;
+    const history = undoHistoryRef.current;
+    if (history.length <= 1) return;
+    history.pop();
+    const previous = history[history.length - 1];
+    if (!previous) return;
+
+    isRestoringRef.current = true;
+    try {
+      await canvas.loadFromJSON(previous);
+      canvas.renderAll();
+      setSelType(null);
+    } catch {
+      // ignore
+    } finally {
+      isRestoringRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const isUndo = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z";
+      if (!isUndo) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable) return;
+      e.preventDefault();
+      void performUndo();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [performUndo]);
 
   const loadExistingTemplate = useCallback(async () => {
     if (!editingTemplateId || editingLoaded) return;
@@ -295,11 +373,13 @@ function TemplateDesignerInner() {
       }
 
       canvas.renderAll();
+      undoHistoryRef.current = [];
+      saveUndoState();
       setEditingLoaded(true);
     } catch {
       // ignore
     }
-  }, [editingTemplateId, editingLoaded]);
+  }, [editingTemplateId, editingLoaded, saveUndoState]);
 
   useEffect(() => {
     if (!canvasReady) return;
@@ -311,6 +391,7 @@ function TemplateDesignerInner() {
     const canvas = fabricRef.current;
     const fabric = fabricLibRef.current;
     if (!canvas || !fabric) return;
+    saveUndoState();
     const tb = new fabric.Textbox("Text", {
       left: PIN_W / 2,
       top: PIN_H / 2 - 50,
@@ -335,6 +416,7 @@ function TemplateDesignerInner() {
     const canvas = fabricRef.current;
     const fabric = fabricLibRef.current;
     if (!canvas || !fabric) return;
+    saveUndoState();
     const rect = new fabric.Rect({
       left: PIN_W / 2,
       top: PIN_H / 3,
@@ -359,6 +441,7 @@ function TemplateDesignerInner() {
     const canvas = fabricRef.current;
     const fabric = fabricLibRef.current;
     if (!canvas || !fabric) return;
+    saveUndoState();
     const rect = new fabric.Rect({
       left: 0,
       top: PIN_H / 2 - 100,
@@ -377,6 +460,7 @@ function TemplateDesignerInner() {
     const canvas = fabricRef.current;
     const fabric = fabricLibRef.current;
     if (!canvas || !fabric) return;
+    saveUndoState();
     const tb = new fabric.Textbox("WWW.YOURSITE.COM", {
       left: PIN_W / 2,
       top: PIN_H - 60,
@@ -408,6 +492,7 @@ function TemplateDesignerInner() {
       const file = input.files?.[0];
       if (!file) return;
       const dataUrl = await readFileAsDataURL(file);
+      saveUndoState();
       const img = await fabric.FabricImage.fromURL(dataUrl, {
         crossOrigin: "anonymous",
       });
@@ -443,6 +528,7 @@ function TemplateDesignerInner() {
       const file = input.files?.[0];
       if (!file) return;
       const dataUrl = await readFileAsDataURL(file);
+      saveUndoState();
       const img = await fabric.FabricImage.fromURL(dataUrl, {
         crossOrigin: "anonymous",
       });
@@ -480,6 +566,7 @@ function TemplateDesignerInner() {
     if (!canvas) return;
     const obj = canvas.getActiveObject();
     if (!obj) return;
+    saveUndoState();
     canvas.remove(obj);
     canvas.discardActiveObject();
     canvas.renderAll();
@@ -490,6 +577,7 @@ function TemplateDesignerInner() {
   function applyText(patch: Record<string, unknown>) {
     const obj = getActive();
     if (!obj || obj.__ttype !== "text") return;
+    saveUndoState();
     obj.set(patch);
     fabricRef.current?.renderAll();
   }
@@ -497,9 +585,18 @@ function TemplateDesignerInner() {
   function applyColor(color: string) {
     const obj = getActive();
     if (!obj) return;
+    saveUndoState();
     obj.set("fill", color);
     fabricRef.current?.renderAll();
     setElemColor(color);
+  }
+
+  function applyBackgroundColor(color: string) {
+    const canvas = fabricRef.current;
+    if (canvas && canvas.backgroundColor !== color) {
+      saveUndoState();
+    }
+    setBgColor(color);
   }
 
   // ── Extract elements for API ───────────────────────────────────────────────
@@ -762,7 +859,7 @@ function TemplateDesignerInner() {
                   <input
                     type="color"
                     value={bgColor}
-                    onChange={(e) => setBgColor(e.target.value)}
+                    onChange={(e) => applyBackgroundColor(e.target.value)}
                     className="w-8 h-8 rounded-lg cursor-pointer border border-gray-700 p-0.5 bg-transparent"
                   />
                   <span className="text-xs text-gray-400 font-mono">{bgColor}</span>

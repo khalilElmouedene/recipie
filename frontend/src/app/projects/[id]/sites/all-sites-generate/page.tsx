@@ -356,6 +356,7 @@ export default function AllSitesGeneratePage() {
         <ArrowLeft size={16} /> Back to Project
       </button>
 
+      {/* ── Header ── */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Generate Articles For All Sites</h1>
         <p className="text-sm text-gray-400 mt-1">
@@ -367,79 +368,77 @@ export default function AllSitesGeneratePage() {
         </p>
       </div>
 
-      <div className="card mb-5">
-        <h2 className="text-sm font-semibold text-gray-300 mb-2">Publishing Schedule</h2>
-        <p className="text-xs text-gray-500 mb-3">
-          Queue mode: the scheduler publishes one article every interval across all sites. Example: 12
-          articles = 12 intervals.
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
-          <label className="flex items-center gap-2 text-sm text-gray-200">
-            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-            Enable scheduler
-          </label>
-          <label className="text-sm text-gray-300">
-            Interval (minutes)
-            <input
-              type="number"
-              min={1}
-              max={10080}
-              value={intervalMinutes}
-              onChange={(e) => setIntervalMinutes(Number(e.target.value || 240))}
-              className="input-field mt-1"
-            />
-
-            <div className="mt-3">
-              Delete recipe images after (days)
+      {/* ── 1. Recipe Inputs ── */}
+      <div className="space-y-3 mb-4">
+        {rows.map((r, idx) => (
+          <div key={idx} className="card border border-gray-700">
+            <div className="text-xs text-gray-500 mb-2">Recipe Input #{idx + 1}</div>
+            <div className="space-y-2">
               <input
-                type="number"
-                min={1}
-                max={3650}
-                value={imageRetentionDays}
-                onChange={(e) => setImageRetentionDays(Number(e.target.value || 4))}
-                className="input-field mt-1"
+                value={r.image_url}
+                onChange={(e) =>
+                  setRows((prev) => prev.map((x, i) => (i === idx ? { ...x, image_url: e.target.value } : x)))
+                }
+                className="input-field"
+                placeholder="Image URL"
+              />
+              <textarea
+                value={r.recipe_text}
+                onChange={(e) =>
+                  setRows((prev) => prev.map((x, i) => (i === idx ? { ...x, recipe_text: e.target.value } : x)))
+                }
+                className="input-field"
+                placeholder="Recipe text/title"
+                rows={4}
               />
             </div>
-          </label>
-          <div className="flex md:justify-end gap-2 flex-wrap">
-            <button
-              onClick={saveSchedule}
-              disabled={savingSchedule}
-              className="btn-secondary flex items-center gap-2 w-full md:w-auto justify-center"
-            >
-              <Save size={14} /> {savingSchedule ? "Saving..." : "Save Schedule"}
-            </button>
-            <button
-              onClick={startPublishingNow}
-              disabled={!canStartPublishing}
-              className="btn-primary flex items-center gap-2 w-full md:w-auto justify-center"
-              title={
-                hasRunningGeneration
-                  ? "Wait until generation job finishes"
-                  : !hasAnyGeneratedRecipes
-                    ? "Generate recipes first"
-                    : "Start queue immediately (publishes one article now, then continues by interval)"
-              }
-            >
-              <Send size={14} /> {startingPublish ? "Starting..." : "Start Publishing"}
-            </button>
+            {rows.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setRows((prev) => prev.filter((_, i) => i !== idx))}
+                className="mt-2 text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
+              >
+                <Trash2 size={12} /> Remove
+              </button>
+            )}
           </div>
-        </div>
-        {!canStartPublishing && (
-          <p className="text-xs text-amber-400 mt-2">
-            {hasRunningGeneration
-              ? "Start Publishing becomes available after generation finishes."
-              : "Generate at least one recipe first."}
-          </p>
-        )}
-        <p className="text-xs text-gray-500 mt-2">
-          {schedule?.next_run_at ? `Next run: ${new Date(schedule.next_run_at).toLocaleString()}` : "No next run scheduled"}
-        </p>
-        {schedule?.last_error && (
-          <p className="text-xs text-red-400 mt-1">Last scheduler message: {schedule.last_error}</p>
-        )}
+        ))}
       </div>
 
+      {/* ── Recipe Input action buttons ── */}
+      <div className="flex flex-wrap items-center gap-2 mb-8">
+        <input
+          ref={excelInputRef}
+          type="file"
+          accept=".xlsx,.xls"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void handleExcelImport(file);
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => excelInputRef.current?.click()}
+          disabled={importingExcel}
+          className="btn-secondary flex items-center gap-2"
+          title='Import Excel columns: "image_url", "recipe_text"'
+        >
+          <Upload size={16} /> {importingExcel ? "Importing..." : "Upload Excel"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setRows((prev) => [...prev, { image_url: "", recipe_text: "" }])}
+          className="btn-secondary flex items-center gap-2"
+        >
+          <Plus size={16} /> Add Recipe Input
+        </button>
+        <button onClick={handleRun} disabled={loading} className="btn-primary flex items-center gap-2">
+          <Send size={16} /> {loading ? "Starting..." : "Run All Sites Job"}
+        </button>
+      </div>
+
+      {/* ── 2. History ── */}
       <div className="card mb-5">
         <h2 className="text-lg font-semibold text-white mb-3">History</h2>
         <p className="text-xs text-gray-500 mb-4">
@@ -736,72 +735,78 @@ export default function AllSitesGeneratePage() {
         )}
       </div>
 
-      <div className="space-y-3">
-        {rows.map((r, idx) => (
-          <div key={idx} className="card border border-gray-700">
-            <div className="text-xs text-gray-500 mb-2">Recipe Input #{idx + 1}</div>
-            <div className="space-y-2">
+      {/* ── 3. Publishing Schedule (bottom) ── */}
+      <div className="card mb-5">
+        <h2 className="text-sm font-semibold text-gray-300 mb-2">Publishing Schedule</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Queue mode: the scheduler publishes one article every interval across all sites. Example: 12
+          articles = 12 intervals.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <label className="flex items-center gap-2 text-sm text-gray-200">
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            Enable scheduler
+          </label>
+          <label className="text-sm text-gray-300">
+            Interval (minutes)
+            <input
+              type="number"
+              min={1}
+              max={10080}
+              value={intervalMinutes}
+              onChange={(e) => setIntervalMinutes(Number(e.target.value || 240))}
+              className="input-field mt-1"
+            />
+
+            <div className="mt-3">
+              Delete recipe images after (days)
               <input
-                value={r.image_url}
-                onChange={(e) =>
-                  setRows((prev) => prev.map((x, i) => (i === idx ? { ...x, image_url: e.target.value } : x)))
-                }
-                className="input-field"
-                placeholder="Image URL"
-              />
-              <textarea
-                value={r.recipe_text}
-                onChange={(e) =>
-                  setRows((prev) => prev.map((x, i) => (i === idx ? { ...x, recipe_text: e.target.value } : x)))
-                }
-                className="input-field"
-                placeholder="Recipe text/title"
-                rows={4}
+                type="number"
+                min={1}
+                max={3650}
+                value={imageRetentionDays}
+                onChange={(e) => setImageRetentionDays(Number(e.target.value || 4))}
+                className="input-field mt-1"
               />
             </div>
-            {rows.length > 1 && (
-              <button
-                type="button"
-                onClick={() => setRows((prev) => prev.filter((_, i) => i !== idx))}
-                className="mt-2 text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
-              >
-                <Trash2 size={12} /> Remove
-              </button>
-            )}
+          </label>
+          <div className="flex md:justify-end gap-2 flex-wrap">
+            <button
+              onClick={saveSchedule}
+              disabled={savingSchedule}
+              className="btn-secondary flex items-center gap-2 w-full md:w-auto justify-center"
+            >
+              <Save size={14} /> {savingSchedule ? "Saving..." : "Save Schedule"}
+            </button>
+            <button
+              onClick={startPublishingNow}
+              disabled={!canStartPublishing}
+              className="btn-primary flex items-center gap-2 w-full md:w-auto justify-center"
+              title={
+                hasRunningGeneration
+                  ? "Wait until generation job finishes"
+                  : !hasAnyGeneratedRecipes
+                    ? "Generate recipes first"
+                    : "Start queue immediately (publishes one article now, then continues by interval)"
+              }
+            >
+              <Send size={14} /> {startingPublish ? "Starting..." : "Start Publishing"}
+            </button>
           </div>
-        ))}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 mt-4">
-        <input
-          ref={excelInputRef}
-          type="file"
-          accept=".xlsx,.xls"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) void handleExcelImport(file);
-          }}
-        />
-        <button
-          type="button"
-          onClick={() => excelInputRef.current?.click()}
-          disabled={importingExcel}
-          className="btn-secondary flex items-center gap-2"
-          title='Import Excel columns: "image_url", "recipe_text"'
-        >
-          <Upload size={16} /> {importingExcel ? "Importing..." : "Upload Excel"}
-        </button>
-        <button
-          type="button"
-          onClick={() => setRows((prev) => [...prev, { image_url: "", recipe_text: "" }])}
-          className="btn-secondary flex items-center gap-2"
-        >
-          <Plus size={16} /> Add Recipe Input
-        </button>
-        <button onClick={handleRun} disabled={loading} className="btn-primary flex items-center gap-2">
-          <Send size={16} /> {loading ? "Starting..." : "Run All Sites Job"}
-        </button>
+        </div>
+        {!canStartPublishing && (
+          <p className="text-xs text-amber-400 mt-2">
+            {hasRunningGeneration
+              ? "Start Publishing becomes available after generation finishes."
+              : "Generate at least one recipe first."}
+          </p>
+        )}
+        <p className="text-xs text-gray-500 mt-2">
+          {schedule?.next_run_at ? `Next run: ${new Date(schedule.next_run_at).toLocaleString()}` : "No next run scheduled"}
+        </p>
+        {schedule?.last_error && (
+          <p className="text-xs text-red-400 mt-1">Last scheduler message: {schedule.last_error}</p>
+        )}
       </div>
     </div>
   );
