@@ -322,6 +322,7 @@ class ImageCleanupRunRequest(BaseModel):
 
 class ImageCleanupRunResult(BaseModel):
     recipes_updated: int
+    recipes_deleted: int = 0
     files_deleted: int
     mode: str
 

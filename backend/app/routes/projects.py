@@ -462,6 +462,7 @@ async def run_image_cleanup_now(
     )
     return ImageCleanupRunResult(
         recipes_updated=result["recipes_updated"],
+        recipes_deleted=result.get("recipes_deleted", 0),
         files_deleted=result["files_deleted"],
         mode="delete_all_published" if body.delete_all_published else (
             "retention_published_only" if body.published_only else "retention_all_statuses"

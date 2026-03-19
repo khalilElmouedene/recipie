@@ -136,21 +136,20 @@ async def cleanup_project_generated_images(
     """
     now = datetime.now(timezone.utc)
     recipes_updated = 0
+    recipes_deleted = 0
     files_deleted = 0
 
     async with SessionLocal() as db:
         stmt = (
             select(Recipe, Site.project_id)
             .join(Site, Recipe.site_id == Site.id)
-            .where(
-                Site.project_id == project_id,
-                Recipe.generated_images.isnot(None),
-            )
+            .where(Site.project_id == project_id)
         )
 
         if delete_all_published:
             stmt = stmt.where(Recipe.status == RecipeStatus.published)
         else:
+            stmt = stmt.where(Recipe.generated_images.isnot(None))
             statuses = [RecipeStatus.published] if published_only else [
                 RecipeStatus.generated, RecipeStatus.published, RecipeStatus.failed
             ]
@@ -162,8 +161,13 @@ async def cleanup_project_generated_images(
         candidates = (await db.execute(stmt)).all()
         files_to_delete: set[Path] = set()
         to_update: list[Recipe] = []
+        to_delete: list[Recipe] = []
 
         for recipe, _ in candidates:
+            # Keep counting published recipes for delete-all mode even if they have no generated_images.
+            if delete_all_published:
+                to_delete.append(recipe)
+
             try:
                 urls = json.loads(recipe.generated_images) if recipe.generated_images else []
             except Exception:
@@ -187,17 +191,29 @@ async def cleanup_project_generated_images(
             except Exception:
                 pass
 
-        for r in to_update:
-            try:
-                r.generated_images = None
-                recipes_updated += 1
-            except Exception:
-                pass
+        if delete_all_published:
+            for r in to_delete:
+                try:
+                    await db.delete(r)
+                    recipes_deleted += 1
+                except Exception:
+                    pass
+        else:
+            for r in to_update:
+                try:
+                    r.generated_images = None
+                    recipes_updated += 1
+                except Exception:
+                    pass
 
-        if to_update:
+        if to_update or to_delete:
             await db.commit()
 
-    return {"recipes_updated": recipes_updated, "files_deleted": files_deleted}
+    return {
+        "recipes_updated": recipes_updated,
+        "recipes_deleted": recipes_deleted,
+        "files_deleted": files_deleted,
+    }
 
 
 async def run_image_retention_scheduler(stop_event: asyncio.Event) -> None:

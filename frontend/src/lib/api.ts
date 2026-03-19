@@ -456,6 +456,7 @@ export interface ImageCleanupRunRequest {
 
 export interface ImageCleanupRunResult {
   recipes_updated: number;
+  recipes_deleted?: number;
   files_deleted: number;
   mode: string;
 }

@@ -174,9 +174,9 @@ function TemplateDesignerInner() {
       cornerStrokeColor: "#ffffff",
       cornerStyle: "circle",
       transparentCorners: false,
-      cornerSize: 16,
-      borderScaleFactor: 2,
-      padding: 8,
+      cornerSize: 22,
+      borderScaleFactor: 3,
+      padding: 12,
     });
   }, []);
 

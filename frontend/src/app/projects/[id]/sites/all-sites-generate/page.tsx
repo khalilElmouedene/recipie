@@ -815,7 +815,7 @@ export default function AllSitesGeneratePage() {
           </label>
           <div className="flex md:justify-end gap-2 flex-wrap">
             <button
-              onClick={() => router.push(`/settings?tab=cleanup&projectId=${projectId}`)}
+              onClick={() => router.push("/settings?tab=cleanup")}
               className="btn-secondary flex items-center gap-2 w-full md:w-auto justify-center border-amber-700/50 text-amber-300"
               title="Open advanced image cleanup controls"
             >

@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Eye, EyeOff, Trash2 } from "lucide-react";
-import { api, getApiBaseUrl, ProjectOut, PublishScheduleOut } from "@/lib/api";
+import { api, getApiBaseUrl, ProjectOut } from "@/lib/api";
 
 interface UserProfile {
   id: string;
@@ -21,7 +21,6 @@ export default function SettingsPage() {
     const raw = searchParams.get("tab");
     return raw === "cleanup" ? "cleanup" : "profile";
   }, [searchParams]);
-  const initialProjectIdFromQuery = useMemo(() => searchParams.get("projectId") ?? "", [searchParams]);
 
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
 
@@ -45,8 +44,6 @@ export default function SettingsPage() {
   const [showConfirm, setShowConfirm] = useState(false);
 
   const [projects, setProjects] = useState<ProjectOut[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
-  const [schedule, setSchedule] = useState<PublishScheduleOut | null>(null);
   const [cleanupLoading, setCleanupLoading] = useState(false);
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [cleanupMessage, setCleanupMessage] = useState("");
@@ -67,29 +64,9 @@ export default function SettingsPage() {
   useEffect(() => {
     api
       .getProjects()
-      .then((list) => {
-        setProjects(list);
-        if (list.length > 0) {
-          setSelectedProjectId((prev) => prev || initialProjectIdFromQuery || list[0].id);
-        }
-      })
+      .then(setProjects)
       .catch(() => {});
-  }, [initialProjectIdFromQuery]);
-
-  useEffect(() => {
-    if (!selectedProjectId) return;
-    setCleanupError("");
-    setCleanupMessage("");
-    api
-      .getPublishSchedule(selectedProjectId)
-      .then((s) => {
-        setSchedule(s);
-        setRetentionDays(s.image_retention_days ?? 4);
-      })
-      .catch((err) => {
-        setCleanupError(err instanceof Error ? err.message : "Failed to load cleanup settings.");
-      });
-  }, [selectedProjectId]);
+  }, []);
 
   async function handleInfoSave(e: FormEvent) {
     e.preventDefault();
@@ -167,19 +144,37 @@ export default function SettingsPage() {
   }
 
   const saveRetention = async () => {
-    if (!selectedProjectId) return;
+    if (projects.length === 0) {
+      setCleanupError("No projects found.");
+      return;
+    }
     setScheduleSaving(true);
     setCleanupError("");
     setCleanupMessage("");
     try {
-      const next = await api.setPublishSchedule(selectedProjectId, {
-        enabled: schedule?.enabled ?? false,
-        interval_minutes: schedule?.interval_minutes ?? 240,
-        image_retention_days: Math.max(1, retentionDays),
-      });
-      setSchedule(next);
-      setRetentionDays(next.image_retention_days ?? Math.max(1, retentionDays));
-      setCleanupMessage("Cleanup settings saved.");
+      let updated = 0;
+      let failed = 0;
+      const nextDays = Math.max(1, retentionDays);
+      for (const project of projects) {
+        try {
+          const current = await api.getPublishSchedule(project.id);
+          await api.setPublishSchedule(project.id, {
+            enabled: current.enabled,
+            interval_minutes: current.interval_minutes,
+            image_retention_days: nextDays,
+          });
+          updated += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      if (updated === 0) {
+        setCleanupError("Could not update cleanup settings for any project.");
+      } else if (failed > 0) {
+        setCleanupMessage(`Cleanup settings updated for ${updated} project(s). Failed: ${failed}.`);
+      } else {
+        setCleanupMessage(`Cleanup settings updated for all ${updated} project(s).`);
+      }
     } catch (err) {
       setCleanupError(err instanceof Error ? err.message : "Failed to save cleanup settings.");
     } finally {
@@ -188,18 +183,42 @@ export default function SettingsPage() {
   };
 
   const runCleanup = async (mode: "retention" | "all_published") => {
-    if (!selectedProjectId) return;
+    if (projects.length === 0) {
+      setCleanupError("No projects found.");
+      return;
+    }
+    if (mode === "all_published") {
+      const confirmation = prompt(
+        "Dangerous action: this will delete ALL published recipes and their generated images across all projects.\nType DELETE to confirm."
+      );
+      if (confirmation !== "DELETE") {
+        return;
+      }
+    }
     setCleanupLoading(true);
     setCleanupError("");
     setCleanupMessage("");
     try {
-      const result = await api.runProjectImageCleanup(selectedProjectId, {
-        delete_all_published: mode === "all_published",
-        published_only: mode === "all_published" ? true : publishedOnly,
-        retention_days: mode === "retention" ? Math.max(1, retentionDays) : undefined,
-      });
+      let totalRecipesUpdated = 0;
+      let totalRecipesDeleted = 0;
+      let totalFilesDeleted = 0;
+      let failed = 0;
+      for (const project of projects) {
+        try {
+          const result = await api.runProjectImageCleanup(project.id, {
+            delete_all_published: mode === "all_published",
+            published_only: mode === "all_published" ? true : publishedOnly,
+            retention_days: mode === "retention" ? Math.max(1, retentionDays) : undefined,
+          });
+          totalRecipesUpdated += result.recipes_updated;
+          totalRecipesDeleted += result.recipes_deleted || 0;
+          totalFilesDeleted += result.files_deleted;
+        } catch {
+          failed += 1;
+        }
+      }
       setCleanupMessage(
-        `Cleanup complete (${result.mode}). Updated recipes: ${result.recipes_updated}. Deleted files: ${result.files_deleted}.`
+        `Cleanup complete (${mode}). Updated recipes: ${totalRecipesUpdated}. Deleted recipes: ${totalRecipesDeleted}. Deleted files: ${totalFilesDeleted}.${failed > 0 ? ` Failed projects: ${failed}.` : ""}`
       );
     } catch (err) {
       setCleanupError(err instanceof Error ? err.message : "Cleanup failed.");
@@ -406,22 +425,9 @@ export default function SettingsPage() {
       {activeTab === "cleanup" && (
         <section className="rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-5">
           <h2 className="text-lg font-semibold text-white">Image Cleanup Controls</h2>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">Project</label>
-            <select
-              value={selectedProjectId}
-              onChange={(e) => setSelectedProjectId(e.target.value)}
-              className="w-full md:w-[420px] rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-            >
-              {projects.length === 0 && <option value="">No projects found</option>}
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <p className="text-sm text-gray-400">
+            Actions below apply to all your accessible projects ({projects.length}).
+          </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -439,7 +445,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={saveRetention}
-                disabled={!selectedProjectId || scheduleSaving}
+                disabled={projects.length === 0 || scheduleSaving}
                 className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
               >
                 {scheduleSaving ? "Saving..." : "Save Cleanup Settings"}
@@ -461,7 +467,7 @@ export default function SettingsPage() {
             <button
               type="button"
               onClick={() => runCleanup("retention")}
-              disabled={!selectedProjectId || cleanupLoading}
+              disabled={projects.length === 0 || cleanupLoading}
               className="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-100 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
             >
               {cleanupLoading ? "Running..." : "Run Retention Cleanup Now"}
@@ -469,11 +475,11 @@ export default function SettingsPage() {
             <button
               type="button"
               onClick={() => runCleanup("all_published")}
-              disabled={!selectedProjectId || cleanupLoading}
+              disabled={projects.length === 0 || cleanupLoading}
               className="rounded-lg bg-red-900/70 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-900 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-2"
             >
               <Trash2 size={15} />
-              {cleanupLoading ? "Running..." : "Delete ALL Published Images Now"}
+              {cleanupLoading ? "Running..." : "Delete ALL Published Images + Recipes Now"}
             </button>
           </div>
 
