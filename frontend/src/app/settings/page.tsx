@@ -88,48 +88,21 @@ export default function SettingsPage() {
           {templates.map((tmpl) => (
             <div
               key={tmpl.id}
-              className="aspect-[2/3] rounded-xl border border-gray-700 overflow-hidden relative group hover:border-gray-500 transition cursor-default"
+              className="h-24 rounded-xl border border-gray-700 bg-gray-900/70 hover:border-gray-500 transition p-3 flex flex-col justify-between"
             >
-              <div
-                className="w-full h-full relative overflow-hidden"
-                style={{ backgroundColor: tmpl.bgColor || "#ffffff" }}
-              >
-                {tmpl.elements.slice(0, 8).map((el) => {
-                  // Scale 1000x1500 canvas down to the card.
-                  const SW = 0.16;
-                  const SH = 0.16;
-                  const style: React.CSSProperties = {
-                    position: "absolute",
-                    left: el.x * SW,
-                    top: el.y * SH,
-                    width: el.width * SW,
-                    height: (el.height ?? 40) * SH,
-                    borderRadius: 2,
-                    backgroundColor:
-                      el.type === "text" ? (el.fill || "#333333") : (el.bgColor || "#e8e8e8"),
-                    opacity: el.type === "text" ? 0.65 : 0.85,
-                  };
-                  return <div key={el.id} style={style} />;
-                })}
-              </div>
-
-              <div className="absolute inset-0 bg-black/65 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 p-3">
-                <p className="text-white text-xs font-semibold text-center line-clamp-2 leading-snug">{tmpl.name}</p>
-                <p className="text-gray-400 text-[10px]">
+              <p className="text-sm font-medium text-white truncate">{tmpl.name}</p>
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] text-gray-500">
                   {tmpl.elements.length} element{tmpl.elements.length !== 1 ? "s" : ""}
                 </p>
                 <button
                   onClick={() => handleDeleteTemplate(tmpl.id)}
                   disabled={deletingId === tmpl.id}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-red-900/70 text-red-300 text-[11px] hover:bg-red-900 transition disabled:opacity-50 mt-1"
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-900/60 text-red-300 text-[11px] hover:bg-red-900 transition disabled:opacity-50"
                 >
                   <Trash2 size={11} />
                   {deletingId === tmpl.id ? "Deleting…" : "Delete"}
                 </button>
-              </div>
-
-              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-2 pt-4 pb-2">
-                <p className="text-white text-[10px] font-medium truncate">{tmpl.name}</p>
               </div>
             </div>
           ))}
