@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import time
+from datetime import datetime, timezone
 from typing import Callable
 
 from slugify import slugify
@@ -17,10 +18,14 @@ def publish_recipe(
     recipe: dict,
     site_config: dict,
     log: Callable[[str], None] | None = None,
+    *,
+    post_date_gmt: datetime | None = None,
 ) -> dict:
     """Publish a single generated recipe to WordPress.
     recipe: dict with generated_article, generated_json, image_url, focus_keyword, meta_description, category, generated_images.
     site_config: dict with wp_url, wp_username, wp_password, domain.
+    post_date_gmt: optional UTC datetime. If in the future, post is created as WordPress "Scheduled" (status future).
+      If in the past, post is published immediately with that backdated post_date_gmt.
     Returns dict with wp_post_id, wp_permalink or error_message.
     """
     _log = log or print
@@ -94,9 +99,19 @@ def publish_recipe(
         post.title = title
         post.content = content
         post.slug = slug
-        post.post_status = "publish"
         post.comment_status = "open"
         post.ping_status = "closed"
+
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        if post_date_gmt is not None:
+            pd = post_date_gmt
+            if pd.tzinfo is not None:
+                pd = pd.astimezone(timezone.utc)
+            pd_naive = pd.replace(tzinfo=None)
+            post.date = pd_naive
+            post.post_status = "future" if pd_naive > now_naive else "publish"
+        else:
+            post.post_status = "publish"
         if img1_id:
             post.thumbnail = str(img1_id)
         if category:

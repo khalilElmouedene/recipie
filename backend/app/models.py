@@ -2,6 +2,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 import re
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 
@@ -310,6 +312,18 @@ class PublishScheduleUpdate(BaseModel):
     enabled: bool
     interval_minutes: int = Field(ge=1, le=10080)
     image_retention_days: int = Field(ge=1, le=3650)
+
+
+class PublishBatchRequest(BaseModel):
+    """Batch push generated recipes to WordPress in one run."""
+    mode: Literal["wordpress_scheduled", "manual_backdate"]
+
+
+class PublishBatchOut(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    errors: list[str] = []
 
 
 class ImageCleanupRunRequest(BaseModel):

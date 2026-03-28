@@ -2,12 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Save } from "lucide-react";
+import { ArrowLeft, Save, CalendarClock, History } from "lucide-react";
 import { api, GeneratedJobRecipeOut, JobOut, PublishScheduleOut } from "@/lib/api";
+import { getUserRole } from "@/lib/auth";
 
 export default function JobResultsPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const role = getUserRole();
+  const canAdmin = role === "owner" || role === "admin";
   const [job, setJob] = useState<JobOut | null>(null);
   const [recipes, setRecipes] = useState<GeneratedJobRecipeOut[]>([]);
   const [schedule, setSchedule] = useState<PublishScheduleOut | null>(null);
@@ -16,6 +19,7 @@ export default function JobResultsPage() {
   const [imageRetentionDays, setImageRetentionDays] = useState(4);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [batchPublishing, setBatchPublishing] = useState<null | "wordpress_scheduled" | "manual_backdate">(null);
 
   useEffect(() => {
     api.getJob(id).then(setJob).catch(() => router.push("/"));
@@ -59,6 +63,26 @@ export default function JobResultsPage() {
       setError(e?.message || "Failed to save publish schedule");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const hasGenerated = recipes.some((r) => r.status === "generated");
+  const canBatch = canAdmin && !!job?.project_id && hasGenerated && !batchPublishing;
+
+  const runBatch = async (mode: "wordpress_scheduled" | "manual_backdate") => {
+    if (!job?.project_id) return;
+    setBatchPublishing(mode);
+    setError(null);
+    try {
+      const res = await api.publishBatchToWordPress(job.project_id, { mode });
+      const extra = res.errors?.length ? `\n${res.errors.slice(0, 4).join("\n")}` : "";
+      alert(`WordPress batch finished.\nSucceeded: ${res.succeeded} / ${res.total}\nFailed: ${res.failed}${extra}`);
+      const list = await api.getJobGeneratedRecipes(id);
+      setRecipes(list);
+    } catch (e: any) {
+      setError(e?.message || "Batch publish failed");
+    } finally {
+      setBatchPublishing(null);
     }
   };
 
@@ -117,6 +141,38 @@ export default function JobResultsPage() {
         {schedule?.last_error && <p className="text-xs text-red-400 mt-2">Last scheduler message: {schedule.last_error}</p>}
         {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
       </div>
+
+      {canAdmin && job?.project_id && (
+        <div className="card mb-4">
+          <h2 className="text-lg font-semibold text-white mb-2">Publish to WordPress (batch)</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            Same as on the All Sites Generate page: schedule staggered future posts in WordPress using your saved interval,
+            or publish all now with random backdates (last 6 months). Save the schedule above first so the interval is stored.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={!canBatch}
+              onClick={() => void runBatch("wordpress_scheduled")}
+              className="btn-primary flex items-center gap-2 text-sm"
+            >
+              <CalendarClock size={14} />{" "}
+              {batchPublishing === "wordpress_scheduled" ? "Working…" : "Schedule on WordPress"}
+            </button>
+            <button
+              type="button"
+              disabled={!canBatch}
+              onClick={() => void runBatch("manual_backdate")}
+              className="btn-secondary flex items-center gap-2 text-sm border-orange-800/50 text-orange-200"
+            >
+              <History size={14} /> {batchPublishing === "manual_backdate" ? "Working…" : "Manual (backdated)"}
+            </button>
+          </div>
+          {!hasGenerated && (
+            <p className="text-xs text-amber-400 mt-2">No generated recipes left to publish in this job.</p>
+          )}
+        </div>
+      )}
 
       <div className="space-y-4">
         {grouped.length === 0 && (

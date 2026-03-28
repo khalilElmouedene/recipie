@@ -1,5 +1,10 @@
 from __future__ import annotations
+import asyncio
+import functools
+import random
 import uuid
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,16 +17,19 @@ from ..config import settings
 from ..database import get_db
 from ..db_models import (
     User, UserRole, Project, ProjectMember, ProjectMemberRole,
-    Site, Recipe, Job, ProjectPublishSchedule,
+    Site, Recipe, Job, ProjectPublishSchedule, RecipeStatus,
 )
 from ..dependencies import get_current_user, require_owner, check_project_access
 from ..models import (
     ProjectCreate, ProjectUpdate, ProjectOut, MemberAdd, MemberOut,
     PublishScheduleOut, PublishScheduleUpdate,
+    PublishBatchRequest, PublishBatchOut,
     ImageCleanupRunRequest, ImageCleanupRunResult,
 )
 from ..services.email_service import send_project_invite_email
 from ..services.image_retention_scheduler import cleanup_project_generated_images
+from ..services.publisher import publish_recipe
+from ..site_credentials import get_random_wp_credentials
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -436,6 +444,128 @@ async def start_publish_schedule_now(
         next_run_at=s.next_run_at,
         last_run_at=s.last_run_at,
         last_error=s.last_error,
+    )
+
+
+@router.post("/{project_id}/publish-batch", response_model=PublishBatchOut)
+async def publish_batch_to_wordpress(
+    project_id: uuid.UUID,
+    body: PublishBatchRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Publish all `generated` recipes for this project to WordPress in one batch.
+
+    - wordpress_scheduled: per site, stagger future publish dates by `interval_minutes`
+      (article 1 at now+interval, article 2 at now+2*interval, …). Posts are created
+      as WordPress scheduled (status future).
+    - manual_backdate: publish immediately with status publish and a random `post_date_gmt`
+      within the last 6 months (per article).
+    """
+    await check_project_access(project_id, user, db, require_roles=[ProjectMemberRole.admin])
+
+    sched_row = await db.execute(
+        select(ProjectPublishSchedule).where(ProjectPublishSchedule.project_id == project_id)
+    )
+    sched = sched_row.scalar_one_or_none()
+    interval_minutes = max(1, sched.interval_minutes if sched else 240)
+
+    pairs_result = await db.execute(
+        select(Recipe, Site)
+        .join(Site, Recipe.site_id == Site.id)
+        .where(Site.project_id == project_id, Recipe.status == RecipeStatus.generated)
+        .order_by(Site.id, Recipe.created_at.asc())
+    )
+    pairs = pairs_result.all()
+    if not pairs:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No generated recipes to publish for this project.",
+        )
+
+    by_site: dict[uuid.UUID, list[tuple[Recipe, Site]]] = defaultdict(list)
+    for recipe, site in pairs:
+        by_site[site.id].append((recipe, site))
+
+    now = datetime.now(timezone.utc)
+    interval = timedelta(minutes=interval_minutes)
+    work: list[tuple[Recipe, Site, datetime]] = []
+
+    if body.mode == "wordpress_scheduled":
+        for _site_id, site_pairs in by_site.items():
+            for i, (recipe, site) in enumerate(site_pairs):
+                post_dt = now + interval * (i + 1)
+                work.append((recipe, site, post_dt))
+    else:
+        six_months_sec = int(timedelta(days=183).total_seconds())
+        flat = [p for plist in by_site.values() for p in plist]
+        for recipe, site in flat:
+            off = random.randint(0, max(1, six_months_sec))
+            post_dt = now - timedelta(seconds=off)
+            work.append((recipe, site, post_dt))
+
+    succeeded = 0
+    failed = 0
+    errors: list[str] = []
+
+    for recipe, site, post_dt in work:
+        if not recipe.generated_article:
+            failed += 1
+            msg = f"Recipe {recipe.id}: missing generated article"
+            if len(errors) < 12:
+                errors.append(msg)
+            recipe.status = RecipeStatus.failed
+            recipe.error_message = msg
+            await db.commit()
+            continue
+
+        wp_username, wp_password = get_random_wp_credentials(site)
+        site_config = {
+            "wp_url": site.wp_url,
+            "wp_username": wp_username,
+            "wp_password": wp_password,
+            "domain": site.domain if site.domain.startswith("http") else f"https://{site.domain}",
+        }
+        recipe_dict = {
+            "id": str(recipe.id),
+            "recipe_text": recipe.recipe_text,
+            "generated_article": recipe.generated_article,
+            "generated_json": recipe.generated_json,
+            "focus_keyword": recipe.focus_keyword,
+            "meta_description": recipe.meta_description,
+            "category": recipe.category,
+            "image_url": recipe.image_url,
+            "generated_images": recipe.generated_images,
+        }
+        pub_fn = functools.partial(
+            publish_recipe,
+            recipe_dict,
+            site_config,
+            None,
+            post_date_gmt=post_dt,
+        )
+        result = await asyncio.to_thread(pub_fn)
+
+        if result.get("error_message"):
+            failed += 1
+            err = str(result["error_message"])
+            recipe.status = RecipeStatus.failed
+            recipe.error_message = err
+            if len(errors) < 12:
+                errors.append(f"Recipe {recipe.id}: {err[:200]}")
+        else:
+            succeeded += 1
+            recipe.wp_post_id = result.get("wp_post_id")
+            recipe.wp_permalink = result.get("wp_permalink")
+            recipe.status = RecipeStatus.published
+            recipe.error_message = None
+        await db.commit()
+
+    return PublishBatchOut(
+        total=len(work),
+        succeeded=succeeded,
+        failed=failed,
+        errors=errors,
     )
 
 

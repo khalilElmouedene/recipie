@@ -121,6 +121,13 @@ export const api = {
     request<PublishScheduleOut>(`/api/projects/${projectId}/publish-schedule/start-now`, {
       method: "POST",
     }),
+
+  publishBatchToWordPress: (projectId: string, data: PublishBatchRequest) =>
+    request<PublishBatchOut>(`/api/projects/${projectId}/publish-batch`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   runProjectImageCleanup: (projectId: string, data: ImageCleanupRunRequest) =>
     request<ImageCleanupRunResult>(`/api/projects/${projectId}/image-cleanup/run`, {
       method: "POST",
@@ -446,6 +453,17 @@ export interface PublishScheduleUpdate {
   enabled: boolean;
   interval_minutes: number;
   image_retention_days: number;
+}
+
+export interface PublishBatchRequest {
+  mode: "wordpress_scheduled" | "manual_backdate";
+}
+
+export interface PublishBatchOut {
+  total: number;
+  succeeded: number;
+  failed: number;
+  errors: string[];
 }
 
 export interface ImageCleanupRunRequest {

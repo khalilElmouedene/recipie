@@ -17,6 +17,8 @@ import {
   ChevronUp,
   Globe,
   RefreshCw,
+  CalendarClock,
+  History,
 } from "lucide-react";
 import {
   api,
@@ -70,7 +72,7 @@ export default function AllSitesGeneratePage() {
   const [intervalMinutes, setIntervalMinutes] = useState(240);
   const [imageRetentionDays, setImageRetentionDays] = useState(4);
   const [savingSchedule, setSavingSchedule] = useState(false);
-  const [startingPublish, setStartingPublish] = useState(false);
+  const [batchPublishing, setBatchPublishing] = useState<null | "wordpress_scheduled" | "manual_backdate">(null);
   const [importingExcel, setImportingExcel] = useState(false);
   const excelInputRef = useRef<HTMLInputElement>(null);
 
@@ -157,8 +159,9 @@ export default function AllSitesGeneratePage() {
     arr.some((r) => r.status === "generated" || r.status === "published")
   );
 
-  const canStartPublishing =
-    !startingPublish &&
+  const canRunWordPressBatch =
+    canAdmin &&
+    !batchPublishing &&
     !hasRunningGeneration &&
     hasAnyGeneratedRecipes;
 
@@ -203,18 +206,27 @@ export default function AllSitesGeneratePage() {
     }
   };
 
-  const startPublishingNow = async () => {
-    setStartingPublish(true);
+  const runPublishBatch = async (mode: "wordpress_scheduled" | "manual_backdate") => {
+    setBatchPublishing(mode);
     try {
-      const s = await api.startPublishScheduleNow(projectId);
-      setSchedule(s);
-      setEnabled(s.enabled);
-      setIntervalMinutes(s.interval_minutes || 240);
-      setImageRetentionDays(s.image_retention_days || 4);
-    } catch (e: any) {
-      alert(e?.message || "Failed to start publishing queue");
+      const res = await api.publishBatchToWordPress(projectId, { mode });
+      const extra = res.errors?.length ? `\n${res.errors.slice(0, 4).join("\n")}` : "";
+      alert(`WordPress batch finished.\nSucceeded: ${res.succeeded} / ${res.total}\nFailed: ${res.failed}${extra}`);
+      const jobs = await api.getProjectJobs(projectId);
+      const filtered = jobs.filter((j) => j.job_type === "articles_all_sites");
+      setHistory(filtered);
+      const pairs = await Promise.all(
+        filtered.map((j) => api.getJobGeneratedRecipes(j.id).then((r) => [j.id, r] as const))
+      );
+      const m: Record<string, GeneratedJobRecipeOut[]> = {};
+      pairs.forEach(([jid, r]) => {
+        m[jid] = r;
+      });
+      setJobRecipeMap(m);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Batch publish failed");
     } finally {
-      setStartingPublish(false);
+      setBatchPublishing(null);
     }
   };
 
@@ -782,8 +794,14 @@ export default function AllSitesGeneratePage() {
       <div className="card mb-5">
         <h2 className="text-sm font-semibold text-gray-300 mb-2">Publishing Schedule</h2>
         <p className="text-xs text-gray-500 mb-3">
-          Queue mode: the scheduler publishes one article every interval across all sites. Example: 12
-          articles = 12 intervals.
+          <span className="text-gray-400 font-medium">WordPress batch (recommended):</span> use the buttons below to push
+          all generated recipes now. Schedule on WordPress creates posts in WordPress as scheduled: per site, article 1 is
+          due after one interval, article 2 after two intervals, and so on (uses the interval above — save schedule first).
+          Manual (backdated) publishes all posts immediately with a random publish date in the last 6 months per article.
+        </p>
+        <p className="text-xs text-gray-500 mb-3">
+          <span className="text-gray-400 font-medium">Background scheduler (optional):</span> if enabled, the server still
+          publishes one generated recipe per interval on its own.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
           <label className="flex items-center gap-2 text-sm text-gray-200">
@@ -828,28 +846,55 @@ export default function AllSitesGeneratePage() {
             >
               <Save size={14} /> {savingSchedule ? "Saving..." : "Save Schedule"}
             </button>
-            <button
-              onClick={startPublishingNow}
-              disabled={!canStartPublishing}
-              className="btn-primary flex items-center gap-2 w-full md:w-auto justify-center"
-              title={
-                hasRunningGeneration
-                  ? "Wait until generation job finishes"
-                  : !hasAnyGeneratedRecipes
-                    ? "Generate recipes first"
-                    : "Start queue immediately (publishes one article now, then continues by interval)"
-              }
-            >
-              <Send size={14} /> {startingPublish ? "Starting..." : "Start Publishing"}
-            </button>
+            {canAdmin && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void runPublishBatch("wordpress_scheduled")}
+                  disabled={!canRunWordPressBatch}
+                  className="btn-primary flex items-center gap-2 w-full md:w-auto justify-center"
+                  title={
+                    hasRunningGeneration
+                      ? "Wait until generation finishes"
+                      : !hasAnyGeneratedRecipes
+                        ? "Generate recipes first"
+                        : "Create scheduled posts in WordPress (staggered by interval, per site)"
+                  }
+                >
+                  <CalendarClock size={14} />{" "}
+                  {batchPublishing === "wordpress_scheduled" ? "Working…" : "Schedule on WordPress"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runPublishBatch("manual_backdate")}
+                  disabled={!canRunWordPressBatch}
+                  className="btn-secondary flex items-center gap-2 w-full md:w-auto justify-center border-orange-800/50 text-orange-200"
+                  title={
+                    hasRunningGeneration
+                      ? "Wait until generation finishes"
+                      : !hasAnyGeneratedRecipes
+                        ? "Generate recipes first"
+                        : "Publish all now with random dates in the past 6 months"
+                  }
+                >
+                  <History size={14} />{" "}
+                  {batchPublishing === "manual_backdate" ? "Working…" : "Manual (backdated)"}
+                </button>
+              </>
+            )}
           </div>
         </div>
-        {!canStartPublishing && (
+        {canAdmin && !canRunWordPressBatch && !batchPublishing && (
           <p className="text-xs text-amber-400 mt-2">
             {hasRunningGeneration
-              ? "Start Publishing becomes available after generation finishes."
-              : "Generate at least one recipe first."}
+              ? "Batch publish is available after generation finishes."
+              : !hasAnyGeneratedRecipes
+                ? "Generate at least one recipe first."
+                : null}
           </p>
+        )}
+        {!canAdmin && (
+          <p className="text-xs text-gray-500 mt-2">Only project admins can run WordPress batch publish.</p>
         )}
         <p className="text-xs text-gray-500 mt-2">
           {schedule?.next_run_at ? `Next run: ${new Date(schedule.next_run_at).toLocaleString()}` : "No next run scheduled"}
