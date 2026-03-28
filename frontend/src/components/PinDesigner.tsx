@@ -8,8 +8,12 @@ import {
   AlignRight, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown,
   PanelLeft, PanelRight, Settings, ChevronLeft, ChevronRight,
   Plus, Loader2, ALargeSmall, Check,
+  CalendarClock,
+  History,
 } from "lucide-react";
 import { api, getApiBaseUrl } from "@/lib/api";
+import { appendPinImageToArticleHtml } from "@/lib/pinArticleEmbed";
+import { getUserRole } from "@/lib/auth";
 import { useDesignerStore } from "@/store/useDesignerStore";
 import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 
@@ -745,8 +749,13 @@ export default function PinDesigner({
   const [pinLink, setPinLink] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [savingToRecipe, setSavingToRecipe] = useState(false);
+  const [wpBatchBusy, setWpBatchBusy] = useState<null | "wordpress_scheduled" | "manual_backdate">(null);
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+
+  const wpPublishRole = typeof window !== "undefined" ? getUserRole() : null;
+  const canPublishWpBatch =
+    Boolean(projectId) && (wpPublishRole === "owner" || wpPublishRole === "admin");
 
   // ── Frame switching ──────────────────────────────────────────────────────
   const switchToFrame = async (newIdx: number) => {
@@ -825,6 +834,47 @@ export default function PinDesigner({
     setFramePreviews((prev) => ({ ...prev, ...newPreviews }));
   };
 
+  const savePinToRecipeWithArticleEmbed = useCallback(
+    async (
+      rid: string,
+      dataUrl: string,
+      titleAlt: string,
+      extra?: { pin_title?: string; pin_description?: string }
+    ) => {
+      const full = await api.getRecipe(rid);
+      const nextArticle = appendPinImageToArticleHtml(full.generated_article ?? "", dataUrl, {
+        alt: titleAlt,
+      });
+      await api.updateRecipe(rid, {
+        pin_design_image: dataUrl,
+        pin_template_id: selectedTemplate?.id,
+        generated_article: nextArticle,
+        ...(extra?.pin_title !== undefined ? { pin_title: extra.pin_title } : {}),
+        ...(extra?.pin_description !== undefined ? { pin_description: extra.pin_description } : {}),
+      });
+    },
+    [selectedTemplate?.id]
+  );
+
+  const runWordPressBatchFromDesigner = useCallback(
+    async (mode: "wordpress_scheduled" | "manual_backdate") => {
+      if (!projectId) return;
+      setWpBatchBusy(mode);
+      try {
+        const res = await api.publishBatchToWordPress(projectId, { mode });
+        const extra = res.errors?.length ? `\n${res.errors.slice(0, 4).join("\n")}` : "";
+        alert(
+          `WordPress batch finished.\nSucceeded: ${res.succeeded} / ${res.total}\nFailed: ${res.failed}${extra}`
+        );
+      } catch (e: unknown) {
+        alert(e instanceof Error ? e.message : "Batch publish failed");
+      } finally {
+        setWpBatchBusy(null);
+      }
+    },
+    [projectId]
+  );
+
   const handleSaveAll = async () => {
     if (!frames || frames.length === 0) return;
     const canvas = fabricCanvasRef.current;
@@ -870,14 +920,13 @@ export default function PinDesigner({
       }
 
       if (dataUrl) {
-        // Save to recipe
+        // Save to recipe (pin PNG + embed in generated article HTML before WPRM block)
         if (frame.recipeId) {
           try {
-              await api.updateRecipe(frame.recipeId, {
-                pin_design_image: dataUrl,
-                pin_template_id: selectedTemplate?.id,
-              });
-          } catch { /* skip */ }
+            await savePinToRecipeWithArticleEmbed(frame.recipeId, dataUrl, frame.title);
+          } catch {
+            /* skip */
+          }
         }
         // Also download locally
         const a = document.createElement("a");
@@ -1173,13 +1222,13 @@ export default function PinDesigner({
     if (!data) return;
     setSavingToRecipe(true);
     try {
-      await api.updateRecipe(recipeId, {
-        pin_design_image: data,
+      await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle, {
         pin_title: recipePinTitle || initialTitle,
         pin_description: recipePinDescription || initialTitle,
-        pin_template_id: selectedTemplate?.id,
       });
-      alert("Design saved to recipe.");
+      alert(
+        "Design saved to recipe. The pin image was added near the end of the generated article HTML (before the recipe card when present). To hide it on the site, add CSS for .recipe-generator-pin-embed with data-pin-display optional."
+      );
     } catch (err: any) {
       alert(`Failed to save: ${err.message}`);
     } finally {
@@ -2749,15 +2798,21 @@ export default function PinDesigner({
             </button>
           )}
           {/* Multi-frame: Save All */}
-          {frames && frames.length > 1 && (
+          {frames && frames.length >= 1 && (
             <button
               onClick={handleSaveAll}
               disabled={savingAll || !selectedTemplate}
-              title={!selectedTemplate ? "Select a template first" : `Download ${frames.length} PNGs`}
+              title={
+                !selectedTemplate
+                  ? "Select a template first"
+                  : `Save pins to recipes, embed in article HTML, and download ${frames.length} PNG(s)`
+              }
               className="btn-primary flex items-center gap-1.5 px-2.5 py-1.5 text-sm disabled:opacity-40"
             >
               <Download size={15} />
-              <span className="hidden sm:inline">{savingAll ? `${saveAllProgress}%` : `Save All (${frames.length})`}</span>
+              <span className="hidden sm:inline">
+                {savingAll ? `${saveAllProgress}%` : `Save All (${frames.length})`}
+              </span>
             </button>
           )}
           {/* Single frame in multi mode — export current */}
@@ -2786,9 +2841,38 @@ export default function PinDesigner({
               onClick={handleSaveToRecipe}
               disabled={savingToRecipe || !selectedTemplate}
               className="btn-primary flex items-center gap-1.5 px-2.5 py-1.5 text-sm"
+              title="Saves pin image and appends it to the generated article HTML (before recipe card). Optional hide: .recipe-generator-pin-embed[data-pin-display=optional]{display:none}"
             >
               <Save size={15} /> <span className="hidden sm:inline">{savingToRecipe ? "Saving..." : "Save"}</span>
             </button>
+          )}
+          {canPublishWpBatch && (
+            <>
+              <button
+                type="button"
+                onClick={() => void runWordPressBatchFromDesigner("wordpress_scheduled")}
+                disabled={!!wpBatchBusy}
+                className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-brand-700/60 text-brand-300"
+                title="Push all generated recipes: WordPress Scheduled posts, staggered by project interval"
+              >
+                <CalendarClock size={14} />
+                <span className="hidden lg:inline">
+                  {wpBatchBusy === "wordpress_scheduled" ? "…" : "WP Schedule"}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void runWordPressBatchFromDesigner("manual_backdate")}
+                disabled={!!wpBatchBusy}
+                className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-orange-800/50 text-orange-200"
+                title="Publish all generated recipes now with random dates in the past 6 months"
+              >
+                <History size={14} />
+                <span className="hidden lg:inline">
+                  {wpBatchBusy === "manual_backdate" ? "…" : "WP Backdate"}
+                </span>
+              </button>
+            </>
           )}
           <button
             onClick={() => { setRightPanelOpen((v) => !v); setLeftPanelOpen(false); }}

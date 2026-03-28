@@ -223,6 +223,8 @@ async def update_recipe(
         recipe.recipe_text = body.recipe_text
     if body.generated_images is not None:
         recipe.generated_images = body.generated_images
+    if body.generated_article is not None:
+        recipe.generated_article = body.generated_article
     if body.pin_design_image is not None:
         recipe.pin_design_image = body.pin_design_image
     if body.pin_title is not None:

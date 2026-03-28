@@ -205,6 +205,7 @@ class SharedRecipeInput(BaseModel):
 class RecipeUpdate(BaseModel):
     recipe_text: str | None = None
     generated_images: str | None = None
+    generated_article: str | None = None
     pin_design_image: str | None = None
     pin_title: str | None = None
     pin_description: str | None = None

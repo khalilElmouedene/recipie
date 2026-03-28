@@ -212,6 +212,7 @@ export const api = {
   updateRecipe: (recipeId: string, data: {
     recipe_text?: string;
     generated_images?: string;
+    generated_article?: string;
     pin_design_image?: string;
     pin_title?: string;
     pin_description?: string;
