@@ -22,7 +22,9 @@ def publish_recipe(
     post_date_gmt: datetime | None = None,
 ) -> dict:
     """Publish a single generated recipe to WordPress.
-    recipe: dict with generated_article, generated_json, image_url, focus_keyword, meta_description, category, generated_images.
+    recipe: dict with recipe_text, generated_article, generated_json, image_url, focus_keyword,
+    meta_description, category, generated_images. WordPress post title and Rank Math SEO title use the
+    first line of recipe_text when present; otherwise the title extracted from the article HTML (H1/H2).
     site_config: dict with wp_url, wp_username, wp_password, domain.
     post_date_gmt: optional UTC datetime. If in the future, post is created as WordPress "Scheduled" (status future).
       If in the past, post is published immediately with that backdated post_date_gmt.
@@ -44,8 +46,10 @@ def publish_recipe(
         generated_images_str = recipe.get("generated_images", "")
 
         # Parse HTML and strip title — keep soup object for proper image injection
-        title, soup = _parse_and_extract_title(article_html)
-        slug = slugify(focus_kw or title)
+        title_from_html, soup = _parse_and_extract_title(article_html)
+        recipe_title_line = (recipe.get("recipe_text") or "").splitlines()[0].strip()
+        wp_title = recipe_title_line or title_from_html
+        slug = slugify(focus_kw or wp_title)
 
         # Resolve image sources (support 1 or 2 images from generated_images list)
         img1_source = image_url
@@ -61,17 +65,17 @@ def publish_recipe(
                 pass
 
         # Upload image 1 (featured + inline top)
-        img1_id, img1_url = upload_image(img1_source, wp, title, focus_kw, log=_log)
+        img1_id, img1_url = upload_image(img1_source, wp, wp_title, focus_kw, log=_log)
         # Fallback to original image_url if generated image URL expired/failed
         if img1_id is None and img1_source != image_url and image_url:
             _log("Generated image failed, retrying with original image_url...")
-            img1_id, img1_url = upload_image(image_url, wp, title, focus_kw, log=_log)
+            img1_id, img1_url = upload_image(image_url, wp, wp_title, focus_kw, log=_log)
 
         # Upload image 2 (mid-article, optional)
         img2_id, img2_url = None, None
         if img2_source:
-            img2_id, img2_url = upload_image(img2_source, wp, title, focus_kw,
-                                              image_slug=slugify(title) + "-2", log=_log)
+            img2_id, img2_url = upload_image(img2_source, wp, wp_title, focus_kw,
+                                              image_slug=slugify(wp_title) + "-2", log=_log)
 
         # Normalize HTTP → HTTPS (XML-RPC sometimes returns http:// on https sites)
         def _to_https(url):
@@ -96,7 +100,7 @@ def publish_recipe(
             content += f"\n[wprm-recipe id={wp_recipe_id}]"
 
         post = WordPressPost()
-        post.title = title
+        post.title = wp_title
         post.content = content
         post.slug = slug
         post.comment_status = "open"
@@ -126,8 +130,8 @@ def publish_recipe(
         except Exception:
             permalink = f"{domain}/{slug}/"
 
-        if focus_kw or meta_desc or title:
-            set_rank_math_meta(post_id, focus_kw, meta_desc, site_config, seo_title=title, log=_log)
+        if focus_kw or meta_desc or wp_title:
+            set_rank_math_meta(post_id, focus_kw, meta_desc, site_config, seo_title=wp_title, log=_log)
 
         _log(f"Post created (ID: {post_id}) - {permalink}")
         result["wp_post_id"] = str(post_id)
