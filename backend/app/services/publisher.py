@@ -30,13 +30,39 @@ def _strip_title_decorations(title: str) -> str:
     return t
 
 
+def _safe_strip_title_decorations(title: str) -> str:
+    """Strip (…) / […] only when the result still looks like a full title, not a leftover fragment."""
+    if not title:
+        return title
+    cleaned = _strip_title_decorations(title)
+    if not cleaned.strip():
+        return title
+    # If the original was long but stripping left a tiny tail (e.g. "(Full Title Here) 4 onions" → "4 onions"), keep original.
+    if len(title) > 40 and len(cleaned) < min(28, max(15, len(title) // 3)):
+        return title
+    return cleaned
+
+
 def _wordpress_display_title(recipe: dict, title_from_html: str) -> str:
-    """Prefer pin_title, then recipe_text first line, then HTML title; strip (…) / […] clutter."""
-    pin_t = (recipe.get("pin_title") or "").strip()
+    """Blog post title from the article H1 (same as older publishes), with light (…) / […] cleanup.
+
+    Does not use pin_title — Pinterest titles are intentionally short and break SEO post titles.
+    """
     recipe_line = (recipe.get("recipe_text") or "").splitlines()[0].strip()
-    base = pin_t or recipe_line or title_from_html
-    cleaned = _strip_title_decorations(base)
-    return cleaned if cleaned.strip() else base
+    html_t = (title_from_html or "").strip()
+    placeholder = "New Recipe Post"
+
+    h = _safe_strip_title_decorations(html_t) if html_t and html_t != placeholder else ""
+    r = _safe_strip_title_decorations(recipe_line) if recipe_line else ""
+
+    if h and r:
+        # Prefer the longer string so we keep full H1-style titles over a short recipe prompt line.
+        return h if len(h) >= len(r) else r
+    if h:
+        return h
+    if r:
+        return r
+    return html_t or recipe_line or placeholder
 
 
 def publish_recipe(
@@ -47,10 +73,10 @@ def publish_recipe(
     post_date_gmt: datetime | None = None,
 ) -> dict:
     """Publish a single generated recipe to WordPress.
-    recipe: dict with optional pin_title, recipe_text, generated_article, generated_json, image_url,
-    focus_keyword, meta_description, category, generated_images. WordPress post title and Rank Math SEO
-    title use pin_title if set, else the first line of recipe_text, else the HTML title — with
-    parenthetical and square-bracket segments removed (e.g. "(Thinly Sliced)").
+    recipe: dict with recipe_text, generated_article, generated_json, image_url, focus_keyword,
+    meta_description, category, generated_images (pin_title is ignored for the blog title — it is for
+    Pinterest only). Post / Rank Math title comes from the article H1 when present, else recipe_text
+    first line; parentheticals are stripped only when the result still looks like a full title.
     site_config: dict with wp_url, wp_username, wp_password, domain.
     post_date_gmt: optional UTC datetime. If in the future, post is created as WordPress "Scheduled" (status future).
       If in the past, post is published immediately with that backdated post_date_gmt.
