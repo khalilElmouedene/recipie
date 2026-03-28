@@ -228,6 +228,7 @@ class JobManager:
                 {
                     "id": str(r.id),
                     "recipe_text": r.recipe_text,
+                    "pin_title": r.pin_title,
                     "image_url": r.image_url,
                     "generated_article": r.generated_article,
                     "generated_json": r.generated_json,

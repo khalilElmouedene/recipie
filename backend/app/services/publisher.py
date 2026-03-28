@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import re
 import time
 from datetime import datetime, timezone
 from typing import Callable
@@ -14,6 +15,30 @@ from wordpress_xmlrpc import Client as WPClient, WordPressPost
 from wordpress_xmlrpc.methods.posts import NewPost, GetPost
 
 
+def _strip_title_decorations(title: str) -> str:
+    """Remove parenthetical / bracketed asides (ingredient notes, etc.) for WP + Rank Math titles."""
+    if not title:
+        return title
+    t = title.strip()
+    while True:
+        nt = re.sub(r"\s*\[[^\]]*\]", "", t)
+        nt = re.sub(r"\s*\([^)]*\)", "", nt)
+        nt = re.sub(r"\s+", " ", nt).strip()
+        if nt == t:
+            break
+        t = nt
+    return t
+
+
+def _wordpress_display_title(recipe: dict, title_from_html: str) -> str:
+    """Prefer pin_title, then recipe_text first line, then HTML title; strip (…) / […] clutter."""
+    pin_t = (recipe.get("pin_title") or "").strip()
+    recipe_line = (recipe.get("recipe_text") or "").splitlines()[0].strip()
+    base = pin_t or recipe_line or title_from_html
+    cleaned = _strip_title_decorations(base)
+    return cleaned if cleaned.strip() else base
+
+
 def publish_recipe(
     recipe: dict,
     site_config: dict,
@@ -22,9 +47,10 @@ def publish_recipe(
     post_date_gmt: datetime | None = None,
 ) -> dict:
     """Publish a single generated recipe to WordPress.
-    recipe: dict with recipe_text, generated_article, generated_json, image_url, focus_keyword,
-    meta_description, category, generated_images. WordPress post title and Rank Math SEO title use the
-    first line of recipe_text when present; otherwise the title extracted from the article HTML (H1/H2).
+    recipe: dict with optional pin_title, recipe_text, generated_article, generated_json, image_url,
+    focus_keyword, meta_description, category, generated_images. WordPress post title and Rank Math SEO
+    title use pin_title if set, else the first line of recipe_text, else the HTML title — with
+    parenthetical and square-bracket segments removed (e.g. "(Thinly Sliced)").
     site_config: dict with wp_url, wp_username, wp_password, domain.
     post_date_gmt: optional UTC datetime. If in the future, post is created as WordPress "Scheduled" (status future).
       If in the past, post is published immediately with that backdated post_date_gmt.
@@ -47,8 +73,7 @@ def publish_recipe(
 
         # Parse HTML and strip title — keep soup object for proper image injection
         title_from_html, soup = _parse_and_extract_title(article_html)
-        recipe_title_line = (recipe.get("recipe_text") or "").splitlines()[0].strip()
-        wp_title = recipe_title_line or title_from_html
+        wp_title = _wordpress_display_title(recipe, title_from_html)
         slug = slugify(focus_kw or wp_title)
 
         # Resolve image sources (support 1 or 2 images from generated_images list)

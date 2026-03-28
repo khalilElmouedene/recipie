@@ -529,6 +529,7 @@ async def publish_batch_to_wordpress(
         recipe_dict = {
             "id": str(recipe.id),
             "recipe_text": recipe.recipe_text,
+            "pin_title": recipe.pin_title,
             "generated_article": recipe.generated_article,
             "generated_json": recipe.generated_json,
             "focus_keyword": recipe.focus_keyword,
