@@ -15,9 +15,9 @@ function escapeHtmlAttr(s: string): string {
 /** Remove a previously injected pin block so re-saving replaces it. */
 export function removeRecipeGeneratorPinEmbed(html: string): string {
   return html
-    // Remove new WP block format (with block comments)
+    // Remove wp:html wrapped pin embed
     .replace(
-      /<!-- wp:image [^>]*recipe-generator-pin-embed[^>]*-->[\s\S]*?<!-- \/wp:image -->/gi,
+      /<!-- wp:html -->\s*<figure[^>]*data-recipe-generator-pin-embed[^>]*>[\s\S]*?<\/figure>\s*<!-- \/wp:html -->/gi,
       ""
     )
     // Remove old raw figure format (legacy)
@@ -30,18 +30,12 @@ export function removeRecipeGeneratorPinEmbed(html: string): string {
 
 function buildPinFigureHtml(imageDataUrl: string, alt: string): string {
   const safeAlt = escapeHtmlAttr(alt);
-  const blockAttrs = JSON.stringify({
-    className: "recipe-generator-pin-embed",
-    sizeSlug: "full",
-    linkDestination: "none",
-    align: "center",
-  });
   return (
-    `\n<!-- wp:image ${blockAttrs} -->\n` +
-    `<figure class="wp-block-image size-full aligncenter recipe-generator-pin-embed" data-recipe-generator-pin-embed="1" data-pin-display="optional">` +
+    `\n<!-- wp:html -->\n` +
+    `<figure class="recipe-generator-pin-embed" data-recipe-generator-pin-embed="1" data-pin-display="optional" style="max-width:100%;margin:1.5rem auto;text-align:center;">` +
     `<img src="${imageDataUrl}" alt="${safeAlt}" loading="lazy" decoding="async" style="max-width:400px;height:auto;border-radius:8px;" />` +
     `</figure>\n` +
-    `<!-- /wp:image -->\n`
+    `<!-- /wp:html -->\n`
   );
 }
 
