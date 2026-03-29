@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -431,7 +432,9 @@ async def publish_threads_post_now(
         raise HTTPException(status_code=502, detail=str(exc))
 
     # Optionally post first comment as a reply
+    # Small delay so Meta fully processes the post before we reply
     if post.first_comment:
+        time.sleep(3)
         try:
             threads_api.add_reply(
                 access_token=access_token,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -49,6 +50,7 @@ async def run_threads_scheduler(stop_event: asyncio.Event) -> None:
 
                     # Optionally post first comment as a reply
                     if post.first_comment:
+                        time.sleep(3)
                         try:
                             add_reply(
                                 access_token=access_token,
