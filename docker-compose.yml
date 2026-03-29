@@ -37,6 +37,9 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Recipe Generator}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      THREADS_APP_ID: ${THREADS_APP_ID:-}
+      THREADS_APP_SECRET: ${THREADS_APP_SECRET:-}
+      THREADS_REDIRECT_URI: ${THREADS_REDIRECT_URI:-http://localhost:3000/threads/callback}
     volumes:
       - uploads_data:/app/uploads
     depends_on:
