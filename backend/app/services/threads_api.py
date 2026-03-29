@@ -18,7 +18,7 @@ def get_oauth_url(state: str) -> str:
     params = {
         "client_id": settings.threads_app_id.strip(),
         "redirect_uri": settings.threads_redirect_uri.strip(),
-        "scope": "threads_basic,threads_content_publish",
+        "scope": "threads_basic,threads_content_publish,threads_manage_replies",
         "response_type": "code",
         "state": state,
     }
