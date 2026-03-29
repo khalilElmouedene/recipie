@@ -472,5 +472,274 @@ class JobManager:
             return True
         return False
 
+    async def resume_job(self, job_id: uuid.UUID) -> bool:
+        """
+        Resume an interrupted job after a server restart.
+        Recipes already in the DB (pending status) are reused — no new records created.
+        Returns True if the job was successfully resumed.
+        """
+        async with SessionLocal() as db:
+            result = await db.execute(select(JobModel).where(JobModel.id == job_id))
+            db_job = result.scalar_one_or_none()
+            if not db_job:
+                return False
+
+            # Already running in memory (shouldn't happen, but guard it)
+            if str(job_id) in self._running:
+                return False
+
+            credentials = await load_credentials_for_job(db, db_job.project_id, db_job.created_by)
+
+            prompts: dict[str, str] = {}
+            prj_row = await db.execute(select(Project).where(Project.id == db_job.project_id))
+            prj = prj_row.scalar_one_or_none()
+            if prj:
+                prompt_rows = await db.execute(
+                    select(Prompt).where(Prompt.owner_id == prj.owner_id)
+                )
+                for p in prompt_rows.scalars().all():
+                    prompts[p.key] = p.value
+
+            main_loop = asyncio.get_running_loop()
+            job_id_str = str(job_id)
+
+            recipes_data: list[dict] = []
+            multi_site_groups: list[dict] = []
+            site_domain = ""
+            site_config: dict = {}
+
+            if db_job.job_type == JobType.articles_all_sites:
+                # Reload existing pending recipes grouped by (recipe_text, image_url)
+                pending_rows = await db.execute(
+                    select(Recipe, Site)
+                    .join(Site, Recipe.site_id == Site.id)
+                    .where(
+                        Recipe.created_by_job_id == db_job.id,
+                        Recipe.status.in_([RecipeStatus.pending, RecipeStatus.failed]),
+                    )
+                    .order_by(Recipe.recipe_text, Site.created_at)
+                )
+                pending = pending_rows.all()
+                if not pending:
+                    # Nothing left to process — mark complete
+                    db_job.status = JobStatus.completed
+                    db_job.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    return False
+
+                # Group by (recipe_text, image_url)
+                groups: dict[tuple, list[dict]] = {}
+                for recipe, site in pending:
+                    key = (recipe.recipe_text, recipe.image_url)
+                    if key not in groups:
+                        groups[key] = []
+                    groups[key].append({
+                        "id": str(recipe.id),
+                        "site_domain": site.domain,
+                        "recipe_text": recipe.recipe_text,
+                        "image_url": recipe.image_url,
+                        "group_idx": len(groups),
+                    })
+                for idx, ((recipe_text, image_url), items) in enumerate(groups.items()):
+                    multi_site_groups.append({
+                        "idx": idx + 1,
+                        "items": items,
+                        "recipe_text": recipe_text,
+                        "image_url": image_url,
+                    })
+                recipes_data = [{"id": item["id"]} for g in multi_site_groups for item in g["items"]]
+
+            else:
+                target_status = RecipeStatus.pending if db_job.job_type == JobType.articles else RecipeStatus.generated
+                site_rows = await db.execute(
+                    select(Site).where(Site.project_id == db_job.project_id).limit(1)
+                )
+                site_obj = site_rows.scalar_one_or_none()
+                if not site_obj:
+                    db_job.status = JobStatus.failed
+                    db_job.error = "Site not found during resume"
+                    db_job.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    return False
+                site_domain = site_obj.domain
+                site_config = self._build_site_config(site_obj)
+
+                recipe_rows = await db.execute(
+                    select(Recipe).where(
+                        Recipe.created_by_job_id == db_job.id,
+                        Recipe.status == target_status,
+                    ).order_by(Recipe.created_at.asc())
+                )
+                recipes_raw = recipe_rows.scalars().all()
+                if not recipes_raw:
+                    db_job.status = JobStatus.completed
+                    db_job.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    return False
+
+                recipes_data = [
+                    {
+                        "id": str(r.id),
+                        "recipe_text": r.recipe_text or "",
+                        "image_url": r.image_url or "",
+                        "focus_keyword": r.focus_keyword or "",
+                        "meta_description": r.meta_description or "",
+                        "category": r.category or "",
+                        "generated_article": r.generated_article or "",
+                        "generated_json": r.generated_json or "",
+                        "generated_images": r.generated_images or "",
+                        "wp_post_id": r.wp_post_id or "",
+                        "wp_permalink": r.wp_permalink or "",
+                    }
+                    for r in recipes_raw
+                ]
+
+            rj = RunningJob(db_job.id)
+            self._running[job_id_str] = rj
+
+            # Reuse the same inner functions from start_job — copy the run logic
+            async def _update_recipe(recipe_id: str, fields: dict, job_type: JobType):
+                async with SessionLocal() as session:
+                    result = await session.execute(select(Recipe).where(Recipe.id == uuid.UUID(recipe_id)))
+                    recipe = result.scalar_one_or_none()
+                    if not recipe:
+                        return
+                    for key, val in fields.items():
+                        if hasattr(recipe, key) and val is not None:
+                            setattr(recipe, key, val)
+                    if "error_message" in fields and fields["error_message"]:
+                        recipe.status = RecipeStatus.failed
+                    elif job_type in (JobType.articles, JobType.articles_all_sites):
+                        recipe.status = RecipeStatus.generated
+                    elif job_type == JobType.publisher:
+                        recipe.status = RecipeStatus.published
+                    await session.commit()
+
+            async def _persist_progress(jid: str, current: int, total: int):
+                async with SessionLocal() as session:
+                    result = await session.execute(select(JobModel).where(JobModel.id == uuid.UUID(jid)))
+                    job = result.scalar_one_or_none()
+                    if job:
+                        job.current_row = current
+                        job.total_rows = total
+                        await session.commit()
+
+            async def _persist_final(jid: str, final_status: JobStatus, logs: list[str], error: str | None):
+                async with SessionLocal() as session:
+                    result = await session.execute(select(JobModel).where(JobModel.id == uuid.UUID(jid)))
+                    job = result.scalar_one_or_none()
+                    if job:
+                        if job.status == JobStatus.stopped:
+                            final_status = JobStatus.stopped
+                        job.status = final_status
+                        job.finished_at = datetime.now(timezone.utc)
+                        if error and final_status != JobStatus.stopped:
+                            job.error = error
+                        for msg in logs:
+                            session.add(JobLog(job_id=job.id, message=msg))
+                        await session.commit()
+
+            def _run_resumed():
+                from ..services.article_generator import process_recipes_from_db, generate_for_recipe, generate_images_only
+                from ..services.publisher import publish_recipes_from_db
+
+                def _on_recipe_done(recipe_id: str, fields: dict):
+                    asyncio.run_coroutine_threadsafe(
+                        _update_recipe(recipe_id, fields, db_job.job_type), main_loop
+                    ).result()
+
+                def _on_progress(current: int, total: int):
+                    rj.set_progress(current, total)
+                    asyncio.run_coroutine_threadsafe(
+                        _persist_progress(job_id_str, current, total), main_loop
+                    ).result()
+
+                def _finalize(status: JobStatus, error: str | None = None):
+                    asyncio.run_coroutine_threadsafe(
+                        _persist_final(job_id_str, status, rj._logs, error), main_loop
+                    ).result()
+                    self._running.pop(job_id_str, None)
+
+                rj.log(f"[AUTO-RESUME] Resuming {db_job.job_type.value} job with {len(recipes_data)} remaining recipes")
+                try:
+                    if db_job.job_type == JobType.articles:
+                        process_recipes_from_db(
+                            recipes=recipes_data,
+                            site_domain=site_domain,
+                            credentials=credentials,
+                            prompts=prompts,
+                            log=rj.log,
+                            should_stop=rj.should_stop,
+                            on_progress=_on_progress,
+                            on_recipe_done=_on_recipe_done,
+                        )
+                    elif db_job.job_type == JobType.publisher:
+                        publish_recipes_from_db(
+                            recipes=recipes_data,
+                            site_config=site_config,
+                            log=rj.log,
+                            should_stop=rj.should_stop,
+                            on_progress=_on_progress,
+                            on_recipe_done=_on_recipe_done,
+                        )
+                    else:  # articles_all_sites
+                        total = len(recipes_data)
+                        done = 0
+                        for group in multi_site_groups:
+                            if rj.should_stop():
+                                break
+                            for item in group["items"]:
+                                if rj.should_stop():
+                                    break
+                                run_creds = dict(credentials)
+                                run_creds["discord_auth"] = run_creds["discord_app_id"] = ""
+                                run_creds["discord_guild"] = run_creds["discord_channel"] = ""
+                                run_creds["mj_version"] = run_creds["mj_id"] = ""
+                                generated = generate_for_recipe(
+                                    recipe_id=item["id"],
+                                    recipe_text=item["recipe_text"],
+                                    image_url=item["image_url"],
+                                    site_domain=item["site_domain"],
+                                    credentials=run_creds,
+                                    prompts=prompts,
+                                    log=rj.log,
+                                    should_stop=rj.should_stop,
+                                )
+                                _on_recipe_done(item["id"], generated)
+                                done += 1
+                                _on_progress(done, total)
+
+                        if not rj.should_stop():
+                            for group in multi_site_groups:
+                                shared_images = generate_images_only(
+                                    recipe_title=group["recipe_text"].splitlines()[0].strip(),
+                                    image_url=group["image_url"],
+                                    credentials=credentials,
+                                    prompts=prompts,
+                                    log=rj.log,
+                                    should_stop=rj.should_stop,
+                                )
+                                if shared_images:
+                                    for item in group["items"]:
+                                        _on_recipe_done(item["id"], {"generated_images": shared_images})
+                                if rj.should_stop():
+                                    break
+
+                    final_status = JobStatus.stopped if rj.should_stop() else JobStatus.completed
+                    rj.log("Job completed" if final_status == JobStatus.completed else "Job stopped")
+                    _finalize(final_status)
+                except Exception as e:
+                    rj.log(f"Job failed: {e}")
+                    _finalize(JobStatus.failed, error=str(e))
+
+            thread = threading.Thread(target=_run_resumed, daemon=True)
+            rj._thread = thread
+            db_job.status = JobStatus.running
+            db_job.total_rows = len(recipes_data)
+            await db.commit()
+            thread.start()
+            logger.info("Resumed job %s (%s) with %d recipes", job_id_str, db_job.job_type.value, len(recipes_data))
+            return True
+
 
 job_manager = JobManager()
