@@ -252,9 +252,8 @@ async def threads_oauth_url(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    app_id_preview = (settings.threads_app_id or "").strip()[:6] or "(empty)"
-    logger.warning("threads_oauth_url: app_id starts_with=%r len=%d redirect_uri=%s",
-                   app_id_preview, len((settings.threads_app_id or "").strip()), settings.threads_redirect_uri)
+    _aid = (settings.threads_app_id or "").strip()
+    print(f"[THREADS DEBUG] app_id='{_aid[:6]}...' len={len(_aid)} redirect_uri='{settings.threads_redirect_uri}'", flush=True)
     if not settings.threads_app_id or not settings.threads_app_secret:
         raise HTTPException(
             status_code=503,
