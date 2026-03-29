@@ -16,8 +16,8 @@ _REFRESH_TOKEN_URL = f"{_GRAPH_BASE}/refresh_access_token"
 def get_oauth_url(state: str) -> str:
     """Build the Threads OAuth authorization URL."""
     params = {
-        "client_id": settings.threads_app_id,
-        "redirect_uri": settings.threads_redirect_uri,
+        "client_id": settings.threads_app_id.strip(),
+        "redirect_uri": settings.threads_redirect_uri.strip(),
         "scope": "threads_basic,threads_content_publish",
         "response_type": "code",
         "state": state,
@@ -34,10 +34,10 @@ def exchange_code_for_token(code: str) -> dict:
     resp = requests.post(
         _TOKEN_URL,
         data={
-            "client_id": settings.threads_app_id,
-            "client_secret": settings.threads_app_secret,
+            "client_id": settings.threads_app_id.strip(),
+            "client_secret": settings.threads_app_secret.strip(),
             "grant_type": "authorization_code",
-            "redirect_uri": settings.threads_redirect_uri,
+            "redirect_uri": settings.threads_redirect_uri.strip(),
             "code": code,
         },
         timeout=30,
