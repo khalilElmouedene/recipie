@@ -2,7 +2,9 @@ from __future__ import annotations
 import csv
 import io
 import json
+import random
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import requests as _requests
@@ -374,7 +376,9 @@ async def publish_recipe_article(
     }
 
     from ..services.publisher import publish_recipe
-    pub_result = publish_recipe(recipe_dict, site_config)
+    six_months_sec = int(timedelta(days=183).total_seconds())
+    backdate = datetime.now(timezone.utc) - timedelta(seconds=random.randint(1, six_months_sec))
+    pub_result = publish_recipe(recipe_dict, site_config, post_date_gmt=backdate)
 
     if "error_message" in pub_result:
         raise HTTPException(status_code=500, detail="Failed to publish article to WordPress")

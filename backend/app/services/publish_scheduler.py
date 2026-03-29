@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -63,7 +64,9 @@ async def run_publish_scheduler(stop_event: asyncio.Event) -> None:
                         "image_url": recipe.image_url,
                         "generated_images": recipe.generated_images,
                     }
-                    result = publish_recipe(recipe_dict, site_config)
+                    six_months_sec = int(timedelta(days=183).total_seconds())
+                    backdate = datetime.now(timezone.utc) - timedelta(seconds=random.randint(1, six_months_sec))
+                    result = publish_recipe(recipe_dict, site_config, post_date_gmt=backdate)
                     if result.get("error_message"):
                         recipe.status = RecipeStatus.failed
                         recipe.error_message = result["error_message"]
