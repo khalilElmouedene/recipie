@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import urllib.parse
 
 import requests
@@ -154,6 +155,9 @@ def publish_post(
     if not creation_id:
         raise ValueError(f"No container id in Threads response: {container_data}")
 
+    # Wait for Meta to process the container before publishing
+    time.sleep(5)
+
     # Step 2: publish container
     publish_resp = requests.post(
         f"{_GRAPH_BASE}/{user_id}/threads_publish",
@@ -200,6 +204,9 @@ def add_reply(
     creation_id = container_data.get("id")
     if not creation_id:
         raise ValueError(f"No container id in Threads reply response: {container_data}")
+
+    # Wait for Meta to process the reply container before publishing
+    time.sleep(5)
 
     # Step 2: publish reply
     publish_resp = requests.post(
