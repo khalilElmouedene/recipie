@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:3000/auth/google/callback"
 
+    # Threads OAuth
+    threads_app_id: str = ""
+    threads_app_secret: str = ""
+    threads_redirect_uri: str = "http://localhost:3000/threads/callback"
+
     # Email / SMTP
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587

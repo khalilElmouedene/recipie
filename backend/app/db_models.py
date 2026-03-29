@@ -274,3 +274,51 @@ class PinDesignerTemplate(Base):
     example_image: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+# ── Threads ───────────────────────────────────────────────────────────────────
+
+class ThreadsPostStatus(str, enum.Enum):
+    draft = "draft"
+    scheduled = "scheduled"
+    published = "published"
+    failed = "failed"
+
+
+class ThreadsProject(Base):
+    __tablename__ = "threads_projects"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ThreadsAccount(Base):
+    __tablename__ = "threads_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("threads_projects.id", ondelete="CASCADE"))
+    threads_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    username: Mapped[str] = mapped_column(String(255), nullable=False)
+    access_token: Mapped[str] = mapped_column(Text, nullable=False)  # encrypted
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ThreadsPost(Base):
+    __tablename__ = "threads_posts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("threads_projects.id", ondelete="CASCADE"))
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("threads_accounts.id", ondelete="CASCADE"))
+    text_content: Mapped[str] = mapped_column(Text, nullable=False)
+    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    first_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[ThreadsPostStatus] = mapped_column(SAEnum(ThreadsPostStatus, name="threads_post_status"), default=ThreadsPostStatus.draft)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    threads_post_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

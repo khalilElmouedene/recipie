@@ -1,12 +1,13 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle } from "lucide-react";
 import { clearToken, getUserRole } from "@/lib/auth";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderKanban },
+  { href: "/threads", label: "Threads", icon: MessageCircle },
   { href: "/pin-designer-templates", label: "Own Templates", icon: LayoutTemplate },
 ];
 

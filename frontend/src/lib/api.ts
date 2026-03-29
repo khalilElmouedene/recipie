@@ -304,6 +304,37 @@ export const api = {
 
   // ── Dashboard ──────────────────────────────────────────
   getDashboard: () => request<DashboardStats>("/api/dashboard"),
+
+  // ── Threads Projects ───────────────────────────────────
+  getThreadsProjects: () => request<ThreadsProjectOut[]>("/api/threads-projects"),
+  createThreadsProject: (data: { name: string; description: string }) =>
+    request<ThreadsProjectOut>("/api/threads-projects", { method: "POST", body: JSON.stringify(data) }),
+  deleteThreadsProject: (id: string) =>
+    request<void>(`/api/threads-projects/${id}`, { method: "DELETE" }),
+
+  // ── Threads Accounts ───────────────────────────────────
+  getThreadsAccounts: (projectId: string) =>
+    request<ThreadsAccountOut[]>(`/api/threads-projects/${projectId}/accounts`),
+  getThreadsOAuthUrl: (projectId: string) =>
+    request<{ url: string }>(`/api/threads/oauth/url?project_id=${projectId}`),
+  connectThreadsAccount: (data: { code: string; state: string }) =>
+    request<ThreadsAccountOut>("/api/threads/oauth/callback", { method: "POST", body: JSON.stringify(data) }),
+  deleteThreadsAccount: (projectId: string, accountId: string) =>
+    request<void>(`/api/threads-projects/${projectId}/accounts/${accountId}`, { method: "DELETE" }),
+
+  // ── Threads Posts ──────────────────────────────────────
+  getThreadsPosts: (projectId: string) =>
+    request<ThreadsPostOut[]>(`/api/threads-projects/${projectId}/posts`),
+  createThreadsPost: (projectId: string, data: {
+    account_id: string; text_content: string; image_url?: string;
+    first_comment?: string; scheduled_at?: string;
+  }) => request<ThreadsPostOut>(`/api/threads-projects/${projectId}/posts`, { method: "POST", body: JSON.stringify(data) }),
+  publishThreadsPost: (postId: string) =>
+    request<ThreadsPostOut>(`/api/threads-posts/${postId}/publish`, { method: "POST" }),
+  updateThreadsPost: (postId: string, data: Partial<{ text_content: string; image_url: string; first_comment: string; scheduled_at: string; account_id: string }>) =>
+    request<ThreadsPostOut>(`/api/threads-posts/${postId}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteThreadsPost: (postId: string) =>
+    request<void>(`/api/threads-posts/${postId}`, { method: "DELETE" }),
 };
 
 export function getWsUrl(jobId: string): string {
@@ -600,4 +631,35 @@ export interface PinterestBulkResponse {
   created: number;
   failed: number;
   pins: PinterestPinResult[];
+}
+
+export interface ThreadsProjectOut {
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+}
+
+export interface ThreadsAccountOut {
+  id: string;
+  project_id: string;
+  threads_user_id: string;
+  username: string;
+  token_expires_at: string | null;
+  created_at: string;
+}
+
+export interface ThreadsPostOut {
+  id: string;
+  project_id: string;
+  account_id: string;
+  text_content: string;
+  image_url: string | null;
+  first_comment: string | null;
+  status: "draft" | "scheduled" | "published" | "failed";
+  scheduled_at: string | null;
+  published_at: string | null;
+  threads_post_id: string | null;
+  error_message: string | null;
+  created_at: string;
 }
