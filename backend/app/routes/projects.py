@@ -468,7 +468,7 @@ async def publish_batch_to_wordpress(
         select(ProjectPublishSchedule).where(ProjectPublishSchedule.project_id == project_id)
     )
     sched = sched_row.scalar_one_or_none()
-    interval_minutes = max(1, sched.interval_minutes if sched else 240)
+    interval_minutes = max(1, body.interval_minutes if body.interval_minutes else (sched.interval_minutes if sched else 240))
 
     pairs_result = await db.execute(
         select(Recipe, Site)
@@ -488,13 +488,16 @@ async def publish_batch_to_wordpress(
         by_site[site.id].append((recipe, site))
 
     now = datetime.now(timezone.utc)
+    base_dt = body.first_publish_at if body.first_publish_at else now
+    if base_dt.tzinfo is None:
+        base_dt = base_dt.replace(tzinfo=timezone.utc)
     interval = timedelta(minutes=interval_minutes)
     work: list[tuple[Recipe, Site, datetime]] = []
 
     if body.mode == "wordpress_scheduled":
         for _site_id, site_pairs in by_site.items():
             for i, (recipe, site) in enumerate(site_pairs):
-                post_dt = now + interval * (i + 1)
+                post_dt = base_dt + interval * i
                 work.append((recipe, site, post_dt))
     else:
         six_months_sec = int(timedelta(days=183).total_seconds())

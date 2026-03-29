@@ -318,6 +318,8 @@ class PublishScheduleUpdate(BaseModel):
 class PublishBatchRequest(BaseModel):
     """Batch push generated recipes to WordPress in one run."""
     mode: Literal["wordpress_scheduled", "manual_backdate"]
+    first_publish_at: datetime | None = None  # base time for first post (wordpress_scheduled)
+    interval_minutes: int | None = None  # override project interval
 
 
 class PublishBatchOut(BaseModel):

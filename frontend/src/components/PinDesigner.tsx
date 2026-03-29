@@ -750,6 +750,12 @@ export default function PinDesigner({
   const [publishing, setPublishing] = useState(false);
   const [savingToRecipe, setSavingToRecipe] = useState(false);
   const [wpBatchBusy, setWpBatchBusy] = useState<null | "wordpress_scheduled" | "manual_backdate">(null);
+  const [showWpScheduleModal, setShowWpScheduleModal] = useState(false);
+  const [wpScheduleFirstAt, setWpScheduleFirstAt] = useState(() => {
+    const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
+    return d.toISOString().slice(0, 16);
+  });
+  const [wpScheduleInterval, setWpScheduleInterval] = useState(240);
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
 
@@ -857,11 +863,14 @@ export default function PinDesigner({
   );
 
   const runWordPressBatchFromDesigner = useCallback(
-    async (mode: "wordpress_scheduled" | "manual_backdate") => {
+    async (
+      mode: "wordpress_scheduled" | "manual_backdate",
+      opts?: { first_publish_at?: string; interval_minutes?: number }
+    ) => {
       if (!projectId) return;
       setWpBatchBusy(mode);
       try {
-        const res = await api.publishBatchToWordPress(projectId, { mode });
+        const res = await api.publishBatchToWordPress(projectId, { mode, ...opts });
         const extra = res.errors?.length ? `\n${res.errors.slice(0, 4).join("\n")}` : "";
         alert(
           `WordPress batch finished.\nSucceeded: ${res.succeeded} / ${res.total}\nFailed: ${res.failed}${extra}`
@@ -2850,10 +2859,10 @@ export default function PinDesigner({
             <>
               <button
                 type="button"
-                onClick={() => void runWordPressBatchFromDesigner("wordpress_scheduled")}
+                onClick={() => setShowWpScheduleModal(true)}
                 disabled={!!wpBatchBusy}
                 className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-brand-700/60 text-brand-300"
-                title="Push all generated recipes: WordPress Scheduled posts, staggered by project interval"
+                title="Configure and push all generated recipes as WordPress Scheduled posts"
               >
                 <CalendarClock size={14} />
                 <span className="hidden lg:inline">
@@ -2886,6 +2895,56 @@ export default function PinDesigner({
           </button>
         </div>
       </header>
+
+      {/* ── WP Schedule Modal ─────────────────────────────────────────────── */}
+      {showWpScheduleModal && (
+        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center">
+          <div className="bg-gray-900 rounded-xl p-6 w-full max-w-sm">
+            <h3 className="text-lg font-semibold text-white mb-4">WordPress Schedule Settings</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">First post publish date &amp; time</label>
+                <input
+                  type="datetime-local"
+                  value={wpScheduleFirstAt}
+                  onChange={(e) => setWpScheduleFirstAt(e.target.value)}
+                  className="input-field w-full"
+                />
+                <p className="text-xs text-gray-500 mt-1">Article 1 will publish at this time. Each next article adds the interval below.</p>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Interval between posts (minutes)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10080}
+                  value={wpScheduleInterval}
+                  onChange={(e) => setWpScheduleInterval(Number(e.target.value) || 240)}
+                  className="input-field w-full"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  className="btn-primary flex-1"
+                  disabled={!!wpBatchBusy}
+                  onClick={async () => {
+                    setShowWpScheduleModal(false);
+                    await runWordPressBatchFromDesigner("wordpress_scheduled", {
+                      first_publish_at: new Date(wpScheduleFirstAt).toISOString(),
+                      interval_minutes: wpScheduleInterval,
+                    });
+                  }}
+                >
+                  {wpBatchBusy === "wordpress_scheduled" ? "Scheduling…" : "Schedule Now"}
+                </button>
+                <button className="btn-secondary flex-1" onClick={() => setShowWpScheduleModal(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Pinterest Publish Modal ────────────────────────────────────────── */}
       {showPublishModal && (

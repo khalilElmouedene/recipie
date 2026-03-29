@@ -458,6 +458,8 @@ export interface PublishScheduleUpdate {
 
 export interface PublishBatchRequest {
   mode: "wordpress_scheduled" | "manual_backdate";
+  first_publish_at?: string; // ISO datetime for first post (wordpress_scheduled mode)
+  interval_minutes?: number; // override project interval
 }
 
 export interface PublishBatchOut {
