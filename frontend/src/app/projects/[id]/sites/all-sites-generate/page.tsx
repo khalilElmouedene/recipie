@@ -70,7 +70,7 @@ export default function AllSitesGeneratePage() {
   const [schedule, setSchedule] = useState<PublishScheduleOut | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [intervalMinutes, setIntervalMinutes] = useState(240);
-  const [imageRetentionDays, setImageRetentionDays] = useState(4);
+  const [deletingPublished, setDeletingPublished] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [batchPublishing, setBatchPublishing] = useState<null | "wordpress_scheduled" | "manual_backdate">(null);
   const [importingExcel, setImportingExcel] = useState(false);
@@ -117,7 +117,6 @@ export default function AllSitesGeneratePage() {
         setSchedule(s);
         setEnabled(s.enabled);
         setIntervalMinutes(s.interval_minutes || 240);
-        setImageRetentionDays(s.image_retention_days || 4);
       })
       .catch(() => {});
   }, [projectId, loadHistory]);
@@ -196,13 +195,27 @@ export default function AllSitesGeneratePage() {
       const s = await api.setPublishSchedule(projectId, {
         enabled,
         interval_minutes: intervalMinutes,
-        image_retention_days: imageRetentionDays,
+        image_retention_days: 7,
       });
       setSchedule(s);
     } catch (e: any) {
       alert(e?.message || "Failed to save publish schedule");
     } finally {
       setSavingSchedule(false);
+    }
+  };
+
+  const deletePublishedNow = async () => {
+    if (!confirm("Delete ALL published recipes and their images from server? This cannot be undone.")) return;
+    setDeletingPublished(true);
+    try {
+      const res = await api.runProjectImageCleanup(projectId, { delete_all_published: true });
+      alert(`Deleted: ${res.recipes_deleted} recipes, ${res.files_deleted} image files removed from server.`);
+      loadHistory();
+    } catch (e: any) {
+      alert(e?.message || "Failed to delete published recipes.");
+    } finally {
+      setDeletingPublished(false);
     }
   };
 
@@ -818,26 +831,15 @@ export default function AllSitesGeneratePage() {
               onChange={(e) => setIntervalMinutes(Number(e.target.value || 240))}
               className="input-field mt-1"
             />
-
-            <div className="mt-3">
-              Delete recipe images after (days)
-              <input
-                type="number"
-                min={1}
-                max={3650}
-                value={imageRetentionDays}
-                onChange={(e) => setImageRetentionDays(Number(e.target.value || 4))}
-                className="input-field mt-1"
-              />
-            </div>
           </label>
           <div className="flex md:justify-end gap-2 flex-wrap">
             <button
-              onClick={() => router.push("/settings?tab=cleanup")}
-              className="btn-secondary flex items-center gap-2 w-full md:w-auto justify-center border-amber-700/50 text-amber-300"
-              title="Open advanced image cleanup controls"
+              onClick={deletePublishedNow}
+              disabled={deletingPublished}
+              className="btn-secondary flex items-center gap-2 w-full md:w-auto justify-center border-red-700/50 text-red-300"
+              title="Delete all published recipes and their images from server"
             >
-              <Trash2 size={14} /> Image Cleanup
+              <Trash2 size={14} /> {deletingPublished ? "Deleting..." : "Delete Published Now"}
             </button>
             <button
               onClick={saveSchedule}

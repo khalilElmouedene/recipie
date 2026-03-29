@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Save, CalendarClock, History } from "lucide-react";
+import { ArrowLeft, Save, CalendarClock, History, Trash2 } from "lucide-react";
 import { api, GeneratedJobRecipeOut, JobOut, PublishScheduleOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
@@ -16,7 +16,7 @@ export default function JobResultsPage() {
   const [schedule, setSchedule] = useState<PublishScheduleOut | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [intervalMinutes, setIntervalMinutes] = useState(240);
-  const [imageRetentionDays, setImageRetentionDays] = useState(4);
+  const [deletingPublished, setDeletingPublished] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [batchPublishing, setBatchPublishing] = useState<null | "wordpress_scheduled" | "manual_backdate">(null);
@@ -33,7 +33,6 @@ export default function JobResultsPage() {
         setSchedule(s);
         setEnabled(s.enabled);
         setIntervalMinutes(s.interval_minutes || 240);
-        setImageRetentionDays(s.image_retention_days || 4);
       })
       .catch(() => {});
   }, [job?.project_id]);
@@ -56,13 +55,29 @@ export default function JobResultsPage() {
       const s = await api.setPublishSchedule(job.project_id, {
         enabled,
         interval_minutes: intervalMinutes,
-        image_retention_days: imageRetentionDays,
+        image_retention_days: 7,
       });
       setSchedule(s);
     } catch (e: any) {
       setError(e?.message || "Failed to save publish schedule");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const deletePublishedNow = async () => {
+    if (!job?.project_id) return;
+    if (!confirm("Delete ALL published recipes and their images from server? This cannot be undone.")) return;
+    setDeletingPublished(true);
+    try {
+      const res = await api.runProjectImageCleanup(job.project_id, { delete_all_published: true });
+      alert(`Deleted: ${res.recipes_deleted} recipes, ${res.files_deleted} image files removed from server.`);
+      const list = await api.getJobGeneratedRecipes(id);
+      setRecipes(list);
+    } catch (e: any) {
+      setError(e?.message || "Failed to delete published recipes.");
+    } finally {
+      setDeletingPublished(false);
     }
   };
 
@@ -121,21 +136,21 @@ export default function JobResultsPage() {
               onChange={(e) => setIntervalMinutes(Number(e.target.value || 240))}
               className="input-field mt-1"
             />
-
-            <div className="mt-3">
-              Delete recipe images after (days)
-              <input
-                type="number"
-                min={1}
-                max={3650}
-                value={imageRetentionDays}
-                onChange={(e) => setImageRetentionDays(Number(e.target.value || 4))}
-                className="input-field mt-1"
-              />
-            </div>
           </label>
-          <div className="text-xs text-gray-400 self-end">
-            {schedule?.next_run_at ? `Next run: ${new Date(schedule.next_run_at).toLocaleString()}` : "No next run scheduled"}
+          <div className="flex flex-col gap-2 self-end">
+            <div className="text-xs text-gray-400">
+              {schedule?.next_run_at ? `Next run: ${new Date(schedule.next_run_at).toLocaleString()}` : "No next run scheduled"}
+            </div>
+            {canAdmin && (
+              <button
+                onClick={deletePublishedNow}
+                disabled={deletingPublished}
+                className="btn-secondary flex items-center gap-2 justify-center border-red-700/50 text-red-300 text-sm"
+                title="Delete all published recipes and their images from server"
+              >
+                <Trash2 size={14} /> {deletingPublished ? "Deleting..." : "Delete Published Now"}
+              </button>
+            )}
           </div>
         </div>
         {schedule?.last_error && <p className="text-xs text-red-400 mt-2">Last scheduler message: {schedule.last_error}</p>}

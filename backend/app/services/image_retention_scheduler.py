@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.db_models import ProjectPublishSchedule, Recipe, RecipeStatus, Site
+from app.db_models import Recipe, RecipeStatus, Site
 
 
 UPLOADS_DIR = Path("/app/uploads")
@@ -56,30 +56,26 @@ def _extract_upload_filename(url: str) -> str | None:
         return None
 
 
+RETENTION_DAYS = 7  # Auto-cleanup: delete published recipes after 7 days
+
+
 async def _cleanup_once() -> int:
     """
-    Hourly retention pass (per-project `image_retention_days`, default 4):
+    Hourly retention pass (fixed 7-day retention):
 
-    - **Published** recipes past retention: delete cached files from `generated_images`, then delete the
-      `Recipe` row. Does not remove posts on WordPress.
-    - **Generated / failed** with `generated_images` past retention: delete cached files and clear
+    - **Published** recipes older than 7 days: delete cached files from `generated_images`, then delete
+      the `Recipe` row. Does not remove posts on WordPress.
+    - **Generated / failed** with `generated_images` older than 7 days: delete cached files and clear
       `generated_images` only.
 
     Returns how many recipe rows were updated or deleted.
     """
     now = datetime.now(timezone.utc)
-    default_retention_days = 4
     recipes_updated = 0
     recipes_deleted = 0
 
     async with SessionLocal() as db:
-        schedule_rows = await db.execute(
-            select(ProjectPublishSchedule.project_id, ProjectPublishSchedule.image_retention_days)
-        )
-        retention_by_project: dict[Any, int] = {row.project_id: row.image_retention_days for row in schedule_rows.all()}
-
-        min_days = min([default_retention_days] + list(retention_by_project.values()) or [default_retention_days])
-        candidate_threshold = now - timedelta(days=min_days)
+        candidate_threshold = now - timedelta(days=RETENTION_DAYS)
 
         published_stmt = (
             select(Recipe, Site.project_id)
@@ -108,10 +104,6 @@ async def _cleanup_once() -> int:
 
         def consider(recipe: Recipe, project_id: Any, *, allow_published_delete: bool) -> None:
             if recipe.id in seen_ids:
-                return
-            retention_days = retention_by_project.get(project_id, default_retention_days)
-            age_days = (now - recipe.created_at).total_seconds() / 86400.0
-            if age_days < float(retention_days):
                 return
             seen_ids.add(recipe.id)
             files_to_delete.update(_upload_paths_from_generated_images(recipe))
