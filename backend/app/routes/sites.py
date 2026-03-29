@@ -13,6 +13,7 @@ from ..crypto import encrypt, decrypt
 from ..database import get_db
 from ..db_models import User, Site, Recipe, Project, ProjectMemberRole
 from ..dependencies import get_current_user, check_project_access
+from .recipes import _is_safe_url
 from ..models import SiteCreate, SiteUpdate, SiteOut
 from ..services import wordpress as wp_service
 from ..site_credentials import get_random_wp_credentials
@@ -231,6 +232,9 @@ async def upload_from_url_to_wordpress(
     db: Annotated[AsyncSession, Depends(get_db)] = None,
 ):
     """Fetch image from URL and upload to WordPress."""
+    if not _is_safe_url(image_url):
+        raise HTTPException(status_code=400, detail="URL not allowed")
+
     result = await db.execute(select(Site).where(Site.id == site_id))
     site = result.scalar_one_or_none()
     if not site:

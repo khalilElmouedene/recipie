@@ -75,9 +75,9 @@ def image_proxy(
     try:
         r = _requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20, stream=True)
         r.raise_for_status()
-        media_type = r.headers.get("content-type", "image/jpeg").split(";")[0]
-        if not media_type.startswith("image/"):
-            raise HTTPException(status_code=400, detail="URL is not an image")
+        media_type = r.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+        if not media_type.startswith("image/") or media_type == "image/svg+xml":
+            raise HTTPException(status_code=400, detail="URL is not an allowed image type")
         return Response(
             content=r.content,
             media_type=media_type,
