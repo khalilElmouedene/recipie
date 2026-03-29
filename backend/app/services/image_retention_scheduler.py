@@ -16,6 +16,23 @@ from app.db_models import ProjectPublishSchedule, Recipe, RecipeStatus, Site
 UPLOADS_DIR = Path("/app/uploads")
 
 
+def _upload_paths_from_generated_images(recipe: Recipe) -> set[Path]:
+    files: set[Path] = set()
+    try:
+        urls = json.loads(recipe.generated_images) if recipe.generated_images else []
+    except Exception:
+        urls = []
+    if not isinstance(urls, list):
+        return files
+    for u in urls:
+        if not isinstance(u, str):
+            continue
+        fn = _extract_upload_filename(u)
+        if fn:
+            files.add(UPLOADS_DIR / fn)
+    return files
+
+
 def _extract_upload_filename(url: str) -> str | None:
     """
     Extract the filename for cached uploads URLs.
@@ -41,15 +58,19 @@ def _extract_upload_filename(url: str) -> str | None:
 
 async def _cleanup_once() -> int:
     """
-    Delete cached recipe images referenced by `Recipe.generated_images`.
+    Hourly retention pass (per-project `image_retention_days`, default 4):
 
-    Note: This deletes files from `/app/uploads` only; it does not delete recipes.
-    After deletion, `Recipe.generated_images` is cleared to prevent repeated work.
-    Returns the number of recipes updated.
+    - **Published** recipes past retention: delete cached files from `generated_images`, then delete the
+      `Recipe` row. Does not remove posts on WordPress.
+    - **Generated / failed** with `generated_images` past retention: delete cached files and clear
+      `generated_images` only.
+
+    Returns how many recipe rows were updated or deleted.
     """
     now = datetime.now(timezone.utc)
     default_retention_days = 4
     recipes_updated = 0
+    recipes_deleted = 0
 
     async with SessionLocal() as db:
         schedule_rows = await db.execute(
@@ -57,69 +78,78 @@ async def _cleanup_once() -> int:
         )
         retention_by_project: dict[Any, int] = {row.project_id: row.image_retention_days for row in schedule_rows.all()}
 
-        # Candidate selection uses the minimum retention days so we don't miss small-retention projects.
         min_days = min([default_retention_days] + list(retention_by_project.values()) or [default_retention_days])
         candidate_threshold = now - timedelta(days=min_days)
 
-        # Only touch recipes that have cached image URLs.
-        candidate_stmt = (
+        published_stmt = (
             select(Recipe, Site.project_id)
             .join(Site, Recipe.site_id == Site.id)
             .where(
-                Recipe.generated_images.isnot(None),
+                Recipe.status == RecipeStatus.published,
                 Recipe.created_at <= candidate_threshold,
-                Recipe.status.in_([RecipeStatus.generated, RecipeStatus.published, RecipeStatus.failed]),
             )
         )
-        candidates = (await db.execute(candidate_stmt)).all()
+        cache_stmt = (
+            select(Recipe, Site.project_id)
+            .join(Site, Recipe.site_id == Site.id)
+            .where(
+                Recipe.status.in_([RecipeStatus.generated, RecipeStatus.failed]),
+                Recipe.generated_images.isnot(None),
+                Recipe.created_at <= candidate_threshold,
+            )
+        )
+        published_rows = (await db.execute(published_stmt)).all()
+        cache_rows = (await db.execute(cache_stmt)).all()
 
+        seen_ids: set[Any] = set()
         files_to_delete: set[Path] = set()
+        to_clear: list[Recipe] = []
+        to_delete_rows: list[Recipe] = []
 
-        # First pass: figure out which recipes are actually beyond their project's retention window.
-        to_update: list[Recipe] = []
-        for recipe, project_id in candidates:
+        def consider(recipe: Recipe, project_id: Any, *, allow_published_delete: bool) -> None:
+            if recipe.id in seen_ids:
+                return
             retention_days = retention_by_project.get(project_id, default_retention_days)
             age_days = (now - recipe.created_at).total_seconds() / 86400.0
             if age_days < float(retention_days):
-                continue
+                return
+            seen_ids.add(recipe.id)
+            files_to_delete.update(_upload_paths_from_generated_images(recipe))
+            if allow_published_delete and recipe.status == RecipeStatus.published:
+                to_delete_rows.append(recipe)
+            elif recipe.status in (RecipeStatus.generated, RecipeStatus.failed):
+                to_clear.append(recipe)
 
-            # Parse the generated_images field, which is a JSON array of URLs.
-            try:
-                urls = json.loads(recipe.generated_images) if recipe.generated_images else []
-            except Exception:
-                urls = []
+        for recipe, project_id in published_rows:
+            consider(recipe, project_id, allow_published_delete=True)
+        for recipe, project_id in cache_rows:
+            consider(recipe, project_id, allow_published_delete=False)
 
-            if isinstance(urls, list):
-                for u in urls:
-                    if not isinstance(u, str):
-                        continue
-                    fn = _extract_upload_filename(u)
-                    if fn:
-                        files_to_delete.add(UPLOADS_DIR / fn)
-
-            to_update.append(recipe)
-
-        # Delete files (best-effort).
         for p in files_to_delete:
             try:
                 if p.exists():
                     p.unlink()
             except Exception:
-                # Keep going; deletion is best-effort.
                 pass
 
-        # Clear references in DB so we don't repeatedly attempt deletions.
-        for r in to_update:
+        for r in to_clear:
             try:
                 r.generated_images = None
                 recipes_updated += 1
             except Exception:
                 pass
 
-        if to_update:
+        for r in to_delete_rows:
+            try:
+                await db.delete(r)
+                recipes_deleted += 1
+            except Exception:
+                pass
+
+        if to_clear or to_delete_rows:
             await db.commit()
 
-    return recipes_updated
+    return recipes_updated + recipes_deleted
 
 
 async def cleanup_project_generated_images(

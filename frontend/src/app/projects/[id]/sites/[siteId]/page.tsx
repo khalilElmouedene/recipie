@@ -72,13 +72,16 @@ export default function SiteDetailPage() {
   const detailsLoadedRef = useRef<Set<string>>(new Set());
   const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
 
-  const loadRecipes = () =>
-    api.getRecipes(siteId, true)
-      .then((rows) => {
-        setRecipes(rows);
-        detailsLoadedRef.current.clear();
-      })
-      .catch(() => {});
+  const loadRecipes = useCallback(
+    () =>
+      api.getRecipes(siteId, true)
+        .then((rows) => {
+          setRecipes(rows);
+          detailsLoadedRef.current.clear();
+        })
+        .catch(() => {}),
+    [siteId]
+  );
 
   const ensureRecipeDetails = useCallback(async (recipeId: string) => {
     if (detailsLoadedRef.current.has(recipeId)) return;
@@ -141,7 +144,7 @@ export default function SiteDetailPage() {
       else router.push(`/projects/${projectId}`);
     });
     loadRecipes();
-  }, [projectId, siteId, router]);
+  }, [projectId, siteId, router, loadRecipes]);
 
   const handleAddRecipe = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -169,22 +172,41 @@ export default function SiteDetailPage() {
 
   const [generatingId, setGeneratingId] = useState<string | null>(null);
 
-  const pollRecipeStatus = useCallback((recipeId: string) => {
-    let attempts = 0;
-    const maxAttempts = 120;
-    const interval = setInterval(async () => {
-      attempts++;
-      try {
-        const r = await api.getRecipe(recipeId);
-        setRecipes((prev) => prev.map((old) => (old.id === recipeId ? r : old)));
-        if (r.status !== "generating" || attempts >= maxAttempts) {
-          clearInterval(interval);
+  const pollRecipeStatus = useCallback(
+    (recipeId: string) => {
+      let successAttempts = 0;
+      const maxSuccessAttempts = 200;
+      const interval = setInterval(async () => {
+        try {
+          const r = await api.getRecipe(recipeId);
+          setRecipes((prev) => prev.map((old) => (old.id === recipeId ? r : old)));
+          if (r.status !== "generating") {
+            clearInterval(interval);
+            return;
+          }
+          successAttempts++;
+          if (successAttempts >= maxSuccessAttempts) {
+            clearInterval(interval);
+            try {
+              const jobs = projectId ? await api.getProjectJobs(projectId) : [];
+              const stillRunning = jobs.some((j) => j.job_type === "articles" && j.status === "running");
+              if (!stillRunning) {
+                const rr = await api.getRecipe(recipeId);
+                setRecipes((prev) => prev.map((old) => (old.id === recipeId ? rr : old)));
+              } else {
+                loadRecipes();
+              }
+            } catch {
+              loadRecipes();
+            }
+          }
+        } catch {
+          // Network blip — keep polling until status changes or success cap (long runs / Midjourney).
         }
-      } catch {
-        clearInterval(interval);
-      }
-    }, 5000);
-  }, []);
+      }, 5000);
+    },
+    [projectId, loadRecipes]
+  );
 
   // Live WebSocket stream for active job
   useEffect(() => {

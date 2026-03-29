@@ -45,13 +45,16 @@ async def lifespan(app: FastAPI):
     await _migrate_prompts()
     from app.services.publish_scheduler import run_publish_scheduler
     from app.services.image_retention_scheduler import run_image_retention_scheduler
+    from app.services.stale_job_reconciler import run_stale_job_reconciler
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(run_publish_scheduler(stop_event))
     retention_task = asyncio.create_task(run_image_retention_scheduler(stop_event))
+    stale_task = asyncio.create_task(run_stale_job_reconciler(stop_event))
     yield
     stop_event.set()
     await scheduler_task
     await retention_task
+    await stale_task
 
 
 _debug = os.getenv("APP_ENV", "production").lower() != "production"

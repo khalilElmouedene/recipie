@@ -245,7 +245,7 @@ class JobManager:
                 await db.execute(
                     update(Recipe)
                     .where(Recipe.id.in_(recipe_ids))
-                    .values(status=RecipeStatus.generating)
+                    .values(status=RecipeStatus.generating, created_by_job_id=db_job.id)
                 )
 
         rj = RunningJob(db_job.id)
