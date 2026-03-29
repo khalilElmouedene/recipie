@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel
 from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -249,13 +252,16 @@ async def threads_oauth_url(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    app_id_preview = (settings.threads_app_id or "")[:6] or "(empty)"
+    logger.info("threads_oauth_url: app_id=%s... redirect_uri=%s", app_id_preview, settings.threads_redirect_uri)
     if not settings.threads_app_id or not settings.threads_app_secret:
         raise HTTPException(
             status_code=503,
             detail=(
-                "Threads OAuth is not configured. "
-                "Set THREADS_APP_ID and THREADS_APP_SECRET in your .env file. "
-                "Create a Meta Developer App at developers.facebook.com and add the Threads API product."
+                f"Threads OAuth is not configured. "
+                f"THREADS_APP_ID={'set' if settings.threads_app_id else 'MISSING'}, "
+                f"THREADS_APP_SECRET={'set' if settings.threads_app_secret else 'MISSING'}. "
+                f"Set these in your .env and restart the backend."
             ),
         )
     # Verify project ownership before generating OAuth URL
