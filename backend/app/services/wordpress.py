@@ -35,14 +35,45 @@ def _parse_and_extract_title(html: str):
     return title, soup
 
 
+def upload_pin_embed_images(soup, wp: WPClient, title: str, log: Callable[[str], None] | None = None) -> None:
+    """Find any pin-embed <figure> in the soup, upload their base64 images to WordPress,
+    and replace data: src with the real WordPress media URL in-place."""
+    _log = log or print
+    for figure in soup.find_all("figure", attrs={"data-recipe-generator-pin-embed": "1"}):
+        img = figure.find("img")
+        if not img:
+            continue
+        src = img.get("src", "")
+        if not src.startswith("data:image/"):
+            continue  # Already a real URL — nothing to do
+        try:
+            header, b64data = src.split(",", 1)
+            img_bytes = base64.b64decode(b64data)
+            webp_data = convert_to_webp(img_bytes) or img_bytes
+            filename = f"{slugify(title)}-pin.webp"
+            data = {"name": filename, "type": "image/webp", "bits": webp_data, "overwrite": True}
+            res = wp.call(UploadFile(data))
+            wp_url = res.get("url", "")
+            if wp_url:
+                img["src"] = wp_url
+                _log(f"Pin embed image uploaded to WordPress: {wp_url[:80]}")
+        except Exception as e:
+            _log(f"Pin embed image upload failed: {e}")
+
+
 def inject_images_into_html(soup, img1_url: str | None, img2_url: str | None = None) -> str:
     """Insert images into article HTML using BeautifulSoup — mirrors the Winsome publisher script.
     img1 is inserted before the first <p> (top of article).
     img2 is inserted before the 4th <h2> (mid-article).
     Returns the final HTML string."""
-    # Strip any pre-existing <img> tags from AI-generated HTML (they point to external/expiring URLs)
+    # Strip pre-existing <img> tags from AI-generated HTML, but preserve pin embed images
+    pin_embed_imgs: set = set()
+    for figure in soup.find_all("figure", attrs={"data-recipe-generator-pin-embed": "1"}):
+        for img in figure.find_all("img"):
+            pin_embed_imgs.add(id(img))
     for img_tag in soup.find_all("img"):
-        img_tag.decompose()
+        if id(img_tag) not in pin_embed_imgs:
+            img_tag.decompose()
 
     # Image 1 — before first <p>
     first_p = soup.find("p")

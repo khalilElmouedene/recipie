@@ -8,7 +8,7 @@ from typing import Callable
 from slugify import slugify
 
 from .wordpress import (
-    _parse_and_extract_title, inject_images_into_html,
+    _parse_and_extract_title, inject_images_into_html, upload_pin_embed_images,
     upload_image, add_recipe, validate_recipe_json, set_rank_math_meta,
 )
 from wordpress_xmlrpc import Client as WPClient, WordPressPost
@@ -136,6 +136,9 @@ def publish_recipe(
 
         img1_url = _to_https(img1_url)
         img2_url = _to_https(img2_url)
+
+        # Upload any pin embed base64 images to WordPress (replaces data: URL with real WP media URL)
+        upload_pin_embed_images(soup, wp, wp_title, log=_log)
 
         # Inject images into the article using BeautifulSoup (img1 before first <p>, img2 before 4th <h2>)
         content = inject_images_into_html(soup, img1_url, img2_url)
