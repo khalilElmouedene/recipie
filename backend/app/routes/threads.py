@@ -249,6 +249,15 @@ async def threads_oauth_url(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    if not settings.threads_app_id or not settings.threads_app_secret:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Threads OAuth is not configured. "
+                "Set THREADS_APP_ID and THREADS_APP_SECRET in your .env file. "
+                "Create a Meta Developer App at developers.facebook.com and add the Threads API product."
+            ),
+        )
     # Verify project ownership before generating OAuth URL
     await _get_threads_project(project_id, user, db)
     url = threads_api.get_oauth_url(state=str(project_id))
