@@ -862,29 +862,8 @@ export default function PinDesigner({
     [selectedTemplate?.id]
   );
 
-  const runWordPressBatchFromDesigner = useCallback(
-    async (
-      mode: "wordpress_scheduled" | "manual_backdate",
-      opts?: { first_publish_at?: string; interval_minutes?: number }
-    ) => {
-      if (!projectId) return;
-      setWpBatchBusy(mode);
-      try {
-        const res = await api.publishBatchToWordPress(projectId, { mode, ...opts });
-        const extra = res.errors?.length ? `\n${res.errors.slice(0, 4).join("\n")}` : "";
-        alert(
-          `WordPress batch finished.\nSucceeded: ${res.succeeded} / ${res.total}\nFailed: ${res.failed}${extra}`
-        );
-      } catch (e: unknown) {
-        alert(e instanceof Error ? e.message : "Batch publish failed");
-      } finally {
-        setWpBatchBusy(null);
-      }
-    },
-    [projectId]
-  );
-
-  const handleSaveAll = async () => {
+  // Shared: render every frame, save pin image to recipe (embed in article), optionally download
+  const saveAllFrames = async (download: boolean) => {
     if (!frames || frames.length === 0) return;
     const canvas = fabricCanvasRef.current;
     if (canvas) {
@@ -929,26 +908,55 @@ export default function PinDesigner({
       }
 
       if (dataUrl) {
-        // Save to recipe (pin PNG + embed in generated article HTML before WPRM block)
+        // Save pin image embedded in article HTML (after Conclusion, before WPRM recipe card)
         if (frame.recipeId) {
           try {
             await savePinToRecipeWithArticleEmbed(frame.recipeId, dataUrl, frame.title);
-          } catch {
-            /* skip */
-          }
+          } catch { /* skip */ }
         }
-        // Also download locally
-        const a = document.createElement("a");
-        a.href = dataUrl;
-        a.download = `pin-${String(i + 1).padStart(2, "0")}-${frame.title.replace(/[^a-z0-9]/gi, "_").slice(0, 30)}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        await new Promise((r) => setTimeout(r, 350));
+        if (download) {
+          const a = document.createElement("a");
+          a.href = dataUrl;
+          a.download = `pin-${String(i + 1).padStart(2, "0")}-${frame.title.replace(/[^a-z0-9]/gi, "_").slice(0, 30)}.png`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          await new Promise((r) => setTimeout(r, 350));
+        }
       }
     }
     setSaveAllProgress(100);
     setSavingAll(false);
+  };
+
+  const handleSaveAll = () => saveAllFrames(true);
+
+  const runWordPressBatchFromDesigner = async (
+    mode: "wordpress_scheduled" | "manual_backdate",
+    opts?: { first_publish_at?: string; interval_minutes?: number }
+  ) => {
+    if (!projectId) return;
+    setWpBatchBusy(mode);
+    try {
+      // 1. Save all pin designs into their recipes first (embed image in article after Conclusion)
+      if (frames && frames.length > 0) {
+        await saveAllFrames(false);
+      } else if (recipeId) {
+        // Single recipe mode — save current canvas pin into article
+        const data = getExportDataUrl();
+        if (data) {
+          await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe");
+        }
+      }
+      // 2. Now publish to WordPress — articles already contain the pin images
+      const res = await api.publishBatchToWordPress(projectId, { mode, ...opts });
+      const extra = res.errors?.length ? `\n${res.errors.slice(0, 4).join("\n")}` : "";
+      alert(`WordPress batch finished.\nSucceeded: ${res.succeeded} / ${res.total}\nFailed: ${res.failed}${extra}`);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Batch publish failed");
+    } finally {
+      setWpBatchBusy(null);
+    }
   };
 
   // ── Mount ────────────────────────────────────────────────────────────────
