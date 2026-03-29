@@ -455,6 +455,82 @@ async def publish_threads_post_now(
     return post
 
 
+class BatchPublishBody(BaseModel):
+    post_ids: list[uuid.UUID]
+
+
+class BatchPublishResult(BaseModel):
+    succeeded: list[str]
+    failed: list[dict]
+
+
+@router.post("/api/threads-posts/batch-publish", response_model=BatchPublishResult)
+async def batch_publish_threads_posts(
+    body: BatchPublishBody,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Publish multiple posts sequentially."""
+    succeeded: list[str] = []
+    failed: list[dict] = []
+
+    for post_id in body.post_ids:
+        try:
+            post = await _get_threads_post(post_id, user, db)
+        except HTTPException:
+            failed.append({"id": str(post_id), "error": "Post not found"})
+            continue
+
+        acc_row = await db.execute(
+            select(ThreadsAccount).where(ThreadsAccount.id == post.account_id)
+        )
+        account = acc_row.scalar_one_or_none()
+        if not account:
+            failed.append({"id": str(post_id), "error": "Account not found"})
+            continue
+
+        try:
+            access_token = decrypt(account.access_token_encrypted)
+        except Exception:
+            failed.append({"id": str(post_id), "error": "Could not decrypt token"})
+            continue
+
+        try:
+            threads_post_id = threads_api.publish_post(
+                access_token=access_token,
+                user_id=account.threads_user_id,
+                text=post.text_content,
+                image_url=post.image_url,
+            )
+        except ValueError as exc:
+            post.status = ThreadsPostStatus.failed
+            post.error_message = str(exc)
+            await db.commit()
+            failed.append({"id": str(post_id), "error": str(exc)})
+            continue
+
+        if post.first_comment:
+            time.sleep(3)
+            try:
+                threads_api.add_reply(
+                    access_token=access_token,
+                    user_id=account.threads_user_id,
+                    post_id=threads_post_id,
+                    text=post.first_comment,
+                )
+            except Exception as reply_exc:
+                print(f"[threads] batch reply failed for post {post.id}: {reply_exc}")
+
+        post.status = ThreadsPostStatus.published
+        post.published_at = datetime.now(timezone.utc)
+        post.threads_post_id = threads_post_id
+        post.error_message = None
+        await db.commit()
+        succeeded.append(str(post_id))
+
+    return BatchPublishResult(succeeded=succeeded, failed=failed)
+
+
 @router.delete(
     "/api/threads-posts/{post_id}",
     status_code=status.HTTP_204_NO_CONTENT,

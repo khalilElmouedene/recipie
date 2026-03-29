@@ -398,6 +398,8 @@ function PostsTab({ projectId }: { projectId: string }) {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [publishing, setPublishing] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchPublishing, setBatchPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const accountMap = Object.fromEntries(accounts.map((a) => [a.id, a]));
@@ -448,16 +450,79 @@ function PostsTab({ projectId }: { projectId: string }) {
     load();
   };
 
+  const publishable = posts.filter(
+    (p) => p.status === "draft" || p.status === "scheduled" || p.status === "failed"
+  );
+  const selectedPublishable = [...selected].filter((id) =>
+    publishable.some((p) => p.id === id)
+  );
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedPublishable.length === publishable.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(publishable.map((p) => p.id)));
+    }
+  };
+
+  const handleBatchPublish = async () => {
+    if (selectedPublishable.length === 0) return;
+    setBatchPublishing(true);
+    setError(null);
+    try {
+      const result = await api.batchPublishThreadsPosts(selectedPublishable);
+      setSelected(new Set());
+      if (result.failed.length > 0) {
+        setError(`${result.succeeded.length} published, ${result.failed.length} failed: ${result.failed.map((f) => f.error).join("; ")}`);
+      }
+      load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Batch publish failed");
+    }
+    setBatchPublishing(false);
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-gray-400">{posts.length} post{posts.length !== 1 ? "s" : ""}</p>
-        <button
-          onClick={() => { setEditPost(null); setShowForm(true); }}
-          className="btn-primary flex items-center gap-2"
-        >
-          <Plus size={16} /> New Post
-        </button>
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-gray-400">{posts.length} post{posts.length !== 1 ? "s" : ""}</p>
+          {publishable.length > 0 && (
+            <button
+              onClick={toggleSelectAll}
+              className="text-xs text-gray-400 hover:text-gray-200 transition"
+            >
+              {selectedPublishable.length === publishable.length ? "Deselect all" : `Select all (${publishable.length})`}
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {selectedPublishable.length > 0 && (
+            <button
+              onClick={handleBatchPublish}
+              disabled={batchPublishing}
+              className="btn-primary flex items-center gap-2"
+            >
+              {batchPublishing
+                ? <><RefreshCw size={15} className="animate-spin" /> Publishing...</>
+                : <><Send size={15} /> Publish {selectedPublishable.length} Selected</>}
+            </button>
+          )}
+          <button
+            onClick={() => { setEditPost(null); setShowForm(true); }}
+            className="btn-primary flex items-center gap-2"
+          >
+            <Plus size={16} /> New Post
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -491,6 +556,14 @@ function PostsTab({ projectId }: { projectId: string }) {
             return (
               <div key={p.id} className="card">
                 <div className="flex items-start gap-3">
+                  {canPublish && (
+                    <input
+                      type="checkbox"
+                      checked={selected.has(p.id)}
+                      onChange={() => toggleSelect(p.id)}
+                      className="mt-1.5 shrink-0 accent-brand-500 cursor-pointer"
+                    />
+                  )}
                   <div className="h-9 w-9 rounded-full bg-brand-600/20 flex items-center justify-center text-brand-400 shrink-0 mt-0.5">
                     <User size={16} />
                   </div>

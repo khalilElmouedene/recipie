@@ -331,6 +331,11 @@ export const api = {
   }) => request<ThreadsPostOut>(`/api/threads-projects/${projectId}/posts`, { method: "POST", body: JSON.stringify(data) }),
   publishThreadsPost: (postId: string) =>
     request<ThreadsPostOut>(`/api/threads-posts/${postId}/publish`, { method: "POST" }),
+  batchPublishThreadsPosts: (postIds: string[]) =>
+    request<{ succeeded: string[]; failed: { id: string; error: string }[] }>(
+      "/api/threads-posts/batch-publish",
+      { method: "POST", body: JSON.stringify({ post_ids: postIds }) }
+    ),
   updateThreadsPost: (postId: string, data: Partial<{ text_content: string; image_url: string; first_comment: string; scheduled_at: string; account_id: string }>) =>
     request<ThreadsPostOut>(`/api/threads-posts/${postId}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteThreadsPost: (postId: string) =>
