@@ -490,7 +490,7 @@ async def batch_publish_threads_posts(
             continue
 
         try:
-            access_token = decrypt(account.access_token_encrypted)
+            access_token = decrypt(account.access_token)
         except Exception:
             failed.append({"id": str(post_id), "error": "Could not decrypt token"})
             continue

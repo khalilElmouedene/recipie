@@ -96,16 +96,17 @@ function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccou
           <div>
             <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase tracking-wider">Account</label>
             {!isEdit && accounts.length > 1 ? (
-              <div className="flex rounded-xl overflow-hidden border border-gray-700">
-                <button type="button" onClick={() => setAllAccounts(false)}
-                  className={`flex-1 py-2.5 text-sm font-medium transition ${!allAccounts ? "bg-brand-600 text-white" : "bg-gray-800 text-gray-400 hover:text-gray-200"}`}>
-                  @{accounts.find((a) => a.id === accountId)?.username ?? "Selected"}
-                </button>
-                <button type="button" onClick={() => setAllAccounts(true)}
-                  className={`flex-1 py-2.5 text-sm font-medium transition ${allAccounts ? "bg-brand-600 text-white" : "bg-gray-800 text-gray-400 hover:text-gray-200"}`}>
-                  All accounts ({accounts.length})
-                </button>
-              </div>
+              <select
+                value={allAccounts ? "__all__" : accountId}
+                onChange={(e) => {
+                  if (e.target.value === "__all__") { setAllAccounts(true); }
+                  else { setAllAccounts(false); setAccountId(e.target.value); }
+                }}
+                className="input-field"
+              >
+                <option value="__all__">All accounts ({accounts.length})</option>
+                {accounts.map((a) => <option key={a.id} value={a.id}>@{a.username}</option>)}
+              </select>
             ) : (
               <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="input-field">
                 {accounts.map((a) => <option key={a.id} value={a.id}>@{a.username}</option>)}
@@ -143,7 +144,7 @@ function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccou
           <div className="flex justify-end gap-2 pt-2 border-t border-gray-800">
             <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
             <button type="submit" disabled={loading || !accounts.length} className="btn-primary">
-              {loading ? "Saving..." : isEdit ? "Save Changes" : allAccounts ? `Create for All (${accounts.length})` : "Create Post"}
+              {loading ? "Saving..." : isEdit ? "Save Changes" : allAccounts ? `Create for All ${accounts.length} Accounts` : "Create Post"}
             </button>
           </div>
         </form>
