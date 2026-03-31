@@ -39,13 +39,14 @@ function getWeekDays(anchor: Date) {
 }
 
 // ── Post form modal ───────────────────────────────────────
-function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccounts, onClose, onSaved }: {
+function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccounts, defaultAccountId, onClose, onSaved }: {
   projectId: string; accounts: ThreadsAccountOut[]; post?: ThreadsPostOut | null;
-  initialDate?: string; defaultAllAccounts?: boolean; onClose: () => void; onSaved: () => void;
+  initialDate?: string; defaultAllAccounts?: boolean; defaultAccountId?: string | null;
+  onClose: () => void; onSaved: () => void;
 }) {
   const isEdit = !!post;
   const defaultScheduled = initialDate ? `${initialDate}T09:00` : "";
-  const [accountId, setAccountId] = useState(post?.account_id ?? accounts[0]?.id ?? "");
+  const [accountId, setAccountId] = useState(post?.account_id ?? defaultAccountId ?? accounts[0]?.id ?? "");
   const [text, setText] = useState(post?.text_content ?? "");
   const [imageUrl, setImageUrl] = useState(post?.image_url ?? "");
   const [firstComment, setFirstComment] = useState(post?.first_comment ?? "");
@@ -95,7 +96,19 @@ function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccou
           {error && <p className="text-xs text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">{error}</p>}
           <div>
             <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase tracking-wider">Account</label>
-            {!isEdit && accounts.length > 1 ? (
+            {isEdit ? (
+              /* Editing: just show the account, no change allowed */
+              <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="input-field">
+                {accounts.map((a) => <option key={a.id} value={a.id}>@{a.username}</option>)}
+              </select>
+            ) : defaultAccountId ? (
+              /* Specific account pre-selected from sidebar — show it as static, no picker */
+              <div className="input-field flex items-center gap-2 text-sm text-gray-200 cursor-default select-none">
+                <User size={14} className="text-brand-400 shrink-0" />
+                @{accounts.find((a) => a.id === defaultAccountId)?.username ?? defaultAccountId}
+              </div>
+            ) : (
+              /* "All accounts" view — let user pick any account or all */
               <select
                 value={allAccounts ? "__all__" : accountId}
                 onChange={(e) => {
@@ -105,10 +118,6 @@ function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccou
                 className="input-field"
               >
                 <option value="__all__">All accounts ({accounts.length})</option>
-                {accounts.map((a) => <option key={a.id} value={a.id}>@{a.username}</option>)}
-              </select>
-            ) : (
-              <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="input-field">
                 {accounts.map((a) => <option key={a.id} value={a.id}>@{a.username}</option>)}
               </select>
             )}
@@ -148,6 +157,36 @@ function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccou
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Delete confirm modal ──────────────────────────────────
+function DeleteConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
+        <div className="p-6 flex flex-col items-center text-center gap-3">
+          <div className="h-12 w-12 rounded-full bg-red-900/30 border border-red-800 flex items-center justify-center">
+            <Trash2 size={20} className="text-red-400" />
+          </div>
+          <div>
+            <h3 className="text-base font-semibold text-white">Delete post?</h3>
+            <p className="text-sm text-gray-400 mt-1">This action cannot be undone.</p>
+          </div>
+        </div>
+        <div className="flex border-t border-gray-800">
+          <button onClick={onCancel}
+            className="flex-1 py-3 text-sm font-medium text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition">
+            Cancel
+          </button>
+          <div className="w-px bg-gray-800" />
+          <button onClick={onConfirm}
+            className="flex-1 py-3 text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-900/20 transition">
+            Delete
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -700,8 +739,9 @@ export default function ThreadsProjectDetailPage() {
   const [publishing, setPublishing] = useState<string | null>(null);
   const [publishingAll, setPublishingAll] = useState(false);
   const [publishAllError, setPublishAllError] = useState<string | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [newPostAllAccounts, setNewPostAllAccounts] = useState(false);
+  const [newPostAccountId, setNewPostAccountId] = useState<string | null>(null);
 
   // OAuth
   const [connecting, setConnecting] = useState(false);
@@ -781,15 +821,22 @@ export default function ThreadsProjectDetailPage() {
     setPublishingAll(false);
   };
 
-  const handleDelete = async (postId: string) => {
-    if (deleteConfirm !== postId) { setDeleteConfirm(postId); return; }
-    try { await api.deleteThreadsPost(postId); setDeleteConfirm(null); loadData(); } catch { /* ignore */ }
+  const handleDelete = (postId: string) => {
+    setDeleteConfirmId(postId);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmId) return;
+    try { await api.deleteThreadsPost(deleteConfirmId); loadData(); } catch { /* ignore */ }
+    setDeleteConfirmId(null);
   };
 
   const handleNewPost = (dateStr: string) => {
     setNewPostDate(dateStr);
     setEditPost(null);
-    setNewPostAllAccounts(selectedAccountId === null && accounts.length > 1);
+    // If a specific account is selected in sidebar, pre-fill it; otherwise show the account picker
+    setNewPostAccountId(selectedAccountId);
+    setNewPostAllAccounts(false);
     setShowForm(true);
   };
 
@@ -965,13 +1012,22 @@ export default function ThreadsProjectDetailPage() {
         </div>
       </div>
 
+      {/* Delete confirm modal */}
+      {deleteConfirmId && (
+        <DeleteConfirmModal
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteConfirmId(null)}
+        />
+      )}
+
       {/* Post form modal */}
       {(showForm || editPost) && (
         <PostFormModal
           projectId={id} accounts={accounts} post={editPost}
           initialDate={newPostDate} defaultAllAccounts={newPostAllAccounts}
-          onClose={() => { setShowForm(false); setEditPost(null); setNewPostDate(undefined); setNewPostAllAccounts(false); }}
-          onSaved={() => { setShowForm(false); setEditPost(null); setNewPostDate(undefined); setNewPostAllAccounts(false); loadData(); }}
+          defaultAccountId={editPost ? null : newPostAccountId}
+          onClose={() => { setShowForm(false); setEditPost(null); setNewPostDate(undefined); setNewPostAllAccounts(false); setNewPostAccountId(null); }}
+          onSaved={() => { setShowForm(false); setEditPost(null); setNewPostDate(undefined); setNewPostAllAccounts(false); setNewPostAccountId(null); loadData(); }}
         />
       )}
     </div>
