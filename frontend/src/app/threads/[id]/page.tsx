@@ -580,7 +580,11 @@ function SettingsTab({ projectId, onAccountsChanged }: { projectId: string; onAc
       const { url } = await api.getThreadsOAuthUrl(projectId);
       const popup = window.open(url, "threads-oauth", "width=600,height=700");
       popupRef.current = popup;
-      if (!popup) { setError("Popup blocked."); setConnecting(false); }
+      if (!popup) { setError("Popup blocked."); setConnecting(false); return; }
+      // Poll until popup closes — if closed without postMessage, reset loading
+      const timer = setInterval(() => {
+        if (popup.closed) { clearInterval(timer); setConnecting(false); }
+      }, 500);
     } catch (err: unknown) { setError(err instanceof Error ? err.message : "OAuth error"); setConnecting(false); }
   };
 
@@ -743,7 +747,10 @@ export default function ThreadsProjectDetailPage() {
       const { url } = await api.getThreadsOAuthUrl(id);
       const popup = window.open(url, "threads-oauth", "width=600,height=700");
       popupRef.current = popup;
-      if (!popup) setConnecting(false);
+      if (!popup) { setConnecting(false); return; }
+      const timer = setInterval(() => {
+        if (popup.closed) { clearInterval(timer); setConnecting(false); }
+      }, 500);
     } catch { setConnecting(false); }
   };
 
