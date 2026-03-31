@@ -5,7 +5,7 @@ import {
   Plus, Trash2, User, Send, Edit2, X, RefreshCw, Clock, CheckCircle,
   AlertCircle, FileText, Image as ImageIcon, MessageSquare, Calendar,
   ChevronLeft, ChevronRight, BarChart2, Settings, BookOpen,
-  LayoutGrid, ChevronDown, Circle,
+  LayoutGrid, ChevronDown, Circle, Loader2,
 } from "lucide-react";
 import { api, ThreadsProjectOut, ThreadsAccountOut, ThreadsPostOut } from "@/lib/api";
 
@@ -19,6 +19,28 @@ const STATUS_META: Record<ThreadsPostOut["status"], { label: string; dot: string
   published: { label: "Published", dot: "bg-green-400", badge: "bg-green-900/40 text-green-400 border border-green-700" },
   failed:    { label: "Failed",    dot: "bg-red-400",   badge: "bg-red-900/40 text-red-400 border border-red-700" },
 };
+
+// ── Toast ──────────────────────────────────────────────────
+type ToastState = { type: "loading" | "success" | "error"; message: string } | null;
+
+function Toast({ toast }: { toast: ToastState }) {
+  if (!toast) return null;
+  const styles = {
+    loading: { bg: "bg-gray-800 border-gray-700", text: "text-gray-200", icon: <Loader2 size={15} className="animate-spin text-brand-400 shrink-0" /> },
+    success: { bg: "bg-green-900/40 border-green-700", text: "text-green-300", icon: <CheckCircle size={15} className="text-green-400 shrink-0" /> },
+    error:   { bg: "bg-red-900/40 border-red-700",     text: "text-red-300",   icon: <AlertCircle size={15} className="text-red-400 shrink-0" /> },
+  }[toast.type];
+  return (
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
+      <div className={`flex items-center gap-2.5 px-4 py-3 rounded-xl border shadow-2xl text-sm font-medium ${styles.bg} ${styles.text}`}
+        style={{ animation: "fadeSlideUp 0.2s ease" }}>
+        {styles.icon}
+        {toast.message}
+      </div>
+      <style>{`@keyframes fadeSlideUp{from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}`}</style>
+    </div>
+  );
+}
 
 function toDateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -740,6 +762,16 @@ export default function ThreadsProjectDetailPage() {
   const [publishingAll, setPublishingAll] = useState(false);
   const [publishAllError, setPublishAllError] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((t: ToastState, autoDismissMs?: number) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(t);
+    if (autoDismissMs) {
+      toastTimerRef.current = setTimeout(() => setToast(null), autoDismissMs);
+    }
+  }, []);
   const [newPostAllAccounts, setNewPostAllAccounts] = useState(false);
   const [newPostAccountId, setNewPostAccountId] = useState<string | null>(null);
 
@@ -797,7 +829,14 @@ export default function ThreadsProjectDetailPage() {
 
   const handlePublish = async (postId: string) => {
     setPublishing(postId);
-    try { await api.publishThreadsPost(postId); loadData(); } catch { /* ignore */ }
+    showToast({ type: "loading", message: "Publishing post to Threads…" });
+    try {
+      await api.publishThreadsPost(postId);
+      showToast({ type: "success", message: "Post published successfully!" }, 3000);
+      loadData();
+    } catch (err: unknown) {
+      showToast({ type: "error", message: err instanceof Error ? err.message : "Publish failed" }, 4000);
+    }
     setPublishing(null);
   };
 
@@ -810,13 +849,20 @@ export default function ThreadsProjectDetailPage() {
     if (!publishableIds.length) return;
     setPublishingAll(true);
     setPublishAllError(null);
+    showToast({ type: "loading", message: `Publishing ${publishableIds.length} post${publishableIds.length > 1 ? "s" : ""}…` });
     try {
       const result = await api.batchPublishThreadsPosts(publishableIds);
-      if (result.failed.length > 0)
+      if (result.failed.length > 0) {
         setPublishAllError(`${result.succeeded.length} published, ${result.failed.length} failed`);
+        showToast({ type: "error", message: `${result.succeeded.length} published, ${result.failed.length} failed` }, 5000);
+      } else {
+        showToast({ type: "success", message: `All ${result.succeeded.length} posts published!` }, 3000);
+      }
       loadData();
     } catch (err: unknown) {
-      setPublishAllError(err instanceof Error ? err.message : "Publish all failed");
+      const msg = err instanceof Error ? err.message : "Publish all failed";
+      setPublishAllError(msg);
+      showToast({ type: "error", message: msg }, 4000);
     }
     setPublishingAll(false);
   };
@@ -1011,6 +1057,9 @@ export default function ThreadsProjectDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Toast */}
+      <Toast toast={toast} />
 
       {/* Delete confirm modal */}
       {deleteConfirmId && (
