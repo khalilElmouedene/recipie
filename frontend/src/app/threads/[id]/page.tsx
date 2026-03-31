@@ -94,20 +94,17 @@ function PostFormModal({ projectId, accounts, post, initialDate, onClose, onSave
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           {error && <p className="text-xs text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">{error}</p>}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">Account</label>
-              {!isEdit && accounts.length > 1 && (
-                <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-400 hover:text-gray-200">
-                  <input type="checkbox" checked={allAccounts} onChange={(e) => setAllAccounts(e.target.checked)} className="accent-brand-500" />
-                  Post to all accounts ({accounts.length})
-                </label>
-              )}
-            </div>
-            {allAccounts ? (
-              <div className="rounded-lg border border-brand-600/40 bg-brand-600/10 px-3 py-2 text-xs text-brand-300 flex flex-wrap gap-1.5">
-                {accounts.map((a) => (
-                  <span key={a.id} className="bg-brand-600/20 rounded-full px-2 py-0.5">@{a.username}</span>
-                ))}
+            <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase tracking-wider">Account</label>
+            {!isEdit && accounts.length > 1 ? (
+              <div className="flex rounded-xl overflow-hidden border border-gray-700">
+                <button type="button" onClick={() => setAllAccounts(false)}
+                  className={`flex-1 py-2.5 text-sm font-medium transition ${!allAccounts ? "bg-brand-600 text-white" : "bg-gray-800 text-gray-400 hover:text-gray-200"}`}>
+                  @{accounts.find((a) => a.id === accountId)?.username ?? "Selected"}
+                </button>
+                <button type="button" onClick={() => setAllAccounts(true)}
+                  className={`flex-1 py-2.5 text-sm font-medium transition ${allAccounts ? "bg-brand-600 text-white" : "bg-gray-800 text-gray-400 hover:text-gray-200"}`}>
+                  All accounts ({accounts.length})
+                </button>
               </div>
             ) : (
               <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="input-field">
