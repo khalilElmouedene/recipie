@@ -56,26 +56,29 @@ function PostFormModal({ projectId, accounts, post, initialDate, onClose, onSave
     if (post?.scheduled_at) return new Date(post.scheduled_at).toISOString().slice(0, 16);
     return defaultScheduled;
   });
+  const [allAccounts, setAllAccounts] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!accountId) { setError("Select an account"); return; }
+    if (!allAccounts && !accountId) { setError("Select an account"); return; }
     if (!text.trim()) { setError("Text is required"); return; }
     setLoading(true); setError(null);
     try {
-      const payload: {
-        account_id: string; text_content: string;
-        image_url?: string; first_comment?: string; scheduled_at?: string;
-      } = {
-        account_id: accountId, text_content: text.trim(),
+      const base = {
+        text_content: text.trim(),
         ...(imageUrl.trim() ? { image_url: imageUrl.trim() } : {}),
         ...(firstComment.trim() ? { first_comment: firstComment.trim() } : {}),
         ...(publishMode === "schedule" && scheduledAt ? { scheduled_at: new Date(scheduledAt).toISOString() } : {}),
       };
-      if (isEdit && post) await api.updateThreadsPost(post.id, payload);
-      else await api.createThreadsPost(projectId, payload);
+      if (isEdit && post) {
+        await api.updateThreadsPost(post.id, { ...base, account_id: accountId });
+      } else if (allAccounts) {
+        await Promise.all(accounts.map((a) => api.createThreadsPost(projectId, { ...base, account_id: a.id })));
+      } else {
+        await api.createThreadsPost(projectId, { ...base, account_id: accountId });
+      }
       onSaved();
     } catch (err: unknown) { setError(err instanceof Error ? err.message : "Failed to save"); }
     setLoading(false);
@@ -91,10 +94,26 @@ function PostFormModal({ projectId, accounts, post, initialDate, onClose, onSave
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           {error && <p className="text-xs text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">{error}</p>}
           <div>
-            <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase tracking-wider">Account</label>
-            <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="input-field">
-              {accounts.map((a) => <option key={a.id} value={a.id}>@{a.username}</option>)}
-            </select>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">Account</label>
+              {!isEdit && accounts.length > 1 && (
+                <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-400 hover:text-gray-200">
+                  <input type="checkbox" checked={allAccounts} onChange={(e) => setAllAccounts(e.target.checked)} className="accent-brand-500" />
+                  Post to all accounts ({accounts.length})
+                </label>
+              )}
+            </div>
+            {allAccounts ? (
+              <div className="rounded-lg border border-brand-600/40 bg-brand-600/10 px-3 py-2 text-xs text-brand-300 flex flex-wrap gap-1.5">
+                {accounts.map((a) => (
+                  <span key={a.id} className="bg-brand-600/20 rounded-full px-2 py-0.5">@{a.username}</span>
+                ))}
+              </div>
+            ) : (
+              <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="input-field">
+                {accounts.map((a) => <option key={a.id} value={a.id}>@{a.username}</option>)}
+              </select>
+            )}
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase tracking-wider">Text</label>
@@ -127,7 +146,7 @@ function PostFormModal({ projectId, accounts, post, initialDate, onClose, onSave
           <div className="flex justify-end gap-2 pt-2 border-t border-gray-800">
             <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
             <button type="submit" disabled={loading || !accounts.length} className="btn-primary">
-              {loading ? "Saving..." : isEdit ? "Save Changes" : "Create Post"}
+              {loading ? "Saving..." : isEdit ? "Save Changes" : allAccounts ? `Create for All (${accounts.length})` : "Create Post"}
             </button>
           </div>
         </form>
@@ -677,6 +696,7 @@ export default function ThreadsProjectDetailPage() {
   const [editPost, setEditPost] = useState<ThreadsPostOut | null>(null);
   const [newPostDate, setNewPostDate] = useState<string | undefined>(undefined);
   const [publishing, setPublishing] = useState<string | null>(null);
+  const [publishingAll, setPublishingAll] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   // OAuth
@@ -732,6 +752,16 @@ export default function ThreadsProjectDetailPage() {
     setPublishing(postId);
     try { await api.publishThreadsPost(postId); loadData(); } catch { /* ignore */ }
     setPublishing(null);
+  };
+
+  const handlePublishAll = async () => {
+    const publishableIds = visiblePosts
+      .filter((p) => p.status === "draft" || p.status === "scheduled" || p.status === "failed")
+      .map((p) => p.id);
+    if (!publishableIds.length) return;
+    setPublishingAll(true);
+    try { await api.batchPublishThreadsPosts(publishableIds); loadData(); } catch { /* ignore */ }
+    setPublishingAll(false);
   };
 
   const handleDelete = async (postId: string) => {
@@ -834,6 +864,14 @@ export default function ThreadsProjectDetailPage() {
               </button>
             ))}
           </div>
+        )}
+
+        {/* Publish all */}
+        {visiblePosts.some((p) => p.status === "draft" || p.status === "scheduled" || p.status === "failed") && (
+          <button onClick={handlePublishAll} disabled={publishingAll}
+            className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-xl border border-green-700 text-green-400 hover:bg-green-900/30 transition disabled:opacity-50">
+            {publishingAll ? <><RefreshCw size={14} className="animate-spin" /> Publishing...</> : <><Send size={14} /> Publish All</>}
+          </button>
         )}
 
         {/* New post */}

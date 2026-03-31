@@ -22,18 +22,21 @@ _FORCE_RESET_PROMPTS = {"recipe_json_user", "recipe_json_system", "article"}
 async def _migrate_prompts() -> None:
     """Reset outdated recipe JSON prompts so new generation uses the fixed format."""
     from app.db_models import Prompt
+    from sqlalchemy import delete as sql_delete
     async with SessionLocal() as db:
         for key in _FORCE_RESET_PROMPTS:
             if key not in DEFAULT_PROMPTS:
                 continue
             new_value = DEFAULT_PROMPTS[key]["value"]
             result = await db.execute(select(Prompt).where(Prompt.key == key))
-            row = result.scalar_one_or_none()
-            if row is None:
-                # Not in DB yet — will use default automatically, nothing to do
+            rows = result.scalars().all()
+            if not rows:
                 continue
-            # Only overwrite if the stored value looks like the old broken format
-            # (old recipe_json_user had plain string examples, not uid/group objects)
+            # Deduplicate: keep first row, delete the rest
+            if len(rows) > 1:
+                extra_ids = [r.id for r in rows[1:]]
+                await db.execute(sql_delete(Prompt).where(Prompt.id.in_(extra_ids)))
+            row = rows[0]
             if '"uid"' not in row.value:
                 row.value = new_value
         await db.commit()
