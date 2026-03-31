@@ -65,7 +65,10 @@ function PostFormModal({ projectId, accounts, post, initialDate, onClose, onSave
     if (!text.trim()) { setError("Text is required"); return; }
     setLoading(true); setError(null);
     try {
-      const payload: Record<string, unknown> = {
+      const payload: {
+        account_id: string; text_content: string;
+        image_url?: string; first_comment?: string; scheduled_at?: string;
+      } = {
         account_id: accountId, text_content: text.trim(),
         ...(imageUrl.trim() ? { image_url: imageUrl.trim() } : {}),
         ...(firstComment.trim() ? { first_comment: firstComment.trim() } : {}),
