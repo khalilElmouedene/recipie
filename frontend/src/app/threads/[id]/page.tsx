@@ -779,21 +779,25 @@ export default function ThreadsProjectDetailPage() {
   const [connecting, setConnecting] = useState(false);
   const popupRef = useRef<Window | null>(null);
 
-  const loadData = useCallback(() => {
+  const loadData = useCallback(async () => {
     if (!id) return;
-    Promise.all([
-      api.getThreadsProjects(),
-      api.getThreadsPosts(id),
-      api.getThreadsAccounts(id),
-    ]).then(([projectsList, postsData, accountsData]) => {
+    try {
+      const [projectsList, postsData, accountsData] = await Promise.all([
+        api.getThreadsProjects(),
+        api.getThreadsPosts(id),
+        api.getThreadsAccounts(id),
+      ]);
       const found = projectsList.find((p) => p.id === id);
       if (!found) { router.push("/threads"); return; }
       setProject(found);
       setProjects(projectsList);
       setPosts(postsData);
       setAccounts(accountsData);
-    }).catch(() => router.push("/threads"))
-      .finally(() => setLoading(false));
+    } catch {
+      router.push("/threads");
+    } finally {
+      setLoading(false);
+    }
   }, [id, router]);
 
   useEffect(() => { loadData(); }, [loadData]);
@@ -832,8 +836,8 @@ export default function ThreadsProjectDetailPage() {
     showToast({ type: "loading", message: "Publishing post to Threads…" });
     try {
       await api.publishThreadsPost(postId);
+      await loadData();
       showToast({ type: "success", message: "Post published successfully!" }, 3000);
-      loadData();
     } catch (err: unknown) {
       showToast({ type: "error", message: err instanceof Error ? err.message : "Publish failed" }, 4000);
     }
@@ -852,13 +856,13 @@ export default function ThreadsProjectDetailPage() {
     showToast({ type: "loading", message: `Publishing ${publishableIds.length} post${publishableIds.length > 1 ? "s" : ""}…` });
     try {
       const result = await api.batchPublishThreadsPosts(publishableIds);
+      await loadData();
       if (result.failed.length > 0) {
         setPublishAllError(`${result.succeeded.length} published, ${result.failed.length} failed`);
         showToast({ type: "error", message: `${result.succeeded.length} published, ${result.failed.length} failed` }, 5000);
       } else {
         showToast({ type: "success", message: `All ${result.succeeded.length} posts published!` }, 3000);
       }
-      loadData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Publish all failed";
       setPublishAllError(msg);
