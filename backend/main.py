@@ -28,11 +28,12 @@ async def _migrate_prompts() -> None:
             if key not in DEFAULT_PROMPTS:
                 continue
             new_value = DEFAULT_PROMPTS[key]["value"]
-            result = await db.execute(select(Prompt).where(Prompt.key == key))
+            result = await db.execute(
+                select(Prompt).where(Prompt.key == key, Prompt.project_id.is_(None))
+            )
             rows = result.scalars().all()
             if not rows:
                 continue
-            # Deduplicate: keep first row, delete the rest
             if len(rows) > 1:
                 extra_ids = [r.id for r in rows[1:]]
                 await db.execute(sql_delete(Prompt).where(Prompt.id.in_(extra_ids)))

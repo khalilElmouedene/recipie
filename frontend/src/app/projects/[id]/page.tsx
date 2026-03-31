@@ -83,7 +83,7 @@ export default function ProjectDetailPage() {
       {tab === "sites" && <SitesTab projectId={id} role={role} router={router} />}
       {tab === "members" && <MembersTab projectId={id} role={role} />}
       {tab === "jobs" && <JobsTab projectId={id} />}
-      {tab === "settings" && <SettingsTab />}
+      {tab === "settings" && <SettingsTab projectId={id} />}
     </div>
   );
 }
@@ -565,7 +565,7 @@ const PROMPT_GROUPS: { label: string; keys: string[] }[] = [
 
 type SettingsSubTab = "credentials" | "prompts" | "templates";
 
-function SettingsTab() {
+function SettingsTab({ projectId }: { projectId: string }) {
   const router = useRouter();
   const [subTab, setSubTab] = useState<SettingsSubTab>("credentials");
 
@@ -590,7 +590,7 @@ function SettingsTab() {
 
   useEffect(() => {
     if (subTab === "prompts") {
-      api.getSettingsPrompts()
+      api.getSettingsPrompts(projectId)
         .then((list) => {
           setPrompts(list);
           setPromptValues(Object.fromEntries(list.map((p) => [p.key, p.value])));
@@ -632,7 +632,7 @@ function SettingsTab() {
     if (!Object.keys(promptValues).length) return;
     setSavingPrompts(true);
     try {
-      const updated = await api.setSettingsPrompts(promptValues);
+      const updated = await api.setSettingsPrompts(projectId, promptValues);
       setPrompts(updated);
     } catch { }
     setSavingPrompts(false);

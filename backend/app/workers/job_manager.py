@@ -86,15 +86,22 @@ class JobManager:
         if not credentials.get("openai"):
             logger.warning("No OpenAI key found. Loaded keys: %s", list(credentials.keys()))
 
-        # Load configurable prompts (filtered by project owner)
+        # Load configurable prompts — project-scoped first, fallback to owner-level
         prompts: dict[str, str] = {}
         prj_row = await db.execute(select(Project).where(Project.id == project_id))
         prj = prj_row.scalar_one_or_none()
         if prj:
-            prompt_rows = await db.execute(
-                select(Prompt).where(Prompt.owner_id == prj.owner_id)
+            # Owner-level fallback (project_id IS NULL)
+            fallback_rows = await db.execute(
+                select(Prompt).where(Prompt.owner_id == prj.owner_id, Prompt.project_id.is_(None))
             )
-            for p in prompt_rows.scalars().all():
+            for p in fallback_rows.scalars().all():
+                prompts[p.key] = p.value
+            # Project-specific overrides
+            project_rows = await db.execute(
+                select(Prompt).where(Prompt.owner_id == prj.owner_id, Prompt.project_id == project_id)
+            )
+            for p in project_rows.scalars().all():
                 prompts[p.key] = p.value
 
         if db_job.job_type == JobType.articles_all_sites:
@@ -494,10 +501,15 @@ class JobManager:
             prj_row = await db.execute(select(Project).where(Project.id == db_job.project_id))
             prj = prj_row.scalar_one_or_none()
             if prj:
-                prompt_rows = await db.execute(
-                    select(Prompt).where(Prompt.owner_id == prj.owner_id)
+                fallback_rows = await db.execute(
+                    select(Prompt).where(Prompt.owner_id == prj.owner_id, Prompt.project_id.is_(None))
                 )
-                for p in prompt_rows.scalars().all():
+                for p in fallback_rows.scalars().all():
+                    prompts[p.key] = p.value
+                project_rows = await db.execute(
+                    select(Prompt).where(Prompt.owner_id == prj.owner_id, Prompt.project_id == db_job.project_id)
+                )
+                for p in project_rows.scalars().all():
                     prompts[p.key] = p.value
 
             main_loop = asyncio.get_running_loop()

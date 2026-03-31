@@ -82,12 +82,13 @@ class PasswordSetupToken(Base):
 
 
 class Prompt(Base):
-    """Configurable prompts for AI generation (per owner)."""
+    """Configurable prompts for AI generation (per project)."""
     __tablename__ = "prompts"
-    __table_args__ = (UniqueConstraint("owner_id", "key", name="uq_owner_prompt_key"),)
+    __table_args__ = (UniqueConstraint("owner_id", "project_id", "key", name="uq_project_prompt_key"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
     owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     key: Mapped[str] = mapped_column(String(100), nullable=False)
     value: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")

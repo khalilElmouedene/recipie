@@ -164,9 +164,10 @@ export const api = {
       body: JSON.stringify(creds),
     }),
 
-  getSettingsPrompts: () => request<PromptOut[]>(`/api/settings/prompts`),
-  setSettingsPrompts: (prompts: Record<string, string>) =>
-    request<PromptOut[]>(`/api/settings/prompts`, {
+  getSettingsPrompts: (projectId: string) =>
+    request<PromptOut[]>(`/api/settings/prompts?project_id=${projectId}`),
+  setSettingsPrompts: (projectId: string, prompts: Record<string, string>) =>
+    request<PromptOut[]>(`/api/settings/prompts?project_id=${projectId}`, {
       method: "PUT",
       body: JSON.stringify({ prompts }),
     }),
