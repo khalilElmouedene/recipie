@@ -39,9 +39,9 @@ function getWeekDays(anchor: Date) {
 }
 
 // ── Post form modal ───────────────────────────────────────
-function PostFormModal({ projectId, accounts, post, initialDate, onClose, onSaved }: {
+function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccounts, onClose, onSaved }: {
   projectId: string; accounts: ThreadsAccountOut[]; post?: ThreadsPostOut | null;
-  initialDate?: string; onClose: () => void; onSaved: () => void;
+  initialDate?: string; defaultAllAccounts?: boolean; onClose: () => void; onSaved: () => void;
 }) {
   const isEdit = !!post;
   const defaultScheduled = initialDate ? `${initialDate}T09:00` : "";
@@ -56,7 +56,7 @@ function PostFormModal({ projectId, accounts, post, initialDate, onClose, onSave
     if (post?.scheduled_at) return new Date(post.scheduled_at).toISOString().slice(0, 16);
     return defaultScheduled;
   });
-  const [allAccounts, setAllAccounts] = useState(false);
+  const [allAccounts, setAllAccounts] = useState(defaultAllAccounts ?? false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -694,7 +694,9 @@ export default function ThreadsProjectDetailPage() {
   const [newPostDate, setNewPostDate] = useState<string | undefined>(undefined);
   const [publishing, setPublishing] = useState<string | null>(null);
   const [publishingAll, setPublishingAll] = useState(false);
+  const [publishAllError, setPublishAllError] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [newPostAllAccounts, setNewPostAllAccounts] = useState(false);
 
   // OAuth
   const [connecting, setConnecting] = useState(false);
@@ -752,12 +754,22 @@ export default function ThreadsProjectDetailPage() {
   };
 
   const handlePublishAll = async () => {
-    const publishableIds = visiblePosts
+    // Use `posts` directly (not visiblePosts which is computed later in render)
+    const allPosts = selectedAccountId ? posts.filter((p) => p.account_id === selectedAccountId) : posts;
+    const publishableIds = allPosts
       .filter((p) => p.status === "draft" || p.status === "scheduled" || p.status === "failed")
       .map((p) => p.id);
     if (!publishableIds.length) return;
     setPublishingAll(true);
-    try { await api.batchPublishThreadsPosts(publishableIds); loadData(); } catch { /* ignore */ }
+    setPublishAllError(null);
+    try {
+      const result = await api.batchPublishThreadsPosts(publishableIds);
+      if (result.failed.length > 0)
+        setPublishAllError(`${result.succeeded.length} published, ${result.failed.length} failed`);
+      loadData();
+    } catch (err: unknown) {
+      setPublishAllError(err instanceof Error ? err.message : "Publish all failed");
+    }
     setPublishingAll(false);
   };
 
@@ -767,7 +779,10 @@ export default function ThreadsProjectDetailPage() {
   };
 
   const handleNewPost = (dateStr: string) => {
-    setNewPostDate(dateStr); setEditPost(null); setShowForm(true);
+    setNewPostDate(dateStr);
+    setEditPost(null);
+    setNewPostAllAccounts(selectedAccountId === null && accounts.length > 1);
+    setShowForm(true);
   };
 
   // Navigation label
@@ -864,11 +879,19 @@ export default function ThreadsProjectDetailPage() {
         )}
 
         {/* Publish all */}
-        {visiblePosts.some((p) => p.status === "draft" || p.status === "scheduled" || p.status === "failed") && (
-          <button onClick={handlePublishAll} disabled={publishingAll}
-            className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-xl border border-green-700 text-green-400 hover:bg-green-900/30 transition disabled:opacity-50">
-            {publishingAll ? <><RefreshCw size={14} className="animate-spin" /> Publishing...</> : <><Send size={14} /> Publish All</>}
-          </button>
+        {posts.some((p) => p.status === "draft" || p.status === "scheduled" || p.status === "failed") && (
+          <div className="flex items-center gap-2">
+            {publishAllError && (
+              <span className="text-xs text-red-400 flex items-center gap-1">
+                <AlertCircle size={12} /> {publishAllError}
+                <button onClick={() => setPublishAllError(null)}><X size={11} /></button>
+              </span>
+            )}
+            <button onClick={handlePublishAll} disabled={publishingAll}
+              className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-xl border border-green-700 text-green-400 hover:bg-green-900/30 transition disabled:opacity-50">
+              {publishingAll ? <><RefreshCw size={14} className="animate-spin" /> Publishing...</> : <><Send size={14} /> Publish All</>}
+            </button>
+          </div>
         )}
 
         {/* New post */}
@@ -937,9 +960,10 @@ export default function ThreadsProjectDetailPage() {
       {/* Post form modal */}
       {(showForm || editPost) && (
         <PostFormModal
-          projectId={id} accounts={accounts} post={editPost} initialDate={newPostDate}
-          onClose={() => { setShowForm(false); setEditPost(null); setNewPostDate(undefined); }}
-          onSaved={() => { setShowForm(false); setEditPost(null); setNewPostDate(undefined); loadData(); }}
+          projectId={id} accounts={accounts} post={editPost}
+          initialDate={newPostDate} defaultAllAccounts={newPostAllAccounts}
+          onClose={() => { setShowForm(false); setEditPost(null); setNewPostDate(undefined); setNewPostAllAccounts(false); }}
+          onSaved={() => { setShowForm(false); setEditPost(null); setNewPostDate(undefined); setNewPostAllAccounts(false); loadData(); }}
         />
       )}
     </div>
