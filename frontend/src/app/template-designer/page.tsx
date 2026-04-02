@@ -20,8 +20,6 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 
-const PIN_W = 1000;
-const PIN_H = 1500;
 const SELECTION_ACCENT = "#2563eb";
 
 let _uid = 0;
@@ -50,6 +48,9 @@ function TemplateDesignerInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const editingTemplateId = searchParams.get("templateId");
+
+  const canvasW = Math.max(100, parseInt(searchParams.get("w") || "1000", 10));
+  const canvasH = Math.max(100, parseInt(searchParams.get("h") || "1500", 10));
 
   // Canvas
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -192,8 +193,8 @@ function TemplateDesignerInner() {
 
         fabricLibRef.current = fabric;
         const canvas = new fabric.Canvas(canvasRef.current!, {
-          width: PIN_W,
-          height: PIN_H,
+          width: canvasW,
+          height: canvasH,
           backgroundColor: "#ffffff",
           preserveObjectStacking: true,
           selectionColor: "rgba(37, 99, 235, 0.15)",
@@ -349,8 +350,8 @@ function TemplateDesignerInner() {
       for (const el of tmpl.elements || []) {
         if (el.type === "text") {
           const tb = new fabric.Textbox(el.defaultText || "Text", {
-            left: el.x ?? PIN_W / 2,
-            top: el.y ?? PIN_H / 2,
+            left: el.x ?? canvasW / 2,
+            top: el.y ?? canvasH / 2,
             width: el.width || 800,
             fontSize: el.fontSize || 48,
             fontFamily: el.fontFamily || "Arial",
@@ -388,7 +389,7 @@ function TemplateDesignerInner() {
           const rect = new fabric.Rect({
             left: el.x ?? 0,
             top: el.y ?? 0,
-            width: el.width || PIN_W,
+            width: el.width || canvasW,
             height: el.height || 120,
             fill: el.bgColor || "#4a90d9",
             originX: "left",
@@ -422,8 +423,8 @@ function TemplateDesignerInner() {
     if (!canvas || !fabric) return;
     saveUndoState();
     const tb = new fabric.Textbox("Text", {
-      left: PIN_W / 2,
-      top: PIN_H / 2 - 50,
+      left: canvasW / 2,
+      top: canvasH / 2 - 50,
       width: 800,
       fontSize: 64,
       fontFamily,
@@ -448,8 +449,8 @@ function TemplateDesignerInner() {
     if (!canvas || !fabric) return;
     saveUndoState();
     const rect = new fabric.Rect({
-      left: PIN_W / 2,
-      top: PIN_H / 3,
+      left: canvasW / 2,
+      top: canvasH / 3,
       width: 800,
       height: 600,
       fill: "#e8e8e8",
@@ -475,8 +476,8 @@ function TemplateDesignerInner() {
     saveUndoState();
     const rect = new fabric.Rect({
       left: 0,
-      top: PIN_H / 2 - 100,
-      width: PIN_W,
+      top: canvasH / 2 - 100,
+      width: canvasW,
       height: 200,
       fill: "#4a90d9",
     });
@@ -494,8 +495,8 @@ function TemplateDesignerInner() {
     if (!canvas || !fabric) return;
     saveUndoState();
     const tb = new fabric.Textbox("WWW.YOURSITE.COM", {
-      left: PIN_W / 2,
-      top: PIN_H - 60,
+      left: canvasW / 2,
+      top: canvasH - 60,
       width: 900,
       fontSize: 26,
       fontFamily,
@@ -530,12 +531,12 @@ function TemplateDesignerInner() {
         crossOrigin: "anonymous",
       });
       const scale = Math.max(
-        PIN_W / (img.width || 1),
-        PIN_H / (img.height || 1)
+        canvasW / (img.width || 1),
+        canvasH / (img.height || 1)
       );
       img.set({
-        left: PIN_W / 2,
-        top: PIN_H / 2,
+        left: canvasW / 2,
+        top: canvasH / 2,
         originX: "center",
         originY: "center",
         scaleX: scale,
@@ -571,8 +572,8 @@ function TemplateDesignerInner() {
         600 / (img.height || 1)
       );
       img.set({
-        left: PIN_W / 2,
-        top: PIN_H / 2,
+        left: canvasW / 2,
+        top: canvasH / 2,
         originX: "center",
         originY: "center",
         scaleX: scale,
@@ -714,6 +715,8 @@ function TemplateDesignerInner() {
         name: templateName.trim() || "My Template",
         description: null,
         bgColor,
+        canvasWidth: canvasW,
+        canvasHeight: canvasH,
         elements: elements as any,
       };
       if (editingTemplateId) {
@@ -878,11 +881,11 @@ function TemplateDesignerInner() {
                 </label>
                 <div className="flex items-center gap-2 text-[11px] text-gray-400">
                   <div className="flex-1 bg-gray-800 rounded-lg px-2 py-1.5 text-center font-mono">
-                    {PIN_W}
+                    {canvasW}
                   </div>
                   <span className="text-gray-600">×</span>
                   <div className="flex-1 bg-gray-800 rounded-lg px-2 py-1.5 text-center font-mono">
-                    {PIN_H}
+                    {canvasH}
                   </div>
                 </div>
               </div>
@@ -935,8 +938,8 @@ function TemplateDesignerInner() {
           <div className="flex-1 overflow-auto p-8">
             <div
               style={{
-                width: PIN_W * zoomPct,
-                height: PIN_H * zoomPct,
+                width: canvasW * zoomPct,
+                height: canvasH * zoomPct,
                 margin: "0 auto",
                 flexShrink: 0,
               }}
@@ -945,8 +948,8 @@ function TemplateDesignerInner() {
                 style={{
                   transform: `scale(${zoomPct})`,
                   transformOrigin: "top left",
-                  width: PIN_W,
-                  height: PIN_H,
+                  width: canvasW,
+                  height: canvasH,
                   boxShadow: "0 4px 40px rgba(0,0,0,0.25)",
                   borderRadius: 4,
                   overflow: "hidden",

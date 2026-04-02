@@ -271,6 +271,10 @@ class PinDesignerTemplate(Base):
     # Stored as JSON text because the schema is flexible and evolves with the designer.
     elements_json: Mapped[str] = mapped_column(Text, nullable=False)
 
+    # Canvas dimensions (pixels). Defaults to the standard Pinterest Pin size.
+    canvas_width: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
+    canvas_height: Mapped[int] = mapped_column(Integer, nullable=False, default=1500)
+
     # Used by UI for quick preview. Optional.
     example_image: Mapped[str | None] = mapped_column(Text, nullable=True)
 

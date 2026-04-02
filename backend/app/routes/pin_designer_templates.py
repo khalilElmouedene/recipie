@@ -47,6 +47,8 @@ async def list_pin_designer_templates(
                 name=t.name,
                 description=t.description,
                 bgColor=t.bg_color,
+                canvasWidth=t.canvas_width,
+                canvasHeight=t.canvas_height,
                 previewLayout="simple",
                 elements=_parse_elements(t.elements_json),
             )
@@ -85,6 +87,8 @@ async def create_pin_designer_template(
         name=normalized_name,
         description=body.description,
         bg_color=body.bgColor,
+        canvas_width=body.canvasWidth,
+        canvas_height=body.canvasHeight,
         elements_json=json.dumps([e.model_dump() for e in body.elements]),
     )
     db.add(tmpl)
@@ -96,6 +100,8 @@ async def create_pin_designer_template(
         name=tmpl.name,
         description=tmpl.description,
         bgColor=tmpl.bg_color,
+        canvasWidth=tmpl.canvas_width,
+        canvasHeight=tmpl.canvas_height,
         previewLayout="simple",
         elements=_parse_elements(tmpl.elements_json),
     )
@@ -169,6 +175,10 @@ async def update_pin_designer_template(
         tmpl.description = body.description
     if body.bgColor is not None:
         tmpl.bg_color = body.bgColor
+    if body.canvasWidth is not None:
+        tmpl.canvas_width = body.canvasWidth
+    if body.canvasHeight is not None:
+        tmpl.canvas_height = body.canvasHeight
     if body.elements is not None:
         tmpl.elements_json = json.dumps([e.model_dump() for e in body.elements])
 
@@ -180,6 +190,8 @@ async def update_pin_designer_template(
         name=tmpl.name,
         description=tmpl.description,
         bgColor=tmpl.bg_color,
+        canvasWidth=tmpl.canvas_width,
+        canvasHeight=tmpl.canvas_height,
         previewLayout="simple",
         elements=_parse_elements(tmpl.elements_json),
     )

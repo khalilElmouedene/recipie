@@ -566,9 +566,86 @@ const PROMPT_GROUPS: { label: string; keys: string[] }[] = [
 
 type SettingsSubTab = "credentials" | "prompts" | "templates";
 
+const CANVAS_SIZE_PRESETS = [
+  { label: "Pinterest Pin",      w: 1000, h: 1500, ratio: "2:3" },
+  { label: "Pinterest Square",   w: 1000, h: 1000, ratio: "1:1" },
+  { label: "Instagram Post",     w: 1080, h: 1080, ratio: "1:1" },
+  { label: "Instagram Story",    w: 1080, h: 1920, ratio: "9:16" },
+  { label: "Facebook Post",      w: 1200, h: 630,  ratio: "~2:1" },
+  { label: "Custom",             w: 0,    h: 0,    ratio: "" },
+];
+
+function SizePickerModal({ onConfirm, onClose }: { onConfirm: (w: number, h: number) => void; onClose: () => void }) {
+  const [selected, setSelected] = useState(0);
+  const [customW, setCustomW] = useState("1000");
+  const [customH, setCustomH] = useState("1500");
+  const isCustom = CANVAS_SIZE_PRESETS[selected].label === "Custom";
+
+  function handleConfirm() {
+    const w = isCustom ? parseInt(customW, 10) : CANVAS_SIZE_PRESETS[selected].w;
+    const h = isCustom ? parseInt(customH, 10) : CANVAS_SIZE_PRESETS[selected].h;
+    if (!w || !h || w < 100 || h < 100) { alert("Please enter valid dimensions (min 100px)."); return; }
+    onConfirm(w, h);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <h3 className="text-white font-semibold text-base mb-1">Choose Template Size</h3>
+        <p className="text-xs text-gray-400 mb-4">Select the canvas dimensions for your new design.</p>
+
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          {CANVAS_SIZE_PRESETS.map((p, i) => (
+            <button
+              key={p.label}
+              onClick={() => setSelected(i)}
+              className={`rounded-xl border px-3 py-2.5 text-left transition ${
+                selected === i
+                  ? "border-brand-500 bg-brand-500/10 text-white"
+                  : "border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200"
+              }`}
+            >
+              <p className="text-xs font-medium">{p.label}</p>
+              {p.ratio && <p className="text-[10px] text-gray-500 mt-0.5">{p.label !== "Custom" ? `${p.w} × ${p.h}` : p.ratio}</p>}
+            </button>
+          ))}
+        </div>
+
+        {isCustom && (
+          <div className="flex items-center gap-2 mb-4">
+            <div className="flex-1">
+              <label className="text-[10px] text-gray-500 block mb-1">Width (px)</label>
+              <input
+                type="number" min={100} max={8000}
+                value={customW} onChange={(e) => setCustomW(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
+              />
+            </div>
+            <span className="text-gray-600 mt-4">×</span>
+            <div className="flex-1">
+              <label className="text-[10px] text-gray-500 block mb-1">Height (px)</label>
+              <input
+                type="number" min={100} max={8000}
+                value={customH} onChange={(e) => setCustomH(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 px-4 py-2 rounded-lg border border-gray-700 text-gray-400 hover:text-white text-sm transition">Cancel</button>
+          <button onClick={handleConfirm} className="flex-1 btn-primary text-sm">Create Design</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsTab({ projectId }: { projectId: string }) {
   const router = useRouter();
   const [subTab, setSubTab] = useState<SettingsSubTab>("credentials");
+  const [showSizePicker, setShowSizePicker] = useState(false);
 
   // Credentials
   const [creds, setCreds] = useState<CredentialOut[]>([]);
@@ -771,6 +848,13 @@ function SettingsTab({ projectId }: { projectId: string }) {
         </>
       )}
 
+      {showSizePicker && (
+        <SizePickerModal
+          onConfirm={(w, h) => { setShowSizePicker(false); router.push(`/template-designer?w=${w}&h=${h}`); }}
+          onClose={() => setShowSizePicker(false)}
+        />
+      )}
+
       {subTab === "templates" && (
         <>
           <div className="flex items-center justify-between mb-6">
@@ -781,7 +865,7 @@ function SettingsTab({ projectId }: { projectId: string }) {
               </p>
             </div>
             <button
-              onClick={() => router.push("/template-designer")}
+              onClick={() => setShowSizePicker(true)}
               className="btn-primary flex items-center gap-2"
             >
               <Plus size={16} /> Create Template
@@ -802,7 +886,7 @@ function SettingsTab({ projectId }: { projectId: string }) {
                 Design your first template and use it across all your Pin Designers.
               </p>
               <button
-                onClick={() => router.push("/template-designer")}
+                onClick={() => setShowSizePicker(true)}
                 className="btn-primary flex items-center gap-2"
               >
                 <Plus size={15} /> Create your first template
@@ -814,7 +898,7 @@ function SettingsTab({ projectId }: { projectId: string }) {
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
               {/* Create new card */}
               <button
-                onClick={() => router.push("/template-designer")}
+                onClick={() => setShowSizePicker(true)}
                 className="aspect-[2/3] rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-500 hover:bg-gray-900/40 transition-all flex flex-col items-center justify-center gap-2 text-gray-500 hover:text-white group"
               >
                 <div className="w-10 h-10 rounded-xl border-2 border-dashed border-current flex items-center justify-center group-hover:border-brand-400">
@@ -836,8 +920,8 @@ function SettingsTab({ projectId }: { projectId: string }) {
                     {/* Simple element preview */}
                     <div className="w-full h-full p-2 space-y-1.5 overflow-hidden">
                       {tmpl.elements.slice(0, 6).map((el) => {
-                        const scaleW = 160 / 1000;
-                        const scaleH = 240 / 1500;
+                        const scaleW = 160 / (tmpl.canvasWidth || 1000);
+                        const scaleH = 240 / (tmpl.canvasHeight || 1500);
                         const style: React.CSSProperties = {
                           position: "absolute",
                           left: el.x * scaleW,
