@@ -488,11 +488,13 @@ async def publish_threads_post_now(
             image_url=post.image_url,
         )
     except ValueError as exc:
+        err_msg = str(exc)
+        logger.error("[threads] publish failed for post %s: %s", post.id, err_msg)
         post.status = ThreadsPostStatus.failed
-        post.error_message = str(exc)
+        post.error_message = err_msg
         await db.commit()
         await db.refresh(post)
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail=err_msg)
 
     # Optionally post first comment as a reply
     # Small delay so Meta fully processes the post before we reply
