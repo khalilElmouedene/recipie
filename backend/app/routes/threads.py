@@ -389,8 +389,7 @@ async def upload_threads_media(
         filename = f"{_uuid_module.uuid4().hex}.{ext}"
         dest = _THREADS_UPLOADS / filename
         dest.write_bytes(data)
-        base = settings.server_base_url.rstrip("/")
-        urls.append(f"{base}/uploads/threads/{filename}")
+        urls.append(f"/uploads/threads/{filename}")
     return {"urls": urls}
 
 
@@ -478,14 +477,22 @@ async def publish_threads_post_now(
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to decrypt access token")
 
+    def _to_absolute(url: str) -> str:
+        """Convert a relative /uploads/... path to a publicly accessible absolute URL."""
+        if url.startswith("/"):
+            return settings.server_base_url.rstrip("/") + url
+        return url
+
     try:
         media = json.loads(post.media_urls) if post.media_urls else None
+        abs_media = [_to_absolute(u) for u in media] if media else None
+        abs_image = _to_absolute(post.image_url) if post.image_url else None
         threads_post_id = threads_api.publish_post(
             access_token=access_token,
             user_id=account.threads_user_id,
             text=post.text_content,
-            media_urls=media,
-            image_url=post.image_url,
+            media_urls=abs_media,
+            image_url=abs_image,
         )
     except ValueError as exc:
         err_msg = str(exc)
@@ -562,12 +569,15 @@ async def batch_publish_threads_posts(
 
         try:
             batch_media = json.loads(post.media_urls) if post.media_urls else None
+            _base = settings.server_base_url.rstrip("/")
+            abs_batch = [u if u.startswith("http") else _base + u for u in batch_media] if batch_media else None
+            abs_img = (_base + post.image_url if post.image_url and post.image_url.startswith("/") else post.image_url) if post.image_url else None
             threads_post_id = threads_api.publish_post(
                 access_token=access_token,
                 user_id=account.threads_user_id,
                 text=post.text_content,
-                media_urls=batch_media,
-                image_url=post.image_url,
+                media_urls=abs_batch,
+                image_url=abs_img,
             )
         except ValueError as exc:
             post.status = ThreadsPostStatus.failed
