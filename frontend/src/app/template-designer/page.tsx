@@ -17,6 +17,13 @@ import {
   AlignRight,
   Loader2,
   X,
+  Eye,
+  EyeOff,
+  ChevronUp,
+  ChevronDown,
+  Layers,
+  Pencil,
+  Check,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -82,6 +89,12 @@ function TemplateDesignerInner() {
 
   // Band / image zone color
   const [elemColor, setElemColor] = useState("#4a90d9");
+
+  // Layers panel
+  const [layers, setLayers] = useState<{ id: string; type: string; label: string; visible: boolean }[]>([]);
+  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
+  const [editingLabelValue, setEditingLabelValue] = useState("");
 
   // Saving
   const [saving, setSaving] = useState(false);
@@ -416,6 +429,27 @@ function TemplateDesignerInner() {
     void loadExistingTemplate();
   }, [canvasReady, loadExistingTemplate]);
 
+  useEffect(() => {
+    const canvas = fabricRef.current;
+    if (!canvas || !canvasReady) return;
+    const sync = () => syncLayers();
+    canvas.on("object:added", sync);
+    canvas.on("object:removed", sync);
+    canvas.on("object:modified", sync);
+    canvas.on("selection:created", sync);
+    canvas.on("selection:updated", sync);
+    canvas.on("selection:cleared", sync);
+    return () => {
+      canvas.off("object:added", sync);
+      canvas.off("object:removed", sync);
+      canvas.off("object:modified", sync);
+      canvas.off("selection:created", sync);
+      canvas.off("selection:updated", sync);
+      canvas.off("selection:cleared", sync);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasReady]);
+
   // ── Add elements ───────────────────────────────────────────────────────────
   function addText() {
     const canvas = fabricRef.current;
@@ -595,6 +629,96 @@ function TemplateDesignerInner() {
       reader.onload = () => resolve(reader.result as string);
       reader.readAsDataURL(file);
     });
+  }
+
+  // ── Layers ────────────────────────────────────────────────────────────────
+  function getLayerLabel(type: string): string {
+    switch (type) {
+      case "text": return "Text";
+      case "image": return "Image Zone";
+      case "band": return "Band";
+      case "asset": return "Image";
+      default: return "Element";
+    }
+  }
+
+  function syncLayers() {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const objs = (canvas.getObjects() as any[]).filter(o => o.__id && o.__ttype);
+    // Reversed: top object first (Canva style)
+    setLayers([...objs].reverse().map(o => ({
+      id: o.__id as string,
+      type: o.__ttype as string,
+      label: (o.__label as string) || getLayerLabel(o.__ttype),
+      visible: o.visible !== false,
+    })));
+    const active = canvas.getActiveObject() as any;
+    setSelectedLayerId(active?.__id ?? null);
+  }
+
+  function selectLayer(id: string) {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const obj = (canvas.getObjects() as any[]).find(o => o.__id === id);
+    if (!obj) return;
+    canvas.setActiveObject(obj);
+    canvas.requestRenderAll();
+    syncLayers();
+  }
+
+  function moveLayerUp(id: string) {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const obj = (canvas.getObjects() as any[]).find(o => o.__id === id);
+    if (!obj) return;
+    saveUndoState();
+    canvas.bringObjectForward(obj);
+    canvas.requestRenderAll();
+    syncLayers();
+  }
+
+  function moveLayerDown(id: string) {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const obj = (canvas.getObjects() as any[]).find(o => o.__id === id);
+    if (!obj) return;
+    saveUndoState();
+    canvas.sendObjectBackwards(obj);
+    canvas.requestRenderAll();
+    syncLayers();
+  }
+
+  function toggleLayerVisibility(id: string) {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const obj = (canvas.getObjects() as any[]).find(o => o.__id === id);
+    if (!obj) return;
+    obj.visible = obj.visible === false ? true : false;
+    canvas.requestRenderAll();
+    syncLayers();
+  }
+
+  function deleteLayerById(id: string) {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const obj = (canvas.getObjects() as any[]).find(o => o.__id === id);
+    if (!obj) return;
+    saveUndoState();
+    canvas.remove(obj);
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+    setSelType(null);
+    syncLayers();
+  }
+
+  function commitRenameLayer(id: string, newLabel: string) {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const obj = (canvas.getObjects() as any[]).find(o => o.__id === id);
+    if (obj) obj.__label = newLabel.trim() || getLayerLabel(obj.__ttype);
+    setEditingLayerId(null);
+    syncLayers();
   }
 
   function deleteSelected() {
@@ -962,7 +1086,9 @@ function TemplateDesignerInner() {
         </main>
 
         {/* ── Right Panel ─────────────────────────────────────────────────── */}
-        <aside className="w-64 border-l border-gray-800 bg-gray-950 overflow-y-auto flex-shrink-0 p-4">
+        <aside className="w-64 border-l border-gray-800 bg-gray-950 flex flex-col flex-shrink-0 overflow-hidden">
+          {/* scrollable properties area */}
+          <div className="flex-1 overflow-y-auto p-4">
           {!selType && (
             <div className="flex flex-col items-center justify-center h-full text-center">
               <div className="w-12 h-12 rounded-xl bg-gray-800 flex items-center justify-center mb-3">
@@ -1208,6 +1334,126 @@ function TemplateDesignerInner() {
               </button>
             </div>
           )}
+          </div>{/* end scrollable properties */}
+
+          {/* ── Layers Panel ──────────────────────────────────────────────── */}
+          <div className="border-t border-gray-800 flex flex-col flex-shrink-0" style={{ maxHeight: "45%" }}>
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-800 flex-shrink-0">
+              <Layers size={13} className="text-gray-500" />
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex-1">
+                Layers
+              </span>
+              <span className="text-[10px] text-gray-600">{layers.length}</span>
+            </div>
+
+            {layers.length === 0 && (
+              <div className="flex-1 flex items-center justify-center py-6">
+                <p className="text-[11px] text-gray-600 text-center px-3">No layers yet.<br />Add an element to get started.</p>
+              </div>
+            )}
+
+            <div className="overflow-y-auto flex-1">
+              {layers.map((layer, i) => {
+                const isSelected = layer.id === selectedLayerId;
+                const isEditing = editingLayerId === layer.id;
+                const isTop = i === 0;
+                const isBottom = i === layers.length - 1;
+
+                return (
+                  <div
+                    key={layer.id}
+                    onClick={() => selectLayer(layer.id)}
+                    className={`group flex items-center gap-1.5 px-2 py-1.5 cursor-pointer transition select-none ${
+                      isSelected ? "bg-brand-500/15 border-l-2 border-brand-500" : "hover:bg-gray-800/60 border-l-2 border-transparent"
+                    }`}
+                  >
+                    {/* Type icon */}
+                    <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-gray-500">
+                      {layer.type === "text" ? <Type size={11} /> :
+                       layer.type === "band" ? <Minus size={11} /> :
+                       <ImageIcon size={11} />}
+                    </div>
+
+                    {/* Label */}
+                    <div className="flex-1 min-w-0">
+                      {isEditing ? (
+                        <input
+                          autoFocus
+                          value={editingLabelValue}
+                          onChange={(e) => setEditingLabelValue(e.target.value)}
+                          onBlur={() => commitRenameLayer(layer.id, editingLabelValue)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitRenameLayer(layer.id, editingLabelValue);
+                            if (e.key === "Escape") setEditingLayerId(null);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full bg-gray-800 border border-brand-500 rounded px-1 py-0.5 text-[11px] text-white focus:outline-none"
+                        />
+                      ) : (
+                        <span
+                          className={`block truncate text-[11px] ${isSelected ? "text-white" : "text-gray-400"}`}
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            setEditingLayerId(layer.id);
+                            setEditingLabelValue(layer.label);
+                          }}
+                          title="Double-click to rename"
+                        >
+                          {layer.label}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Action buttons — visible on hover or when selected */}
+                    <div className={`flex items-center gap-0.5 flex-shrink-0 ${isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"} transition-opacity`}>
+                      {/* Rename */}
+                      <button
+                        title="Rename"
+                        onClick={(e) => { e.stopPropagation(); setEditingLayerId(layer.id); setEditingLabelValue(layer.label); }}
+                        className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-700 text-gray-500 hover:text-white transition"
+                      >
+                        <Pencil size={9} />
+                      </button>
+                      {/* Visibility */}
+                      <button
+                        title={layer.visible ? "Hide" : "Show"}
+                        onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(layer.id); }}
+                        className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-700 text-gray-500 hover:text-white transition"
+                      >
+                        {layer.visible ? <Eye size={10} /> : <EyeOff size={10} />}
+                      </button>
+                      {/* Move up */}
+                      <button
+                        title="Move up"
+                        disabled={isTop}
+                        onClick={(e) => { e.stopPropagation(); moveLayerUp(layer.id); }}
+                        className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-700 text-gray-500 hover:text-white transition disabled:opacity-20 disabled:pointer-events-none"
+                      >
+                        <ChevronUp size={11} />
+                      </button>
+                      {/* Move down */}
+                      <button
+                        title="Move down"
+                        disabled={isBottom}
+                        onClick={(e) => { e.stopPropagation(); moveLayerDown(layer.id); }}
+                        className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-700 text-gray-500 hover:text-white transition disabled:opacity-20 disabled:pointer-events-none"
+                      >
+                        <ChevronDown size={11} />
+                      </button>
+                      {/* Delete */}
+                      <button
+                        title="Delete layer"
+                        onClick={(e) => { e.stopPropagation(); deleteLayerById(layer.id); }}
+                        className="w-5 h-5 flex items-center justify-center rounded hover:bg-red-900/60 text-gray-500 hover:text-red-400 transition"
+                      >
+                        <Trash2 size={9} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </aside>
       </div>
     </div>
