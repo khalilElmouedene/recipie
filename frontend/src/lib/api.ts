@@ -546,6 +546,8 @@ export interface PinDesignerTemplateOut {
   name: string;
   description: string | null;
   bgColor: string;
+  canvasWidth: number;
+  canvasHeight: number;
   previewLayout: string | null;
   elements: PinDesignerTemplateElement[];
 }
@@ -554,6 +556,8 @@ export interface PinDesignerTemplateCreate {
   name: string;
   description: string | null;
   bgColor: string;
+  canvasWidth?: number;
+  canvasHeight?: number;
   elements: PinDesignerTemplateElement[];
 }
 
