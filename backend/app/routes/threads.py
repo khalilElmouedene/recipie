@@ -501,7 +501,7 @@ async def publish_threads_post_now(
         post.error_message = err_msg
         await db.commit()
         await db.refresh(post)
-        raise HTTPException(status_code=502, detail=err_msg)
+        raise HTTPException(status_code=400, detail=err_msg)
 
     # Optionally post first comment as a reply
     # Small delay so Meta fully processes the post before we reply
