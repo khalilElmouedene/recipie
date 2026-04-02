@@ -494,6 +494,8 @@ async def publish_threads_post_now(
         media = json.loads(post.media_urls) if post.media_urls else None
         abs_media = [_to_absolute(u) for u in media] if media else None
         abs_image = _to_absolute(post.image_url) if post.image_url else None
+        logger.error("[threads DEBUG] raw media_urls=%s raw image_url=%s abs_media=%s abs_image=%s server_base_url=%s",
+                     post.media_urls, post.image_url, abs_media, abs_image, settings.server_base_url)
         threads_post_id = threads_api.publish_post(
             access_token=access_token,
             user_id=account.threads_user_id,
