@@ -554,13 +554,13 @@ const KEY_GROUPS = [
 const PROMPT_GROUPS: { label: string; keys: string[] }[] = [
   { label: "Article generation", keys: ["article"] },
   { label: "Full recipe", keys: ["full_recipe"] },
-  { label: "Recipe JSON (WP Recipe Maker)", keys: ["recipe_json_system", "recipe_json_user"] },
-  { label: "Meta description (SEO)", keys: ["meta_description_system", "meta_description_user"] },
-  { label: "Category", keys: ["category_system", "category_user"] },
-  { label: "Pinterest Pin title", keys: ["pinterest_title_system", "pinterest_title_user"] },
-  { label: "Pinterest Pin description", keys: ["pinterest_description_system", "pinterest_description_user"] },
-  { label: "Pinterest Pin tags", keys: ["pinterest_tags_system", "pinterest_tags_user"] },
-  { label: "Pinterest Pin board", keys: ["pinterest_board_system", "pinterest_board_user"] },
+  { label: "Recipe JSON (WP Recipe Maker)", keys: ["recipe_json"] },
+  { label: "Meta description (SEO)", keys: ["meta_description"] },
+  { label: "Category", keys: ["category"] },
+  { label: "Pinterest Pin title", keys: ["pinterest_title"] },
+  { label: "Pinterest Pin description", keys: ["pinterest_description"] },
+  { label: "Pinterest Pin tags", keys: ["pinterest_tags"] },
+  { label: "Pinterest Pin board", keys: ["pinterest_board"] },
   { label: "Midjourney image prompt", keys: ["midjourney_imagine"] },
 ];
 

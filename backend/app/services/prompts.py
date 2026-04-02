@@ -57,12 +57,8 @@ Recipe to base the article on:
         "value": "Rewrite in English language the following food recipe in a clean and professional format. Only include title, ingredients, and instructions. Do not add commentary.\n\n{recipe_title}",
         "description": "Full recipe rewrite - placeholder: {recipe_title}",
     },
-    "recipe_json_system": {
-        "value": "You are an expert recipe-card generator. Parse the provided food article and return ONLY a valid JSON object (no backticks, no markdown) that follows the schema exactly.",
-        "description": "System message for recipe JSON generation",
-    },
-    "recipe_json_user": {
-        "value": """Parse the following food article and return ONLY a JSON object (no backticks, no markdown) that follows THIS schema exactly:
+    "recipe_json": {
+        "value": """You are an expert recipe-card generator. Parse the following food article and return ONLY a valid JSON object (no backticks, no markdown) that follows THIS schema exactly:
 
 {{
   "name": "Recipe Title Here",
@@ -146,12 +142,10 @@ ARTICLE:
 {full_recipe}""",
         "description": "Recipe JSON - placeholder: {full_recipe}",
     },
-    "meta_description_system": {
-        "value": "You are an SEO expert for a US food blog.",
-        "description": "System message for meta description",
-    },
-    "meta_description_user": {
-        "value": """Write a single meta description (max 140 characters) for this recipe article.
+    "meta_description": {
+        "value": """You are an SEO expert for a US food blog.
+
+Write a single meta description (max 140 characters) for this recipe article.
 
 Rules:
 - One short, clear sentence.
@@ -164,12 +158,10 @@ Rules:
 Recipe: {recipe_title}""",
         "description": "Meta description - placeholder: {recipe_title}",
     },
-    "category_system": {
-        "value": "You are a food classification expert.",
-        "description": "System message for category",
-    },
-    "category_user": {
-        "value": """Choose the BEST matching category for the following recipe.
+    "category": {
+        "value": """You are a food classification expert.
+
+Choose the BEST matching category for the following recipe.
 Respond ONLY with one of these exact category names:
 Breakfast, Dinner, Salad, Dessert, Snacks, All Recipes, Drinks, Lunch
 
@@ -178,12 +170,10 @@ No other text or explanation.
 Recipe: {recipe_title}""",
         "description": "Category - placeholder: {recipe_title}",
     },
-    "pinterest_title_system": {
-        "value": "You are a Pinterest food blogger with 10 years of success.",
-        "description": "System message for Pinterest pin title",
-    },
-    "pinterest_title_user": {
-        "value": """Write a Pin Title for this recipe article.
+    "pinterest_title": {
+        "value": """You are a Pinterest food blogger with 10 years of success.
+
+Write a Pin Title for this recipe article.
 
 Rules:
 - Max 100 characters.
@@ -196,12 +186,10 @@ Rules:
 Recipe: {recipe_title}""",
         "description": "Pinterest title - placeholder: {recipe_title}",
     },
-    "pinterest_description_system": {
-        "value": "You are a Pinterest food blogger with 10 years of success.",
-        "description": "System message for Pinterest description",
-    },
-    "pinterest_description_user": {
-        "value": """Write a Pin Description for this recipe article.
+    "pinterest_description": {
+        "value": """You are a Pinterest food blogger with 10 years of success.
+
+Write a Pin Description for this recipe article.
 
 Rules:
 - Natural, conversational tone.
@@ -217,12 +205,10 @@ Rules:
 Recipe: {recipe_title}""",
         "description": "Pinterest description - placeholder: {recipe_title}",
     },
-    "pinterest_tags_system": {
-        "value": "You are a Pinterest SEO expert.",
-        "description": "System message for Pinterest tags",
-    },
-    "pinterest_tags_user": {
-        "value": """Create 5 to 8 Pinterest keywords for this recipe article.
+    "pinterest_tags": {
+        "value": """You are a Pinterest SEO expert.
+
+Create 5 to 8 Pinterest keywords for this recipe article.
 
 Rules:
 - English only.
@@ -236,12 +222,10 @@ Return ONLY the comma-separated list, nothing else.
 Recipe: {recipe_title}""",
         "description": "Pinterest tags - placeholder: {recipe_title}",
     },
-    "pinterest_board_system": {
-        "value": "You are a Pinterest content strategist who selects the best board for each pin.",
-        "description": "System message for Pinterest board selection",
-    },
-    "pinterest_board_user": {
-        "value": """Choose the single BEST Pinterest board from this list for the recipe below:
+    "pinterest_board": {
+        "value": """You are a Pinterest content strategist who selects the best board for each pin.
+
+Choose the single BEST Pinterest board from this list for the recipe below:
 
 {boards_list}
 
