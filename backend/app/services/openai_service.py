@@ -71,21 +71,10 @@ def generate_article(recipe_title: str, full_recipe: str, external_links: str, i
 
 
 def generate_full_recipe(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
-    client = _get_client(api_key)
     p = prompts or {}
-    system = get_prompt(p, "full_recipe_system")
-    user_tpl = get_prompt(p, "full_recipe_user")
-    user_content = user_tpl.format(recipe_title=recipe_title)
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0.7,
-        max_tokens=2000,
-    )
-    result = response.choices[0].message.content.strip()
+    tpl = get_prompt(p, "full_recipe")
+    prompt = tpl.format(recipe_title=recipe_title)
+    result = generate_with_openai(prompt, api_key, log=log)
     return re.sub(r'[*#]+', '', result)
 
 
@@ -217,6 +206,24 @@ def generate_pinterest_pin_tags(recipe_title: str, api_key: str, prompts: dict[s
         ],
         temperature=0.7,
         max_tokens=150,
+    )
+    return re.sub(r'[*#"]', '', response.choices[0].message.content.strip())
+
+
+def generate_pinterest_pin_board(recipe_title: str, boards_list: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+    client = _get_client(api_key)
+    p = prompts or {}
+    system = get_prompt(p, "pinterest_board_system")
+    user_tpl = get_prompt(p, "pinterest_board_user")
+    user_content = user_tpl.format(recipe_title=recipe_title, boards_list=boards_list)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.3,
+        max_tokens=50,
     )
     return re.sub(r'[*#"]', '', response.choices[0].message.content.strip())
 

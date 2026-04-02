@@ -263,7 +263,7 @@ def generate_for_recipe(
         if _stop():
             return result
         _log("Generating full recipe...")
-        full_recipe = openai_service.generate_full_recipe(recipe_title, openai_key, log=_log)
+        full_recipe = openai_service.generate_full_recipe(recipe_title, openai_key, prompts=prompts, log=_log)
         result["generated_full_recipe"] = full_recipe
 
         # 3. Generate recipe JSON for WP Recipe Maker

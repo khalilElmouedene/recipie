@@ -3,124 +3,165 @@ from __future__ import annotations
 
 DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
     "article": {
-        "value": """Generate a complete, fully written recipe article for '{recipe_title}' based on the recipe details: {full_recipe}. The article must be at least 1300 words and include:
+        "value": """You are a professional American recipe blogger. Your goal is to write a long, SEO-optimized blog article based on the recipe provided, in English.
 
-1. COMPLETE ARTICLE STRUCTURE:
-- Engaging introduction (200-300 words)
-- Why you'll love this recipe section (300-400 words)
-- Why you should try this recipe section (300-400 words)
-- Ingredients and necessary utensils with detailed list and quantities (300-500 words)
-- Detailed recipe steps with practical tips (300-400 words)
-- FAQ section with 4-6 relevant questions and answers
-- Conclusion (100-200 words)
+Instructions:
+- Write in a warm, conversational, and friendly tone, as if talking to a friend in the kitchen.
+- Use the second person ("you") to guide the reader step by step, and occasionally use the first person ("I") to add helpful personal tips.
+- Use simple, clear language with an inviting, cozy vibe. No jargon.
+- DO NOT use this character in texts and titles: -
+- Use ONLY standard ASCII English punctuation: . , ? ! : ; ' " ( ) [ ] /
 
-2. SEO OPTIMIZATION:
-- Use focus keyword '{recipe_title}' naturally throughout
-- Include H2, H3, H4 headings with keywords
-- {internal_links}
-- Write meta description (will be used separately)
+Format the article in clean HTML, following this structure exactly (no extra tags):
+- Title: <h1>
+- Main sections: <h2>
+- Subsections: <h3>
+- Paragraphs: <p>
+- Lists: <ul>, <li>
 
-3. FORMATTING:
-- Output as clean HTML without <head>, <body> tags
-- Start directly with H1 for the title
-- Use proper HTML tags for lists, headings, paragraphs
-- Make it mobile-friendly and readable
+Structure:
+<h1>Catchy SEO-optimized title for {recipe_title}</h1>
+Start with a nostalgic or emotional hook. Mention how easy, quick, or memorable the recipe is.
 
-4. CONTENT QUALITY:
-- Unique, well-structured content
-- Perfect grammar and spelling
-- Natural and engaging tone
-- No content duplication
+<h2>Why You'll Love {recipe_title}</h2>
+<ul><li>Fast</li><li>Easy</li><li>Giftable</li><li>Crowd-pleasing</li></ul>
 
-Write the complete article now with all sections fully developed.""",
-        "description": "Article generation - placeholders: {recipe_title}, {full_recipe}, {external_links}, {internal_links}",
+<h2>Ingredients</h2>
+List ingredients with short comments about them.
+
+<h2>How to Make {recipe_title}</h2>
+Step-by-step instructions.
+
+<h2>Substitutions and Additions</h2>
+Suggest swaps and creative upgrades.
+
+<h2>Tips for Success</h2>
+Common mistakes and prep-ahead ideas.
+
+<h2>How to Store {recipe_title}</h2>
+Storage tips and shelf life.
+
+<h2>FAQs</h2>
+2-4 brief questions and answers.
+
+Internal links instructions:
+{internal_links}
+
+At the very end of the article, add a short sentence encouraging readers to follow the Pinterest account. Use the word Pinterest as the anchor text, linking it to: https://www.pinterest.com/winsomerecipes/
+
+Recipe to base the article on:
+{full_recipe}""",
+        "description": "Article generation - placeholders: {recipe_title}, {full_recipe}, {internal_links}",
     },
-    "full_recipe_system": {
-        "value": "You are a professional recipe writer.",
-        "description": "System message for full recipe generation",
-    },
-    "full_recipe_user": {
-        "value": "COPY-PASTE READY Long And Easy To Read Food Recipe : {recipe_title} no additional text with title and Ingredients, write recipe (ingredients, instructions, nutrition) based on ingredients",
-        "description": "User prompt for full recipe - placeholder: {recipe_title}",
+    "full_recipe": {
+        "value": "Rewrite in English language the following food recipe in a clean and professional format. Only include title, ingredients, and instructions. Do not add commentary.\n\n{recipe_title}",
+        "description": "Full recipe rewrite - placeholder: {recipe_title}",
     },
     "recipe_json_system": {
-        "value": "You are a professional recipe creator that outputs perfect JSON for WP Recipe Maker with ALL required fields.",
+        "value": "You are an expert recipe-card generator. Parse the provided food article and return ONLY a valid JSON object (no backticks, no markdown) that follows the schema exactly.",
         "description": "System message for recipe JSON generation",
     },
     "recipe_json_user": {
-        "value": """Generate a complete recipe for "{full_recipe}" that can be directly imported into WP Recipe Maker plugin.
+        "value": """Parse the following food article and return ONLY a JSON object (no backticks, no markdown) that follows THIS schema exactly:
 
-Return ONLY valid JSON exactly matching this structure (no markdown, no extra text):
 {{
-    "type": "wprm_recipe",
-    "name": "Full recipe title",
-    "summary": "A 1-2 sentence enticing description of the recipe.",
-    "author": {{"id": 1, "name": "Recipe Creator"}},
-    "servings": 4,
-    "servings_unit": "servings",
-    "cost": "",
-    "prep_time": 15,
-    "cook_time": 30,
-    "total_time": 45,
-    "custom_time": 0,
-    "custom_time_label": "",
-    "rating": {{"count": 0, "total": 0, "average": 0}},
-    "tags": {{
-        "course": ["Dessert"],
-        "cuisine": ["American"],
-        "keyword": ["keyword-specific-to-recipe", "main-ingredient", "cooking-method", "occasion"],
-        "difficulty": "easy"
+  "name": "Recipe Title Here",
+  "summary": "<p>Short enticing description of the recipe.</p>",
+  "author_display": "disabled",
+  "author_name": "",
+  "author_link": "",
+  "cost": "",
+  "servings": "4",
+  "servings_unit": "servings",
+  "prep_time": "10",
+  "prep_time_zero": "",
+  "cook_time": "25",
+  "cook_time_zero": "",
+  "total_time": "35",
+  "custom_time": "",
+  "custom_time_zero": "",
+  "custom_time_label": "",
+  "tags": {{
+    "course": ["Dinner", "Main Course"],
+    "cuisine": ["American"],
+    "keyword": ["main keyword", "secondary keyword"],
+    "difficulty": []
+  }},
+  "equipment": [
+    {{ "name": "Equipment 1" }},
+    {{ "name": "Equipment 2" }}
+  ],
+  "ingredients_flat": [
+    {{
+      "name": "Group Name",
+      "type": "group"
     }},
-    "equipment": [
-        {{"name": "Equipment 1"}},
-        {{"name": "Equipment 2"}}
-    ],
-    "ingredients_flat": [
-        {{"uid": "group_1", "name": "Main Ingredients", "type": "group"}},
-        {{"uid": "ingredient_1", "name": "ingredient name", "amount": "1", "unit": "cup", "notes": "", "group": "group_1", "type": "ingredient"}},
-        {{"uid": "ingredient_2", "name": "ingredient name", "amount": "1/2", "unit": "tablespoon", "notes": "optional note", "group": "group_1", "type": "ingredient"}},
-        {{"uid": "ingredient_3", "name": "ingredient name", "amount": "2", "unit": "cups", "notes": "", "group": "group_1", "type": "ingredient"}}
-    ],
-    "instructions_flat": [
-        {{"uid": "group_1", "name": "Instructions", "type": "group"}},
-        {{"uid": "instruction_1", "text": "Detailed first step.", "group": "group_1", "type": "instruction"}},
-        {{"uid": "instruction_2", "text": "Detailed second step.", "group": "group_1", "type": "instruction"}},
-        {{"uid": "instruction_3", "text": "Detailed third step.", "group": "group_1", "type": "instruction"}}
-    ],
-    "nutrition": {{
-        "calories": "350 kcal",
-        "carbohydrates": "50 g",
-        "protein": "5 g",
-        "fat": "15 g",
-        "saturated_fat": "8 g",
-        "cholesterol": "45 mg",
-        "sodium": "80 mg",
-        "potassium": "",
-        "fiber": "3 g",
-        "sugar": "10 g",
-        "vitamin_a": "",
-        "vitamin_c": "",
-        "calcium": "",
-        "iron": ""
-    }},
-    "custom_fields": {{}},
-    "notes": "Tips, substitutions, and storage instructions for this recipe."
+    {{
+      "amount": "1",
+      "unit": "lb",
+      "name": "ingredient name",
+      "notes": "optional note",
+      "converted": {{
+        "2": {{ "amount": "450", "unit": "g" }}
+      }},
+      "type": "ingredient"
+    }}
+  ],
+  "instructions_flat": [
+    {{
+      "text": "<p><strong>Step 1:</strong> Detailed instruction text here.</p>",
+      "type": "instruction",
+      "image_url": ""
+    }}
+  ],
+  "video_embed": "",
+  "notes": "<p>Tips, substitutions, and storage instructions.</p>",
+  "nutrition": {{
+    "calories": 350,
+    "carbohydrates": 40,
+    "protein": 15,
+    "fat": 12,
+    "saturated_fat": 5,
+    "cholesterol": 60,
+    "sodium": 400,
+    "potassium": 300,
+    "fiber": 3,
+    "sugar": 8,
+    "vitamin_a": 500,
+    "vitamin_c": 10,
+    "calcium": 100,
+    "iron": 2
+  }},
+  "custom_fields": {{}},
+  "ingredient_links_type": "global"
 }}
 
 Rules:
-- ingredients_flat: start with one group object, then list all 6-10 ingredients with uid, name, amount, unit, notes, group, type
-- instructions_flat: start with one group object, then list 5-8 detailed steps with uid, text, group, type
-- keywords must be recipe-specific (main ingredient, cooking method, flavor, occasion) — NOT generic words like "easy" or "delicious"
-- nutrition values must be strings with units exactly as shown (e.g. "350 kcal", "50 g", "80 mg")
-- Return ONLY the JSON object, absolutely nothing else""",
+- Fill every field with data from the article.
+- Times are strings representing integers in minutes.
+- Leave a field empty (or 0) if info is missing.
+- Do NOT wrap the JSON in backticks or markdown.
+
+ARTICLE:
+{full_recipe}""",
         "description": "Recipe JSON - placeholder: {full_recipe}",
     },
     "meta_description_system": {
-        "value": "You are an SEO expert.",
+        "value": "You are an SEO expert for a US food blog.",
         "description": "System message for meta description",
     },
     "meta_description_user": {
-        "value": "Generate a meta description of 155 characters for the recipe with the Main Keyword '{recipe_title}'",
+        "value": """Write a single meta description (max 140 characters) for this recipe article.
+
+Rules:
+- One short, clear sentence.
+- No emojis.
+- Make people want to click.
+- Return ONLY the meta description, nothing else.
+- DO NOT use this character: -
+- Use ONLY standard ASCII English punctuation: . , ? ! : ; ' " ( ) [ ] /
+
+Recipe: {recipe_title}""",
         "description": "Meta description - placeholder: {recipe_title}",
     },
     "category_system": {
@@ -128,23 +169,52 @@ Rules:
         "description": "System message for category",
     },
     "category_user": {
-        "value": "Based solely on the recipe name '{recipe_title}', which category does it best fit into? Only respond with one of these exact words: Breakfast, Dinner, Salad, or Dessert. No other text or explanation.",
+        "value": """Choose the BEST matching category for the following recipe.
+Respond ONLY with one of these exact category names:
+Breakfast, Dinner, Salad, Dessert, Snacks, All Recipes, Drinks, Lunch
+
+No other text or explanation.
+
+Recipe: {recipe_title}""",
         "description": "Category - placeholder: {recipe_title}",
     },
     "pinterest_title_system": {
-        "value": "You are a Pinterest marketing expert.",
+        "value": "You are a Pinterest food blogger with 10 years of success.",
         "description": "System message for Pinterest pin title",
     },
     "pinterest_title_user": {
-        "value": "Create a clear and engaging Pinterest Pin title for '{recipe_title}'. Keep it under 100 characters, include common Pinterest search keywords, and make it appeal to users looking for new recipe ideas",
+        "value": """Write a Pin Title for this recipe article.
+
+Rules:
+- Max 100 characters.
+- Compelling and clickable.
+- Include the main focus keyphrase if possible.
+- Return ONLY the title on one line, nothing else.
+- DO NOT use this character: -
+- Use ONLY standard ASCII English punctuation: . , ? ! : ; ' " ( ) [ ] /
+
+Recipe: {recipe_title}""",
         "description": "Pinterest title - placeholder: {recipe_title}",
     },
     "pinterest_description_system": {
-        "value": "You are a Pinterest content specialist.",
+        "value": "You are a Pinterest food blogger with 10 years of success.",
         "description": "System message for Pinterest description",
     },
     "pinterest_description_user": {
-        "value": "Using the following title and keywords '{recipe_title}', create a Pinterest-friendly description that is clear, keyword-rich, and written in an engaging, natural tone. Avoid hype or sales-driven phrases. Compose 2-3 sentences that blend the keywords smoothly, evoke seasonal or emotional appeal, and close with a subtle CTA like 'Learn more' or 'Explore the recipe'",
+        "value": """Write a Pin Description for this recipe article.
+
+Rules:
+- Natural, conversational tone.
+- 240 to 330 characters total.
+- Similar style to these examples:
+  - This Chocolate Cupcake recipe is my go-to for birthday parties and bake sales, since they are perfectly moist and oh-so chocolatey. Top them with our chocolate frosting, and you have the ultimate chocolate lover's cupcake!
+  - Easy Croissant French Toast Casserole with fresh berries is the best crowd-pleasing breakfast recipe. Refrigerate overnight for easy serving.
+  - Relive your favorite childhood mornings with this incredibly easy Fruity Pebbles Breakfast Bread! It's fast, fun, and packed with colorful cereal goodness. Perfect for breakfast, brunch, or a sweet treat anytime. Get ready for smiles!
+- Return ONLY the description, nothing else.
+- DO NOT use this character: -
+- Use ONLY standard ASCII English punctuation: . , ? ! : ; ' " ( ) [ ] /
+
+Recipe: {recipe_title}""",
         "description": "Pinterest description - placeholder: {recipe_title}",
     },
     "pinterest_tags_system": {
@@ -152,11 +222,39 @@ Rules:
         "description": "System message for Pinterest tags",
     },
     "pinterest_tags_user": {
-        "value": "Generate Pinterest pin relevant tags for '{recipe_title}' as a comma-separated list. Include 10-15 relevant tags that are commonly searched on Pinterest for recipes",
+        "value": """Create 5 to 8 Pinterest keywords for this recipe article.
+
+Rules:
+- English only.
+- Comma-separated list.
+- No hashtags.
+- No duplicates.
+- Example: garlic butter chicken, creamy pasta, weeknight dinner, easy chicken recipe
+
+Return ONLY the comma-separated list, nothing else.
+
+Recipe: {recipe_title}""",
         "description": "Pinterest tags - placeholder: {recipe_title}",
     },
+    "pinterest_board_system": {
+        "value": "You are a Pinterest content strategist who selects the best board for each pin.",
+        "description": "System message for Pinterest board selection",
+    },
+    "pinterest_board_user": {
+        "value": """Choose the single BEST Pinterest board from this list for the recipe below:
+
+{boards_list}
+
+Rules:
+- Return EXACTLY one board name from the list above.
+- It must match one of the names exactly.
+- No extra words or explanation.
+
+Recipe: {recipe_title}""",
+        "description": "Pinterest board selection - placeholders: {recipe_title}, {boards_list}",
+    },
     "midjourney_imagine": {
-        "value": "/imagine prompt:  {recipe_name} | Amateur photo, taken with an iPhone 15 Pro  |  --ar 5:6 --v 7   --sref {source_img} ",
+        "value": "/imagine prompt: {source_img} Amateur photo from Reddit. The photo was taken by an amateur using her phone camera. RECIPE NAME: {recipe_name} Recipe --style raw --stylize 30 --iw 3 --v 6.1",
         "description": "Midjourney image prompt - placeholders: {recipe_name}, {source_img}",
     },
 }
