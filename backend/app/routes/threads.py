@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
+import uuid as _uuid_module
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel
@@ -68,6 +71,7 @@ class ThreadsPostCreate(BaseModel):
     account_id: uuid.UUID
     text_content: str
     image_url: str | None = None
+    media_urls: list[str] | None = None
     first_comment: str | None = None
     scheduled_at: datetime | None = None
 
@@ -76,6 +80,7 @@ class ThreadsPostUpdate(BaseModel):
     account_id: uuid.UUID | None = None
     text_content: str | None = None
     image_url: str | None = None
+    media_urls: list[str] | None = None
     first_comment: str | None = None
     scheduled_at: datetime | None = None
 
@@ -86,6 +91,7 @@ class ThreadsPostOut(BaseModel):
     account_id: uuid.UUID
     text_content: str
     image_url: str | None = None
+    media_urls: list[str] | None = None
     first_comment: str | None = None
     status: str
     scheduled_at: datetime | None = None
@@ -96,6 +102,28 @@ class ThreadsPostOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @classmethod
+    def from_db(cls, post: "ThreadsPost") -> "ThreadsPostOut":
+        try:
+            media = json.loads(post.media_urls) if post.media_urls else None
+        except Exception:
+            media = None
+        return cls(
+            id=post.id,
+            project_id=post.project_id,
+            account_id=post.account_id,
+            text_content=post.text_content,
+            image_url=post.image_url,
+            media_urls=media,
+            first_comment=post.first_comment,
+            status=post.status,
+            scheduled_at=post.scheduled_at,
+            published_at=post.published_at,
+            threads_post_id=post.threads_post_id,
+            error_message=post.error_message,
+            created_at=post.created_at,
+        )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -334,6 +362,38 @@ async def threads_oauth_callback(
     return account
 
 
+# ── Media Upload ─────────────────────────────────────────────────────────────
+
+_THREADS_UPLOADS = Path("/app/uploads/threads")
+_ALLOWED_MIME = {
+    "image/jpeg", "image/png", "image/gif", "image/webp",
+    "video/mp4", "video/quicktime",
+}
+_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+
+
+@router.post("/api/threads/upload-media")
+async def upload_threads_media(
+    files: List[UploadFile] = File(...),
+    user: User = Depends(get_current_user),
+):
+    _THREADS_UPLOADS.mkdir(parents=True, exist_ok=True)
+    urls: list[str] = []
+    for f in files:
+        if f.content_type not in _ALLOWED_MIME:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {f.content_type}")
+        data = await f.read()
+        if len(data) > _MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail=f"File too large (max 50 MB)")
+        ext = (f.filename or "file").rsplit(".", 1)[-1].lower() or "bin"
+        filename = f"{_uuid_module.uuid4().hex}.{ext}"
+        dest = _THREADS_UPLOADS / filename
+        dest.write_bytes(data)
+        base = settings.server_base_url.rstrip("/")
+        urls.append(f"{base}/uploads/threads/{filename}")
+    return {"urls": urls}
+
+
 # ── Posts ─────────────────────────────────────────────────────────────────────
 
 @router.get(
@@ -351,7 +411,7 @@ async def list_threads_posts(
         .where(ThreadsPost.project_id == project_id)
         .order_by(ThreadsPost.created_at.desc())
     )
-    return rows.scalars().all()
+    return [ThreadsPostOut.from_db(p) for p in rows.scalars().all()]
 
 
 @router.post(
@@ -386,6 +446,7 @@ async def create_threads_post(
         account_id=body.account_id,
         text_content=body.text_content,
         image_url=body.image_url,
+        media_urls=json.dumps(body.media_urls) if body.media_urls else None,
         first_comment=body.first_comment,
         scheduled_at=body.scheduled_at,
         status=post_status,
@@ -393,7 +454,7 @@ async def create_threads_post(
     db.add(post)
     await db.commit()
     await db.refresh(post)
-    return post
+    return ThreadsPostOut.from_db(post)
 
 
 @router.post("/api/threads-posts/{post_id}/publish", response_model=ThreadsPostOut)
@@ -418,10 +479,12 @@ async def publish_threads_post_now(
         raise HTTPException(status_code=500, detail="Failed to decrypt access token")
 
     try:
+        media = json.loads(post.media_urls) if post.media_urls else None
         threads_post_id = threads_api.publish_post(
             access_token=access_token,
             user_id=account.threads_user_id,
             text=post.text_content,
+            media_urls=media,
             image_url=post.image_url,
         )
     except ValueError as exc:
@@ -452,7 +515,7 @@ async def publish_threads_post_now(
     post.error_message = None
     await db.commit()
     await db.refresh(post)
-    return post
+    return ThreadsPostOut.from_db(post)
 
 
 class BatchPublishBody(BaseModel):
@@ -496,10 +559,12 @@ async def batch_publish_threads_posts(
             continue
 
         try:
+            batch_media = json.loads(post.media_urls) if post.media_urls else None
             threads_post_id = threads_api.publish_post(
                 access_token=access_token,
                 user_id=account.threads_user_id,
                 text=post.text_content,
+                media_urls=batch_media,
                 image_url=post.image_url,
             )
         except ValueError as exc:
@@ -572,6 +637,8 @@ async def update_threads_post(
         post.text_content = body.text_content
     if body.image_url is not None:
         post.image_url = body.image_url
+    if body.media_urls is not None:
+        post.media_urls = json.dumps(body.media_urls) if body.media_urls else None
     if body.first_comment is not None:
         post.first_comment = body.first_comment
     if body.scheduled_at is not None:
@@ -582,4 +649,4 @@ async def update_threads_post(
 
     await db.commit()
     await db.refresh(post)
-    return post
+    return ThreadsPostOut.from_db(post)

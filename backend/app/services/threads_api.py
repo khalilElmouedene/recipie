@@ -121,59 +121,103 @@ def get_user_info(access_token: str, user_id: str) -> dict:
     return data
 
 
+def _is_video_url(url: str) -> bool:
+    lower = url.lower().split("?")[0]
+    return lower.endswith(".mp4") or lower.endswith(".mov") or "/threads/" in lower and "video" in lower
+
+
+def _create_container(user_id: str, access_token: str, params: dict) -> str:
+    resp = requests.post(
+        f"{_GRAPH_BASE}/{user_id}/threads",
+        data={**params, "access_token": access_token},
+        timeout=60,
+    )
+    if not resp.ok:
+        raise ValueError(f"Threads container creation failed: {resp.text}")
+    data = resp.json()
+    cid = data.get("id")
+    if not cid:
+        raise ValueError(f"No container id in Threads response: {data}")
+    return str(cid)
+
+
+def _publish_container(user_id: str, access_token: str, creation_id: str) -> str:
+    resp = requests.post(
+        f"{_GRAPH_BASE}/{user_id}/threads_publish",
+        data={"creation_id": creation_id, "access_token": access_token},
+        timeout=60,
+    )
+    if not resp.ok:
+        raise ValueError(f"Threads publish failed: {resp.text}")
+    data = resp.json()
+    post_id = data.get("id")
+    if not post_id:
+        raise ValueError(f"No post id in Threads publish response: {data}")
+    return str(post_id)
+
+
 def publish_post(
     access_token: str,
     user_id: str,
     text: str,
+    media_urls: list[str] | None = None,
     image_url: str | None = None,
 ) -> str:
     """Create a Threads media container then publish it.
 
+    Supports: text-only, single image, single video, carousel (multiple images).
     Returns the threads_post_id string on success.
     Raises ValueError on failure.
     """
-    # Step 1: create media container
-    container_params: dict = {
+    # Normalise media list (prefer media_urls, fall back to legacy image_url)
+    urls: list[str] = []
+    if media_urls:
+        urls = [u for u in media_urls if u]
+    elif image_url:
+        urls = [image_url]
+
+    if len(urls) == 0:
+        # Text-only post
+        creation_id = _create_container(user_id, access_token, {"media_type": "TEXT", "text": text})
+        time.sleep(5)
+        return _publish_container(user_id, access_token, creation_id)
+
+    if len(urls) == 1:
+        # Single image or video
+        url = urls[0]
+        if _is_video_url(url):
+            creation_id = _create_container(user_id, access_token, {
+                "media_type": "VIDEO",
+                "video_url": url,
+                "text": text,
+            })
+        else:
+            creation_id = _create_container(user_id, access_token, {
+                "media_type": "IMAGE",
+                "image_url": url,
+                "text": text,
+            })
+        time.sleep(5)
+        return _publish_container(user_id, access_token, creation_id)
+
+    # Carousel: multiple images (Threads supports up to 20 images)
+    item_ids: list[str] = []
+    for url in urls[:20]:
+        item_id = _create_container(user_id, access_token, {
+            "is_carousel_item": "true",
+            "media_type": "IMAGE",
+            "image_url": url,
+        })
+        item_ids.append(item_id)
+        time.sleep(1)
+
+    carousel_id = _create_container(user_id, access_token, {
+        "media_type": "CAROUSEL",
+        "children": ",".join(item_ids),
         "text": text,
-        "access_token": access_token,
-    }
-    if image_url:
-        container_params["media_type"] = "IMAGE"
-        container_params["image_url"] = image_url
-    else:
-        container_params["media_type"] = "TEXT"
-
-    container_resp = requests.post(
-        f"{_GRAPH_BASE}/{user_id}/threads",
-        data=container_params,
-        timeout=60,
-    )
-    if not container_resp.ok:
-        raise ValueError(f"Threads container creation failed: {container_resp.text}")
-    container_data = container_resp.json()
-    creation_id = container_data.get("id")
-    if not creation_id:
-        raise ValueError(f"No container id in Threads response: {container_data}")
-
-    # Wait for Meta to process the container before publishing
+    })
     time.sleep(5)
-
-    # Step 2: publish container
-    publish_resp = requests.post(
-        f"{_GRAPH_BASE}/{user_id}/threads_publish",
-        data={
-            "creation_id": creation_id,
-            "access_token": access_token,
-        },
-        timeout=60,
-    )
-    if not publish_resp.ok:
-        raise ValueError(f"Threads publish failed: {publish_resp.text}")
-    publish_data = publish_resp.json()
-    post_id = publish_data.get("id")
-    if not post_id:
-        raise ValueError(f"No post id in Threads publish response: {publish_data}")
-    return str(post_id)
+    return _publish_container(user_id, access_token, carousel_id)
 
 
 def add_reply(

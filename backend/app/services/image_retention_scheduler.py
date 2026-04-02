@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.db_models import Recipe, RecipeStatus, Site
+from app.db_models import Recipe, RecipeStatus, Site, ThreadsPost, ThreadsPostStatus
 
 
 UPLOADS_DIR = Path("/app/uploads")
@@ -238,6 +238,49 @@ async def cleanup_project_generated_images(
     }
 
 
+async def _cleanup_threads_media_once() -> int:
+    """Delete uploaded media files for Threads posts published more than 7 days ago."""
+    now = datetime.now(timezone.utc)
+    threshold = now - timedelta(days=RETENTION_DAYS)
+    cleared = 0
+
+    async with SessionLocal() as db:
+        rows = await db.execute(
+            select(ThreadsPost).where(
+                ThreadsPost.status == ThreadsPostStatus.published,
+                ThreadsPost.media_urls.isnot(None),
+                ThreadsPost.published_at <= threshold,
+            )
+        )
+        posts = rows.scalars().all()
+
+        for post in posts:
+            try:
+                urls = json.loads(post.media_urls) if post.media_urls else []
+            except Exception:
+                urls = []
+            for u in urls:
+                if not isinstance(u, str):
+                    continue
+                try:
+                    parsed_path = urlparse(u).path or ""
+                    # Strip leading /uploads/ to get subpath like "threads/abc.jpg"
+                    if "/uploads/" in parsed_path:
+                        sub = parsed_path.split("/uploads/", 1)[1]
+                        p = UPLOADS_DIR / sub
+                        if p.exists():
+                            p.unlink()
+                except Exception:
+                    pass
+            post.media_urls = None
+            cleared += 1
+
+        if posts:
+            await db.commit()
+
+    return cleared
+
+
 async def run_image_retention_scheduler(stop_event: asyncio.Event) -> None:
     """
     Background loop to periodically run cache cleanup.
@@ -247,7 +290,10 @@ async def run_image_retention_scheduler(stop_event: asyncio.Event) -> None:
         try:
             await _cleanup_once()
         except Exception:
-            # Best-effort cleanup; don't crash the app.
+            pass
+        try:
+            await _cleanup_threads_media_once()
+        except Exception:
             pass
 
         try:

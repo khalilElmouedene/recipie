@@ -320,6 +320,7 @@ class ThreadsPost(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("threads_accounts.id", ondelete="CASCADE"))
     text_content: Mapped[str] = mapped_column(Text, nullable=False)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_urls: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of uploaded media URLs
     first_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[ThreadsPostStatus] = mapped_column(SAEnum(ThreadsPostStatus, name="threads_post_status"), default=ThreadsPostStatus.draft)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

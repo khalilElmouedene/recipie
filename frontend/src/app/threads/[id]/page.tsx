@@ -5,9 +5,9 @@ import {
   Plus, Trash2, User, Send, Edit2, X, RefreshCw, Clock, CheckCircle,
   AlertCircle, FileText, Image as ImageIcon, MessageSquare, Calendar,
   ChevronLeft, ChevronRight, BarChart2, Settings, BookOpen,
-  LayoutGrid, ChevronDown, Circle, Loader2,
+  LayoutGrid, ChevronDown, Circle, Loader2, Video, Upload,
 } from "lucide-react";
-import { api, ThreadsProjectOut, ThreadsAccountOut, ThreadsPostOut } from "@/lib/api";
+import { api, getApiBaseUrl, ThreadsProjectOut, ThreadsAccountOut, ThreadsPostOut } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────
 type ViewMode = "today" | "week" | "month";
@@ -70,7 +70,9 @@ function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccou
   const defaultScheduled = initialDate ? `${initialDate}T09:00` : "";
   const [accountId, setAccountId] = useState(post?.account_id ?? defaultAccountId ?? accounts[0]?.id ?? "");
   const [text, setText] = useState(post?.text_content ?? "");
-  const [imageUrl, setImageUrl] = useState(post?.image_url ?? "");
+  const [mediaUrls, setMediaUrls] = useState<string[]>(post?.media_urls ?? (post?.image_url ? [post.image_url] : []));
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [firstComment, setFirstComment] = useState(post?.first_comment ?? "");
   const [publishMode, setPublishMode] = useState<"now" | "schedule">(
     post?.scheduled_at || initialDate ? "schedule" : "now"
@@ -83,6 +85,22 @@ function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccou
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const result = await api.uploadThreadsMedia(files);
+      setMediaUrls((prev) => [...prev, ...result.urls]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!allAccounts && !accountId) { setError("Select an account"); return; }
@@ -91,7 +109,7 @@ function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccou
     try {
       const base = {
         text_content: text.trim(),
-        ...(imageUrl.trim() ? { image_url: imageUrl.trim() } : {}),
+        ...(mediaUrls.length > 0 ? { media_urls: mediaUrls } : {}),
         ...(firstComment.trim() ? { first_comment: firstComment.trim() } : {}),
         ...(publishMode === "schedule" && scheduledAt ? { scheduled_at: new Date(scheduledAt).toISOString() } : {}),
       };
@@ -151,8 +169,66 @@ function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccou
             <p className={`text-xs mt-1 text-right ${text.length > 480 ? "text-yellow-400" : "text-gray-600"}`}>{text.length}/500</p>
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase tracking-wider">Image URL (optional)</label>
-            <input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} className="input-field" placeholder="https://..." type="url" />
+            <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase tracking-wider">Media (optional)</label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime"
+              multiple
+              className="hidden"
+              onChange={handleFileChange}
+            />
+            {mediaUrls.length === 0 ? (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="w-full h-20 rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-500 hover:bg-gray-800/50 transition flex flex-col items-center justify-center gap-1.5 text-gray-500 hover:text-gray-300 disabled:opacity-50"
+              >
+                {uploading ? (
+                  <Loader2 size={20} className="animate-spin" />
+                ) : (
+                  <>
+                    <Upload size={20} />
+                    <span className="text-xs">Add images or video</span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  {mediaUrls.map((url, i) => {
+                    const isVideo = url.match(/\.(mp4|mov)$/i);
+                    const fullUrl = url.startsWith("http") ? url : `${getApiBaseUrl()}${url}`;
+                    return (
+                      <div key={i} className="relative group w-16 h-16 rounded-lg overflow-hidden border border-gray-700 bg-gray-800 flex items-center justify-center">
+                        {isVideo ? (
+                          <Video size={22} className="text-gray-400" />
+                        ) : (
+                          <img src={fullUrl} alt="" className="w-full h-full object-cover" />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setMediaUrls((prev) => prev.filter((_, idx) => idx !== i))}
+                          className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+                        >
+                          <X size={11} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading || mediaUrls.length >= 10}
+                    className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-700 hover:border-brand-500 transition flex items-center justify-center text-gray-500 hover:text-gray-300 disabled:opacity-40"
+                  >
+                    {uploading ? <Loader2 size={16} className="animate-spin" /> : <Plus size={18} />}
+                  </button>
+                </div>
+                <p className="text-[10px] text-gray-600">{mediaUrls.length} file{mediaUrls.length !== 1 ? "s" : ""} added</p>
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase tracking-wider">First Comment (optional)</label>

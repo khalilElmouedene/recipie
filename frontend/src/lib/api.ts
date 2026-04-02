@@ -326,9 +326,24 @@ export const api = {
   // ── Threads Posts ──────────────────────────────────────
   getThreadsPosts: (projectId: string) =>
     request<ThreadsPostOut[]>(`/api/threads-projects/${projectId}/posts`),
+  uploadThreadsMedia: async (files: File[]): Promise<{ urls: string[] }> => {
+    const token = getToken();
+    const formData = new FormData();
+    files.forEach((f) => formData.append("files", f));
+    const res = await fetch(`${API_URL}/api/threads/upload-media`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(typeof err.detail === "string" ? err.detail : "Upload failed");
+    }
+    return res.json();
+  },
   createThreadsPost: (projectId: string, data: {
     account_id: string; text_content: string; image_url?: string;
-    first_comment?: string; scheduled_at?: string;
+    media_urls?: string[]; first_comment?: string; scheduled_at?: string;
   }) => request<ThreadsPostOut>(`/api/threads-projects/${projectId}/posts`, { method: "POST", body: JSON.stringify(data) }),
   publishThreadsPost: (postId: string) =>
     request<ThreadsPostOut>(`/api/threads-posts/${postId}/publish`, { method: "POST" }),
@@ -337,7 +352,7 @@ export const api = {
       "/api/threads-posts/batch-publish",
       { method: "POST", body: JSON.stringify({ post_ids: postIds }) }
     ),
-  updateThreadsPost: (postId: string, data: Partial<{ text_content: string; image_url: string; first_comment: string; scheduled_at: string; account_id: string }>) =>
+  updateThreadsPost: (postId: string, data: Partial<{ text_content: string; image_url: string; media_urls: string[]; first_comment: string; scheduled_at: string; account_id: string }>) =>
     request<ThreadsPostOut>(`/api/threads-posts/${postId}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteThreadsPost: (postId: string) =>
     request<void>(`/api/threads-posts/${postId}`, { method: "DELETE" }),
@@ -665,6 +680,7 @@ export interface ThreadsPostOut {
   account_id: string;
   text_content: string;
   image_url: string | null;
+  media_urls: string[] | null;
   first_comment: string | null;
   status: "draft" | "scheduled" | "published" | "failed";
   scheduled_at: string | null;
