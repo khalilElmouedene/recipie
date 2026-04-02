@@ -478,7 +478,14 @@ async def publish_threads_post_now(
         raise HTTPException(status_code=500, detail="Failed to decrypt access token")
 
     def _to_absolute(url: str) -> str:
-        """Convert a relative /uploads/... path to a publicly accessible absolute URL."""
+        """Always resolve to an absolute URL using current SERVER_BASE_URL.
+        Handles: relative paths, old localhost URLs, already-correct absolute URLs."""
+        if not url:
+            return url
+        if "/uploads/" in url:
+            # Extract /uploads/... portion and rebuild — fixes localhost URLs too
+            path = "/uploads/" + url.split("/uploads/", 1)[1]
+            return settings.server_base_url.rstrip("/") + path
         if url.startswith("/"):
             return settings.server_base_url.rstrip("/") + url
         return url
@@ -570,8 +577,13 @@ async def batch_publish_threads_posts(
         try:
             batch_media = json.loads(post.media_urls) if post.media_urls else None
             _base = settings.server_base_url.rstrip("/")
-            abs_batch = [u if u.startswith("http") else _base + u for u in batch_media] if batch_media else None
-            abs_img = (_base + post.image_url if post.image_url and post.image_url.startswith("/") else post.image_url) if post.image_url else None
+            def _abs(u: str) -> str:
+                if not u: return u
+                if "/uploads/" in u:
+                    return _base + "/uploads/" + u.split("/uploads/", 1)[1]
+                return u if u.startswith("http") else _base + u
+            abs_batch = [_abs(u) for u in batch_media] if batch_media else None
+            abs_img = _abs(post.image_url) if post.image_url else None
             threads_post_id = threads_api.publish_post(
                 access_token=access_token,
                 user_id=account.threads_user_id,
