@@ -109,6 +109,7 @@ from app.routes.threads import router as threads_router
 from app.ws.logs import router as ws_router
 
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+app.mount("/api/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="api_uploads")
 
 app.include_router(auth_router)
 app.include_router(users_router)

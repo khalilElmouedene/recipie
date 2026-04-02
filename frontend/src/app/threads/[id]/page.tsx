@@ -199,7 +199,7 @@ function PostFormModal({ projectId, accounts, post, initialDate, defaultAllAccou
                 <div className="flex flex-wrap gap-2">
                   {mediaUrls.map((url, i) => {
                     const isVideo = url.match(/\.(mp4|mov)$/i);
-                    const fullUrl = url.startsWith("http") ? url : `${getApiBaseUrl()}${url}`;
+                    const fullUrl = url.startsWith("http") ? url : `${getApiBaseUrl()}${url.replace("/uploads/", "/api/uploads/")}`;
                     return (
                       <div key={i} className="relative group w-16 h-16 rounded-lg overflow-hidden border border-gray-700 bg-gray-800 flex items-center justify-center">
                         {isVideo ? (
