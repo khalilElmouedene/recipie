@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, FolderKanban, Globe, ChefHat, Copy } from "lucide-react";
+import { Plus, FolderKanban, Globe, ChefHat, Copy, Trash2 } from "lucide-react";
 import { api, ProjectOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
@@ -13,6 +13,8 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(false);
   const role = getUserRole();
   const [duplicating, setDuplicating] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = () => api.getProjects().then(setProjects).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -25,6 +27,17 @@ export default function ProjectsPage() {
       load();
     } catch { }
     setDuplicating(null);
+  };
+
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    setDeleting(id);
+    try {
+      await api.deleteProject(id);
+      setDeleteConfirmId(null);
+      load();
+    } catch { }
+    setDeleting(null);
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -85,14 +98,43 @@ export default function ProjectsPage() {
               </div>
             </Link>
             {role === "owner" && (
-              <button
-                onClick={(e) => handleDuplicate(p.id, e)}
-                disabled={duplicating === p.id}
-                title="Duplicate project"
-                className="absolute top-3 right-3 p-1.5 rounded text-gray-500 hover:text-brand-400 hover:bg-gray-800 transition disabled:opacity-40"
-              >
-                <Copy size={15} className={duplicating === p.id ? "animate-pulse" : ""} />
-              </button>
+              <div className="absolute top-3 right-3 flex items-center gap-1">
+                {deleteConfirmId === p.id ? (
+                  <div className="flex items-center gap-1" onClick={(e) => e.preventDefault()}>
+                    <button
+                      onClick={(e) => handleDelete(p.id, e)}
+                      disabled={deleting === p.id}
+                      className="text-xs bg-red-600 hover:bg-red-500 text-white rounded px-2 py-1 transition disabled:opacity-50"
+                    >
+                      {deleting === p.id ? "..." : "Delete"}
+                    </button>
+                    <button
+                      onClick={(e) => { e.preventDefault(); setDeleteConfirmId(null); }}
+                      className="text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 rounded px-2 py-1 transition"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={(e) => handleDuplicate(p.id, e)}
+                      disabled={duplicating === p.id}
+                      title="Duplicate project"
+                      className="p-1.5 rounded text-gray-500 hover:text-brand-400 hover:bg-gray-800 transition disabled:opacity-40"
+                    >
+                      <Copy size={15} className={duplicating === p.id ? "animate-pulse" : ""} />
+                    </button>
+                    <button
+                      onClick={(e) => { e.preventDefault(); setDeleteConfirmId(p.id); }}
+                      title="Delete project"
+                      className="p-1.5 rounded text-gray-500 hover:text-red-400 hover:bg-gray-800 transition"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </>
+                )}
+              </div>
             )}
           </div>
         ))}

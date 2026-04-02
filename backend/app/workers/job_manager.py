@@ -154,8 +154,8 @@ class JobManager:
 
         recipes_data: list[dict] = []
         multi_site_groups: list[dict] = []
-        site_domain = ""
         if db_job.job_type == JobType.articles_all_sites:
+            site_domain = ""
             created_recipe_ids: list[uuid.UUID] = []
             for idx, item in enumerate(shared_recipes or []):
                 if isinstance(item, dict):

@@ -829,6 +829,8 @@ export default function ThreadsProjectDetailPage() {
   const [bottomTab, setBottomTab] = useState<BottomTab>("planner");
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [showProjectMenu, setShowProjectMenu] = useState(false);
+  const [deletingProject, setDeletingProject] = useState(false);
+  const [showDeleteProject, setShowDeleteProject] = useState(false);
 
   // Post actions
   const [showForm, setShowForm] = useState(false);
@@ -957,6 +959,19 @@ export default function ThreadsProjectDetailPage() {
     setDeleteConfirmId(null);
   };
 
+  const handleDeleteProject = async () => {
+    if (!id) return;
+    setDeletingProject(true);
+    try {
+      await api.deleteThreadsProject(id);
+      router.push("/threads");
+    } catch (err: unknown) {
+      showToast({ type: "error", message: err instanceof Error ? err.message : "Failed to delete project" }, 4000);
+      setDeletingProject(false);
+      setShowDeleteProject(false);
+    }
+  };
+
   const handleNewPost = (dateStr: string) => {
     setNewPostDate(dateStr);
     setEditPost(null);
@@ -1021,6 +1036,12 @@ export default function ThreadsProjectDetailPage() {
                   {pr.name}
                 </button>
               ))}
+              <div className="border-t border-gray-800 mt-1 pt-1">
+                <button onClick={() => { setShowProjectMenu(false); setShowDeleteProject(true); }}
+                  className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-red-900/20 transition flex items-center gap-2">
+                  <Trash2 size={13} /> Delete Project
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -1147,6 +1168,34 @@ export default function ThreadsProjectDetailPage() {
           onConfirm={confirmDelete}
           onCancel={() => setDeleteConfirmId(null)}
         />
+      )}
+
+      {/* Delete project confirm */}
+      {showDeleteProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
+            <div className="p-6 flex flex-col items-center text-center gap-3">
+              <div className="h-12 w-12 rounded-full bg-red-900/30 border border-red-800 flex items-center justify-center">
+                <Trash2 size={20} className="text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-white">Delete "{project?.name}"?</h3>
+                <p className="text-sm text-gray-400 mt-1">This will permanently delete the project, all posts, and connected accounts.</p>
+              </div>
+            </div>
+            <div className="flex border-t border-gray-800">
+              <button onClick={() => setShowDeleteProject(false)} disabled={deletingProject}
+                className="flex-1 py-3 text-sm font-medium text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition disabled:opacity-50">
+                Cancel
+              </button>
+              <div className="w-px bg-gray-800" />
+              <button onClick={handleDeleteProject} disabled={deletingProject}
+                className="flex-1 py-3 text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-900/20 transition disabled:opacity-50">
+                {deletingProject ? "Deleting..." : "Delete Project"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Post form modal */}
