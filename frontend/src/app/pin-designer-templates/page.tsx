@@ -5,6 +5,84 @@ import { useRouter } from "next/navigation";
 import { LayoutTemplate, Plus, Trash2, Pencil, Copy } from "lucide-react";
 import { api, PinDesignerTemplateOut } from "@/lib/api";
 
+const CANVAS_SIZE_PRESETS = [
+  { label: "Pinterest Pin",    w: 1000, h: 1500 },
+  { label: "Pinterest Square", w: 1000, h: 1000 },
+  { label: "Instagram Post",   w: 1080, h: 1080 },
+  { label: "Instagram Story",  w: 1080, h: 1920 },
+  { label: "Facebook Post",    w: 1200, h: 630  },
+  { label: "Custom",           w: 0,    h: 0    },
+];
+
+function SizePickerModal({ onConfirm, onClose }: { onConfirm: (w: number, h: number) => void; onClose: () => void }) {
+  const [selected, setSelected] = useState(0);
+  const [customW, setCustomW] = useState("1000");
+  const [customH, setCustomH] = useState("1500");
+  const isCustom = CANVAS_SIZE_PRESETS[selected].label === "Custom";
+
+  function handleConfirm() {
+    const w = isCustom ? parseInt(customW, 10) : CANVAS_SIZE_PRESETS[selected].w;
+    const h = isCustom ? parseInt(customH, 10) : CANVAS_SIZE_PRESETS[selected].h;
+    if (!w || !h || w < 100 || h < 100) { alert("Please enter valid dimensions (min 100px)."); return; }
+    onConfirm(w, h);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <h3 className="text-white font-semibold text-base mb-1">Choose Template Size</h3>
+        <p className="text-xs text-gray-400 mb-4">Select the canvas dimensions for your new design.</p>
+
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          {CANVAS_SIZE_PRESETS.map((p, i) => (
+            <button
+              key={p.label}
+              onClick={() => setSelected(i)}
+              className={`rounded-xl border px-3 py-2.5 text-left transition ${
+                selected === i
+                  ? "border-brand-500 bg-brand-500/10 text-white"
+                  : "border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200"
+              }`}
+            >
+              <p className="text-xs font-medium">{p.label}</p>
+              {p.label !== "Custom" && (
+                <p className="text-[10px] text-gray-500 mt-0.5">{p.w} × {p.h}</p>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {isCustom && (
+          <div className="flex items-center gap-2 mb-4">
+            <div className="flex-1">
+              <label className="text-[10px] text-gray-500 block mb-1">Width (px)</label>
+              <input
+                type="number" min={100} max={8000}
+                value={customW} onChange={(e) => setCustomW(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
+              />
+            </div>
+            <span className="text-gray-600 mt-4">×</span>
+            <div className="flex-1">
+              <label className="text-[10px] text-gray-500 block mb-1">Height (px)</label>
+              <input
+                type="number" min={100} max={8000}
+                value={customH} onChange={(e) => setCustomH(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 px-4 py-2 rounded-lg border border-gray-700 text-gray-400 hover:text-white text-sm transition">Cancel</button>
+          <button onClick={handleConfirm} className="flex-1 btn-primary text-sm">Create Design</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PinDesignerTemplatesPage() {
   const router = useRouter();
 
@@ -12,6 +90,7 @@ export default function PinDesignerTemplatesPage() {
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [cloningId, setCloningId] = useState<string | null>(null);
+  const [showSizePicker, setShowSizePicker] = useState(false);
 
   useEffect(() => {
     setTemplatesLoading(true);
@@ -58,6 +137,8 @@ export default function PinDesignerTemplatesPage() {
         name: cleanName,
         description: tmpl.description,
         bgColor: tmpl.bgColor,
+        canvasWidth: tmpl.canvasWidth,
+        canvasHeight: tmpl.canvasHeight,
         elements: tmpl.elements,
       });
       setTemplates((prev) => [created, ...prev]);
@@ -70,6 +151,13 @@ export default function PinDesignerTemplatesPage() {
 
   return (
     <div>
+      {showSizePicker && (
+        <SizePickerModal
+          onConfirm={(w, h) => { setShowSizePicker(false); router.push(`/template-designer?w=${w}&h=${h}`); }}
+          onClose={() => setShowSizePicker(false)}
+        />
+      )}
+
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Pin Designer Templates</h1>
         <p className="text-sm text-gray-400 mt-1">Manage your own templates and edit them anytime.</p>
@@ -83,7 +171,7 @@ export default function PinDesignerTemplatesPage() {
           </p>
         </div>
 
-        <button onClick={() => router.push("/template-designer")} className="btn-primary flex items-center gap-2">
+        <button onClick={() => setShowSizePicker(true)} className="btn-primary flex items-center gap-2">
           <Plus size={16} /> Create Template
         </button>
       </div>
@@ -99,7 +187,7 @@ export default function PinDesignerTemplatesPage() {
           <p className="text-sm text-gray-500 mb-6 max-w-sm">
             Design your first Pin template and reuse it across all your sites.
           </p>
-          <button onClick={() => router.push("/template-designer")} className="btn-primary flex items-center gap-2">
+          <button onClick={() => setShowSizePicker(true)} className="btn-primary flex items-center gap-2">
             <Plus size={15} /> Create your first template
           </button>
         </div>
@@ -108,7 +196,7 @@ export default function PinDesignerTemplatesPage() {
       {!templatesLoading && templates.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           <button
-            onClick={() => router.push("/template-designer")}
+            onClick={() => setShowSizePicker(true)}
             className="h-24 rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-500 hover:bg-gray-900/40 transition-all flex flex-col items-center justify-center gap-2 text-gray-500 hover:text-white group"
           >
             <div className="w-10 h-10 rounded-xl border-2 border-dashed border-current flex items-center justify-center group-hover:border-brand-400">
@@ -125,11 +213,11 @@ export default function PinDesignerTemplatesPage() {
               <p className="text-sm font-medium text-white truncate">{tmpl.name}</p>
               <div className="flex items-center justify-between">
                 <p className="text-[11px] text-gray-500">
-                  {tmpl.elements.length} element{tmpl.elements.length !== 1 ? "s" : ""}
+                  {tmpl.canvasWidth} × {tmpl.canvasHeight}
                 </p>
                 <div className="flex items-center gap-1.5">
                   <button
-                    onClick={() => router.push(`/template-designer?templateId=${tmpl.id}`)}
+                    onClick={() => router.push(`/template-designer?templateId=${tmpl.id}&w=${tmpl.canvasWidth}&h=${tmpl.canvasHeight}`)}
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-800 text-gray-300 text-[11px] hover:bg-gray-700 transition"
                   >
                     <Pencil size={11} />

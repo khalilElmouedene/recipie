@@ -2,8 +2,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, LayoutTemplate, ExternalLink } from "lucide-react";
-import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut, PinDesignerTemplateOut } from "@/lib/api";
+import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink } from "lucide-react";
+import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
 type Tab = "sites" | "members" | "jobs" | "settings";
@@ -564,88 +564,11 @@ const PROMPT_GROUPS: { label: string; keys: string[] }[] = [
   { label: "Midjourney image prompt", keys: ["midjourney_imagine"] },
 ];
 
-type SettingsSubTab = "credentials" | "prompts" | "templates";
-
-const CANVAS_SIZE_PRESETS = [
-  { label: "Pinterest Pin",      w: 1000, h: 1500, ratio: "2:3" },
-  { label: "Pinterest Square",   w: 1000, h: 1000, ratio: "1:1" },
-  { label: "Instagram Post",     w: 1080, h: 1080, ratio: "1:1" },
-  { label: "Instagram Story",    w: 1080, h: 1920, ratio: "9:16" },
-  { label: "Facebook Post",      w: 1200, h: 630,  ratio: "~2:1" },
-  { label: "Custom",             w: 0,    h: 0,    ratio: "" },
-];
-
-function SizePickerModal({ onConfirm, onClose }: { onConfirm: (w: number, h: number) => void; onClose: () => void }) {
-  const [selected, setSelected] = useState(0);
-  const [customW, setCustomW] = useState("1000");
-  const [customH, setCustomH] = useState("1500");
-  const isCustom = CANVAS_SIZE_PRESETS[selected].label === "Custom";
-
-  function handleConfirm() {
-    const w = isCustom ? parseInt(customW, 10) : CANVAS_SIZE_PRESETS[selected].w;
-    const h = isCustom ? parseInt(customH, 10) : CANVAS_SIZE_PRESETS[selected].h;
-    if (!w || !h || w < 100 || h < 100) { alert("Please enter valid dimensions (min 100px)."); return; }
-    onConfirm(w, h);
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
-        <h3 className="text-white font-semibold text-base mb-1">Choose Template Size</h3>
-        <p className="text-xs text-gray-400 mb-4">Select the canvas dimensions for your new design.</p>
-
-        <div className="grid grid-cols-2 gap-2 mb-4">
-          {CANVAS_SIZE_PRESETS.map((p, i) => (
-            <button
-              key={p.label}
-              onClick={() => setSelected(i)}
-              className={`rounded-xl border px-3 py-2.5 text-left transition ${
-                selected === i
-                  ? "border-brand-500 bg-brand-500/10 text-white"
-                  : "border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200"
-              }`}
-            >
-              <p className="text-xs font-medium">{p.label}</p>
-              {p.ratio && <p className="text-[10px] text-gray-500 mt-0.5">{p.label !== "Custom" ? `${p.w} × ${p.h}` : p.ratio}</p>}
-            </button>
-          ))}
-        </div>
-
-        {isCustom && (
-          <div className="flex items-center gap-2 mb-4">
-            <div className="flex-1">
-              <label className="text-[10px] text-gray-500 block mb-1">Width (px)</label>
-              <input
-                type="number" min={100} max={8000}
-                value={customW} onChange={(e) => setCustomW(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
-              />
-            </div>
-            <span className="text-gray-600 mt-4">×</span>
-            <div className="flex-1">
-              <label className="text-[10px] text-gray-500 block mb-1">Height (px)</label>
-              <input
-                type="number" min={100} max={8000}
-                value={customH} onChange={(e) => setCustomH(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
-              />
-            </div>
-          </div>
-        )}
-
-        <div className="flex gap-2">
-          <button onClick={onClose} className="flex-1 px-4 py-2 rounded-lg border border-gray-700 text-gray-400 hover:text-white text-sm transition">Cancel</button>
-          <button onClick={handleConfirm} className="flex-1 btn-primary text-sm">Create Design</button>
-        </div>
-      </div>
-    </div>
-  );
-}
+type SettingsSubTab = "credentials" | "prompts";
 
 function SettingsTab({ projectId }: { projectId: string }) {
   const router = useRouter();
   const [subTab, setSubTab] = useState<SettingsSubTab>("credentials");
-  const [showSizePicker, setShowSizePicker] = useState(false);
 
   // Credentials
   const [creds, setCreds] = useState<CredentialOut[]>([]);
@@ -656,11 +579,6 @@ function SettingsTab({ projectId }: { projectId: string }) {
   const [prompts, setPrompts] = useState<PromptOut[]>([]);
   const [promptValues, setPromptValues] = useState<Record<string, string>>({});
   const [savingPrompts, setSavingPrompts] = useState(false);
-
-  // Templates
-  const [templates, setTemplates] = useState<PinDesignerTemplateOut[]>([]);
-  const [templatesLoading, setTemplatesLoading] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     api.getSettingsCredentials().then(setCreds).catch(() => {});
@@ -675,24 +593,7 @@ function SettingsTab({ projectId }: { projectId: string }) {
         })
         .catch(() => {});
     }
-    if (subTab === "templates") {
-      setTemplatesLoading(true);
-      api.getPinDesignerTemplates()
-        .then(setTemplates)
-        .catch(() => {})
-        .finally(() => setTemplatesLoading(false));
-    }
   }, [subTab]);
-
-  const handleDeleteTemplate = async (id: string) => {
-    if (!confirm("Delete this template?")) return;
-    setDeletingId(id);
-    try {
-      await api.deletePinDesignerTemplate(id);
-      setTemplates((prev) => prev.filter((t) => t.id !== id));
-    } catch { }
-    setDeletingId(null);
-  };
 
   const handleSave = async () => {
     const toSave = Object.entries(values)
@@ -723,7 +624,6 @@ function SettingsTab({ projectId }: { projectId: string }) {
   const subTabs = [
     { key: "credentials" as SettingsSubTab, label: "API Keys", icon: Key },
     { key: "prompts" as SettingsSubTab, label: "AI Prompts", icon: MessageSquare },
-    { key: "templates" as SettingsSubTab, label: "My Templates", icon: LayoutTemplate },
   ];
 
   return (
@@ -848,126 +748,6 @@ function SettingsTab({ projectId }: { projectId: string }) {
         </>
       )}
 
-      {showSizePicker && (
-        <SizePickerModal
-          onConfirm={(w, h) => { setShowSizePicker(false); router.push(`/template-designer?w=${w}&h=${h}`); }}
-          onClose={() => setShowSizePicker(false)}
-        />
-      )}
-
-      {subTab === "templates" && (
-        <>
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h2 className="font-semibold text-white">My Pin Templates</h2>
-              <p className="text-xs text-gray-400 mt-0.5">
-                Create reusable layouts for the Pin Designer.
-              </p>
-            </div>
-            <button
-              onClick={() => setShowSizePicker(true)}
-              className="btn-primary flex items-center gap-2"
-            >
-              <Plus size={16} /> Create Template
-            </button>
-          </div>
-
-          {templatesLoading && (
-            <div className="text-center py-12 text-gray-400 text-sm">Loading templates…</div>
-          )}
-
-          {!templatesLoading && templates.length === 0 && (
-            <div className="card flex flex-col items-center justify-center py-14 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-gray-800 flex items-center justify-center mb-4">
-                <LayoutTemplate size={26} className="text-gray-500" />
-              </div>
-              <p className="font-medium text-gray-300 mb-1">No templates yet</p>
-              <p className="text-sm text-gray-500 mb-5 max-w-xs">
-                Design your first template and use it across all your Pin Designers.
-              </p>
-              <button
-                onClick={() => setShowSizePicker(true)}
-                className="btn-primary flex items-center gap-2"
-              >
-                <Plus size={15} /> Create your first template
-              </button>
-            </div>
-          )}
-
-          {!templatesLoading && templates.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {/* Create new card */}
-              <button
-                onClick={() => setShowSizePicker(true)}
-                className="aspect-[2/3] rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-500 hover:bg-gray-900/40 transition-all flex flex-col items-center justify-center gap-2 text-gray-500 hover:text-white group"
-              >
-                <div className="w-10 h-10 rounded-xl border-2 border-dashed border-current flex items-center justify-center group-hover:border-brand-400">
-                  <Plus size={22} />
-                </div>
-                <span className="text-xs font-medium">New Template</span>
-              </button>
-
-              {templates.map((tmpl) => (
-                <div
-                  key={tmpl.id}
-                  className="aspect-[2/3] rounded-xl border border-gray-700 overflow-hidden relative group hover:border-gray-500 transition"
-                >
-                  {/* Preview */}
-                  <div
-                    className="w-full h-full flex flex-col items-center justify-center"
-                    style={{ backgroundColor: tmpl.bgColor || "#ffffff" }}
-                  >
-                    {/* Simple element preview */}
-                    <div className="w-full h-full p-2 space-y-1.5 overflow-hidden">
-                      {tmpl.elements.slice(0, 6).map((el) => {
-                        const scaleW = 160 / (tmpl.canvasWidth || 1000);
-                        const scaleH = 240 / (tmpl.canvasHeight || 1500);
-                        const style: React.CSSProperties = {
-                          position: "absolute",
-                          left: el.x * scaleW,
-                          top: el.y * scaleH,
-                          width: el.width * scaleW,
-                          height: el.height * scaleH,
-                          borderRadius: 2,
-                          backgroundColor:
-                            el.type === "text"
-                              ? (el.fill || "#333333")
-                              : (el.bgColor || "#e8e8e8"),
-                          opacity: el.type === "text" ? 0.7 : 0.9,
-                        };
-                        return <div key={el.id} style={style} />;
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Overlay on hover */}
-                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition flex flex-col items-center justify-center gap-2 p-3">
-                    <p className="text-white text-xs font-semibold text-center line-clamp-2">
-                      {tmpl.name}
-                    </p>
-                    <p className="text-gray-300 text-[10px]">
-                      {tmpl.elements.length} element{tmpl.elements.length !== 1 ? "s" : ""}
-                    </p>
-                    <button
-                      onClick={() => handleDeleteTemplate(tmpl.id)}
-                      disabled={deletingId === tmpl.id}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-900/70 text-red-300 text-[11px] hover:bg-red-900 transition disabled:opacity-50"
-                    >
-                      <Trash2 size={11} />
-                      {deletingId === tmpl.id ? "Deleting…" : "Delete"}
-                    </button>
-                  </div>
-
-                  {/* Name badge */}
-                  <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-2">
-                    <p className="text-white text-[10px] font-medium truncate">{tmpl.name}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
     </div>
   );
 }
