@@ -21,6 +21,8 @@ import {
   EyeOff,
   ChevronUp,
   ChevronDown,
+  ChevronsUp,
+  ChevronsDown,
   Layers,
   Pencil,
   Check,
@@ -61,6 +63,7 @@ function TemplateDesignerInner() {
 
   // Canvas
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const fabricRef = useRef<any>(null);
   const fabricLibRef = useRef<any>(null);
 
@@ -89,6 +92,9 @@ function TemplateDesignerInner() {
 
   // Band / image zone color
   const [elemColor, setElemColor] = useState("#4a90d9");
+
+  // Floating toolbar
+  const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
 
   // Layers panel
   const [layers, setLayers] = useState<{ id: string; type: string; label: string; visible: boolean }[]>([]);
@@ -433,19 +439,26 @@ function TemplateDesignerInner() {
     const canvas = fabricRef.current;
     if (!canvas || !canvasReady) return;
     const sync = () => syncLayers();
+    const onSelected = (e: any) => { syncLayers(); recalcToolbarPos(e.selected?.[0]); };
+    const onModified = (e: any) => { syncLayers(); recalcToolbarPos(e.target); };
+    const onCleared  = () => { syncLayers(); setToolbarPos(null); };
     canvas.on("object:added", sync);
     canvas.on("object:removed", sync);
-    canvas.on("object:modified", sync);
-    canvas.on("selection:created", sync);
-    canvas.on("selection:updated", sync);
-    canvas.on("selection:cleared", sync);
+    canvas.on("object:modified", onModified);
+    canvas.on("object:moving",   onModified);
+    canvas.on("object:scaling",  onModified);
+    canvas.on("selection:created", onSelected);
+    canvas.on("selection:updated", onSelected);
+    canvas.on("selection:cleared", onCleared);
     return () => {
       canvas.off("object:added", sync);
       canvas.off("object:removed", sync);
-      canvas.off("object:modified", sync);
-      canvas.off("selection:created", sync);
-      canvas.off("selection:updated", sync);
-      canvas.off("selection:cleared", sync);
+      canvas.off("object:modified", onModified);
+      canvas.off("object:moving",   onModified);
+      canvas.off("object:scaling",  onModified);
+      canvas.off("selection:created", onSelected);
+      canvas.off("selection:updated", onSelected);
+      canvas.off("selection:cleared", onCleared);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasReady]);
@@ -629,6 +642,42 @@ function TemplateDesignerInner() {
       reader.onload = () => resolve(reader.result as string);
       reader.readAsDataURL(file);
     });
+  }
+
+  // ── Floating toolbar position ─────────────────────────────────────────────
+  function recalcToolbarPos(obj?: any) {
+    const wrapper = canvasWrapperRef.current;
+    const canvas = fabricRef.current;
+    if (!wrapper || !canvas) { setToolbarPos(null); return; }
+    const target = obj ?? canvas.getActiveObject();
+    if (!target) { setToolbarPos(null); return; }
+    const bound = target.getBoundingRect(true, true);
+    const wRect = wrapper.getBoundingClientRect();
+    const zf = zoom / 100;
+    setToolbarPos({
+      x: wRect.left + (bound.left + bound.width / 2) * zf,
+      y: wRect.top + bound.top * zf,
+    });
+  }
+
+  function sendToBack() {
+    const canvas = fabricRef.current;
+    const obj = canvas?.getActiveObject();
+    if (!canvas || !obj) return;
+    saveUndoState();
+    canvas.sendObjectToBack(obj);
+    canvas.requestRenderAll();
+    syncLayers();
+  }
+
+  function bringToFront() {
+    const canvas = fabricRef.current;
+    const obj = canvas?.getActiveObject();
+    if (!canvas || !obj) return;
+    saveUndoState();
+    canvas.bringObjectToFront(obj);
+    canvas.requestRenderAll();
+    syncLayers();
   }
 
   // ── Layers ────────────────────────────────────────────────────────────────
@@ -1069,6 +1118,7 @@ function TemplateDesignerInner() {
               }}
             >
               <div
+                ref={canvasWrapperRef}
                 style={{
                   transform: `scale(${zoomPct})`,
                   transformOrigin: "top left",
@@ -1084,6 +1134,37 @@ function TemplateDesignerInner() {
             </div>
           </div>
         </main>
+
+        {/* ── Floating Toolbar ────────────────────────────────────────────── */}
+        {toolbarPos && selType && (
+          <div
+            style={{
+              position: "fixed",
+              left: toolbarPos.x,
+              top: toolbarPos.y - 48,
+              transform: "translateX(-50%)",
+              zIndex: 200,
+              pointerEvents: "auto",
+            }}
+            className="flex items-center gap-0.5 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 shadow-2xl"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button onClick={sendToBack}   title="Send to back"   className="p-1 rounded hover:bg-gray-700 text-gray-300"><ChevronsDown size={14} /></button>
+            <button onClick={() => moveLayerDown(selectedLayerId!)} title="Move down" disabled={!selectedLayerId} className="p-1 rounded hover:bg-gray-700 text-gray-300 disabled:opacity-30"><ChevronDown size={14} /></button>
+            <button onClick={() => moveLayerUp(selectedLayerId!)}   title="Move up"   disabled={!selectedLayerId} className="p-1 rounded hover:bg-gray-700 text-gray-300 disabled:opacity-30"><ChevronUp   size={14} /></button>
+            <button onClick={bringToFront} title="Bring to front"  className="p-1 rounded hover:bg-gray-700 text-gray-300"><ChevronsUp   size={14} /></button>
+
+            <div className="w-px h-4 bg-gray-700 mx-0.5" />
+
+            <button
+              onClick={deleteSelected}
+              title="Delete"
+              className="p-1 rounded hover:bg-red-900/60 text-gray-400 hover:text-red-400"
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        )}
 
         {/* ── Right Panel ─────────────────────────────────────────────────── */}
         <aside className="w-64 border-l border-gray-800 bg-gray-950 flex flex-col flex-shrink-0 overflow-hidden">
