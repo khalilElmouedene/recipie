@@ -40,6 +40,9 @@ services:
       THREADS_APP_ID: ${THREADS_APP_ID:-}
       THREADS_APP_SECRET: ${THREADS_APP_SECRET:-}
       THREADS_REDIRECT_URI: ${THREADS_REDIRECT_URI:-http://localhost:3000/threads/callback}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
     volumes:
       - uploads_data:/app/uploads
     depends_on:

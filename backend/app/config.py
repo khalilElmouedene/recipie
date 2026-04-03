@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     threads_app_secret: str = ""
     threads_redirect_uri: str = "http://localhost:3000/threads/callback"
 
+    # Cloudinary
+    cloudinary_cloud_name: str = ""
+    cloudinary_api_key: str = ""
+    cloudinary_api_secret: str = ""
+
     # Email / SMTP
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587

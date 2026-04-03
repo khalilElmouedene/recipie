@@ -22,3 +22,4 @@ sqlalchemy[asyncio]
 asyncpg
 alembic
 cryptography
+cloudinary

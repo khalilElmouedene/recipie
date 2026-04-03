@@ -364,7 +364,6 @@ async def threads_oauth_callback(
 
 # ── Media Upload ─────────────────────────────────────────────────────────────
 
-_THREADS_UPLOADS = Path("/app/uploads/threads")
 _ALLOWED_MIME = {
     "image/jpeg", "image/png", "image/gif", "image/webp",
     "video/mp4", "video/quicktime",
@@ -377,19 +376,33 @@ async def upload_threads_media(
     files: List[UploadFile] = File(...),
     user: User = Depends(get_current_user),
 ):
-    _THREADS_UPLOADS.mkdir(parents=True, exist_ok=True)
+    import cloudinary
+    import cloudinary.uploader
+
+    if not settings.cloudinary_cloud_name:
+        raise HTTPException(status_code=503, detail="Cloudinary is not configured")
+
+    cloudinary.config(
+        cloud_name=settings.cloudinary_cloud_name,
+        api_key=settings.cloudinary_api_key,
+        api_secret=settings.cloudinary_api_secret,
+    )
+
     urls: list[str] = []
     for f in files:
         if f.content_type not in _ALLOWED_MIME:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {f.content_type}")
         data = await f.read()
         if len(data) > _MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail=f"File too large (max 50 MB)")
-        ext = (f.filename or "file").rsplit(".", 1)[-1].lower() or "bin"
-        filename = f"{_uuid_module.uuid4().hex}.{ext}"
-        dest = _THREADS_UPLOADS / filename
-        dest.write_bytes(data)
-        urls.append(f"/uploads/threads/{filename}")
+            raise HTTPException(status_code=400, detail="File too large (max 50 MB)")
+        resource_type = "video" if f.content_type.startswith("video/") else "image"
+        result = cloudinary.uploader.upload(
+            data,
+            folder="threads",
+            resource_type=resource_type,
+            public_id=_uuid_module.uuid4().hex,
+        )
+        urls.append(result["secure_url"])
     return {"urls": urls}
 
 
