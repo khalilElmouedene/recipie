@@ -19,7 +19,7 @@ def _to_absolute(url: str) -> str:
         return url
     if "/uploads/" in url:
         suffix = url.split("/uploads/", 1)[1]
-        return settings.server_base_url.rstrip("/") + "/api/uploads/" + suffix
+        return settings.server_base_url.rstrip("/") + "/uploads/" + suffix
     if url.startswith("/"):
         return settings.server_base_url.rstrip("/") + url
     return url
