@@ -382,8 +382,11 @@ async def publish_recipe_article(
     backdate = datetime.now(timezone.utc) - timedelta(seconds=random.randint(1, six_months_sec))
     pub_result = publish_recipe(recipe_dict, site_config, post_date_gmt=backdate)
 
-    if "error_message" in pub_result:
-        raise HTTPException(status_code=500, detail="Failed to publish article to WordPress")
+    if not pub_result.get("wp_post_id"):
+        raise HTTPException(
+            status_code=500,
+            detail=pub_result.get("error_message", "Failed to publish article to WordPress"),
+        )
 
     recipe.wp_post_id = pub_result.get("wp_post_id")
     recipe.wp_permalink = pub_result.get("wp_permalink")

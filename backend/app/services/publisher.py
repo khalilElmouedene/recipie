@@ -184,12 +184,15 @@ def publish_recipe(
         except Exception:
             permalink = f"{domain}/{slug}/"
 
-        if focus_kw or meta_desc or wp_title:
-            set_rank_math_meta(post_id, focus_kw, meta_desc, site_config, seo_title=wp_title, log=_log)
-
         _log(f"Post created (ID: {post_id}) - {permalink}")
         result["wp_post_id"] = str(post_id)
         result["wp_permalink"] = permalink
+
+        try:
+            if focus_kw or meta_desc or wp_title:
+                set_rank_math_meta(post_id, focus_kw, meta_desc, site_config, seo_title=wp_title, log=_log)
+        except Exception as seo_err:
+            _log(f"Rank Math SEO meta failed (post published OK): {seo_err}")
 
     except Exception as e:
         _log(f"Publishing failed: {e}")
