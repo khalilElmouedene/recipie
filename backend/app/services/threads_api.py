@@ -129,7 +129,7 @@ def _is_video_url(url: str) -> bool:
 def _create_container(user_id: str, access_token: str, params: dict) -> str:
     resp = requests.post(
         f"{_GRAPH_BASE}/{user_id}/threads",
-        data={**params, "access_token": access_token},
+        params={**params, "access_token": access_token},
         timeout=60,
     )
     if not resp.ok:
@@ -144,7 +144,7 @@ def _create_container(user_id: str, access_token: str, params: dict) -> str:
 def _publish_container(user_id: str, access_token: str, creation_id: str) -> str:
     resp = requests.post(
         f"{_GRAPH_BASE}/{user_id}/threads_publish",
-        data={"creation_id": creation_id, "access_token": access_token},
+        params={"creation_id": creation_id, "access_token": access_token},
         timeout=60,
     )
     if not resp.ok:
@@ -234,7 +234,7 @@ def add_reply(
     # Step 1: create reply container
     container_resp = requests.post(
         f"{_GRAPH_BASE}/{user_id}/threads",
-        data={
+        params={
             "media_type": "TEXT",
             "text": text,
             "reply_to_id": post_id,
@@ -255,7 +255,7 @@ def add_reply(
     # Step 2: publish reply
     publish_resp = requests.post(
         f"{_GRAPH_BASE}/{user_id}/threads_publish",
-        data={
+        params={
             "creation_id": creation_id,
             "access_token": access_token,
         },
