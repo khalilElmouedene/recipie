@@ -1,15 +1,28 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from app.config import settings
 from app.crypto import decrypt
 from app.database import SessionLocal
 from app.db_models import ThreadsAccount, ThreadsPost, ThreadsPostStatus
 from app.services.threads_api import add_reply, publish_post
+
+
+def _to_absolute(url: str) -> str:
+    if not url:
+        return url
+    if "/uploads/" in url:
+        suffix = url.split("/uploads/", 1)[1]
+        return settings.server_base_url.rstrip("/") + "/api/uploads/" + suffix
+    if url.startswith("/"):
+        return settings.server_base_url.rstrip("/") + url
+    return url
 
 
 async def run_threads_scheduler(stop_event: asyncio.Event) -> None:
@@ -41,11 +54,15 @@ async def run_threads_scheduler(stop_event: asyncio.Event) -> None:
                     access_token = decrypt(account.access_token)
                     threads_user_id = account.threads_user_id
 
+                    media = json.loads(post.media_urls) if post.media_urls else None
+                    abs_media = [_to_absolute(u) for u in media] if media else None
+                    abs_image = _to_absolute(post.image_url) if post.image_url else None
                     threads_post_id = publish_post(
                         access_token=access_token,
                         user_id=threads_user_id,
                         text=post.text_content,
-                        image_url=post.image_url,
+                        media_urls=abs_media,
+                        image_url=abs_image,
                     )
 
                     # Optionally post first comment as a reply
