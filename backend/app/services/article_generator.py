@@ -71,8 +71,27 @@ def _fetch_sitemap_urls(sitemap_url: str) -> list[str]:
     ]
 
 
+_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif", ".ico", ".bmp")
+
+
+def _is_media_url(url: str) -> bool:
+    """Return True if the URL points to a media file rather than a post/page."""
+    lower = url.lower().split("?")[0]
+    if "/wp-content/uploads/" in lower:
+        return True
+    if any(lower.endswith(ext) for ext in _IMAGE_EXTENSIONS):
+        return True
+    return False
+
+
 def _parse_sitemap_xml(xml_content: bytes) -> tuple[list[str], list[str]]:
-    """Parse sitemap XML content and return (child_sitemaps, page_urls)."""
+    """Parse sitemap XML content and return (child_sitemaps, page_urls).
+
+    Only the canonical <loc> inside <url> (not <image:loc> or <video:loc>) is
+    included in page_urls.  We detect those by checking the *parent* tag name:
+    if the immediate parent ends with 'url' it is a post URL; otherwise it is a
+    media/image sub-element and is skipped.
+    """
     try:
         root = ET.fromstring(xml_content)
     except Exception:
@@ -81,25 +100,32 @@ def _parse_sitemap_xml(xml_content: bytes) -> tuple[list[str], list[str]]:
     child_sitemaps: list[str] = []
     page_urls: list[str] = []
 
-    # Namespace-agnostic parsing to support various WP/SEO plugins.
+    is_index = "sitemapindex" in (root.tag or "").lower()
+
+    # Build a parent-map so we can check immediate parent tags.
+    parent_map: dict = {child: parent for parent in root.iter() for child in parent}
+
     for el in root.iter():
         tag = (el.tag or "").lower()
         text = (el.text or "").strip()
-        if not text:
+        if not text or not tag.endswith("loc"):
             continue
-        if tag.endswith("loc"):
-            parent_tag = (getattr(el, "getparent", lambda: None)() or None)
-            # xml.etree does not provide parent access; infer by root type below.
-            # We'll classify using root tag instead of parent.
-            if "sitemapindex" in (root.tag or "").lower():
-                child_sitemaps.append(text)
-            else:
-                page_urls.append(text)
 
-    # Fallback split for sitemap indexes where above inference may mix links.
-    if "sitemapindex" in (root.tag or "").lower():
+        if is_index:
+            child_sitemaps.append(text)
+        else:
+            # Only include loc elements whose immediate parent tag ends with "url"
+            # (i.e. the canonical <url><loc>…</loc></url> pattern).
+            parent = parent_map.get(el)
+            parent_tag = (parent.tag or "").lower() if parent is not None else ""
+            if not parent_tag.endswith("url"):
+                continue  # skip <image:loc>, <video:loc>, etc.
+            if _is_media_url(text):
+                continue
+            page_urls.append(text)
+
+    if is_index:
         return child_sitemaps, []
-
     return [], page_urls
 
 
@@ -136,7 +162,7 @@ def _extract_same_domain_links_from_html(html: str, site_domain: str) -> list[st
     return out
 
 
-def get_sitemap_links(site_domain: str) -> list[str]:
+def get_sitemap_links(site_domain: str, log: Callable[[str], None] | None = None) -> list[str]:
     """
     Try multiple common sitemap locations for the site and return up to 50 post URLs.
     Handles both sitemap index files and direct sitemap XML.
@@ -189,6 +215,7 @@ def get_sitemap_links(site_domain: str) -> list[str]:
             pass
 
     candidates = list(dict.fromkeys(candidates))
+    _log = log or (lambda _: None)
 
     for url in candidates:
         try:
@@ -210,14 +237,19 @@ def get_sitemap_links(site_domain: str) -> list[str]:
                     if len(links) >= 50:
                         break
                 if links:
-                    return list(dict.fromkeys(links))[:50]
+                    result = list(dict.fromkeys(links))[:50]
+                    _log(f"Sitemap index found at {url} → {len(result)} post URLs")
+                    return result
             else:
                 if page_urls:
-                    return list(dict.fromkeys(page_urls))[:50]
+                    result = list(dict.fromkeys(page_urls))[:50]
+                    _log(f"Sitemap found at {url} → {len(result)} post URLs")
+                    return result
         except Exception:
             continue
 
     # Fallback: crawl homepage links if all sitemap variants fail.
+    _log("No sitemap found — falling back to homepage link crawl")
     for base in domain_variants:
         try:
             r = requests.get(base, timeout=15, headers=headers)
@@ -225,10 +257,12 @@ def get_sitemap_links(site_domain: str) -> list[str]:
                 continue
             links = _extract_same_domain_links_from_html(r.text, base)
             if links:
+                _log(f"Homepage crawl found {len(links)} links")
                 return links[:50]
         except Exception:
             continue
 
+    _log("WARNING: No internal links found — article will use fallback category links")
     return []
 
 
@@ -277,7 +311,7 @@ def generate_for_recipe(
         if _stop():
             return result
         _log("Generating article HTML...")
-        internal_links = get_sitemap_links(site_domain)
+        internal_links = get_sitemap_links(site_domain, log=_log)
         _log(f"Found {len(internal_links)} internal links from sitemap")
         article = openai_service.generate_article(recipe_title, full_recipe, "", internal_links, openai_key, prompts=prompts, log=_log, site_domain=site_domain)
         result["generated_article"] = article

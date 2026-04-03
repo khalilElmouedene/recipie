@@ -44,18 +44,28 @@ def generate_with_openai(prompt: str, api_key: str, max_retries: int = 3, log: C
 def generate_article(recipe_title: str, full_recipe: str, external_links: str, internal_links: list[str], api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None, site_domain: str = "") -> str:
     tpl = get_prompt(prompts or {}, "article")
     if internal_links:
+        # Use up to 30 links — one per line so the AI can read them clearly.
+        sample = internal_links[:30]
+        links_list = "\n".join(sample)
         links_instruction = (
-            f"Add 5-7 internal links using ONLY the URLs from this list "
-            f"(pick the most relevant ones and use natural anchor text): {', '.join(internal_links)}"
+            "You MUST naturally integrate 2-3 internal links from the list below into the "
+            "body of the article using rich anchor text.\n"
+            "Rules:\n"
+            "- Place links only where they make contextual sense.\n"
+            "- Use meaningful and descriptive anchor text (no 'click here').\n"
+            "- Integrate them naturally into existing paragraphs — do NOT create a separate links section or list.\n"
+            "- Use ONLY URLs from this exact list — do not invent or modify any URL.\n\n"
+            f"Available internal links:\n{links_list}"
         )
     else:
         base = site_domain.rstrip("/") if site_domain else "https://yoursite.com"
         if not base.startswith(("http://", "https://")):
             base = "https://" + base
         links_instruction = (
-            f"Add 3-5 internal links to relevant pages on the site '{base}'. "
-            f"Build logical URLs like {base}/category/breakfast/, {base}/category/dinner/, "
-            f"{base}/category/dessert/, {base}/recipes/, or {base}/. "
+            f"Add 2-3 internal links to relevant posts on the site '{base}'. "
+            f"You may use category pages such as {base}/category/dinner/, "
+            f"{base}/category/dessert/, {base}/category/breakfast/, or {base}/recipes/ "
+            f"as a last resort, but prefer linking to specific recipe posts if the URL pattern is clear. "
             f"Use natural anchor text that fits the sentence."
         )
     prompt = tpl.format(
