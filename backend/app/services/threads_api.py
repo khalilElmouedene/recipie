@@ -234,16 +234,25 @@ def publish_post(
             time.sleep(5)
         return _publish_container(user_id, access_token, creation_id)
 
-    # Carousel: multiple images (Threads supports up to 20 images)
+    # Carousel: up to 20 items, images and videos can be mixed
     item_ids: list[str] = []
     for url in urls[:20]:
-        item_id = _create_container(user_id, access_token, {
-            "is_carousel_item": "true",
-            "media_type": "IMAGE",
-            "image_url": url,
-        })
+        if _is_video_url(url):
+            item_id = _create_container(user_id, access_token, {
+                "is_carousel_item": "true",
+                "media_type": "VIDEO",
+                "video_url": url,
+            })
+            # Videos need processing time even as carousel items
+            _wait_for_container(item_id, access_token, timeout=180)
+        else:
+            item_id = _create_container(user_id, access_token, {
+                "is_carousel_item": "true",
+                "media_type": "IMAGE",
+                "image_url": url,
+            })
+            time.sleep(1)
         item_ids.append(item_id)
-        time.sleep(1)
 
     carousel_id = _create_container(user_id, access_token, {
         "media_type": "CAROUSEL",
