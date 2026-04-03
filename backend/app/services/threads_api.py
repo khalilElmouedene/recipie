@@ -127,14 +127,20 @@ def _is_video_url(url: str) -> bool:
 
 
 def _create_container(user_id: str, access_token: str, params: dict) -> str:
-    req = requests.Request(
-        "POST",
-        f"{_GRAPH_BASE}/{user_id}/threads",
-        params={**params, "access_token": access_token},
-    )
-    prepared = req.prepare()
-    print(f"[threads DEBUG] container request URL: {prepared.url}", flush=True)
-    resp = requests.Session().send(prepared, timeout=60)
+    # Meta's Threads API expects image_url/video_url unencoded in the query string.
+    # Using requests' params= would percent-encode them (https:// → https%3A%2F%2F)
+    # which the API doesn't decode, resulting in an empty URI error.
+    all_params = {**params, "access_token": access_token}
+    parts = []
+    for k, v in all_params.items():
+        if k in ("image_url", "video_url"):
+            parts.append(f"{k}={v}")  # pass URL as-is, no encoding
+        else:
+            parts.append(f"{urllib.parse.quote(str(k))}={urllib.parse.quote(str(v), safe='')}")
+    query = "&".join(parts)
+    full_url = f"{_GRAPH_BASE}/{user_id}/threads?{query}"
+    print(f"[threads DEBUG] container request URL: {full_url}", flush=True)
+    resp = requests.post(full_url, timeout=60)
     if not resp.ok:
         raise ValueError(f"Threads container creation failed: {resp.text}")
     data = resp.json()
