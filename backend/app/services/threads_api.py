@@ -121,7 +121,11 @@ def get_user_info(access_token: str, user_id: str) -> dict:
 
 def _is_video_url(url: str) -> bool:
     lower = url.lower().split("?")[0]
-    return lower.endswith(".mp4") or lower.endswith(".mov") or "/threads/" in lower and "video" in lower
+    return (
+        lower.endswith(".mp4") or
+        lower.endswith(".mov") or
+        "/video/upload/" in lower  # Cloudinary video URL
+    )
 
 
 def _create_container(user_id: str, access_token: str, params: dict) -> str:
@@ -146,6 +150,28 @@ def _create_container(user_id: str, access_token: str, params: dict) -> str:
     if not cid:
         raise ValueError(f"No container id in Threads response: {data}")
     return str(cid)
+
+
+def _wait_for_container(container_id: str, access_token: str, timeout: int = 120) -> None:
+    """Poll container status until FINISHED. Raises ValueError if ERROR or timeout."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        resp = requests.get(
+            f"{_GRAPH_BASE}/{container_id}",
+            params={"fields": "status,error_message", "access_token": access_token},
+            timeout=30,
+        )
+        if not resp.ok:
+            raise ValueError(f"Threads container status check failed: {resp.text}")
+        data = resp.json()
+        status = data.get("status", "")
+        if status == "FINISHED":
+            return
+        if status == "ERROR":
+            raise ValueError(f"Threads container processing failed: {data.get('error_message', 'unknown error')}")
+        # IN_PROGRESS or PUBLISHED — keep waiting
+        time.sleep(5)
+    raise ValueError(f"Threads container {container_id} did not finish processing within {timeout}s")
 
 
 def _publish_container(user_id: str, access_token: str, creation_id: str) -> str:
@@ -198,13 +224,14 @@ def publish_post(
                 "video_url": url,
                 "text": text,
             })
+            _wait_for_container(creation_id, access_token, timeout=180)
         else:
             creation_id = _create_container(user_id, access_token, {
                 "media_type": "IMAGE",
                 "image_url": url,
                 "text": text,
             })
-        time.sleep(5)
+            time.sleep(5)
         return _publish_container(user_id, access_token, creation_id)
 
     # Carousel: multiple images (Threads supports up to 20 images)
