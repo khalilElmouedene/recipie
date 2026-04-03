@@ -52,17 +52,20 @@ async def lifespan(app: FastAPI):
     from app.services.image_retention_scheduler import run_image_retention_scheduler
     from app.services.stale_job_reconciler import run_stale_job_reconciler
     from app.services.threads_scheduler import run_threads_scheduler
+    from app.services.threads_media_cleanup_scheduler import run_threads_media_cleanup_scheduler
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(run_publish_scheduler(stop_event))
     retention_task = asyncio.create_task(run_image_retention_scheduler(stop_event))
     stale_task = asyncio.create_task(run_stale_job_reconciler(stop_event))
     threads_scheduler_task = asyncio.create_task(run_threads_scheduler(stop_event))
+    threads_cleanup_task = asyncio.create_task(run_threads_media_cleanup_scheduler(stop_event))
     yield
     stop_event.set()
     await scheduler_task
     await retention_task
     await stale_task
     await threads_scheduler_task
+    await threads_cleanup_task
 
 
 _debug = os.getenv("APP_ENV", "production").lower() != "production"

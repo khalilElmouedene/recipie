@@ -574,8 +574,6 @@ async def publish_threads_post_now(
         media = json.loads(post.media_urls) if post.media_urls else None
         abs_media = [_to_absolute(u) for u in media] if media else None
         abs_image = _to_absolute(post.image_url) if post.image_url else None
-        logger.error("[threads DEBUG] raw media_urls=%s raw image_url=%s abs_media=%s abs_image=%s server_base_url=%s",
-                     post.media_urls, post.image_url, abs_media, abs_image, settings.server_base_url)
         threads_post_id = threads_api.publish_post(
             access_token=access_token,
             user_id=account.threads_user_id,
@@ -593,7 +591,6 @@ async def publish_threads_post_now(
         raise HTTPException(status_code=400, detail=err_msg)
 
     # Optionally post first comment as a reply
-    # Small delay so Meta fully processes the post before we reply
     if post.first_comment:
         time.sleep(3)
         try:
@@ -604,7 +601,6 @@ async def publish_threads_post_now(
                 text=post.first_comment,
             )
         except Exception as reply_exc:
-            # Non-fatal: log but don't fail the whole request
             print(f"[threads] reply failed for post {post.id}: {reply_exc}")
 
     post.status = ThreadsPostStatus.published
@@ -613,6 +609,13 @@ async def publish_threads_post_now(
     post.error_message = None
     await db.commit()
     await db.refresh(post)
+
+    # Delete Cloudinary media now that the post is published
+    if settings.cloudinary_cloud_name:
+        from ..services.cloudinary_utils import delete_cloudinary_media
+        all_media = list(filter(None, (abs_media or []) + ([abs_image] if abs_image else [])))
+        delete_cloudinary_media(all_media, settings.cloudinary_cloud_name, settings.cloudinary_api_key, settings.cloudinary_api_secret)
+
     return ThreadsPostOut.from_db(post)
 
 
@@ -697,6 +700,13 @@ async def batch_publish_threads_posts(
         post.threads_post_id = threads_post_id
         post.error_message = None
         await db.commit()
+
+        # Delete Cloudinary media now that the post is published
+        if settings.cloudinary_cloud_name:
+            from ..services.cloudinary_utils import delete_cloudinary_media
+            all_media = list(filter(None, (abs_batch or []) + ([abs_img] if abs_img else [])))
+            delete_cloudinary_media(all_media, settings.cloudinary_cloud_name, settings.cloudinary_api_key, settings.cloudinary_api_secret)
+
         succeeded.append(str(post_id))
 
     return BatchPublishResult(succeeded=succeeded, failed=failed)

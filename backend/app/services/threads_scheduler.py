@@ -11,6 +11,7 @@ from app.config import settings
 from app.crypto import decrypt
 from app.database import SessionLocal
 from app.db_models import ThreadsAccount, ThreadsPost, ThreadsPostStatus
+from app.services.cloudinary_utils import delete_cloudinary_media
 from app.services.threads_api import add_reply, publish_post
 
 
@@ -83,6 +84,11 @@ async def run_threads_scheduler(stop_event: asyncio.Event) -> None:
                     post.published_at = datetime.now(timezone.utc)
                     post.threads_post_id = threads_post_id
                     post.error_message = None
+
+                    # Delete Cloudinary media now that the post is published
+                    if settings.cloudinary_cloud_name:
+                        all_media = list(filter(None, (abs_media or []) + ([abs_image] if abs_image else [])))
+                        delete_cloudinary_media(all_media, settings.cloudinary_cloud_name, settings.cloudinary_api_key, settings.cloudinary_api_secret)
 
                 except Exception as exc:
                     post.status = ThreadsPostStatus.failed
