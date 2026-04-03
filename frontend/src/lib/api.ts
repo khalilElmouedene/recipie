@@ -179,6 +179,37 @@ export const api = {
       body: JSON.stringify({ fonts }),
     }),
 
+  importBoardsExcel: async (file: File): Promise<{ boards: string }> => {
+    const token = getToken();
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`${API_URL}/api/settings/boards/import`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(typeof err.detail === "string" ? err.detail : "Import failed");
+    }
+    return res.json();
+  },
+
+  downloadBoardsTemplate: async (): Promise<void> => {
+    const token = getToken();
+    const res = await fetch(`${API_URL}/api/settings/boards/template`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error("Failed to download template");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "pinterest_boards_template.xlsx";
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
   // ── Sites ──────────────────────────────────────────────
   getSites: (projectId: string) => request<SiteOut[]>(`/api/projects/${projectId}/sites`),
 

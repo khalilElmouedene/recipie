@@ -1,10 +1,13 @@
 """Paramètres / Settings - clés API globales, prompts (par owner)."""
 from __future__ import annotations
+import io
 import json
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import openpyxl
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -162,6 +165,57 @@ async def update_prompts(
         if key not in out:
             out[key] = PromptOut(key=key, value=data["value"], description=data.get("description", ""))
     return list(out.values())
+
+
+# ── Pinterest Boards ─────────────────────────────────────────────────────────
+
+_DEFAULT_BOARDS = DEFAULT_PROMPTS["pinterest_boards_list"]["value"].splitlines()
+
+
+@router.post("/boards/import", response_model=dict)
+async def import_boards_excel(
+    user: Annotated[User, Depends(require_owner)],
+    file: UploadFile = File(...),
+):
+    """Parse an Excel file (column A = board name, row 1 = header) and return newline-separated boards."""
+    content = await file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid Excel file")
+    ws = wb.active
+    boards = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        cell = row[0] if row else None
+        if cell:
+            name = str(cell).strip()
+            if name:
+                boards.append(name)
+    if not boards:
+        raise HTTPException(status_code=400, detail="No board names found in column A (starting from row 2)")
+    return {"boards": "\n".join(boards)}
+
+
+@router.get("/boards/template")
+async def get_boards_template(
+    user: Annotated[User, Depends(require_owner)],
+):
+    """Return an Excel template pre-filled with the default Pinterest boards."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Boards"
+    ws.column_dimensions["A"].width = 40
+    ws.append(["Board Name"])
+    for board in _DEFAULT_BOARDS:
+        ws.append([board])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=pinterest_boards_template.xlsx"},
+    )
 
 
 # ── Custom Fonts (per user) ──────────────────────────────────────────────────

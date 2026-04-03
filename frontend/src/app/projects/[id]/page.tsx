@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink } from "lucide-react";
+import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload } from "lucide-react";
 import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
@@ -565,6 +565,7 @@ const PROMPT_GROUPS: { label: string; keys: string[] }[] = [
 ];
 
 type SettingsSubTab = "credentials" | "prompts";
+type BoardsInputMode = "text" | "excel";
 
 function SettingsTab({ projectId }: { projectId: string }) {
   const router = useRouter();
@@ -579,6 +580,11 @@ function SettingsTab({ projectId }: { projectId: string }) {
   const [prompts, setPrompts] = useState<PromptOut[]>([]);
   const [promptValues, setPromptValues] = useState<Record<string, string>>({});
   const [savingPrompts, setSavingPrompts] = useState(false);
+
+  // Pinterest boards
+  const [boardsMode, setBoardsMode] = useState<BoardsInputMode>("text");
+  const [importingBoards, setImportingBoards] = useState(false);
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
 
   useEffect(() => {
     api.getSettingsCredentials().then(setCreds).catch(() => {});
@@ -615,6 +621,29 @@ function SettingsTab({ projectId }: { projectId: string }) {
       setPrompts(updated);
     } catch { }
     setSavingPrompts(false);
+  };
+
+  const handleImportBoards = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportingBoards(true);
+    try {
+      const { boards } = await api.importBoardsExcel(file);
+      setPromptValues((prev) => ({ ...prev, pinterest_boards_list: boards }));
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImportingBoards(false);
+      e.target.value = "";
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    setDownloadingTemplate(true);
+    try {
+      await api.downloadBoardsTemplate();
+    } catch { }
+    setDownloadingTemplate(false);
   };
 
   const getMasked = (key: string) => creds.find((c) => c.key_type === key)?.masked_value || "Not configured";
@@ -737,6 +766,76 @@ function SettingsTab({ projectId }: { projectId: string }) {
                 </div>
               </div>
             ))}
+
+            {/* Pinterest Boards List */}
+            <div className="card">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <List size={16} className="text-brand-400" />
+                  <h2 className="font-semibold text-white">Pinterest Boards List</h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleDownloadTemplate}
+                    disabled={downloadingTemplate}
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-gray-600 text-gray-300 hover:border-gray-400 hover:text-white transition"
+                  >
+                    <Download size={13} /> {downloadingTemplate ? "Downloading..." : "Excel Template"}
+                  </button>
+                  <div className="flex rounded-lg border border-gray-700 overflow-hidden">
+                    <button
+                      onClick={() => setBoardsMode("text")}
+                      className={`px-3 py-1.5 text-xs font-medium transition ${boardsMode === "text" ? "bg-brand-600 text-white" : "text-gray-400 hover:text-gray-200"}`}
+                    >
+                      Text
+                    </button>
+                    <button
+                      onClick={() => setBoardsMode("excel")}
+                      className={`px-3 py-1.5 text-xs font-medium transition ${boardsMode === "excel" ? "bg-brand-600 text-white" : "text-gray-400 hover:text-gray-200"}`}
+                    >
+                      Excel
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-xs text-gray-400 mb-3">
+                One board name per line. Used as <code className="text-brand-400">{"{boards_list}"}</code> in the Pinterest board prompt.
+              </p>
+
+              {boardsMode === "text" ? (
+                <div className="border border-gray-700 rounded-lg p-3">
+                  <label className="text-xs font-mono text-gray-300 block mb-1.5">pinterest_boards_list</label>
+                  <textarea
+                    value={promptValues["pinterest_boards_list"] ?? prompts.find((p) => p.key === "pinterest_boards_list")?.value ?? ""}
+                    onChange={(e) => setPromptValues({ ...promptValues, pinterest_boards_list: e.target.value })}
+                    className="input-field w-full font-mono text-xs resize-y"
+                    style={{ minHeight: "180px" }}
+                    placeholder="One board name per line..."
+                  />
+                </div>
+              ) : (
+                <div className="border border-dashed border-gray-600 rounded-lg p-6 text-center">
+                  <Upload size={24} className="mx-auto mb-2 text-gray-500" />
+                  <p className="text-sm text-gray-400 mb-3">Upload an Excel file (.xlsx) — Board names in column A, starting from row 2</p>
+                  <label className={`btn-primary cursor-pointer inline-flex items-center gap-2 text-sm ${importingBoards ? "opacity-50 pointer-events-none" : ""}`}>
+                    <Upload size={14} /> {importingBoards ? "Importing..." : "Choose File"}
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls"
+                      className="hidden"
+                      onChange={handleImportBoards}
+                      disabled={importingBoards}
+                    />
+                  </label>
+                  {promptValues["pinterest_boards_list"] && (
+                    <p className="text-xs text-green-400 mt-3">
+                      {promptValues["pinterest_boards_list"].split("\n").filter(Boolean).length} boards loaded — switch to Text to review
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           {hasPromptChanges && (
             <div className="sticky bottom-4 flex justify-end mt-6">

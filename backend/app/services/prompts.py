@@ -241,6 +241,10 @@ Recipe: {recipe_title}""",
         "value": "/imagine prompt: {source_img} Amateur photo from Reddit. The photo was taken by an amateur using her phone camera. RECIPE NAME: {recipe_name} Recipe --style raw --stylize 30 --iw 3 --v 6.1",
         "description": "Midjourney image prompt - placeholders: {recipe_name}, {source_img}",
     },
+    "pinterest_boards_list": {
+        "value": "Air Fryer Dinners & Snacks\n30-Minute Weeknight Meals\nBrunch & Breakfast Bakes\nDesserts & Chaos Cakes\nPickle Fix (Dill-icious Recipes)\nRebel Floats & Fun Drinks\nCharcuterie & Party Boards\nOne-Pot & Casserole Comforts\nPasta & Pizza Night\nBBQ & Grilling Classics\nHealthy Salads & Veggie Sides\nSlow Cooker & Instant Pot Comforts\nBread & Pastry Workshop\nProtein-Packed Lunch Prep\nSauces, Dips & Seasonings\nSoups, Stews & Chowders\nCanning, Ferments & Pickles\nKitchen Hacks & How-To Guides\nHoliday & Seasonal Recipes\nBudget-Friendly & 5-Ingredient Meals\nKid-Friendly Snacks & Lunches",
+        "description": "Pinterest boards list - one board name per line, used as {boards_list} in the pinterest_board prompt",
+    },
 }
 
 
