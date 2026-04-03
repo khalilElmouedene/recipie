@@ -383,8 +383,12 @@ class JobManager:
                 if not recipe:
                     return
                 for key, val in fields.items():
-                    if hasattr(recipe, key) and val is not None:
-                        setattr(recipe, key, val)
+                    if not hasattr(recipe, key) or val is None:
+                        continue
+                    # Don't overwrite pin_blog_link if already set by user
+                    if key == "pin_blog_link" and getattr(recipe, "pin_blog_link", None):
+                        continue
+                    setattr(recipe, key, val)
 
                 if "error_message" in fields and fields["error_message"]:
                     recipe.status = RecipeStatus.failed
@@ -617,8 +621,11 @@ class JobManager:
                     if not recipe:
                         return
                     for key, val in fields.items():
-                        if hasattr(recipe, key) and val is not None:
-                            setattr(recipe, key, val)
+                        if not hasattr(recipe, key) or val is None:
+                            continue
+                        if key == "pin_blog_link" and getattr(recipe, "pin_blog_link", None):
+                            continue
+                        setattr(recipe, key, val)
                     if "error_message" in fields and fields["error_message"]:
                         recipe.status = RecipeStatus.failed
                     elif job_type in (JobType.articles, JobType.articles_all_sites):

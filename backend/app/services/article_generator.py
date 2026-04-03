@@ -330,6 +330,21 @@ def generate_for_recipe(
         category = openai_service.generate_category(recipe_title, openai_key, prompts=prompts, log=_log)
         result["category"] = category
 
+        # 6b. Pinterest board selection (AI picks best board from boards list)
+        from .prompts import DEFAULT_PROMPTS as _DP
+        boards_list = (prompts or {}).get("pinterest_boards_list") or _DP.get("pinterest_boards_list", {}).get("value", "")
+        if boards_list and not _stop():
+            _log("Selecting Pinterest board...")
+            try:
+                pin_board = openai_service.generate_pinterest_pin_board(
+                    recipe_title, boards_list, openai_key, prompts=prompts, log=_log
+                )
+                pin_board = pin_board.strip().strip('"').strip("'")
+                result["pin_board"] = pin_board
+                _log(f"Pinterest board selected: {pin_board}")
+            except Exception as e:
+                _log(f"Pinterest board selection failed (non-fatal): {e}")
+
         # 7. Midjourney images (only if Discord credentials exist)
         discord_auth = credentials.get("discord_auth", "")
         if discord_auth and image_url:

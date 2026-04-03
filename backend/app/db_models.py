@@ -199,6 +199,7 @@ class Recipe(Base):
     # (built-in templates use their built-in ids; custom templates use DB ids).
     pin_template_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     pin_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pin_board: Mapped[str | None] = mapped_column(String(300), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

@@ -353,16 +353,26 @@ export default function SiteDetailPage() {
     setPinLink(recipe.wp_permalink || "");
     setSelectedBoard("");
 
+    const aiBoard = recipe.pin_board?.trim().toLowerCase() ?? "";
+
+    const _pickBoard = (boardList: typeof boards) => {
+      if (boardList.length === 0) return;
+      const matched = aiBoard ? boardList.find((b) => b.name.trim().toLowerCase() === aiBoard) : null;
+      setSelectedBoard(matched ? matched.id : boardList[0].id);
+    };
+
     if (boards.length === 0) {
       setBoardsLoading(true);
       try {
         const b = await api.getPinterestBoards(projectId);
         setBoards(b);
-        if (b.length > 0) setSelectedBoard(b[0].id);
+        _pickBoard(b);
       } catch (err: any) {
         alert(err.message || "Failed to load Pinterest boards. Check your Pinterest credentials.");
       }
       setBoardsLoading(false);
+    } else {
+      _pickBoard(boards);
     }
   };
 
@@ -433,6 +443,18 @@ export default function SiteDetailPage() {
       alert(`Published to WordPress!\n\nPost: ${data.wp_permalink}`);
       loadRecipes();
     } catch (err: any) {
+      // The request may have timed out (Cloudflare proxy timeout) while the backend
+      // was still uploading images / creating the post. Refresh the recipe to check
+      // whether it was actually published despite the timeout error.
+      try {
+        const refreshed = await api.getRecipe(r.id);
+        if (refreshed.wp_post_id) {
+          loadRecipes();
+          alert(`Published to WordPress!\n\nPost: ${refreshed.wp_permalink || ""}`);
+          setWpPublishingId(null);
+          return;
+        }
+      } catch { /* ignore */ }
       alert(err.message || "Failed to publish to WordPress");
     }
     setWpPublishingId(null);
@@ -890,7 +912,12 @@ export default function SiteDetailPage() {
                                 <>
                                   {boards.length > 0 && (
                                     <div>
-                                      <label className="text-xs text-gray-400 mb-1 block">Board</label>
+                                      <div className="flex items-center justify-between mb-1">
+                                        <label className="text-xs text-gray-400">Board</label>
+                                        {r.pin_board && (
+                                          <span className="text-xs text-brand-400">AI picked: {r.pin_board}</span>
+                                        )}
+                                      </div>
                                       <select
                                         value={selectedBoard}
                                         onChange={(e) => setSelectedBoard(e.target.value)}

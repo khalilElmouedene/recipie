@@ -187,6 +187,9 @@ def publish_recipe(
         _log(f"Post created (ID: {post_id}) - {permalink}")
         result["wp_post_id"] = str(post_id)
         result["wp_permalink"] = permalink
+        # Auto-populate pin_blog_link so Pinterest pins always link to the published post
+        # (mirrors Articles_Publishing_Winsome.py which saves permalink back to the sheet)
+        result["pin_blog_link"] = permalink
 
         try:
             if focus_kw or meta_desc or wp_title:

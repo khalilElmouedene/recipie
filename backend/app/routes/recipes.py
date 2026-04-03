@@ -1,5 +1,7 @@
 from __future__ import annotations
+import asyncio
 import csv
+import functools
 import io
 import json
 import random
@@ -239,6 +241,8 @@ async def update_recipe(
         recipe.pin_template_id = body.pin_template_id
     if body.pin_url is not None:
         recipe.pin_url = body.pin_url
+    if body.pin_board is not None:
+        recipe.pin_board = body.pin_board
 
     await db.commit()
     row = await db.execute(select(Recipe).where(Recipe.id == recipe_id))
@@ -380,7 +384,11 @@ async def publish_recipe_article(
     from ..services.publisher import publish_recipe
     six_months_sec = int(timedelta(days=183).total_seconds())
     backdate = datetime.now(timezone.utc) - timedelta(seconds=random.randint(1, six_months_sec))
-    pub_result = publish_recipe(recipe_dict, site_config, post_date_gmt=backdate)
+    loop = asyncio.get_event_loop()
+    pub_result = await loop.run_in_executor(
+        None,
+        functools.partial(publish_recipe, recipe_dict, site_config, post_date_gmt=backdate),
+    )
 
     if not pub_result.get("wp_post_id"):
         raise HTTPException(
@@ -391,6 +399,11 @@ async def publish_recipe_article(
     recipe.wp_post_id = pub_result.get("wp_post_id")
     recipe.wp_permalink = pub_result.get("wp_permalink")
     recipe.status = RecipeStatus.published
+    # Auto-set pin_blog_link to the published post URL so Pinterest pins always
+    # link to the correct article (same behaviour as Articles_Publishing_Winsome.py
+    # which saves the permalink back to the sheet for Pinterest use).
+    if recipe.wp_permalink and not recipe.pin_blog_link:
+        recipe.pin_blog_link = recipe.wp_permalink
     await db.commit()
 
     return {"wp_post_id": recipe.wp_post_id, "wp_permalink": recipe.wp_permalink}
