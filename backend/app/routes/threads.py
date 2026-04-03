@@ -364,11 +364,14 @@ async def threads_oauth_callback(
 
 # ── Media Upload ─────────────────────────────────────────────────────────────
 
-_ALLOWED_MIME = {
-    "image/jpeg", "image/png", "image/gif", "image/webp",
-    "video/mp4", "video/quicktime",
-}
-_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+_ALLOWED_IMAGE_MIME = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+_ALLOWED_VIDEO_MIME = {"video/mp4", "video/quicktime"}
+_ALLOWED_MIME = _ALLOWED_IMAGE_MIME | _ALLOWED_VIDEO_MIME
+
+# Threads API limits
+_MAX_IMAGE_SIZE = 8 * 1024 * 1024    # 8 MB
+_MAX_VIDEO_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB
+_MIN_IMAGE_DIM = 320  # px
 
 
 @router.post("/api/threads/upload-media")
@@ -376,8 +379,10 @@ async def upload_threads_media(
     files: List[UploadFile] = File(...),
     user: User = Depends(get_current_user),
 ):
+    import io
     import cloudinary
     import cloudinary.uploader
+    from PIL import Image
 
     if not settings.cloudinary_cloud_name:
         raise HTTPException(status_code=503, detail="Cloudinary is not configured")
@@ -390,12 +395,39 @@ async def upload_threads_media(
 
     urls: list[str] = []
     for f in files:
-        if f.content_type not in _ALLOWED_MIME:
-            raise HTTPException(status_code=400, detail=f"Unsupported file type: {f.content_type}")
+        name = f.filename or "file"
+        mime = f.content_type or ""
+
+        if mime not in _ALLOWED_MIME:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{name}: unsupported type '{mime}'. Allowed: JPEG, PNG, GIF, WebP, MP4, MOV."
+            )
+
         data = await f.read()
-        if len(data) > _MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail="File too large (max 50 MB)")
-        resource_type = "video" if f.content_type.startswith("video/") else "image"
+        is_video = mime in _ALLOWED_VIDEO_MIME
+
+        if is_video:
+            if len(data) > _MAX_VIDEO_SIZE:
+                raise HTTPException(status_code=400, detail=f"{name}: video exceeds 1 GB limit.")
+        else:
+            if len(data) > _MAX_IMAGE_SIZE:
+                raise HTTPException(status_code=400, detail=f"{name}: image exceeds 8 MB limit.")
+            # Check minimum dimensions
+            try:
+                img = Image.open(io.BytesIO(data))
+                w, h = img.size
+                if w < _MIN_IMAGE_DIM or h < _MIN_IMAGE_DIM:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{name}: image too small ({w}×{h}px). Minimum is 320×320px."
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"{name}: could not read image file.")
+
+        resource_type = "video" if is_video else "image"
         result = cloudinary.uploader.upload(
             data,
             folder="threads",
