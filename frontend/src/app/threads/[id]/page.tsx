@@ -386,6 +386,7 @@ function WeekView({ posts, accounts, anchor, onNewPost, onEdit, onDelete, onPubl
           return at.localeCompare(bt);
         });
         const isToday = key === todayKey;
+        const isPast = key < todayKey;
         const dayName = day.toLocaleDateString("en", { weekday: "short" });
         const dayNum = day.getDate();
 
@@ -407,13 +408,15 @@ function WeekView({ posts, accounts, anchor, onNewPost, onEdit, onDelete, onPubl
                 />
               ))}
 
-              {/* Add button */}
-              <button
-                onClick={() => onNewPost(key)}
-                className="w-full py-2 rounded-xl border border-dashed border-gray-700 text-gray-600 hover:border-brand-600 hover:text-brand-500 transition text-xs flex items-center justify-center gap-1"
-              >
-                <Plus size={11} /> Add
-              </button>
+              {/* Add button — hidden for past dates */}
+              {!isPast && (
+                <button
+                  onClick={() => onNewPost(key)}
+                  className="w-full py-2 rounded-xl border border-dashed border-gray-700 text-gray-600 hover:border-brand-600 hover:text-brand-500 transition text-xs flex items-center justify-center gap-1"
+                >
+                  <Plus size={11} /> Add
+                </button>
+              )}
             </div>
           </div>
         );
@@ -452,9 +455,11 @@ function MonthView({ posts, accounts, anchor, onNewPost, onEdit, onDelete, onPub
           const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
           const dayPosts = byDay[key] || [];
           const isToday = key === todayKey;
+          const isPast = key < todayKey;
           return (
-            <div key={key} className="border-r border-b border-gray-800/50 min-h-[100px] p-1.5 group cursor-pointer hover:bg-gray-800/20 transition"
-              onClick={() => onNewPost(key)}>
+            <div key={key}
+              className={`border-r border-b border-gray-800/50 min-h-[100px] p-1.5 transition ${isPast ? "opacity-50 cursor-default" : "group cursor-pointer hover:bg-gray-800/20"}`}
+              onClick={() => { if (!isPast) onNewPost(key); }}>
               <div className="flex items-center justify-between mb-1">
                 <span className={`text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full ${isToday ? "bg-brand-600 text-white" : "text-gray-400"}`}>{day}</span>
               </div>
