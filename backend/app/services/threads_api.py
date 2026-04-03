@@ -127,11 +127,14 @@ def _is_video_url(url: str) -> bool:
 
 
 def _create_container(user_id: str, access_token: str, params: dict) -> str:
-    resp = requests.post(
+    req = requests.Request(
+        "POST",
         f"{_GRAPH_BASE}/{user_id}/threads",
         params={**params, "access_token": access_token},
-        timeout=60,
     )
+    prepared = req.prepare()
+    print(f"[threads DEBUG] container request URL: {prepared.url}", flush=True)
+    resp = requests.Session().send(prepared, timeout=60)
     if not resp.ok:
         raise ValueError(f"Threads container creation failed: {resp.text}")
     data = resp.json()
