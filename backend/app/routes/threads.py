@@ -37,6 +37,15 @@ router = APIRouter(tags=["threads"])
 class ThreadsProjectCreate(BaseModel):
     name: str
     description: str = ""
+    app_id: str
+    app_secret: str
+
+
+class ThreadsProjectUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    app_id: str | None = None
+    app_secret: str | None = None
 
 
 class ThreadsProjectOut(BaseModel):
@@ -44,6 +53,7 @@ class ThreadsProjectOut(BaseModel):
     owner_id: uuid.UUID
     name: str
     description: str
+    app_id: str | None = None
     created_at: datetime
 
     class Config:
@@ -191,8 +201,31 @@ async def create_threads_project(
         owner_id=user.id,
         name=body.name,
         description=body.description,
+        app_id=body.app_id.strip(),
+        app_secret=encrypt(body.app_secret.strip()),
     )
     db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    return project
+
+
+@router.patch("/api/threads-projects/{project_id}", response_model=ThreadsProjectOut)
+async def update_threads_project(
+    project_id: uuid.UUID,
+    body: ThreadsProjectUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    project = await _get_threads_project(project_id, user, db)
+    if body.name is not None:
+        project.name = body.name
+    if body.description is not None:
+        project.description = body.description
+    if body.app_id is not None:
+        project.app_id = body.app_id.strip()
+    if body.app_secret is not None:
+        project.app_secret = encrypt(body.app_secret.strip())
     await db.commit()
     await db.refresh(project)
     return project
@@ -281,21 +314,17 @@ async def threads_oauth_url(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    _aid = (settings.threads_app_id or "").strip()
-    print(f"[THREADS DEBUG] app_id='{_aid[:6]}...' len={len(_aid)} redirect_uri='{settings.threads_redirect_uri}'", flush=True)
-    if not settings.threads_app_id or not settings.threads_app_secret:
+    project = await _get_threads_project(project_id, user, db)
+    if not project.app_id or not project.app_secret:
         raise HTTPException(
-            status_code=503,
-            detail=(
-                f"Threads OAuth is not configured. "
-                f"THREADS_APP_ID={'set' if settings.threads_app_id else 'MISSING'}, "
-                f"THREADS_APP_SECRET={'set' if settings.threads_app_secret else 'MISSING'}. "
-                f"Set these in your .env and restart the backend."
-            ),
+            status_code=400,
+            detail="This project has no Threads app credentials. Edit the project to add App ID and App Secret.",
         )
-    # Verify project ownership before generating OAuth URL
-    await _get_threads_project(project_id, user, db)
-    url = threads_api.get_oauth_url(state=str(project_id))
+    url = threads_api.get_oauth_url(
+        app_id=project.app_id,
+        redirect_uri=settings.threads_redirect_uri,
+        state=str(project_id),
+    )
     return OAuthUrlOut(url=url)
 
 
@@ -315,10 +344,18 @@ async def threads_oauth_callback(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid state parameter (must be a project UUID)")
 
-    await _get_threads_project(project_id, user, db)
+    project = await _get_threads_project(project_id, user, db)
+    if not project.app_id or not project.app_secret:
+        raise HTTPException(status_code=400, detail="Project has no Threads app credentials configured.")
 
     try:
-        token_data = threads_api.exchange_code_for_token(body.code)
+        app_secret = decrypt(project.app_secret)
+        token_data = threads_api.exchange_code_for_token(
+            code=body.code,
+            app_id=project.app_id,
+            app_secret=app_secret,
+            redirect_uri=settings.threads_redirect_uri,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

@@ -5,8 +5,6 @@ import urllib.parse
 
 import requests
 
-from ..config import settings
-
 _GRAPH_BASE = "https://graph.threads.net/v1.0"
 _AUTH_BASE = "https://threads.net/oauth/authorize"
 _TOKEN_URL = "https://graph.threads.net/oauth/access_token"
@@ -14,11 +12,11 @@ _LONG_LIVED_TOKEN_URL = f"{_GRAPH_BASE}/access_token"
 _REFRESH_TOKEN_URL = f"{_GRAPH_BASE}/refresh_access_token"
 
 
-def get_oauth_url(state: str) -> str:
+def get_oauth_url(app_id: str, redirect_uri: str, state: str) -> str:
     """Build the Threads OAuth authorization URL."""
     params = {
-        "client_id": settings.threads_app_id.strip(),
-        "redirect_uri": settings.threads_redirect_uri.strip(),
+        "client_id": app_id.strip(),
+        "redirect_uri": redirect_uri.strip(),
         "scope": "threads_basic,threads_content_publish,threads_manage_replies",
         "response_type": "code",
         "state": state,
@@ -26,7 +24,7 @@ def get_oauth_url(state: str) -> str:
     return f"{_AUTH_BASE}?{urllib.parse.urlencode(params)}"
 
 
-def exchange_code_for_token(code: str) -> dict:
+def exchange_code_for_token(code: str, app_id: str, app_secret: str, redirect_uri: str) -> dict:
     """Exchange OAuth code for a short-lived token, then upgrade to long-lived (60 days).
 
     Returns dict with keys: access_token, user_id, expires_in
@@ -35,10 +33,10 @@ def exchange_code_for_token(code: str) -> dict:
     resp = requests.post(
         _TOKEN_URL,
         data={
-            "client_id": settings.threads_app_id.strip(),
-            "client_secret": settings.threads_app_secret.strip(),
+            "client_id": app_id.strip(),
+            "client_secret": app_secret.strip(),
             "grant_type": "authorization_code",
-            "redirect_uri": settings.threads_redirect_uri.strip(),
+            "redirect_uri": redirect_uri.strip(),
             "code": code,
         },
         timeout=30,
@@ -56,7 +54,7 @@ def exchange_code_for_token(code: str) -> dict:
         _LONG_LIVED_TOKEN_URL,
         params={
             "grant_type": "th_exchange_token",
-            "client_secret": settings.threads_app_secret,
+            "client_secret": app_secret,
             "access_token": short_token,
         },
         timeout=30,

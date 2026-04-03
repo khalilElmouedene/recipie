@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, MessageCircle, Trash2, X } from "lucide-react";
+import { Plus, MessageCircle, Trash2, X, Settings } from "lucide-react";
 import { api, ThreadsProjectOut } from "@/lib/api";
 
 export default function ThreadsProjectsPage() {
@@ -10,7 +10,15 @@ export default function ThreadsProjectsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+  const [appId, setAppId] = useState("");
+  const [appSecret, setAppSecret] = useState("");
   const [creating, setCreating] = useState(false);
+  const [editProject, setEditProject] = useState<ThreadsProjectOut | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editAppId, setEditAppId] = useState("");
+  const [editAppSecret, setEditAppSecret] = useState("");
+  const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,15 +38,41 @@ export default function ThreadsProjectsPage() {
     setCreating(true);
     setError(null);
     try {
-      await api.createThreadsProject({ name, description: desc });
-      setName("");
-      setDesc("");
+      await api.createThreadsProject({ name, description: desc, app_id: appId, app_secret: appSecret });
+      setName(""); setDesc(""); setAppId(""); setAppSecret("");
       setShowCreate(false);
       load();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to create project");
     }
     setCreating(false);
+  };
+
+  const handleEdit = (p: ThreadsProjectOut) => {
+    setEditProject(p);
+    setEditName(p.name);
+    setEditDesc(p.description);
+    setEditAppId(p.app_id ?? "");
+    setEditAppSecret("");
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editProject) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const payload: { name: string; description: string; app_id: string; app_secret?: string } = {
+        name: editName, description: editDesc, app_id: editAppId,
+      };
+      if (editAppSecret) payload.app_secret = editAppSecret;
+      await api.updateThreadsProject(editProject.id, payload);
+      setEditProject(null);
+      load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to update project");
+    }
+    setSaving(false);
   };
 
   const handleDelete = async (id: string) => {
@@ -83,39 +117,62 @@ export default function ThreadsProjectsPage() {
 
       {/* Create form */}
       {showCreate && (
-        <form onSubmit={handleCreate} className="card mb-6 flex gap-4 items-end">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-300 mb-1">Name</label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              className="input-field"
-              placeholder="My Threads Project"
-            />
+        <form onSubmit={handleCreate} className="card mb-6 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Name</label>
+              <input value={name} onChange={(e) => setName(e.target.value)} required className="input-field" placeholder="My Threads Project" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+              <input value={desc} onChange={(e) => setDesc(e.target.value)} className="input-field" placeholder="Optional" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Threads App ID</label>
+              <input value={appId} onChange={(e) => setAppId(e.target.value)} required className="input-field" placeholder="From Meta Developer Console" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Threads App Secret</label>
+              <input type="password" value={appSecret} onChange={(e) => setAppSecret(e.target.value)} required className="input-field" placeholder="Stored encrypted" />
+            </div>
           </div>
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
-            <input
-              value={desc}
-              onChange={(e) => setDesc(e.target.value)}
-              className="input-field"
-              placeholder="Optional description"
-            />
-          </div>
-          <div className="flex gap-2">
-            <button type="submit" disabled={creating} className="btn-primary">
-              {creating ? "Creating..." : "Create"}
-            </button>
-            <button
-              type="button"
-              onClick={() => { setShowCreate(false); setName(""); setDesc(""); }}
-              className="btn-secondary"
-            >
-              Cancel
-            </button>
+          <div className="flex gap-2 justify-end">
+            <button type="submit" disabled={creating} className="btn-primary">{creating ? "Creating..." : "Create"}</button>
+            <button type="button" onClick={() => { setShowCreate(false); setName(""); setDesc(""); setAppId(""); setAppSecret(""); }} className="btn-secondary">Cancel</button>
           </div>
         </form>
+      )}
+
+      {/* Edit modal */}
+      {editProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <form onSubmit={handleSaveEdit} className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-lg shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-base font-semibold text-white">Edit Project</h2>
+              <button type="button" onClick={() => setEditProject(null)} className="text-gray-500 hover:text-gray-200"><X size={18} /></button>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Name</label>
+              <input value={editName} onChange={(e) => setEditName(e.target.value)} required className="input-field" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+              <input value={editDesc} onChange={(e) => setEditDesc(e.target.value)} className="input-field" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Threads App ID</label>
+              <input value={editAppId} onChange={(e) => setEditAppId(e.target.value)} required className="input-field" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Threads App Secret <span className="text-gray-500 font-normal">(leave blank to keep current)</span></label>
+              <input type="password" value={editAppSecret} onChange={(e) => setEditAppSecret(e.target.value)} className="input-field" placeholder="Enter new secret to update" />
+            </div>
+            <div className="flex gap-2 justify-end pt-1">
+              <button type="submit" disabled={saving} className="btn-primary">{saving ? "Saving..." : "Save"}</button>
+              <button type="button" onClick={() => setEditProject(null)} className="btn-secondary">Cancel</button>
+            </div>
+          </form>
+        </div>
       )}
 
       {/* Grid */}
@@ -152,32 +209,24 @@ export default function ThreadsProjectsPage() {
                 </div>
               </Link>
 
-              {/* Delete button */}
+              {/* Actions */}
               {deleteConfirm === p.id ? (
                 <div className="absolute inset-0 flex items-center justify-center gap-2 rounded-xl bg-gray-900/90 backdrop-blur-sm">
                   <span className="text-sm text-gray-300 mr-1">Delete?</span>
-                  <button
-                    onClick={() => handleDelete(p.id)}
-                    disabled={deleting === p.id}
-                    className="rounded px-3 py-1.5 text-xs font-medium bg-red-600 hover:bg-red-500 text-white disabled:opacity-50 transition"
-                  >
+                  <button onClick={() => handleDelete(p.id)} disabled={deleting === p.id} className="rounded px-3 py-1.5 text-xs font-medium bg-red-600 hover:bg-red-500 text-white disabled:opacity-50 transition">
                     {deleting === p.id ? "Deleting..." : "Yes, delete"}
                   </button>
-                  <button
-                    onClick={() => setDeleteConfirm(null)}
-                    className="rounded px-3 py-1.5 text-xs font-medium bg-gray-700 hover:bg-gray-600 text-gray-200 transition"
-                  >
-                    Cancel
-                  </button>
+                  <button onClick={() => setDeleteConfirm(null)} className="rounded px-3 py-1.5 text-xs font-medium bg-gray-700 hover:bg-gray-600 text-gray-200 transition">Cancel</button>
                 </div>
               ) : (
-                <button
-                  onClick={(e) => { e.preventDefault(); setDeleteConfirm(p.id); }}
-                  title="Delete project"
-                  className="absolute top-3 right-3 p-1.5 rounded text-gray-600 hover:text-red-400 hover:bg-gray-800 transition"
-                >
-                  <Trash2 size={15} />
-                </button>
+                <div className="absolute top-3 right-3 flex gap-1">
+                  <button onClick={(e) => { e.preventDefault(); handleEdit(p); }} title="Edit project" className="p-1.5 rounded text-gray-600 hover:text-blue-400 hover:bg-gray-800 transition">
+                    <Settings size={15} />
+                  </button>
+                  <button onClick={(e) => { e.preventDefault(); setDeleteConfirm(p.id); }} title="Delete project" className="p-1.5 rounded text-gray-600 hover:text-red-400 hover:bg-gray-800 transition">
+                    <Trash2 size={15} />
+                  </button>
+                </div>
               )}
             </div>
           ))}

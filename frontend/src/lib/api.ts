@@ -308,8 +308,10 @@ export const api = {
 
   // ── Threads Projects ───────────────────────────────────
   getThreadsProjects: () => request<ThreadsProjectOut[]>("/api/threads-projects"),
-  createThreadsProject: (data: { name: string; description: string }) =>
+  createThreadsProject: (data: { name: string; description: string; app_id: string; app_secret: string }) =>
     request<ThreadsProjectOut>("/api/threads-projects", { method: "POST", body: JSON.stringify(data) }),
+  updateThreadsProject: (id: string, data: { name?: string; description?: string; app_id?: string; app_secret?: string }) =>
+    request<ThreadsProjectOut>(`/api/threads-projects/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteThreadsProject: (id: string) =>
     request<void>(`/api/threads-projects/${id}`, { method: "DELETE" }),
 
@@ -662,6 +664,7 @@ export interface ThreadsProjectOut {
   id: string;
   name: string;
   description: string;
+  app_id: string | null;
   created_at: string;
 }
 

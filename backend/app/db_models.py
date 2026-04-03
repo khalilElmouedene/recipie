@@ -297,6 +297,8 @@ class ThreadsProject(Base):
     owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
+    app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)      # Threads app ID
+    app_secret: Mapped[str | None] = mapped_column(Text, nullable=True)         # encrypted Threads app secret
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
