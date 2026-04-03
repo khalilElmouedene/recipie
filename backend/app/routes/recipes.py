@@ -237,6 +237,8 @@ async def update_recipe(
         recipe.pin_blog_link = body.pin_blog_link
     if body.pin_template_id is not None:
         recipe.pin_template_id = body.pin_template_id
+    if body.pin_url is not None:
+        recipe.pin_url = body.pin_url
 
     await db.commit()
     row = await db.execute(select(Recipe).where(Recipe.id == recipe_id))

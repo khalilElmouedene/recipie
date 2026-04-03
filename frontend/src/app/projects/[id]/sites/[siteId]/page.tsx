@@ -53,6 +53,7 @@ export default function SiteDetailPage() {
   const [pinDesignTitle, setPinDesignTitle] = useState("");
   const [pinDesignDesc, setPinDesignDesc] = useState("");
   const [pinDesignLink, setPinDesignLink] = useState("");
+  const [pinDesignPinUrl, setPinDesignPinUrl] = useState("");
   const [pinDesignSaving, setPinDesignSaving] = useState(false);
 
   // Bulk Pin Generator (site-level)
@@ -134,6 +135,7 @@ export default function SiteDetailPage() {
       setPinDesignTitle(r.pin_title || recipeTitle);
       setPinDesignDesc(r.pin_description || r.meta_description || recipeTitle);
       setPinDesignLink(r.pin_blog_link || r.wp_permalink || "");
+      setPinDesignPinUrl(r.pin_url || "");
     }
   }, [expandedId, recipes]);
 
@@ -443,6 +445,7 @@ export default function SiteDetailPage() {
         pin_title: pinDesignTitle || undefined,
         pin_description: pinDesignDesc || undefined,
         pin_blog_link: pinDesignLink || undefined,
+        pin_url: pinDesignPinUrl || undefined,
       });
       loadRecipes();
     } catch (err: any) {
@@ -1012,6 +1015,28 @@ export default function SiteDetailPage() {
                                   className="input-field text-sm w-full"
                                   placeholder="https://yoursite.com/recipe-post"
                                 />
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">Pinterest pin URL</label>
+                                <div className="flex gap-2">
+                                  <input
+                                    value={pinDesignPinUrl}
+                                    onChange={(e) => setPinDesignPinUrl(e.target.value)}
+                                    className="input-field text-sm w-full"
+                                    placeholder="https://www.pinterest.com/pin/..."
+                                  />
+                                  {pinDesignPinUrl && (
+                                    <a
+                                      href={pinDesignPinUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center px-3 rounded-lg border border-gray-600 text-gray-400 hover:text-white hover:border-gray-400 transition flex-shrink-0"
+                                      title="Open pin"
+                                    >
+                                      <ExternalLink size={14} />
+                                    </a>
+                                  )}
+                                </div>
                               </div>
                               <button
                                 onClick={() => handleSavePinDesign(r.id)}

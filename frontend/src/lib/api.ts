@@ -250,6 +250,7 @@ export const api = {
     pin_description?: string;
     pin_blog_link?: string;
     pin_template_id?: string;
+    pin_url?: string;
   }) =>
     request<RecipeOut>(`/api/recipes/${recipeId}`, { method: "PATCH", body: JSON.stringify(data) }),
 
@@ -490,6 +491,7 @@ export interface RecipeOut {
   pin_description: string | null;
   pin_blog_link: string | null;
   pin_template_id: string | null;
+  pin_url: string | null;
   error_message: string | null;
   created_at: string;
 }
