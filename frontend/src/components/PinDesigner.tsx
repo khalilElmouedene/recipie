@@ -10,6 +10,7 @@ import {
   Plus, Loader2, ALargeSmall, Check,
   CalendarClock,
   History,
+  FlipHorizontal2, FlipVertical2,
 } from "lucide-react";
 import { api, getApiBaseUrl } from "@/lib/api";
 import { appendPinImageToArticleHtml } from "@/lib/pinArticleEmbed";
@@ -2672,6 +2673,24 @@ export default function PinDesigner({
     canvas.renderAll();
   };
 
+  const flipImageHorizontal = () => {
+    const canvas = fabricCanvasRef.current;
+    const obj = getSelectedObject();
+    if (!canvas || !obj || obj.__pinType !== "image") return;
+    saveUndoState();
+    obj.set({ flipX: !obj.flipX });
+    canvas.renderAll();
+  };
+
+  const flipImageVertical = () => {
+    const canvas = fabricCanvasRef.current;
+    const obj = getSelectedObject();
+    if (!canvas || !obj || obj.__pinType !== "image") return;
+    saveUndoState();
+    obj.set({ flipY: !obj.flipY });
+    canvas.renderAll();
+  };
+
   const setZoomPct = (pct: number) => setZoom(Math.max(20, Math.min(200, pct)));
 
   const selectedElement = layers.find((l) => l.id === selectedId);
@@ -2771,6 +2790,13 @@ export default function PinDesigner({
           {/* Image-specific */}
           {selectedType === "image" && (
             <>
+              <button onClick={flipImageHorizontal} title="Flip horizontal" className="p-1 rounded hover:bg-gray-700 text-gray-300">
+                <FlipHorizontal2 size={14} />
+              </button>
+              <button onClick={flipImageVertical} title="Flip vertical" className="p-1 rounded hover:bg-gray-700 text-gray-300">
+                <FlipVertical2 size={14} />
+              </button>
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
               <button
                 onClick={handleUploadImage}
                 className="p-1 rounded hover:bg-gray-700 text-gray-300 text-[11px] font-medium px-2"
