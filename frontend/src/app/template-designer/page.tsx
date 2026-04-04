@@ -422,14 +422,29 @@ function TemplateDesignerInner() {
           canvas.add(rect);
         } else if (el.type === "asset" && el.imageUrl) {
           try {
-            const img = await fabric.FabricImage.fromURL(el.imageUrl, { crossOrigin: "anonymous" });
+            // Manually load + decode the image so it's fully ready before Fabric renders it.
+            // FabricImage.fromURL resolves before the browser finishes decoding pixel data,
+            // which causes blank images on first render.
+            const htmlImg = new Image();
+            await new Promise<void>((resolve, reject) => {
+              htmlImg.onload = () => resolve();
+              htmlImg.onerror = () => reject(new Error("Image load error"));
+              htmlImg.src = el.imageUrl!;
+            });
+            // decode() waits until the browser has fully decoded the image pixels
+            if (typeof htmlImg.decode === "function") {
+              await htmlImg.decode().catch(() => {});
+            }
+            const naturalW = htmlImg.naturalWidth || htmlImg.width || 1;
+            const naturalH = htmlImg.naturalHeight || htmlImg.height || 1;
+            const img = new fabric.FabricImage(htmlImg);
             img.set({
               left: el.x ?? 0,
               top: el.y ?? 0,
               originX: "left",
               originY: "top",
-              scaleX: el.width / (img.width || 1),
-              scaleY: el.height / (img.height || 1),
+              scaleX: el.width / naturalW,
+              scaleY: el.height / naturalH,
               flipX: el.flipX ?? false,
               flipY: el.flipY ?? false,
             });
@@ -442,6 +457,8 @@ function TemplateDesignerInner() {
       }
 
       canvas.renderAll();
+      // Schedule a second render on next frame in case any image decode finishes late
+      requestAnimationFrame(() => { fabricRef.current?.renderAll(); });
       undoHistoryRef.current = [];
       saveUndoState();
       setEditingLoaded(true);
