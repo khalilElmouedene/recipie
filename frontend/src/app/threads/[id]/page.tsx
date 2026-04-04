@@ -1031,9 +1031,8 @@ export default function ThreadsProjectDetailPage() {
   const handleNewPost = (dateStr: string) => {
     setNewPostDate(dateStr);
     setEditPost(null);
-    // If a specific account is selected in sidebar, pre-fill it; otherwise show the account picker
     setNewPostAccountId(selectedAccountId);
-    setNewPostAllAccounts(false);
+    setNewPostAllAccounts(selectedAccountId === null);
     setShowForm(true);
   };
 
