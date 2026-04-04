@@ -602,6 +602,9 @@ export interface PinDesignerTemplateElement {
   radius?: number | null;
   strokeWidth?: number | null;
   strokeStyle?: Record<string, unknown> | string | null;
+  imageUrl?: string | null;
+  flipX?: boolean | null;
+  flipY?: boolean | null;
 }
 
 export interface PinDesignerTemplateOut {

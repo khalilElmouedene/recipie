@@ -52,7 +52,7 @@ export default function SiteDetailPage() {
   // Saved pin design form (Pinterest tab)
   const [pinDesignTitle, setPinDesignTitle] = useState("");
   const [pinDesignDesc, setPinDesignDesc] = useState("");
-  const [pinDesignTags, setPinDesignTags] = useState("");
+  const [pinDesignBoard, setPinDesignBoard] = useState("");
   const [pinDesignLink, setPinDesignLink] = useState("");
   const [pinDesignPinUrl, setPinDesignPinUrl] = useState("");
   const [pinDesignSaving, setPinDesignSaving] = useState(false);
@@ -135,7 +135,7 @@ export default function SiteDetailPage() {
       const recipeTitle = r.recipe_text?.split("\n")[0]?.trim() || "";
       setPinDesignTitle(r.pin_title || recipeTitle);
       setPinDesignDesc(r.pin_description || r.meta_description || recipeTitle);
-      setPinDesignTags(r.pin_tags || "");
+      setPinDesignBoard(r.pin_board || "");
       setPinDesignLink(r.pin_blog_link || r.wp_permalink || "");
       setPinDesignPinUrl(r.pin_url || "");
     }
@@ -149,6 +149,16 @@ export default function SiteDetailPage() {
     });
     loadRecipes();
   }, [projectId, siteId, router, loadRecipes]);
+
+  // Load boards when Pinterest tab is opened (needed for the board selector in design form)
+  useEffect(() => {
+    if (detailTab !== "pinterest" || boards.length > 0 || boardsLoading) return;
+    setBoardsLoading(true);
+    api.getPinterestBoards(projectId)
+      .then((b) => { setBoards(b); })
+      .catch(() => {})
+      .finally(() => setBoardsLoading(false));
+  }, [detailTab, boards.length, boardsLoading, projectId]);
 
   const handleAddRecipe = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -468,7 +478,7 @@ export default function SiteDetailPage() {
       await api.updateRecipe(recipeId, {
         pin_title: pinDesignTitle || undefined,
         pin_description: pinDesignDesc || undefined,
-        pin_tags: pinDesignTags || undefined,
+        pin_board: pinDesignBoard || undefined,
         pin_blog_link: pinDesignLink || undefined,
         pin_url: pinDesignPinUrl || undefined,
       });
@@ -1038,13 +1048,28 @@ export default function SiteDetailPage() {
                                 />
                               </div>
                               <div>
-                                <label className="text-xs text-gray-400 block mb-1">Tags / Keywords</label>
-                                <input
-                                  value={pinDesignTags}
-                                  onChange={(e) => setPinDesignTags(e.target.value)}
-                                  className="input-field text-sm w-full"
-                                  placeholder="tag1, tag2, tag3..."
-                                />
+                                <label className="text-xs text-gray-400 block mb-1">Board</label>
+                                {boardsLoading ? (
+                                  <p className="text-xs text-gray-500">Loading boards…</p>
+                                ) : boards.length > 0 ? (
+                                  <select
+                                    value={pinDesignBoard}
+                                    onChange={(e) => setPinDesignBoard(e.target.value)}
+                                    className="input-field text-sm w-full"
+                                  >
+                                    <option value="">— Select board —</option>
+                                    {boards.map((b) => (
+                                      <option key={b.id} value={b.name}>{b.name}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input
+                                    value={pinDesignBoard}
+                                    onChange={(e) => setPinDesignBoard(e.target.value)}
+                                    className="input-field text-sm w-full"
+                                    placeholder="Board name…"
+                                  />
+                                )}
                               </div>
                               <div>
                                 <label className="text-xs text-gray-400 block mb-1">Blog link (if already published on WordPress)</label>

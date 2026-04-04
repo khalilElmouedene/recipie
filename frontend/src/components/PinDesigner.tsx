@@ -79,6 +79,8 @@ export interface PinTemplate {
   bgColor: string;
   elements: TemplateElement[];
   exampleImage?: string;
+  canvasWidth?: number;
+  canvasHeight?: number;
 }
 
 // ─── Templates ───────────────────────────────────────────────────────────────
@@ -1521,6 +1523,14 @@ export default function PinDesigner({
     );
     const shouldAutoStretchLastElement = !isCustomTemplateId;
 
+    // Resize canvas if custom template has different dimensions
+    const tmplW = template.canvasWidth || PIN_W;
+    const tmplH = template.canvasHeight || PIN_H;
+    if (canvas.width !== tmplW || canvas.height !== tmplH) {
+      canvas.setWidth(tmplW);
+      canvas.setHeight(tmplH);
+    }
+
     undoHistoryRef.current = [];
     canvas.clear();
     canvas.backgroundColor = template.bgColor;
@@ -1529,6 +1539,27 @@ export default function PinDesigner({
     let imageIndex = 0;
 
     for (const el of template.elements) {
+      if (el.type === "asset" && (el as any).imageUrl) {
+        // Restore uploaded image asset
+        try {
+          const img = await fabric.FabricImage.fromURL((el as any).imageUrl, { crossOrigin: "anonymous" });
+          img.set({
+            left: el.x ?? 0,
+            top: el.y ?? 0,
+            originX: "left",
+            originY: "top",
+            scaleX: el.width / (img.width || 1),
+            scaleY: el.height / (img.height || 1),
+            flipX: (el as any).flipX ?? false,
+            flipY: (el as any).flipY ?? false,
+          });
+          (img as any).__pinId = el.id;
+          (img as any).__pinType = "image";
+          (img as any).__pinLabel = el.label || "Image";
+          canvas.add(img);
+        } catch { /* ignore broken images */ }
+        continue;
+      }
       if (el.type === "image") {
         const legacyAssetId = String(el.id || "");
         if (legacyAssetId.startsWith("bg_") || legacyAssetId.startsWith("img_")) {

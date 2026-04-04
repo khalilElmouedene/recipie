@@ -26,6 +26,8 @@ import {
   Layers,
   Pencil,
   Check,
+  FlipHorizontal2,
+  FlipVertical2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -36,7 +38,7 @@ function uid(prefix: string) {
   return `${prefix}_${Date.now()}_${++_uid}`;
 }
 
-type SelType = "text" | "image" | "band" | null;
+type SelType = "text" | "image" | "band" | "asset" | null;
 
 const TEMPLATE_FONTS = [
   "Triumvirate Compressed",
@@ -293,7 +295,7 @@ function TemplateDesignerInner() {
   function syncSel(obj: any) {
     const rawType = obj?.__ttype;
     const t: SelType =
-      rawType === "text" || rawType === "image" || rawType === "band"
+      rawType === "text" || rawType === "image" || rawType === "band" || rawType === "asset"
         ? rawType
         : null;
     setSelType(t);
@@ -418,6 +420,24 @@ function TemplateDesignerInner() {
           (rect as any).__ttype = "band";
           applySelectionVisuals(rect);
           canvas.add(rect);
+        } else if (el.type === "asset" && el.imageUrl) {
+          try {
+            const img = await fabric.FabricImage.fromURL(el.imageUrl, { crossOrigin: "anonymous" });
+            img.set({
+              left: el.x ?? 0,
+              top: el.y ?? 0,
+              originX: "left",
+              originY: "top",
+              scaleX: el.width / (img.width || 1),
+              scaleY: el.height / (img.height || 1),
+              flipX: el.flipX ?? false,
+              flipY: el.flipY ?? false,
+            });
+            (img as any).__id = el.id || uid("img");
+            (img as any).__ttype = "asset";
+            applySelectionVisuals(img);
+            canvas.add(img);
+          } catch { /* ignore broken image */ }
         }
       }
 
@@ -680,6 +700,24 @@ function TemplateDesignerInner() {
     syncLayers();
   }
 
+  function flipHorizontal() {
+    const canvas = fabricRef.current;
+    const obj = canvas?.getActiveObject();
+    if (!canvas || !obj) return;
+    saveUndoState();
+    obj.set({ flipX: !obj.flipX });
+    canvas.requestRenderAll();
+  }
+
+  function flipVertical() {
+    const canvas = fabricRef.current;
+    const obj = canvas?.getActiveObject();
+    if (!canvas || !obj) return;
+    saveUndoState();
+    obj.set({ flipY: !obj.flipY });
+    canvas.requestRenderAll();
+  }
+
   // ── Layers ────────────────────────────────────────────────────────────────
   function getLayerLabel(type: string): string {
     switch (type) {
@@ -869,6 +907,22 @@ function TemplateDesignerInner() {
           width: w,
           height: h,
           bgColor: typeof o.fill === "string" ? o.fill : "#4a90d9",
+        });
+      } else if (type === "asset") {
+        // Actual uploaded image — persist its src so it can be restored on reload
+        const src = typeof o.getSrc === "function" ? o.getSrc() : null;
+        if (!src) continue;
+        results.push({
+          id: o.__id,
+          type: "asset",
+          label: "Image",
+          x,
+          y,
+          width: w || o.width || 200,
+          height: h || o.height || 200,
+          imageUrl: src,
+          flipX: o.flipX ?? false,
+          flipY: o.flipY ?? false,
         });
       }
     }
@@ -1154,6 +1208,14 @@ function TemplateDesignerInner() {
             <button onClick={() => moveLayerUp(selectedLayerId!)}   title="Move up"   disabled={!selectedLayerId} className="p-1 rounded hover:bg-gray-700 text-gray-300 disabled:opacity-30"><ChevronUp   size={14} /></button>
             <button onClick={bringToFront} title="Bring to front"  className="p-1 rounded hover:bg-gray-700 text-gray-300"><ChevronsUp   size={14} /></button>
 
+            {selType === "asset" && (
+              <>
+                <div className="w-px h-4 bg-gray-700 mx-0.5" />
+                <button onClick={flipHorizontal} title="Flip horizontal" className="p-1 rounded hover:bg-gray-700 text-gray-300"><FlipHorizontal2 size={14} /></button>
+                <button onClick={flipVertical}   title="Flip vertical"   className="p-1 rounded hover:bg-gray-700 text-gray-300"><FlipVertical2   size={14} /></button>
+              </>
+            )}
+
             <div className="w-px h-4 bg-gray-700 mx-0.5" />
 
             <button
@@ -1374,6 +1436,24 @@ function TemplateDesignerInner() {
                 className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-red-950/50 border border-red-900/40 text-red-400 text-xs hover:bg-red-950 transition"
               >
                 <Trash2 size={13} /> Delete Element
+              </button>
+            </div>
+          )}
+
+          {selType === "asset" && (
+            <div className="space-y-4">
+              <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Image</h4>
+              <p className="text-[11px] text-gray-500 leading-relaxed">Uploaded image. Use the flip buttons in the toolbar above to mirror it.</p>
+              <div className="flex gap-2">
+                <button onClick={flipHorizontal} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-gray-800 border border-gray-700 text-xs text-gray-300 hover:bg-gray-700 transition">
+                  <FlipHorizontal2 size={13} /> Flip H
+                </button>
+                <button onClick={flipVertical} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-gray-800 border border-gray-700 text-xs text-gray-300 hover:bg-gray-700 transition">
+                  <FlipVertical2 size={13} /> Flip V
+                </button>
+              </div>
+              <button onClick={deleteSelected} className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-red-950/50 border border-red-900/40 text-red-400 text-xs hover:bg-red-950 transition">
+                <Trash2 size={13} /> Delete Image
               </button>
             </div>
           )}
