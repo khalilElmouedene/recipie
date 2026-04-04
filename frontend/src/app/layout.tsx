@@ -8,6 +8,11 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "Recipe Generator",
   description: "Recipe content generation and publishing automation",
+  icons: {
+    icon: "/template images/favicon.svg",
+    shortcut: "/template images/favicon.svg",
+    apple: "/template images/favicon.svg",
+  },
 };
 
 export default function RootLayout({

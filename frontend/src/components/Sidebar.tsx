@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle } from "lucide-react";
 import { clearToken, getUserRole } from "@/lib/auth";
@@ -34,8 +35,14 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       ].join(" ")}
     >
       <div className="flex h-16 items-center gap-2 border-b border-gray-800 px-6">
-        <div className="h-8 w-8 rounded-lg bg-brand-600 flex items-center justify-center text-white font-bold text-sm">R</div>
-        <span className="text-lg font-bold text-white flex-1">Recipe Generator</span>
+        <Image
+          src="/template images/logo (2).svg"
+          alt="Logo"
+          width={140}
+          height={36}
+          className="object-contain flex-1"
+          priority
+        />
         {/* Close button — mobile only */}
         <button
           onClick={onClose}
