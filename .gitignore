@@ -14,3 +14,4 @@ Client_Secret.json
 *.pickle
 token_sheets_v4.pickle
 .claude
+docs
