@@ -64,6 +64,11 @@ interface DesignerState {
   leftTab: LeftTab;
   setLeftTab: (tab: LeftTab) => void;
 
+  // Canvas dimensions (updated when a custom-size template is loaded)
+  canvasW: number;
+  canvasH: number;
+  setCanvasDimensions: (w: number, h: number) => void;
+
   // Zoom (CSS %)
   zoom: number;
   setZoom: (z: number) => void;
@@ -110,6 +115,10 @@ export const useDesignerStore = create<DesignerState>()(
     leftTab: "templates",
     setLeftTab: (leftTab) => set({ leftTab }),
 
+    canvasW: 1000,
+    canvasH: 1500,
+    setCanvasDimensions: (w, h) => set({ canvasW: w, canvasH: h }),
+
     zoom: 35,
     setZoom: (z) => set({ zoom: Math.max(20, Math.min(200, z)) }),
 
@@ -153,6 +162,8 @@ export const useDesignerStore = create<DesignerState>()(
       activeTool: "select",
       layers: [],
       leftTab: "templates",
+      canvasW: 1000,
+      canvasH: 1500,
       zoom: 35,
       toolbarPos: null,
     }),

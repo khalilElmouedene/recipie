@@ -150,15 +150,40 @@ export default function SiteDetailPage() {
     loadRecipes();
   }, [projectId, siteId, router, loadRecipes]);
 
-  // Load boards when Pinterest tab is opened (needed for the board selector in design form)
+  // Load boards from pinterest_boards_list prompt setting (already stored per-project, no OAuth needed)
+  const [pinterestNotConnected, setPinterestNotConnected] = useState(false);
   useEffect(() => {
     if (detailTab !== "pinterest" || boards.length > 0 || boardsLoading) return;
     setBoardsLoading(true);
-    api.getPinterestBoards(projectId)
-      .then((b) => { setBoards(b); })
-      .catch(() => {})
+    api.getSettingsPrompts(projectId)
+      .then((prompts) => {
+        const entry = prompts.find((p) => p.key === "pinterest_boards_list");
+        const raw = entry?.value || "";
+        const boardNames = raw.split("\n").map((s: string) => s.trim()).filter(Boolean);
+        if (boardNames.length > 0) {
+          setBoards(boardNames.map((name: string) => ({ id: name, name })));
+        } else {
+          setPinterestNotConnected(true);
+        }
+      })
+      .catch(() => { setPinterestNotConnected(true); })
       .finally(() => setBoardsLoading(false));
   }, [detailTab, boards.length, boardsLoading, projectId]);
+
+  const handleConnectPinterest = () => {
+    const token = localStorage.getItem("token");
+    fetch(`${API_URL}/pinterest/auth-url?project_id=${projectId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (!data) return;
+        localStorage.setItem("pinterest_oauth_project_id", projectId);
+        localStorage.setItem("pinterest_oauth_state", data.state);
+        window.location.href = data.url;
+      })
+      .catch(() => {});
+  };
 
   const handleAddRecipe = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -376,11 +401,15 @@ export default function SiteDetailPage() {
     if (boards.length === 0) {
       setBoardsLoading(true);
       try {
-        const b = await api.getPinterestBoards(projectId);
+        const prompts = await api.getSettingsPrompts(projectId);
+        const entry = prompts.find((p) => p.key === "pinterest_boards_list");
+        const raw = entry?.value || "";
+        const boardNames = raw.split("\n").map((s: string) => s.trim()).filter(Boolean);
+        const b = boardNames.map((name: string) => ({ id: name, name }));
         setBoards(b);
         _pickBoard(b);
-      } catch (err: any) {
-        alert(err.message || "Failed to load Pinterest boards. Check your Pinterest credentials.");
+      } catch {
+        // ignore
       }
       setBoardsLoading(false);
     } else {
@@ -1008,6 +1037,11 @@ export default function SiteDetailPage() {
                   )}
                   {detailTab === "pinterest" && (
                     <div className="space-y-4">
+                      {pinterestNotConnected && (
+                        <div className="p-3 rounded-xl bg-amber-900/20 border border-amber-800 text-xs text-amber-300">
+                          No Pinterest boards configured. Go to <strong>Project Settings → Prompts</strong> and add your boards under <code>pinterest_boards_list</code> (one board per line).
+                        </div>
+                      )}
                       {r.pin_design_image ? (
                         <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-4">
                           <div className="flex flex-col sm:flex-row gap-4">

@@ -722,6 +722,7 @@ export default function PinDesigner({
     selectedId, setSelectedId,
     layers, setLayers,
     leftTab, setLeftTab,
+    canvasW, canvasH, setCanvasDimensions,
     zoom, setZoom,
     textProps, setTextProps,
     bandProps, setBandProps,
@@ -1530,6 +1531,8 @@ export default function PinDesigner({
       canvas.setWidth(tmplW);
       canvas.setHeight(tmplH);
     }
+    // Always sync store so the CSS wrapper dimensions update
+    setCanvasDimensions(tmplW, tmplH);
 
     undoHistoryRef.current = [];
     canvas.clear();
@@ -3159,11 +3162,11 @@ export default function PinDesigner({
                   <div className="flex gap-2">
                     <div className="flex-1">
                       <label className="text-[10px] text-gray-500">Width</label>
-                      <div className="bg-gray-800 rounded px-2 py-1 text-sm text-gray-300">{PIN_W}</div>
+                      <div className="bg-gray-800 rounded px-2 py-1 text-sm text-gray-300">{canvasW}</div>
                     </div>
                     <div className="flex-1">
                       <label className="text-[10px] text-gray-500">Height</label>
-                      <div className="bg-gray-800 rounded px-2 py-1 text-sm text-gray-300">{PIN_H}</div>
+                      <div className="bg-gray-800 rounded px-2 py-1 text-sm text-gray-300">{canvasH}</div>
                     </div>
                   </div>
                 </div>
@@ -3390,7 +3393,7 @@ export default function PinDesigner({
               {/* Preview pages BEFORE active */}
               {frames.slice(0, activeFrameIdx).map((f, i) => (
                 <div key={f.recipeId} className="flex flex-col items-center">
-                  <div className="flex items-center gap-2 mb-1 text-gray-500" style={{ width: `${PIN_W * zoom / 100}px` }}>
+                  <div className="flex items-center gap-2 mb-1 text-gray-500" style={{ width: `${canvasW * zoom / 100}px` }}>
                     <span className="text-xs font-semibold">Page {i + 1}</span>
                     <span className="text-xs truncate flex-1">{f.title}</span>
                     {frameJsonsRef.current[i] && <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" title="Edited" />}
@@ -3398,9 +3401,9 @@ export default function PinDesigner({
                   <div
                     onClick={() => switchToFrame(i)}
                     className="cursor-pointer group relative"
-                    style={{ width: `${PIN_W * zoom / 100}px`, height: `${PIN_H * zoom / 100}px` }}
+                    style={{ width: `${canvasW * zoom / 100}px`, height: `${canvasH * zoom / 100}px` }}
                   >
-                    <div style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top left", width: PIN_W, height: PIN_H, position: "absolute", top: 0, left: 0 }}
+                    <div style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top left", width: canvasW, height: canvasH, position: "absolute", top: 0, left: 0 }}
                          className="shadow-lg rounded-lg overflow-hidden border-2 border-gray-700 group-hover:border-gray-500 transition">
                       {framePreviews[i] ? (
                         <img src={framePreviews[i]} alt={f.title} className="w-full h-full object-cover" />
@@ -3419,14 +3422,14 @@ export default function PinDesigner({
 
               {/* ── Active page: live canvas (stable DOM position) ────────── */}
               <div className="flex flex-col items-center">
-                <div className="flex items-center gap-2 mb-1 text-brand-400" style={{ width: `${PIN_W * zoom / 100}px` }}>
+                <div className="flex items-center gap-2 mb-1 text-brand-400" style={{ width: `${canvasW * zoom / 100}px` }}>
                   <span className="text-xs font-semibold">Page {activeFrameIdx + 1}</span>
                   <span className="text-xs truncate flex-1">{effectiveTitle}</span>
                 </div>
-                <div className="relative" style={{ width: `${PIN_W * zoom / 100}px`, height: `${PIN_H * zoom / 100}px` }}>
+                <div className="relative" style={{ width: `${canvasW * zoom / 100}px`, height: `${canvasH * zoom / 100}px` }}>
                   <div
                     ref={canvasWrapperRef}
-                    style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top left", width: PIN_W, height: PIN_H, position: "absolute", top: 0, left: 0 }}
+                    style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top left", width: canvasW, height: canvasH, position: "absolute", top: 0, left: 0 }}
                     className="shadow-2xl rounded-lg overflow-hidden border-2 border-brand-500"
                   >
                     <canvas ref={canvasRef} />
@@ -3448,7 +3451,7 @@ export default function PinDesigner({
                 const i = activeFrameIdx + 1 + sliceI;
                 return (
                   <div key={f.recipeId} className="flex flex-col items-center">
-                    <div className="flex items-center gap-2 mb-1 text-gray-500" style={{ width: `${PIN_W * zoom / 100}px` }}>
+                    <div className="flex items-center gap-2 mb-1 text-gray-500" style={{ width: `${canvasW * zoom / 100}px` }}>
                       <span className="text-xs font-semibold">Page {i + 1}</span>
                       <span className="text-xs truncate flex-1">{f.title}</span>
                       {frameJsonsRef.current[i] && <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" title="Edited" />}
@@ -3456,9 +3459,9 @@ export default function PinDesigner({
                     <div
                       onClick={() => switchToFrame(i)}
                       className="cursor-pointer group relative"
-                      style={{ width: `${PIN_W * zoom / 100}px`, height: `${PIN_H * zoom / 100}px` }}
+                      style={{ width: `${canvasW * zoom / 100}px`, height: `${canvasH * zoom / 100}px` }}
                     >
-                      <div style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top left", width: PIN_W, height: PIN_H, position: "absolute", top: 0, left: 0 }}
+                      <div style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top left", width: canvasW, height: canvasH, position: "absolute", top: 0, left: 0 }}
                            className="shadow-lg rounded-lg overflow-hidden border-2 border-gray-700 group-hover:border-gray-500 transition">
                         {framePreviews[i] ? (
                           <img src={framePreviews[i]} alt={f.title} className="w-full h-full object-cover" />
@@ -3479,10 +3482,10 @@ export default function PinDesigner({
           ) : (
             /* ── Single canvas (no frames) ──────────────────────────────────── */
             <div className="p-4 sm:p-8 flex justify-center">
-              <div className="relative" style={{ width: `${PIN_W * zoom / 100}px`, height: `${PIN_H * zoom / 100}px` }}>
+              <div className="relative" style={{ width: `${canvasW * zoom / 100}px`, height: `${canvasH * zoom / 100}px` }}>
                 <div
                   ref={canvasWrapperRef}
-                  style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top left", width: PIN_W, height: PIN_H, position: "absolute", top: 0, left: 0 }}
+                  style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top left", width: canvasW, height: canvasH, position: "absolute", top: 0, left: 0 }}
                   className="shadow-2xl rounded-lg overflow-hidden border-2 border-gray-600"
                 >
                   <canvas ref={canvasRef} />

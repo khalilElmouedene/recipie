@@ -379,6 +379,9 @@ class PinDesignerTemplateElement(BaseModel):
     radius: float | None = None
     strokeWidth: float | None = None
     strokeStyle: dict | str | None = None
+    imageUrl: str | None = None
+    flipX: bool | None = None
+    flipY: bool | None = None
 
 
 class PinDesignerTemplateOut(BaseModel):
