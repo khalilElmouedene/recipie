@@ -695,6 +695,9 @@ function SettingsTab({ projectId, onAccountsChanged }: { projectId: string; onAc
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showTokenForm, setShowTokenForm] = useState(false);
+  const [tokenInput, setTokenInput] = useState("");
+  const [addingToken, setAddingToken] = useState(false);
   const popupRef = useRef<Window | null>(null);
 
   const load = useCallback(() => {
@@ -729,6 +732,21 @@ function SettingsTab({ projectId, onAccountsChanged }: { projectId: string; onAc
         if (popup.closed) { clearInterval(timer); setConnecting(false); }
       }, 500);
     } catch (err: unknown) { setError(err instanceof Error ? err.message : "OAuth error"); setConnecting(false); }
+  };
+
+  const handleAddByToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tokenInput.trim()) return;
+    setAddingToken(true);
+    setError(null);
+    try {
+      await api.addThreadsAccountByToken(projectId, tokenInput.trim());
+      setTokenInput("");
+      setShowTokenForm(false);
+      load();
+      onAccountsChanged();
+    } catch (err: unknown) { setError(err instanceof Error ? err.message : "Failed to add account"); }
+    setAddingToken(false);
   };
 
   const handleDelete = async (id: string) => {
@@ -769,10 +787,42 @@ function SettingsTab({ projectId, onAccountsChanged }: { projectId: string; onAc
           </div>
         ))}
       </div>
-      <button onClick={handleConnect} disabled={connecting}
-        className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-gray-700 py-3 text-sm text-gray-500 hover:border-brand-600 hover:text-brand-400 transition disabled:opacity-50">
-        {connecting ? <><RefreshCw size={14} className="animate-spin" /> Connecting...</> : <><Plus size={14} /> Connect New Account</>}
-      </button>
+      <div className="space-y-2">
+        <button onClick={handleConnect} disabled={connecting}
+          className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-gray-700 py-3 text-sm text-gray-500 hover:border-brand-600 hover:text-brand-400 transition disabled:opacity-50">
+          {connecting ? <><RefreshCw size={14} className="animate-spin" /> Connecting...</> : <><Plus size={14} /> Connect via Browser (OAuth)</>}
+        </button>
+        <button onClick={() => { setShowTokenForm((v) => !v); setError(null); }}
+          className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-gray-700 py-3 text-sm text-gray-500 hover:border-amber-600 hover:text-amber-400 transition">
+          <Plus size={14} /> Paste Access Token (multi-account)
+        </button>
+      </div>
+
+      {showTokenForm && (
+        <form onSubmit={handleAddByToken} className="mt-3 space-y-2 rounded-xl border border-gray-700 bg-gray-800/50 p-3">
+          <p className="text-xs text-gray-400">
+            Generate a long-lived token in the{" "}
+            <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="text-brand-400 underline">Meta Graph Explorer</a>
+            {" "}or via the Threads API, then paste it below. Each token = one account, no browser login needed.
+          </p>
+          <textarea
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
+            rows={3}
+            className="input-field w-full text-xs font-mono resize-none"
+            placeholder="Paste access token here..."
+            required
+          />
+          <div className="flex gap-2">
+            <button type="submit" disabled={addingToken || !tokenInput.trim()} className="btn-primary text-xs py-1.5">
+              {addingToken ? "Validating..." : "Add Account"}
+            </button>
+            <button type="button" onClick={() => { setShowTokenForm(false); setTokenInput(""); }} className="btn-secondary text-xs py-1.5">
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }

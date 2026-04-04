@@ -20,6 +20,7 @@ def get_oauth_url(app_id: str, redirect_uri: str, state: str) -> str:
         "scope": "threads_basic,threads_content_publish,threads_manage_replies",
         "response_type": "code",
         "state": state,
+        "prompt": "login",  # Force fresh login every time — never auto-use existing browser session
     }
     return f"{_AUTH_BASE}?{urllib.parse.urlencode(params)}"
 
@@ -96,6 +97,30 @@ def refresh_token(access_token: str) -> dict:
         "access_token": new_token,
         "expires_in": data.get("expires_in", 5183944),
     }
+
+
+def get_user_info_by_token(access_token: str) -> dict:
+    """Fetch Threads user profile using only an access token (calls /me).
+
+    Returns dict with keys: id, username
+    Raises ValueError on failure.
+    """
+    resp = requests.get(
+        f"{_GRAPH_BASE}/me",
+        params={
+            "fields": "id,username",
+            "access_token": access_token,
+        },
+        timeout=30,
+    )
+    if not resp.ok:
+        raise ValueError(f"Threads token validation failed: {resp.text}")
+    data = resp.json()
+    if "error" in data:
+        raise ValueError(f"Invalid Threads token: {data['error'].get('message', data['error'])}")
+    if not data.get("id"):
+        raise ValueError(f"Unexpected Threads response: {data}")
+    return data
 
 
 def get_user_info(access_token: str, user_id: str) -> dict:

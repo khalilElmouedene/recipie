@@ -302,6 +302,71 @@ async def remove_threads_account(
     await db.commit()
 
 
+# ── Manual token add ──────────────────────────────────────────────────────────
+
+class ThreadsAccountTokenAdd(BaseModel):
+    access_token: str
+
+
+@router.post(
+    "/api/threads-projects/{project_id}/accounts/token",
+    response_model=ThreadsAccountOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_threads_account_by_token(
+    project_id: uuid.UUID,
+    body: ThreadsAccountTokenAdd,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Add a Threads account by pasting a long-lived access token directly.
+    Validates the token against the Threads API, then stores the account.
+    """
+    await _get_threads_project(project_id, user, db)
+
+    token = body.access_token.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="access_token is required")
+
+    try:
+        user_info = threads_api.get_user_info_by_token(token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    threads_user_id = str(user_info["id"])
+    username = user_info.get("username", threads_user_id)
+
+    # Long-lived tokens are valid for ~60 days; set expiry accordingly
+    token_expires_at = datetime.now(timezone.utc) + timedelta(days=60)
+
+    # Upsert: update if account already exists in this project
+    existing_row = await db.execute(
+        select(ThreadsAccount).where(
+            ThreadsAccount.project_id == project_id,
+            ThreadsAccount.threads_user_id == threads_user_id,
+        )
+    )
+    account = existing_row.scalar_one_or_none()
+
+    if account:
+        account.access_token = encrypt(token)
+        account.username = username
+        account.token_expires_at = token_expires_at
+    else:
+        account = ThreadsAccount(
+            project_id=project_id,
+            threads_user_id=threads_user_id,
+            username=username,
+            access_token=encrypt(token),
+            token_expires_at=token_expires_at,
+        )
+        db.add(account)
+
+    await db.commit()
+    await db.refresh(account)
+    return account
+
+
 # ── OAuth ─────────────────────────────────────────────────────────────────────
 
 class OAuthUrlOut(BaseModel):

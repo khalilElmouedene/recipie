@@ -358,6 +358,10 @@ export const api = {
     request<{ url: string }>(`/api/threads/oauth/url?project_id=${projectId}`),
   connectThreadsAccount: (data: { code: string; state: string }) =>
     request<ThreadsAccountOut>("/api/threads/oauth/callback", { method: "POST", body: JSON.stringify(data) }),
+  addThreadsAccountByToken: (projectId: string, accessToken: string) =>
+    request<ThreadsAccountOut>(`/api/threads-projects/${projectId}/accounts/token`, {
+      method: "POST", body: JSON.stringify({ access_token: accessToken }),
+    }),
   deleteThreadsAccount: (projectId: string, accountId: string) =>
     request<void>(`/api/threads-projects/${projectId}/accounts/${accountId}`, { method: "DELETE" }),
 
