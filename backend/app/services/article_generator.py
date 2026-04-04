@@ -275,6 +275,7 @@ def generate_for_recipe(
     prompts: dict[str, str] | None = None,
     log: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    pinterest_url: str = "",
 ) -> dict:
     """Generate all content for a single recipe. Returns a dict of fields to update on the Recipe row."""
     _log = log or print
@@ -319,7 +320,7 @@ def generate_for_recipe(
         _log("Generating article HTML...")
         internal_links = get_sitemap_links(site_domain, log=_log)
         _log(f"Found {len(internal_links)} internal links from sitemap")
-        article = openai_service.generate_article(recipe_title, full_recipe, "", internal_links, openai_key, prompts=prompts, log=_log, site_domain=site_domain)
+        article = openai_service.generate_article(recipe_title, full_recipe, "", internal_links, openai_key, prompts=prompts, log=_log, site_domain=site_domain, pinterest_url=pinterest_url)
         result["generated_article"] = article
 
         # 5. Meta description
@@ -474,6 +475,7 @@ def process_recipes_from_db(
     should_stop: Callable[[], bool] | None = None,
     on_progress: Callable[[int, int], None] | None = None,
     on_recipe_done: Callable[[str, dict], None] | None = None,
+    pinterest_url: str = "",
 ):
     """Process a list of pending recipes from the database.
     recipes: list of dicts with id, recipe_text, image_url.
@@ -510,6 +512,7 @@ def process_recipes_from_db(
             prompts=prompts,
             log=_log,
             should_stop=_stop,
+            pinterest_url=pinterest_url,
         )
 
         if on_recipe_done:

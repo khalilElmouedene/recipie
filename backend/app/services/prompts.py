@@ -52,7 +52,7 @@ Use 1-2 real internal links from the list below as the anchor text in that sente
 Internal links instructions:
 {internal_links}
 
-At the very end of the article, add a short sentence encouraging readers to follow the Pinterest account. Use the word Pinterest as the anchor text, linking it to: https://www.pinterest.com/winsomerecipes/
+At the very end of the article, add a short sentence encouraging readers to follow the Pinterest account. Use the word Pinterest as the anchor text, linking it to: {pinterest_url}
 
 Recipe to base the article on:
 {full_recipe}""",

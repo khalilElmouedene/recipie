@@ -54,6 +54,7 @@ async def _site_out(site: Site, db: AsyncSession) -> dict:
         "wp_users": wp_users,
         "sheet_name": site.sheet_name or "",
         "spreadsheet_id": site.spreadsheet_id or "",
+        "pinterest_url": site.pinterest_url or "",
         "created_at": site.created_at,
         "recipe_count": recipe_count,
     }
@@ -96,6 +97,7 @@ async def create_site(
         wp_users_enc=wp_users_enc,
         sheet_name=body.sheet_name,
         spreadsheet_id=body.spreadsheet_id,
+        pinterest_url=body.pinterest_url or None,
     )
     db.add(site)
     await db.commit()
@@ -143,6 +145,8 @@ async def update_site(
         site.sheet_name = body.sheet_name
     if body.spreadsheet_id is not None:
         site.spreadsheet_id = body.spreadsheet_id
+    if body.pinterest_url is not None:
+        site.pinterest_url = body.pinterest_url or None
 
     await db.commit()
     row = await db.execute(select(Site).where(Site.id == site_id))

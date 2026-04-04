@@ -161,6 +161,7 @@ class Site(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     domain: Mapped[str] = mapped_column(String(300), nullable=False)
     wp_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    pinterest_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     wp_username: Mapped[str] = mapped_column(String(200), nullable=True)  # deprecated, use wp_users_enc
     wp_password_enc: Mapped[str] = mapped_column(Text, nullable=True)  # deprecated, use wp_users_enc
     wp_users_enc: Mapped[str] = mapped_column(Text, nullable=True)  # JSON: [{"username","password_enc"},...]

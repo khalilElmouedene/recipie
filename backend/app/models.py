@@ -163,6 +163,7 @@ class SiteCreate(BaseModel):
     wp_users: list[WpUserItem] = Field(..., min_length=1, description="At least one WP user")
     sheet_name: str = ""
     spreadsheet_id: str = ""
+    pinterest_url: str = ""
 
 
 class SiteUpdate(BaseModel):
@@ -171,6 +172,7 @@ class SiteUpdate(BaseModel):
     wp_users: list[WpUserItem] | None = None
     sheet_name: str | None = None
     spreadsheet_id: str | None = None
+    pinterest_url: str | None = None
 
 
 class WpUserOut(BaseModel):
@@ -185,6 +187,7 @@ class SiteOut(BaseModel):
     wp_users: list[WpUserOut]
     sheet_name: str
     spreadsheet_id: str
+    pinterest_url: str = ""
     created_at: datetime
     recipe_count: int = 0
 

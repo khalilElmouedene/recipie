@@ -134,6 +134,7 @@ class JobManager:
                 return
             site_id = site_obj.id
             site_domain = site_obj.domain
+            site_pinterest_url = site_obj.pinterest_url or ""
             site_config = self._build_site_config(site_obj)
         else:
             site_result = await db.execute(select(Site).where(Site.id == site_id))
@@ -145,6 +146,7 @@ class JobManager:
                 await db.commit()
                 return
             site_domain = site_obj.domain
+            site_pinterest_url = site_obj.pinterest_url or ""
             site_config = self._build_site_config(site_obj)
 
         if db_job.job_type == JobType.articles:
@@ -183,6 +185,7 @@ class JobManager:
                         {
                             "id": str(new_recipe.id),
                             "site_domain": s.domain,
+                            "pinterest_url": s.pinterest_url or "",
                             "recipe_text": recipe_text,
                             "image_url": image_url,
                             "group_idx": idx + 1,
@@ -297,6 +300,7 @@ class JobManager:
                         should_stop=rj.should_stop,
                         on_progress=_on_progress,
                         on_recipe_done=_on_recipe_done,
+                        pinterest_url=site_pinterest_url,
                     )
                 elif db_job.job_type == JobType.publisher:
                     publish_recipes_from_db(
@@ -342,6 +346,7 @@ class JobManager:
                                 prompts=prompts,
                                 log=rj.log,
                                 should_stop=rj.should_stop,
+                                pinterest_url=item.get("pinterest_url", ""),
                             )
                             _on_recipe_done(item["id"], generated)
                             done += 1
@@ -581,6 +586,7 @@ class JobManager:
                     await db.commit()
                     return False
                 site_domain = site_obj.domain
+                site_pinterest_url = site_obj.pinterest_url or ""
                 site_config = self._build_site_config(site_obj)
 
                 recipe_rows = await db.execute(
@@ -697,6 +703,7 @@ class JobManager:
                             should_stop=rj.should_stop,
                             on_progress=_on_progress,
                             on_recipe_done=_on_recipe_done,
+                            pinterest_url=site_pinterest_url,
                         )
                     elif db_job.job_type == JobType.publisher:
                         publish_recipes_from_db(
@@ -729,6 +736,7 @@ class JobManager:
                                     prompts=prompts,
                                     log=rj.log,
                                     should_stop=rj.should_stop,
+                                    pinterest_url=item.get("pinterest_url", ""),
                                 )
                                 _on_recipe_done(item["id"], generated)
                                 done += 1

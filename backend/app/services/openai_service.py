@@ -41,7 +41,7 @@ def generate_with_openai(prompt: str, api_key: str, max_retries: int = 3, log: C
     return f"Error: Failed after {max_retries} attempts"
 
 
-def generate_article(recipe_title: str, full_recipe: str, external_links: str, internal_links: list[str], api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None, site_domain: str = "") -> str:
+def generate_article(recipe_title: str, full_recipe: str, external_links: str, internal_links: list[str], api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None, site_domain: str = "", pinterest_url: str = "") -> str:
     tpl = get_prompt(prompts or {}, "article")
     if internal_links:
         # Use up to 30 links — one per line so the AI can read them clearly.
@@ -73,6 +73,7 @@ def generate_article(recipe_title: str, full_recipe: str, external_links: str, i
         full_recipe=full_recipe,
         external_links=external_links or "",
         internal_links=links_instruction,
+        pinterest_url=pinterest_url or "",
     )
     result = generate_with_openai(prompt, api_key, log=log)
     result = re.sub(r'```html\s*', '', result)

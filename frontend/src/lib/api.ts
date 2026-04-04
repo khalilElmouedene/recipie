@@ -457,6 +457,7 @@ export interface SiteOut {
   wp_users: WpUserOut[];
   sheet_name: string;
   spreadsheet_id: string;
+  pinterest_url: string;
   created_at: string;
   recipe_count: number;
 }
@@ -472,6 +473,7 @@ export interface SiteCreateData {
   wp_users: WpUserItem[];
   sheet_name?: string;
   spreadsheet_id?: string;
+  pinterest_url?: string;
 }
 
 export interface RecipeOut {

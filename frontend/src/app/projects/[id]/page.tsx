@@ -95,12 +95,12 @@ const emptyWpUser = () => ({ username: "", password: "" });
 function SitesTab({ projectId, role, router }: { projectId: string; role: string | null; router: ReturnType<typeof useRouter> }) {
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState({ domain: "", wp_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
+  const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [loading, setLoading] = useState(false);
   const [publishingSiteId, setPublishingSiteId] = useState<string | null>(null);
   const [detailsSite, setDetailsSite] = useState<SiteOut | null>(null);
   const [editSite, setEditSite] = useState<SiteOut | null>(null);
-  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
+  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", pinterest_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [editing, setEditing] = useState(false);
 
   const load = () => api.getSites(projectId).then(setSites).catch(() => {});
@@ -120,7 +120,7 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
     setLoading(true);
     try {
       await api.createSite(projectId, { ...form, wp_users: validUsers });
-      setForm({ domain: "", wp_url: "", wp_users: [emptyWpUser()] });
+      setForm({ domain: "", wp_url: "", pinterest_url: "", wp_users: [emptyWpUser()] });
       setShow(false);
       load();
     } catch {}
@@ -153,6 +153,7 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
     setEditForm({
       domain: s.domain,
       wp_url: s.wp_url,
+      pinterest_url: s.pinterest_url || "",
       wp_users: wpUsers.length ? wpUsers : [emptyWpUser()],
     });
   };
@@ -170,6 +171,7 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
       const data: Record<string, unknown> = {
         domain: editForm.domain,
         wp_url: editForm.wp_url,
+        pinterest_url: editForm.pinterest_url || "",
         wp_users: validUsers.map((u) => ({ username: u.username, password: u.password })),
       };
       await api.updateSite(editSite.id, data);
@@ -205,6 +207,10 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">WordPress URL</label>
             <input value={form.wp_url} onChange={(e) => setForm({ ...form, wp_url: e.target.value })} required className="input-field" placeholder="https://example.com/xmlrpc.php" />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-sm font-medium text-gray-300 mb-1">Pinterest Account URL <span className="text-gray-500 font-normal">(used in generated articles)</span></label>
+            <input value={form.pinterest_url} onChange={(e) => setForm({ ...form, pinterest_url: e.target.value })} className="input-field" placeholder="https://www.pinterest.com/youraccount/" />
           </div>
           <div className="col-span-2">
             <label className="block text-sm font-medium text-gray-300 mb-1">WP Users (one randomly selected per publish)</label>
@@ -356,6 +362,15 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
                   required
                   className="input-field w-full"
                   placeholder="https://example.com/xmlrpc.php"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Pinterest Account URL <span className="text-gray-500 font-normal">(used in generated articles)</span></label>
+                <input
+                  value={editForm.pinterest_url}
+                  onChange={(e) => setEditForm({ ...editForm, pinterest_url: e.target.value })}
+                  className="input-field w-full"
+                  placeholder="https://www.pinterest.com/youraccount/"
                 />
               </div>
               <div>
