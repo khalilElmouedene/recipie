@@ -44,6 +44,11 @@ Storage tips and shelf life.
 <h2>FAQs</h2>
 2-4 brief questions and answers.
 
+<h2>Conclusion</h2>
+Write a warm 2-3 sentence wrap-up of the recipe. Then add exactly one sentence in this style:
+"For more delicious recipes, check out [anchor text 1] or [anchor text 2] for treats you will love!"
+Use 1-2 real internal links from the list below as the anchor text in that sentence.
+
 Internal links instructions:
 {internal_links}
 

@@ -48,12 +48,12 @@ def generate_article(recipe_title: str, full_recipe: str, external_links: str, i
         sample = internal_links[:30]
         links_list = "\n".join(sample)
         links_instruction = (
-            "You MUST naturally integrate 2-3 internal links from the list below into the "
-            "body of the article using rich anchor text.\n"
+            "You MUST use 2-3 internal links from the list below.\n"
             "Rules:\n"
-            "- Place links only where they make contextual sense.\n"
+            "- Integrate 1-2 links naturally inside existing body paragraphs using rich anchor text.\n"
+            "- Use 1-2 links in the Conclusion section in a sentence like: "
+            "\"For more delicious recipes, check out [anchor text] or [anchor text] for treats you will love!\"\n"
             "- Use meaningful and descriptive anchor text (no 'click here').\n"
-            "- Integrate them naturally into existing paragraphs — do NOT create a separate links section or list.\n"
             "- Use ONLY URLs from this exact list — do not invent or modify any URL.\n\n"
             f"Available internal links:\n{links_list}"
         )
@@ -62,11 +62,11 @@ def generate_article(recipe_title: str, full_recipe: str, external_links: str, i
         if not base.startswith(("http://", "https://")):
             base = "https://" + base
         links_instruction = (
-            f"Add 2-3 internal links to relevant posts on the site '{base}'. "
-            f"You may use category pages such as {base}/category/dinner/, "
-            f"{base}/category/dessert/, {base}/category/breakfast/, or {base}/recipes/ "
-            f"as a last resort, but prefer linking to specific recipe posts if the URL pattern is clear. "
-            f"Use natural anchor text that fits the sentence."
+            f"Add 2-3 internal links to relevant recipe posts on '{base}'.\n"
+            f"- Integrate 1-2 naturally inside body paragraphs using rich anchor text.\n"
+            f"- Add 1-2 in the Conclusion as: \"For more delicious recipes, check out [anchor] or [anchor] for treats you will love!\"\n"
+            f"- Use realistic recipe post URL patterns like {base}/recipe-name-here/\n"
+            f"- Use natural, descriptive anchor text."
         )
     prompt = tpl.format(
         recipe_title=recipe_title,

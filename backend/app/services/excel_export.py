@@ -90,23 +90,22 @@ def _url_slug(recipe: Any) -> str:
 
 def _recipe_row(recipe: Any) -> list[str]:
     title = _recipe_title(recipe)
-    pin_title = recipe.focus_keyword or title
     return [
-        _images_newline(recipe),                  # Images :
-        recipe.generated_full_recipe or "",       # Recipe :
-        title,                                    # Recipe Title :
-        title,                                    # SEO title : (same as recipe title)
-        recipe.meta_description or "",             # Meta Desc :
-        recipe.category or "",                    # Categories :
-        recipe.generated_article or "",           # Article :
-        _url_slug(recipe),                        # URL Slug :
-        recipe.focus_keyword or "",               # Keyphrase :
-        "",                                       # Tags :
-        pin_title,                                # Pin Title :
-        recipe.meta_description or "",            # Pin Description :
-        recipe.focus_keyword or "",               # Keywords :
-        "",                                       # Board :
-        recipe.generated_json or "",              # JSON :
+        _images_newline(recipe),                                    # Images :
+        recipe.generated_full_recipe or "",                         # Recipe :
+        title,                                                      # Recipe Title :
+        getattr(recipe, "seo_title", None) or title,                # SEO title :
+        recipe.meta_description or "",                              # Meta Desc :
+        recipe.category or "",                                      # Categories :
+        recipe.generated_article or "",                             # Article :
+        _url_slug(recipe),                                          # URL Slug :
+        recipe.focus_keyword or "",                                 # Keyphrase :
+        getattr(recipe, "wp_tags", None) or "",                     # Tags :
+        recipe.pin_title or recipe.focus_keyword or title,          # Pin Title :
+        recipe.pin_description or recipe.meta_description or "",    # Pin Description :
+        getattr(recipe, "pin_tags", None) or recipe.focus_keyword or "",  # Keywords :
+        getattr(recipe, "pin_board", None) or "",                   # Board :
+        recipe.generated_json or "",                                # JSON :
     ]
 
 
