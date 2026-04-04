@@ -1734,6 +1734,32 @@ export default function PinDesigner({
         (textbox as any).__pinLabel = el.label;
         (textbox as any).__pinType = "text";
         canvas.add(textbox);
+      } else if (el.type === "frame") {
+        const strokeStyle = (el.strokeStyle as string) ?? (el as any).__strokeStyle ?? "solid";
+        let dashArray: number[] | null = null;
+        if (strokeStyle === "dashed") dashArray = [20, 10];
+        else if (strokeStyle === "dotted") dashArray = [4, 8];
+        const frame = new fabric.Rect({
+          left: el.x,
+          top: el.y,
+          width: el.width,
+          height: el.height,
+          fill: "transparent",
+          stroke: el.fill ?? "#333333",
+          strokeWidth: el.strokeWidth ?? 4,
+          strokeUniform: true,
+          strokeDashArray: dashArray,
+          rx: el.radius ?? 0,
+          ry: el.radius ?? 0,
+          originX: "left",
+          originY: "top",
+          selectable: true,
+        });
+        (frame as any).__pinId = el.id;
+        (frame as any).__pinLabel = el.label || "Frame";
+        (frame as any).__pinType = "frame";
+        (frame as any).__strokeStyle = strokeStyle;
+        canvas.add(frame);
       }
     }
 

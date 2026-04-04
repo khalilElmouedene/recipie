@@ -28,6 +28,7 @@ import {
   Check,
   FlipHorizontal2,
   FlipVertical2,
+  Square,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -38,7 +39,8 @@ function uid(prefix: string) {
   return `${prefix}_${Date.now()}_${++_uid}`;
 }
 
-type SelType = "text" | "image" | "band" | "asset" | null;
+type SelType = "text" | "image" | "band" | "asset" | "frame" | null;
+type StrokeStyle = "solid" | "dashed" | "dotted";
 
 const TEMPLATE_FONTS = [
   "Triumvirate Compressed",
@@ -95,6 +97,12 @@ function TemplateDesignerInner() {
   // Band / image zone color
   const [elemColor, setElemColor] = useState("#4a90d9");
 
+  // Frame props
+  const [frameStrokeColor, setFrameStrokeColor] = useState("#333333");
+  const [frameStrokeWidth, setFrameStrokeWidth] = useState(4);
+  const [frameStrokeStyle, setFrameStrokeStyle] = useState<StrokeStyle>("solid");
+  const [frameRadius, setFrameRadius] = useState(0);
+
   // Floating toolbar
   const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
 
@@ -110,7 +118,7 @@ function TemplateDesignerInner() {
   const undoHistoryRef = useRef<string[]>([]);
   const isRestoringRef = useRef(false);
   const transformSaveDoneRef = useRef(false);
-  const UNDO_CUSTOM_KEYS = ["__id", "__ttype"];
+  const UNDO_CUSTOM_KEYS = ["__id", "__ttype", "__strokeStyle"];
   const MAX_UNDO = 50;
 
   useEffect(() => {
@@ -295,7 +303,7 @@ function TemplateDesignerInner() {
   function syncSel(obj: any) {
     const rawType = obj?.__ttype;
     const t: SelType =
-      rawType === "text" || rawType === "image" || rawType === "band" || rawType === "asset"
+      rawType === "text" || rawType === "image" || rawType === "band" || rawType === "asset" || rawType === "frame"
         ? rawType
         : null;
     setSelType(t);
@@ -309,6 +317,11 @@ function TemplateDesignerInner() {
       setFontFamily(obj.fontFamily ?? "Arial");
     } else if (t === "band" || t === "image") {
       setElemColor(typeof obj.fill === "string" ? obj.fill : "#4a90d9");
+    } else if (t === "frame") {
+      setFrameStrokeColor(obj.stroke ?? "#333333");
+      setFrameStrokeWidth(obj.strokeWidth ?? 4);
+      setFrameStrokeStyle((obj.__strokeStyle as StrokeStyle) ?? "solid");
+      setFrameRadius(obj.rx ?? 0);
     }
   }
 
@@ -453,6 +466,31 @@ function TemplateDesignerInner() {
             applySelectionVisuals(img);
             canvas.add(img);
           } catch { /* ignore broken image */ }
+        } else if (el.type === "frame") {
+          const strokeStyle = (el.strokeStyle as string) ?? "solid";
+          let dashArray: number[] | null = null;
+          if (strokeStyle === "dashed") dashArray = [20, 10];
+          else if (strokeStyle === "dotted") dashArray = [4, 8];
+          const rect = new fabric.Rect({
+            left: el.x ?? 0,
+            top: el.y ?? 0,
+            width: el.width || 900,
+            height: el.height || 1400,
+            fill: "rgba(0,0,0,0)",
+            stroke: el.fill ?? "#333333",
+            strokeWidth: el.strokeWidth ?? 4,
+            strokeUniform: true,
+            strokeDashArray: dashArray,
+            rx: el.radius ?? 0,
+            ry: el.radius ?? 0,
+            originX: "left",
+            originY: "top",
+          });
+          (rect as any).__id = el.id || uid("frame");
+          (rect as any).__ttype = "frame";
+          (rect as any).__strokeStyle = strokeStyle;
+          applySelectionVisuals(rect);
+          canvas.add(rect);
         }
       }
 
@@ -571,6 +609,64 @@ function TemplateDesignerInner() {
     canvas.add(rect);
     canvas.setActiveObject(rect);
     canvas.renderAll();
+  }
+
+  function addFrame() {
+    const canvas = fabricRef.current;
+    const fabric = fabricLibRef.current;
+    if (!canvas || !fabric) return;
+    saveUndoState();
+    const padding = 40;
+    const rect = new fabric.Rect({
+      left: padding,
+      top: padding,
+      width: canvasW - padding * 2,
+      height: canvasH - padding * 2,
+      fill: "rgba(0,0,0,0)",
+      stroke: "#333333",
+      strokeWidth: 4,
+      strokeUniform: true,
+      rx: 0,
+      ry: 0,
+      originX: "left",
+      originY: "top",
+    });
+    (rect as any).__id = uid("frame");
+    (rect as any).__ttype = "frame";
+    (rect as any).__strokeStyle = "solid";
+    applySelectionVisuals(rect);
+    canvas.add(rect);
+    canvas.setActiveObject(rect);
+    canvas.renderAll();
+    syncSel(rect);
+  }
+
+  function applyFrameProperty(property: string, value: any) {
+    const obj = getActive();
+    if (!obj || obj.__ttype !== "frame") return;
+    saveUndoState();
+    if (property === "strokeColor") {
+      obj.set("stroke", value);
+      setFrameStrokeColor(value);
+    } else if (property === "strokeWidth") {
+      obj.set("strokeWidth", parseInt(value));
+      setFrameStrokeWidth(parseInt(value));
+    } else if (property === "strokeStyle") {
+      obj.__strokeStyle = value;
+      if (value === "dashed") {
+        obj.set("strokeDashArray", [20, 10]);
+      } else if (value === "dotted") {
+        obj.set("strokeDashArray", [4, 8]);
+      } else {
+        obj.set("strokeDashArray", null);
+      }
+      setFrameStrokeStyle(value as StrokeStyle);
+    } else if (property === "radius") {
+      const r = parseInt(value);
+      obj.set({ rx: r, ry: r });
+      setFrameRadius(r);
+    }
+    fabricRef.current?.renderAll();
   }
 
   function addWebsiteLink() {
@@ -941,6 +1037,20 @@ function TemplateDesignerInner() {
           flipX: o.flipX ?? false,
           flipY: o.flipY ?? false,
         });
+      } else if (type === "frame") {
+        results.push({
+          id: o.__id,
+          type: "frame",
+          label: "Frame",
+          x,
+          y,
+          width: w || o.width || 900,
+          height: h || o.height || 1400,
+          strokeWidth: o.strokeWidth ?? 4,
+          strokeStyle: (o.__strokeStyle as string) ?? "solid",
+          fill: typeof o.stroke === "string" ? o.stroke : "#333333",
+          radius: o.rx ?? 0,
+        });
       }
     }
     return results;
@@ -1090,6 +1200,15 @@ function TemplateDesignerInner() {
                 <Minus size={22} className="text-gray-400 group-hover:text-white transition" />
                 <span className="text-[11px] text-gray-400 group-hover:text-white transition">
                   Band
+                </span>
+              </button>
+              <button
+                onClick={addFrame}
+                className="flex flex-col items-center gap-2 py-4 rounded-xl border border-gray-700 hover:border-brand-500 hover:bg-gray-900 transition-all group"
+              >
+                <Square size={22} className="text-gray-400 group-hover:text-white transition" />
+                <span className="text-[11px] text-gray-400 group-hover:text-white transition">
+                  Frame
                 </span>
               </button>
               <button
@@ -1512,6 +1631,64 @@ function TemplateDesignerInner() {
               </button>
             </div>
           )}
+
+          {selType === "frame" && (
+            <div className="space-y-4">
+              <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Frame</h4>
+
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1.5">Border Color</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={frameStrokeColor}
+                    onChange={(e) => applyFrameProperty("strokeColor", e.target.value)}
+                    className="w-8 h-8 rounded-lg cursor-pointer border border-gray-700 p-0.5 bg-transparent"
+                  />
+                  <span className="text-xs font-mono text-gray-400">{frameStrokeColor}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1">Border Style</label>
+                <div className="flex gap-1">
+                  {(["solid", "dashed", "dotted"] as const).map((style) => (
+                    <button
+                      key={style}
+                      onClick={() => applyFrameProperty("strokeStyle", style)}
+                      className={`flex-1 py-2 rounded text-xs font-medium transition flex flex-col items-center gap-1 ${frameStrokeStyle === style ? "bg-brand-500 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"}`}
+                    >
+                      <div className="w-7 h-0 border-t-2" style={{ borderStyle: style, borderColor: frameStrokeStyle === style ? "white" : "#9ca3af" }} />
+                      <span className="capitalize">{style}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1">Border Width</label>
+                <div className="flex gap-2 items-center">
+                  <input type="range" min="1" max="20" value={frameStrokeWidth} onChange={(e) => applyFrameProperty("strokeWidth", e.target.value)} className="flex-1" />
+                  <span className="text-sm text-gray-300 w-8">{frameStrokeWidth}px</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1">Corner Radius</label>
+                <div className="flex gap-2 items-center">
+                  <input type="range" min="0" max="200" value={frameRadius} onChange={(e) => applyFrameProperty("radius", e.target.value)} className="flex-1" />
+                  <span className="text-sm text-gray-300 w-8">{frameRadius}px</span>
+                </div>
+              </div>
+
+              <button
+                onClick={deleteSelected}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-red-950/50 border border-red-900/40 text-red-400 text-xs hover:bg-red-950 transition"
+              >
+                <Trash2 size={13} /> Delete Frame
+              </button>
+            </div>
+          )}
           </div>{/* end scrollable properties */}
 
           {/* ── Layers Panel ──────────────────────────────────────────────── */}
@@ -1549,6 +1726,7 @@ function TemplateDesignerInner() {
                     <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-gray-500">
                       {layer.type === "text" ? <Type size={11} /> :
                        layer.type === "band" ? <Minus size={11} /> :
+                       layer.type === "frame" ? <Square size={11} /> :
                        <ImageIcon size={11} />}
                     </div>
 
