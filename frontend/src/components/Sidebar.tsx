@@ -34,13 +34,13 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         isOpen ? "translate-x-0" : "-translate-x-full",
       ].join(" ")}
     >
-      <div className="flex h-16 items-center gap-2 border-b border-gray-800 px-6">
+      <div className="flex h-16 items-center justify-center border-b border-gray-800 px-4">
         <Image
           src="/template images/logo (2).svg"
           alt="Logo"
-          width={140}
-          height={36}
-          className="object-contain flex-1"
+          width={48}
+          height={48}
+          className="object-contain shrink-0"
           priority
         />
         {/* Close button — mobile only */}

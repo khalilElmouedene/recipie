@@ -2,7 +2,6 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
-import Image from "next/image";
 import { isLoggedIn } from "@/lib/auth";
 import Sidebar from "./Sidebar";
 
@@ -55,14 +54,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           >
             <Menu size={22} />
           </button>
-          <Image
-            src="/template images/logo (2).svg"
-            alt="Logo"
-            width={120}
-            height={32}
-            className="ml-3 object-contain"
-            priority
-          />
         </div>
 
         <main className="flex-1 overflow-y-auto p-4 md:p-8">{children}</main>
