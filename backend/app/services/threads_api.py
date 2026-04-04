@@ -20,7 +20,8 @@ def get_oauth_url(app_id: str, redirect_uri: str, state: str) -> str:
         "scope": "threads_basic,threads_content_publish,threads_manage_replies",
         "response_type": "code",
         "state": state,
-        "prompt": "login",  # Force fresh login every time — never auto-use existing browser session
+        "prompt": "login",          # Force fresh login every time — never auto-use existing browser session
+        "auth_type": "reauthenticate",  # Meta: force credentials re-entry even if session exists
     }
     return f"{_AUTH_BASE}?{urllib.parse.urlencode(params)}"
 

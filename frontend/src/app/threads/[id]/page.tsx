@@ -724,7 +724,7 @@ function SettingsTab({ projectId, onAccountsChanged }: { projectId: string; onAc
     setError(null); setConnecting(true);
     try {
       const { url } = await api.getThreadsOAuthUrl(projectId);
-      const popup = window.open(url, "threads-oauth", "width=600,height=700");
+      const popup = window.open(url, `threads-oauth-${Date.now()}`, "width=600,height=700");
       popupRef.current = popup;
       if (!popup) { setError("Popup blocked."); setConnecting(false); return; }
       // Poll until popup closes — if closed without postMessage, reset loading
@@ -955,7 +955,8 @@ export default function ThreadsProjectDetailPage() {
     setConnecting(true);
     try {
       const { url } = await api.getThreadsOAuthUrl(id);
-      const popup = window.open(url, "threads-oauth", "width=600,height=700");
+      // Unique window name each time so Chrome always opens a fresh popup (no session reuse)
+      const popup = window.open(url, `threads-oauth-${Date.now()}`, "width=600,height=700");
       popupRef.current = popup;
       if (!popup) { setConnecting(false); return; }
       const timer = setInterval(() => {
@@ -1152,7 +1153,13 @@ export default function ThreadsProjectDetailPage() {
         )}
 
         {/* New post */}
-        <button onClick={() => { setEditPost(null); setNewPostDate(undefined); setShowForm(true); }}
+        <button onClick={() => {
+          setEditPost(null);
+          setNewPostDate(undefined);
+          setNewPostAccountId(selectedAccountId);
+          setNewPostAllAccounts(selectedAccountId === null);
+          setShowForm(true);
+        }}
           className="btn-primary flex items-center gap-1.5 text-sm">
           <Plus size={14} /> New Post
         </button>
