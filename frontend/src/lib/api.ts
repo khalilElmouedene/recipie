@@ -252,6 +252,9 @@ export const api = {
     pin_template_id?: string;
     pin_url?: string;
     pin_board?: string;
+    pin_tags?: string;
+    seo_title?: string;
+    wp_tags?: string;
   }) =>
     request<RecipeOut>(`/api/recipes/${recipeId}`, { method: "PATCH", body: JSON.stringify(data) }),
 
@@ -494,6 +497,9 @@ export interface RecipeOut {
   pin_template_id: string | null;
   pin_url: string | null;
   pin_board: string | null;
+  pin_tags: string | null;
+  seo_title: string | null;
+  wp_tags: string | null;
   error_message: string | null;
   created_at: string;
 }

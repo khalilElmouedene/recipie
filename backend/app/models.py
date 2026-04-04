@@ -213,6 +213,9 @@ class RecipeUpdate(BaseModel):
     pin_template_id: str | None = None
     pin_url: str | None = None
     pin_board: str | None = None
+    pin_tags: str | None = None
+    seo_title: str | None = None
+    wp_tags: str | None = None
 
 
 class PinterestPinRequest(BaseModel):
@@ -260,6 +263,9 @@ class RecipeOut(BaseModel):
     pin_template_id: str | None = None
     pin_url: str | None = None
     pin_board: str | None = None
+    pin_tags: str | None = None
+    seo_title: str | None = None
+    wp_tags: str | None = None
     error_message: str | None = None
     created_at: datetime
 

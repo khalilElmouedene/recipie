@@ -96,10 +96,13 @@ def publish_recipe(
         category = recipe.get("category", "")
         image_url = recipe.get("image_url", "")
         generated_images_str = recipe.get("generated_images", "")
+        seo_title = (recipe.get("seo_title") or "").strip()
+        wp_tags_raw = (recipe.get("wp_tags") or "").strip()
 
         # Parse HTML and strip title — keep soup object for proper image injection
         title_from_html, soup = _parse_and_extract_title(article_html)
-        wp_title = _wordpress_display_title(recipe, title_from_html)
+        # Use AI-generated SEO title when available, fall back to H1-derived title
+        wp_title = seo_title if seo_title else _wordpress_display_title(recipe, title_from_html)
         slug = slugify(focus_kw or wp_title)
 
         # Resolve image sources (support 1 or 2 images from generated_images list)
@@ -172,8 +175,15 @@ def publish_recipe(
             post.post_status = "publish"
         if img1_id:
             post.thumbnail = str(img1_id)
+        terms: dict = {}
         if category:
-            post.terms_names = {"category": [category]}
+            terms["category"] = [category]
+        if wp_tags_raw:
+            tags_list = [t.strip() for t in wp_tags_raw.split(",") if t.strip()]
+            if tags_list:
+                terms["post_tag"] = tags_list
+        if terms:
+            post.terms_names = terms
 
         post_id = wp.call(NewPost(post))
 

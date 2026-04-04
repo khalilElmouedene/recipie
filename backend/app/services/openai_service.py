@@ -135,6 +135,39 @@ def generate_category(recipe_title: str, api_key: str, prompts: dict[str, str] |
     return response.choices[0].message.content.strip()
 
 
+def generate_seo_title(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+    tpl = get_prompt(prompts or {}, "seo_title")
+    prompt = tpl.format(recipe_title=recipe_title)
+    client = _get_client(api_key)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.5,
+        max_tokens=80,
+    )
+    return re.sub(r'[*#"]', '', response.choices[0].message.content.strip())
+
+
+def generate_focus_keyword(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+    tpl = get_prompt(prompts or {}, "focus_keyword")
+    prompt = tpl.format(recipe_title=recipe_title)
+    client = _get_client(api_key)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=30,
+    )
+    return re.sub(r'[*#"]', '', response.choices[0].message.content.strip())
+
+
+def generate_wp_tags(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+    tpl = get_prompt(prompts or {}, "wp_tags")
+    prompt = tpl.format(recipe_title=recipe_title)
+    result = generate_with_openai(prompt, api_key, log=log)
+    return re.sub(r'[*#"]', '', result)
+
+
 def generate_pinterest_pin_title(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
     tpl = get_prompt(prompts or {}, "pinterest_title")
     prompt = tpl.format(recipe_title=recipe_title)

@@ -288,8 +288,14 @@ def generate_for_recipe(
         if _stop():
             return result
 
-        # 1. Focus keyword
-        focus_keyword = re.sub(r'[*#"]', '', clean_keyword(recipe_title))
+        # 1. Focus keyword (AI-generated)
+        _log("Generating focus keyword...")
+        try:
+            focus_keyword = openai_service.generate_focus_keyword(recipe_title, openai_key, prompts=prompts, log=_log)
+            if not focus_keyword or len(focus_keyword) < 3:
+                focus_keyword = re.sub(r'[*#"]', '', clean_keyword(recipe_title))
+        except Exception:
+            focus_keyword = re.sub(r'[*#"]', '', clean_keyword(recipe_title))
         result["focus_keyword"] = focus_keyword
         _log(f"Focus keyword: {focus_keyword}")
 
@@ -330,7 +336,29 @@ def generate_for_recipe(
         category = openai_service.generate_category(recipe_title, openai_key, prompts=prompts, log=_log)
         result["category"] = category
 
-        # 6b. Pinterest board selection (AI picks best board from boards list)
+        # 6b. SEO title (AI-generated, used as WP post title + Rank Math title)
+        if not _stop():
+            _log("Generating SEO title...")
+            try:
+                seo_title = openai_service.generate_seo_title(recipe_title, openai_key, prompts=prompts, log=_log)
+                if seo_title and len(seo_title) > 3:
+                    result["seo_title"] = seo_title
+                    _log(f"SEO title: {seo_title}")
+            except Exception as e:
+                _log(f"SEO title generation failed (non-fatal): {e}")
+
+        # 6c. WordPress post tags
+        if not _stop():
+            _log("Generating WordPress post tags...")
+            try:
+                wp_tags = openai_service.generate_wp_tags(recipe_title, openai_key, prompts=prompts, log=_log)
+                if wp_tags:
+                    result["wp_tags"] = wp_tags
+                    _log(f"WordPress tags: {wp_tags}")
+            except Exception as e:
+                _log(f"WordPress tags generation failed (non-fatal): {e}")
+
+        # 6d. Pinterest board selection (AI picks best board from boards list)
         from .prompts import DEFAULT_PROMPTS as _DP
         boards_list = (prompts or {}).get("pinterest_boards_list") or _DP.get("pinterest_boards_list", {}).get("value", "")
         if boards_list and not _stop():
@@ -344,6 +372,42 @@ def generate_for_recipe(
                 _log(f"Pinterest board selected: {pin_board}")
             except Exception as e:
                 _log(f"Pinterest board selection failed (non-fatal): {e}")
+
+        # 6e. Pinterest pin title
+        if not _stop():
+            _log("Generating Pinterest pin title...")
+            try:
+                pin_title = openai_service.generate_pinterest_pin_title(
+                    recipe_title, openai_key, prompts=prompts, log=_log
+                )
+                result["pin_title"] = pin_title.strip().strip('"').strip("'")
+                _log(f"Pinterest pin title: {result['pin_title']}")
+            except Exception as e:
+                _log(f"Pinterest pin title generation failed (non-fatal): {e}")
+
+        # 6f. Pinterest pin description
+        if not _stop():
+            _log("Generating Pinterest pin description...")
+            try:
+                pin_description = openai_service.generate_pinterest_pin_description(
+                    recipe_title, openai_key, prompts=prompts, log=_log
+                )
+                result["pin_description"] = pin_description.strip()
+                _log(f"Pinterest pin description generated ({len(result['pin_description'])} chars)")
+            except Exception as e:
+                _log(f"Pinterest pin description generation failed (non-fatal): {e}")
+
+        # 6g. Pinterest pin tags
+        if not _stop():
+            _log("Generating Pinterest pin tags...")
+            try:
+                pin_tags = openai_service.generate_pinterest_pin_tags(
+                    recipe_title, openai_key, prompts=prompts, log=_log
+                )
+                result["pin_tags"] = pin_tags.strip()
+                _log(f"Pinterest pin tags: {result['pin_tags']}")
+            except Exception as e:
+                _log(f"Pinterest pin tags generation failed (non-fatal): {e}")
 
         # 7. Midjourney images (only if Discord credentials exist)
         discord_auth = credentials.get("discord_auth", "")

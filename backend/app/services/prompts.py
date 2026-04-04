@@ -237,6 +237,52 @@ Rules:
 Recipe: {recipe_title}""",
         "description": "Pinterest board selection - placeholders: {recipe_title}, {boards_list}",
     },
+    "seo_title": {
+        "value": """You are an SEO expert for a US food blog.
+
+Write a single SEO title for this recipe article.
+
+Rules:
+- Use natural Title Case.
+- Use a style like: Easy Chocolate Cupcakes Recipe, Homemade Spaghetti Sauce Recipe, Air Fryer Chicken Wings (Extra Crispy!)
+- Include the word "Recipe" unless the title ends with a parenthetical or exclamation tag.
+- Make it natural and compelling. Max 60 characters.
+- Return ONLY the title on one line, nothing else.
+- DO NOT use this character: -
+- Use ONLY standard ASCII English punctuation: . , ? ! : ; ' " ( ) [ ] /
+
+Recipe: {recipe_title}""",
+        "description": "SEO post title - placeholder: {recipe_title}",
+    },
+    "focus_keyword": {
+        "value": """Create a single focus keyphrase for this recipe article.
+
+Rules:
+- 2 to 5 words.
+- What a user would type in Google to find this recipe.
+- No quotes, no explanations, no punctuation.
+- Example: garlic butter chicken pasta
+
+Return ONLY the keyphrase, nothing else.
+
+Recipe: {recipe_title}""",
+        "description": "Focus keyphrase - placeholder: {recipe_title}",
+    },
+    "wp_tags": {
+        "value": """Generate 3 to 5 relevant WordPress post tags for this recipe article.
+
+Rules:
+- English only.
+- Comma-separated list, lowercase.
+- No hashtags, no duplicates.
+- Short phrases or single words.
+- Example: quick dinner, pasta recipe, one-pot meal, weeknight meal
+
+Return ONLY the comma-separated list, nothing else.
+
+Recipe: {recipe_title}""",
+        "description": "WordPress post tags - placeholder: {recipe_title}",
+    },
     "midjourney_imagine": {
         "value": "/imagine prompt: {source_img} Amateur photo from Reddit. The photo was taken by an amateur using her phone camera. RECIPE NAME: {recipe_name} Recipe --style raw --stylize 30 --iw 3 --v 6.1",
         "description": "Midjourney image prompt - placeholders: {recipe_name}, {source_img}",

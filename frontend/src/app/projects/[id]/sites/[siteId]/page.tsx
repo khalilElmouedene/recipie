@@ -52,6 +52,7 @@ export default function SiteDetailPage() {
   // Saved pin design form (Pinterest tab)
   const [pinDesignTitle, setPinDesignTitle] = useState("");
   const [pinDesignDesc, setPinDesignDesc] = useState("");
+  const [pinDesignTags, setPinDesignTags] = useState("");
   const [pinDesignLink, setPinDesignLink] = useState("");
   const [pinDesignPinUrl, setPinDesignPinUrl] = useState("");
   const [pinDesignSaving, setPinDesignSaving] = useState(false);
@@ -134,6 +135,7 @@ export default function SiteDetailPage() {
       const recipeTitle = r.recipe_text?.split("\n")[0]?.trim() || "";
       setPinDesignTitle(r.pin_title || recipeTitle);
       setPinDesignDesc(r.pin_description || r.meta_description || recipeTitle);
+      setPinDesignTags(r.pin_tags || "");
       setPinDesignLink(r.pin_blog_link || r.wp_permalink || "");
       setPinDesignPinUrl(r.pin_url || "");
     }
@@ -466,6 +468,7 @@ export default function SiteDetailPage() {
       await api.updateRecipe(recipeId, {
         pin_title: pinDesignTitle || undefined,
         pin_description: pinDesignDesc || undefined,
+        pin_tags: pinDesignTags || undefined,
         pin_blog_link: pinDesignLink || undefined,
         pin_url: pinDesignPinUrl || undefined,
       });
@@ -1032,6 +1035,15 @@ export default function SiteDetailPage() {
                                   className="input-field text-sm w-full"
                                   rows={2}
                                   placeholder="Pin description..."
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">Tags / Keywords</label>
+                                <input
+                                  value={pinDesignTags}
+                                  onChange={(e) => setPinDesignTags(e.target.value)}
+                                  className="input-field text-sm w-full"
+                                  placeholder="tag1, tag2, tag3..."
                                 />
                               </div>
                               <div>
