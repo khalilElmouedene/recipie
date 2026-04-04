@@ -243,6 +243,9 @@ class JobManager:
                     "meta_description": r.meta_description,
                     "category": r.category,
                     "generated_images": r.generated_images,
+                    "seo_title": r.seo_title,
+                    "wp_tags": r.wp_tags,
+                    "pin_blog_link": r.pin_blog_link,
                 }
                 for r in recipes_raw
             ]
@@ -606,6 +609,9 @@ class JobManager:
                         "generated_images": r.generated_images or "",
                         "wp_post_id": r.wp_post_id or "",
                         "wp_permalink": r.wp_permalink or "",
+                        "seo_title": r.seo_title or "",
+                        "wp_tags": r.wp_tags or "",
+                        "pin_blog_link": r.pin_blog_link or "",
                     }
                     for r in recipes_raw
                 ]
