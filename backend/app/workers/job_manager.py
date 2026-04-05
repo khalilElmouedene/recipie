@@ -10,6 +10,31 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 from typing import Any
 
+
+def _split_images(images: list[str], n: int) -> list[list[str]]:
+    """Split *images* into *n* chunks as evenly as possible.
+
+    Examples (4 images):
+      n=4 → [[img0], [img1], [img2], [img3]]
+      n=2 → [[img0, img1], [img2, img3]]
+      n=3 → [[img0, img1], [img2], [img3]]
+      n=6 → [[img0], [img1], [img2], [img3], [img0], [img1]]  (cycles when n > len)
+    """
+    if not images:
+        return [[] for _ in range(n)]
+    if n >= len(images):
+        # More sites than images — cycle
+        return [[images[i % len(images)]] for i in range(n)]
+    # Divide floor-evenly; last chunk absorbs the remainder
+    base, remainder = divmod(len(images), n)
+    chunks: list[list[str]] = []
+    idx = 0
+    for i in range(n):
+        size = base + (1 if i < remainder else 0)
+        chunks.append(images[idx: idx + size])
+        idx += size
+    return chunks
+
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -355,7 +380,7 @@ class JobManager:
                             _on_progress(done, total)
 
                     # Phase 2: generate images once per shared input, then distribute
-                    # one unique variation per site (randomly assigned).
+                    # evenly across sites (e.g. 4 images / 2 sites = 2 images each).
                     if not rj.should_stop():
                         for group in multi_site_groups:
                             n_sites = len(group["items"])
@@ -373,17 +398,15 @@ class JobManager:
                             if shared_images:
                                 img_list: list[str] = json.loads(shared_images) if shared_images else []
                                 if img_list:
-                                    # Shuffle so the assignment is random, then cycle if
-                                    # there are more sites than image variations.
                                     shuffled = list(img_list)
                                     random.shuffle(shuffled)
+                                    chunks = _split_images(shuffled, n_sites)
                                     rj.log(
-                                        f"Distributing {len(img_list)} image variation(s) "
-                                        f"across {n_sites} site(s) — one unique image per site"
+                                        f"Distributing {len(img_list)} image(s) across "
+                                        f"{n_sites} site(s) (~{len(chunks[0])} per site)"
                                     )
-                                    for i, item in enumerate(group["items"]):
-                                        site_img = shuffled[i % len(shuffled)]
-                                        _on_recipe_done(item["id"], {"generated_images": json.dumps([site_img])})
+                                    for item, site_imgs in zip(group["items"], chunks):
+                                        _on_recipe_done(item["id"], {"generated_images": json.dumps(site_imgs)})
                                 else:
                                     for item in group["items"]:
                                         _on_recipe_done(item["id"], {"generated_images": shared_images})
@@ -781,13 +804,13 @@ class JobManager:
                                     if img_list:
                                         shuffled = list(img_list)
                                         random.shuffle(shuffled)
+                                        chunks = _split_images(shuffled, n_sites)
                                         rj.log(
-                                            f"Distributing {len(img_list)} image variation(s) "
-                                            f"across {n_sites} site(s) — one unique image per site"
+                                            f"Distributing {len(img_list)} image(s) across "
+                                            f"{n_sites} site(s) (~{len(chunks[0])} per site)"
                                         )
-                                        for i, item in enumerate(group["items"]):
-                                            site_img = shuffled[i % len(shuffled)]
-                                            _on_recipe_done(item["id"], {"generated_images": json.dumps([site_img])})
+                                        for item, site_imgs in zip(group["items"], chunks):
+                                            _on_recipe_done(item["id"], {"generated_images": json.dumps(site_imgs)})
                                     else:
                                         for item in group["items"]:
                                             _on_recipe_done(item["id"], {"generated_images": shared_images})
