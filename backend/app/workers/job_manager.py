@@ -1,6 +1,8 @@
 from __future__ import annotations
 import asyncio
+import json
 import logging
+import random
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -352,10 +354,14 @@ class JobManager:
                             done += 1
                             _on_progress(done, total)
 
-                    # Phase 2: generate images once per shared input and fan out
+                    # Phase 2: generate images once per shared input, then distribute
+                    # one unique variation per site (randomly assigned).
                     if not rj.should_stop():
                         for group in multi_site_groups:
-                            rj.log(f"Input recipe {group['idx']}: generating shared images once for all sites")
+                            n_sites = len(group["items"])
+                            rj.log(
+                                f"Input recipe {group['idx']}: generating images for {n_sites} site(s)"
+                            )
                             shared_images = generate_images_only(
                                 recipe_title=group["recipe_text"].splitlines()[0].strip(),
                                 image_url=group["image_url"],
@@ -365,8 +371,22 @@ class JobManager:
                                 should_stop=rj.should_stop,
                             )
                             if shared_images:
-                                for item in group["items"]:
-                                    _on_recipe_done(item["id"], {"generated_images": shared_images})
+                                img_list: list[str] = json.loads(shared_images) if shared_images else []
+                                if img_list:
+                                    # Shuffle so the assignment is random, then cycle if
+                                    # there are more sites than image variations.
+                                    shuffled = list(img_list)
+                                    random.shuffle(shuffled)
+                                    rj.log(
+                                        f"Distributing {len(img_list)} image variation(s) "
+                                        f"across {n_sites} site(s) — one unique image per site"
+                                    )
+                                    for i, item in enumerate(group["items"]):
+                                        site_img = shuffled[i % len(shuffled)]
+                                        _on_recipe_done(item["id"], {"generated_images": json.dumps([site_img])})
+                                else:
+                                    for item in group["items"]:
+                                        _on_recipe_done(item["id"], {"generated_images": shared_images})
                             if rj.should_stop():
                                 break
 
@@ -744,6 +764,10 @@ class JobManager:
 
                         if not rj.should_stop():
                             for group in multi_site_groups:
+                                n_sites = len(group["items"])
+                                rj.log(
+                                    f"Input recipe {group['idx']}: generating images for {n_sites} site(s)"
+                                )
                                 shared_images = generate_images_only(
                                     recipe_title=group["recipe_text"].splitlines()[0].strip(),
                                     image_url=group["image_url"],
@@ -753,8 +777,20 @@ class JobManager:
                                     should_stop=rj.should_stop,
                                 )
                                 if shared_images:
-                                    for item in group["items"]:
-                                        _on_recipe_done(item["id"], {"generated_images": shared_images})
+                                    img_list: list[str] = json.loads(shared_images) if shared_images else []
+                                    if img_list:
+                                        shuffled = list(img_list)
+                                        random.shuffle(shuffled)
+                                        rj.log(
+                                            f"Distributing {len(img_list)} image variation(s) "
+                                            f"across {n_sites} site(s) — one unique image per site"
+                                        )
+                                        for i, item in enumerate(group["items"]):
+                                            site_img = shuffled[i % len(shuffled)]
+                                            _on_recipe_done(item["id"], {"generated_images": json.dumps([site_img])})
+                                    else:
+                                        for item in group["items"]:
+                                            _on_recipe_done(item["id"], {"generated_images": shared_images})
                                 if rj.should_stop():
                                     break
 
