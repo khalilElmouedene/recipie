@@ -99,6 +99,7 @@ function TemplateDesignerInner() {
 
   // Band / image zone color
   const [elemColor, setElemColor] = useState("#4a90d9");
+  const [isFlipZone, setIsFlipZone] = useState(false);
 
   // Frame props
   const [frameStrokeColor, setFrameStrokeColor] = useState("#333333");
@@ -321,6 +322,7 @@ function TemplateDesignerInner() {
       setTextVariable((obj.__textVariable as "" | "title" | "website") ?? "");
     } else if (t === "band" || t === "image") {
       setElemColor(typeof obj.fill === "string" ? obj.fill : "#4a90d9");
+      if (t === "image") setIsFlipZone(obj.__flipX === true);
     } else if (t === "frame") {
       setFrameStrokeColor(obj.stroke ?? "#333333");
       setFrameStrokeWidth(obj.strokeWidth ?? 4);
@@ -878,6 +880,21 @@ function TemplateDesignerInner() {
     canvas.requestRenderAll();
   }
 
+  function toggleFlipZone() {
+    const canvas = fabricRef.current;
+    const obj = canvas?.getActiveObject() as any;
+    if (!canvas || !obj || obj.__ttype !== "image") return;
+    saveUndoState();
+    const nowFlip = !(obj.__flipX === true);
+    obj.__flipX = nowFlip;
+    obj.set({
+      fill: nowFlip ? "#b3d9ff" : "#e8e8e8",
+      stroke: nowFlip ? "#4a90d9" : "#aaaaaa",
+    });
+    canvas.requestRenderAll();
+    syncLayers();
+  }
+
   // ── Layers ────────────────────────────────────────────────────────────────
   function getLayerLabel(type: string): string {
     switch (type) {
@@ -1404,6 +1421,19 @@ function TemplateDesignerInner() {
             <button onClick={() => moveLayerDown(selectedLayerId!)} title="Move down" disabled={!selectedLayerId} className="p-1 rounded hover:bg-gray-700 text-gray-300 disabled:opacity-30"><ChevronDown size={14} /></button>
             <button onClick={() => moveLayerUp(selectedLayerId!)}   title="Move up"   disabled={!selectedLayerId} className="p-1 rounded hover:bg-gray-700 text-gray-300 disabled:opacity-30"><ChevronUp   size={14} /></button>
             <button onClick={bringToFront} title="Bring to front"  className="p-1 rounded hover:bg-gray-700 text-gray-300"><ChevronsUp   size={14} /></button>
+
+            {selType === "image" && (
+              <>
+                <div className="w-px h-4 bg-gray-700 mx-0.5" />
+                <button
+                  onClick={toggleFlipZone}
+                  title={isFlipZone ? "Remove flip (make normal Image Zone)" : "Enable flip (mirror recipe image)"}
+                  className={`p-1 rounded transition ${isFlipZone ? "bg-blue-700 text-white hover:bg-blue-600" : "hover:bg-gray-700 text-gray-400"}`}
+                >
+                  <FlipHorizontal2 size={14} />
+                </button>
+              </>
+            )}
 
             {selType === "asset" && (
               <>
