@@ -374,19 +374,24 @@ export async function buildTemplateOnCanvas(
       const secondLine = titleLines[1] || "";
       const thirdLine = titleLines[2] || "";
       const tv = (el as any).textVariable ?? "";
-      const isTitle = tv === "title" || el.id === "title" || el.id === "title1" || el.id === "title2" || el.id === "title3";
-      const isWebsite = tv === "website" || el.id === "website";
-      const text = (tv === "title" || el.id === "title")
-        ? (title || el.defaultText || "")
-        : el.id === "title1"
-          ? (firstLine || el.defaultText || "")
-          : el.id === "title2"
-            ? secondLine
-            : el.id === "title3"
-              ? thirdLine
-              : isWebsite
-                ? (oWebsite || website || el.defaultText || "")
-                : (el.defaultText || "");
+      // Resolve text content — explicit textVariable binding wins, then ID-based matching.
+      // Custom-template IDs follow the pattern "<prefix>_<timestamp>_<n>" (e.g. "text_…", "website_…").
+      let text: string;
+      if (tv === "title" || el.id === "title" || el.id.startsWith("text_")) {
+        text = title || el.defaultText || "";
+      } else if (el.id === "title1") {
+        text = firstLine || el.defaultText || "";
+      } else if (el.id === "title2") {
+        text = secondLine || el.defaultText || "";
+      } else if (el.id === "title3") {
+        text = thirdLine || el.defaultText || "";
+      } else if (tv === "website" || el.id === "website" || el.id.startsWith("website_")) {
+        text = oWebsite || website || el.defaultText || "";
+      } else {
+        text = el.defaultText || "";
+      }
+      const isTitle = tv === "title" || el.id === "title" || el.id.startsWith("title") || el.id.startsWith("text_");
+      const isWebsite = tv === "website" || el.id === "website" || el.id.startsWith("website_");
       const fill = isTitle && oTitleColor ? oTitleColor : (el.fill || "#333333");
       const tb = new fabric.Textbox(text, {
         left: el.x, top: el.y, width: el.width || 940, originX: "center", originY: "center",
@@ -1702,17 +1707,20 @@ export default function PinDesigner({
         const secondLine = titleLines[1] || "";
         const thirdLine = titleLines[2] || "";
         const tv = (el as any).textVariable ?? "";
-        const textContent = (tv === "title" || el.id === "title")
-          ? (ttl || el.defaultText || "Text")
-          : el.id === "title1"
-            ? (firstLine || el.defaultText || "Text")
-            : el.id === "title2"
-              ? secondLine
-              : el.id === "title3"
-                ? thirdLine
-                : (tv === "website" || el.id === "website")
-                  ? (siteWebsite || el.defaultText || "Text")
-                  : (el.defaultText || "Text");
+        let textContent: string;
+        if (tv === "title" || el.id === "title" || el.id.startsWith("text_")) {
+          textContent = ttl || el.defaultText || "Text";
+        } else if (el.id === "title1") {
+          textContent = firstLine || el.defaultText || "Text";
+        } else if (el.id === "title2") {
+          textContent = secondLine || el.defaultText || "";
+        } else if (el.id === "title3") {
+          textContent = thirdLine || el.defaultText || "";
+        } else if (tv === "website" || el.id === "website" || el.id.startsWith("website_")) {
+          textContent = siteWebsite || el.defaultText || "Text";
+        } else {
+          textContent = el.defaultText || "Text";
+        }
         const textbox = new fabric.Textbox(
           textContent,
           {
