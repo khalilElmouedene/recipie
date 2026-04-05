@@ -407,13 +407,14 @@ function TemplateDesignerInner() {
           applySelectionVisuals(tb);
           canvas.add(tb);
         } else if (el.type === "image") {
+          const isFlip = (el as any).flipX === true;
           const rect = new fabric.Rect({
             left: el.x ?? 100,
             top: el.y ?? 100,
             width: el.width || 400,
             height: el.height || 300,
-            fill: el.bgColor || "#e8e8e8",
-            stroke: "#aaaaaa",
+            fill: isFlip ? "#b3d9ff" : (el.bgColor || "#e8e8e8"),
+            stroke: isFlip ? "#4a90d9" : "#aaaaaa",
             strokeWidth: 3,
             strokeUniform: true,
             strokeDashArray: [10, 6],
@@ -421,6 +422,7 @@ function TemplateDesignerInner() {
             originY: "top",
           });
           (rect as any).__id = el.id || uid("image");
+          (rect as any).__flipX = isFlip;
           (rect as any).__ttype = "image";
           applySelectionVisuals(rect);
           canvas.add(rect);
@@ -591,6 +593,33 @@ function TemplateDesignerInner() {
     });
     (rect as any).__id = uid("image");
     (rect as any).__ttype = "image";
+    applySelectionVisuals(rect);
+    canvas.add(rect);
+    canvas.setActiveObject(rect);
+    canvas.renderAll();
+  }
+
+  function addFlipImageZone() {
+    const canvas = fabricRef.current;
+    const fabric = fabricLibRef.current;
+    if (!canvas || !fabric) return;
+    saveUndoState();
+    const rect = new fabric.Rect({
+      left: canvasW / 2,
+      top: canvasH / 3,
+      width: 800,
+      height: 600,
+      fill: "#b3d9ff",
+      stroke: "#4a90d9",
+      strokeWidth: 3,
+      strokeUniform: true,
+      strokeDashArray: [10, 6],
+      originX: "center",
+      originY: "center",
+    });
+    (rect as any).__id = uid("image");
+    (rect as any).__ttype = "image";
+    (rect as any).__flipX = true;
     applySelectionVisuals(rect);
     canvas.add(rect);
     canvas.setActiveObject(rect);
@@ -1022,12 +1051,13 @@ function TemplateDesignerInner() {
         results.push({
           id: o.__id,
           type: "image",
-          label: "Image Zone",
+          label: o.__flipX ? "Flip Image Zone" : "Image Zone",
           x,
           y,
           width: w,
           height: h,
           bgColor: typeof o.fill === "string" ? o.fill : "#e8e8e8",
+          flipX: o.__flipX === true,
         });
       } else if (type === "band") {
         results.push({
@@ -1210,6 +1240,18 @@ function TemplateDesignerInner() {
                 <ImageIcon size={22} className="text-gray-400 group-hover:text-white transition" />
                 <span className="text-[11px] text-gray-400 group-hover:text-white transition">
                   Image Zone
+                </span>
+              </button>
+              <button
+                onClick={addFlipImageZone}
+                className="flex flex-col items-center gap-2 py-4 rounded-xl border border-blue-800 hover:border-blue-400 hover:bg-gray-900 transition-all group"
+              >
+                <div className="relative">
+                  <ImageIcon size={22} className="text-blue-400 group-hover:text-blue-300 transition" />
+                  <FlipHorizontal2 size={12} className="absolute -bottom-1 -right-1 text-blue-400 group-hover:text-blue-300 transition" />
+                </div>
+                <span className="text-[11px] text-blue-400 group-hover:text-blue-300 transition">
+                  Flip Image
                 </span>
               </button>
               <button

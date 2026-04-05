@@ -1338,7 +1338,7 @@ export default function PinDesigner({
   const MAX_UNDO = 50;
 
   // Fabric v6: toJSON() ignores propertiesToInclude — must use toObject() to include custom keys
-  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"];
+  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__flipX"];
 
   const saveUndoState = () => {
     const canvas = fabricCanvasRef.current;
@@ -1595,6 +1595,7 @@ export default function PinDesigner({
               (zoneW + panMarginPx) / imgW,
               (zoneH + panMarginPx) / imgH
             );
+            const shouldFlip = (el as any).flipX === true;
             img.set({
               left: el.x + zoneW / 2,
               top: el.y + zoneH / 2,
@@ -1602,6 +1603,7 @@ export default function PinDesigner({
               originY: "center",
               scaleX: scale,
               scaleY: scale,
+              flipX: shouldFlip,
               selectable: true,
               hasControls: true,
               hasBorders: true,
@@ -2593,6 +2595,59 @@ export default function PinDesigner({
       });
   };
 
+  const addFlipImageZone = () => {
+    const fabric = fabricLibRef.current;
+    const canvas = fabricCanvasRef.current;
+    if (!fabric || !canvas) return;
+    saveUndoState();
+    const id = `image_${Date.now()}`;
+
+    const existingObjs = canvas.getObjects().filter(
+      (o: any) => !o.__isFill && !o.__isLabel
+    );
+    const minTop = existingObjs.length > 0
+      ? Math.min(...existingObjs.map((o: any) => (o.top ?? 0)))
+      : canvas.height ?? 1500;
+    const zoneW = canvas.width ?? 1000;
+    const zoneH = Math.max(200, minTop);
+
+    const rect = new fabric.Rect({
+      left: 0,
+      top: 0,
+      width: zoneW,
+      height: zoneH,
+      fill: "#b3d9ff",
+      rx: 0,
+      ry: 0,
+      selectable: true,
+      strokeWidth: 2,
+      stroke: "#4a90d9",
+    });
+    (rect as any).__pinId = id;
+    (rect as any).__pinLabel = "Flip Image Zone";
+    (rect as any).__pinType = "image";
+    (rect as any).__flipX = true;
+    canvas.add(rect);
+    const label = new fabric.FabricText("⇄ Flip Image Zone", {
+      left: zoneW / 2,
+      top: zoneH / 2,
+      fontSize: 24,
+      fontFamily: "Arial",
+      fill: "#4a90d9",
+      originX: "center",
+      originY: "center",
+      selectable: false,
+      evented: false,
+    });
+    (label as any).__isLabel = true;
+    (label as any).__forId = id;
+    canvas.add(label);
+    canvas.setActiveObject(rect);
+    canvas.renderAll();
+    updateLayers();
+    syncSelectionFromObject(rect);
+  };
+
   const addImageZone = () => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
@@ -3216,6 +3271,13 @@ export default function PinDesigner({
                     <button onClick={addImageZone} className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition">
                       <ImageIcon size={28} className="text-gray-300" />
                       <span className="text-xs text-gray-400">Image Zone</span>
+                    </button>
+                    <button onClick={addFlipImageZone} className="flex flex-col items-center gap-2 p-4 rounded-lg border border-blue-900 hover:border-blue-400 hover:bg-gray-800 transition">
+                      <div className="relative">
+                        <ImageIcon size={28} className="text-blue-400" />
+                        <FlipHorizontal2 size={13} className="absolute -bottom-1 -right-1 text-blue-400" />
+                      </div>
+                      <span className="text-xs text-blue-400">Flip Image</span>
                     </button>
                     <button onClick={addBand} className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-700 hover:border-brand-500 hover:bg-gray-800 transition">
                       <div className="w-7 h-5 bg-blue-500 rounded" />
