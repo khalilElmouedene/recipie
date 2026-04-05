@@ -2699,6 +2699,40 @@ export default function PinDesigner({
     canvas.renderAll();
   };
 
+  const zoomImage = (direction: "in" | "out") => {
+    const canvas = fabricCanvasRef.current;
+    const obj = getSelectedObject();
+    if (!canvas || !obj || obj.__pinType !== "image") return;
+    saveUndoState();
+    const factor = direction === "in" ? 1.1 : 1 / 1.1;
+    const newScaleX = (obj.scaleX ?? 1) * factor;
+    const newScaleY = (obj.scaleY ?? 1) * factor;
+
+    // If image has a clip zone, enforce minimum scale so it always covers the zone
+    if (obj.clipPath && obj.clipPath.absolutePositioned) {
+      const clip = obj.clipPath;
+      const minScaleX = (clip.width  || 0) / (obj.width  || 1);
+      const minScaleY = (clip.height || 0) / (obj.height || 1);
+      const minScale  = Math.max(minScaleX, minScaleY);
+      obj.set({ scaleX: Math.max(minScale, newScaleX), scaleY: Math.max(minScale, newScaleY) });
+      // Re-clamp position so image still covers the frame
+      const imgW = (obj.width || 1) * (obj.scaleX || 1);
+      const imgH = (obj.height || 1) * (obj.scaleY || 1);
+      const clipLeft   = clip.left ?? 0;
+      const clipTop    = clip.top  ?? 0;
+      const clipRight  = clipLeft + (clip.width  || 0);
+      const clipBottom = clipTop  + (clip.height || 0);
+      obj.left = Math.max(clipRight - imgW / 2, Math.min(clipLeft + imgW / 2, obj.left ?? 0));
+      obj.top  = Math.max(clipBottom - imgH / 2, Math.min(clipTop  + imgH / 2, obj.top  ?? 0));
+    } else {
+      obj.set({ scaleX: newScaleX, scaleY: newScaleY });
+    }
+
+    obj.setCoords();
+    canvas.renderAll();
+    syncSelectionFromObject(obj);
+  };
+
   const flipImageHorizontal = () => {
     const canvas = fabricCanvasRef.current;
     const obj = getSelectedObject();
@@ -2816,6 +2850,13 @@ export default function PinDesigner({
           {/* Image-specific */}
           {selectedType === "image" && (
             <>
+              <button onClick={() => zoomImage("in")} title="Zoom in image" className="p-1 rounded hover:bg-gray-700 text-gray-300">
+                <ZoomIn size={14} />
+              </button>
+              <button onClick={() => zoomImage("out")} title="Zoom out image" className="p-1 rounded hover:bg-gray-700 text-gray-300">
+                <ZoomOut size={14} />
+              </button>
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
               <button onClick={flipImageHorizontal} title="Flip horizontal" className="p-1 rounded hover:bg-gray-700 text-gray-300">
                 <FlipHorizontal2 size={14} />
               </button>
