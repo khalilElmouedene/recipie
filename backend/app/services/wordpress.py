@@ -16,11 +16,22 @@ from wordpress_xmlrpc.methods.posts import NewPost, EditPost
 from wordpress_xmlrpc.methods.media import UploadFile
 
 
+def _convert_markdown_links(html: str) -> str:
+    """Convert any markdown-style links [text](url) left in the HTML to proper <a> tags.
+    The AI sometimes generates these inside otherwise-HTML content."""
+    return re.sub(
+        r'\[([^\]]+)\]\((https?://[^)]+)\)',
+        r'<a href="\2">\1</a>',
+        html,
+    )
+
+
 def _parse_and_extract_title(html: str):
     """Parse HTML, strip the H1/H2 title, return (title, soup).
     The soup object can be further manipulated before converting to string."""
     if not html or not isinstance(html, str):
         return "New Recipe Post", BeautifulSoup("", "html.parser")
+    html = _convert_markdown_links(html)
     soup = BeautifulSoup(html, "html.parser")
     title = "New Recipe Post"
     h1 = soup.find("h1")

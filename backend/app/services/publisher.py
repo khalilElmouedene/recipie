@@ -208,10 +208,12 @@ def publish_recipe(
             _log(f"Rank Math SEO meta failed (post published OK): {seo_err}")
 
         # Set Yoast SEO meta via XML-RPC custom_fields (same as Articles_Publishing_Winsome.py)
-        # Works whether the site uses Yoast or not — non-Yoast sites simply ignore the extra fields.
+        # IMPORTANT: must set title explicitly — WordPressPost() defaults title="" which XML-RPC
+        # sends as an empty string, causing WordPress to show the post as "Untitled".
         try:
             if focus_kw or meta_desc or wp_title:
                 yoast_post = WordPressPost()
+                yoast_post.title = wp_title          # preserve the post title
                 yoast_post.custom_fields = [
                     {"key": "_yoast_wpseo_title",    "value": wp_title},
                     {"key": "_yoast_wpseo_metadesc", "value": meta_desc},
