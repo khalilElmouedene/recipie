@@ -5,6 +5,7 @@ All keys are read from:
   - Articles_Publishing_Winsome (1).py → WordPress URL/domain, spreadsheet/sheet, WP accounts
 
 Place both files in the project root (same folder as backend/). Fallbacks used only if a file is missing.
+Optional: set SEED_OPENAI_KEY in the environment for a dev OpenAI key (never commit real keys).
 
 Run: docker compose exec backend python -m app.scripts.seed_dev_data
   or: cd backend && python -m app.scripts.seed_dev_data
@@ -22,9 +23,9 @@ if os.path.isfile(env_path):
     from dotenv import load_dotenv
     load_dotenv(env_path)
 
-# Fallback when key files are not found; openai used directly so seed always has a key
+# Fallback when key files are not found — never commit real keys; use env or py files in project root.
 _LOCAL_KEYS = {
-    "openai": "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",
+    "openai": (os.getenv("SEED_OPENAI_KEY") or "").strip(),
     "discord_app_id": "",
     "discord_guild": "",
     "discord_channel": "",

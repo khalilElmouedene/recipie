@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from ..database import get_db
 from ..db_models import User, UserRole, PasswordSetupToken
 from ..dependencies import get_current_user
 from ..models import RegisterRequest, LoginRequest, TokenResponse, UserOut, ProfileUpdate, SetupPasswordRequest
+from ..rate_limit import limiter
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -54,7 +55,15 @@ class GoogleCallbackRequest(BaseModel):
 
 # ── Standard auth ────────────────────────────────────────────────────────────
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+@limiter.limit("5/minute")
+async def register(
+    request: Request,
+    body: RegisterRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    if not settings.registration_enabled:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Registration is disabled")
+
     existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -77,7 +86,12 @@ async def register(body: RegisterRequest, db: Annotated[AsyncSession, Depends(ge
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+@limiter.limit("20/minute")
+async def login(
+    request: Request,
+    body: LoginRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
     if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
@@ -117,7 +131,9 @@ async def update_me(
 
 
 @router.post("/setup-password", response_model=TokenResponse)
+@limiter.limit("10/minute")
 async def setup_password(
+    request: Request,
     body: SetupPasswordRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
@@ -172,7 +188,9 @@ async def google_auth_url():
 
 
 @router.post("/google/callback", response_model=TokenResponse)
+@limiter.limit("30/minute")
 async def google_callback(
+    request: Request,
     body: GoogleCallbackRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
@@ -229,8 +247,13 @@ async def google_callback(
             # Link Google to existing email account
             user.google_id = google_id
         else:
-            # Brand new user — first user becomes owner
             user_count = await db.scalar(select(func.count()).select_from(User))
+            if user_count > 0 and not settings.registration_enabled:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    detail="Registration is disabled — ask an administrator for an account",
+                )
+            # Brand new user — first user becomes owner
             role = UserRole.owner if user_count == 0 else UserRole.member
             user = User(
                 email=email,

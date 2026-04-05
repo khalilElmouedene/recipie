@@ -26,44 +26,9 @@ from ..models import (
     PinTemplateOut, GeneratePinRequest, GeneratePinResponse,
     BulkGeneratePinsRequest, BulkGeneratePinsResponse, BulkPinItem,
 )
+from ..services.ssrf import is_safe_url_for_server_fetch as _is_safe_url
 
 router = APIRouter(tags=["recipes"])
-
-# Private/reserved IP ranges blocked by the image proxy to prevent SSRF
-_PRIVATE_RANGES = [
-    ("127.0.0.0", "127.255.255.255"),    # Loopback
-    ("169.254.0.0", "169.254.255.255"),  # Link-local / AWS metadata
-    ("10.0.0.0", "10.255.255.255"),      # RFC 1918
-    ("172.16.0.0", "172.31.255.255"),    # RFC 1918
-    ("192.168.0.0", "192.168.255.255"),  # RFC 1918
-    ("0.0.0.0", "0.255.255.255"),        # Reserved
-    ("100.64.0.0", "100.127.255.255"),   # Shared address space
-]
-
-
-def _ip_to_int(ip: str) -> int:
-    import struct, socket
-    return struct.unpack("!I", socket.inet_aton(ip))[0]
-
-
-def _is_safe_url(url: str) -> bool:
-    import socket
-    from urllib.parse import urlparse
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        return False
-    host = parsed.hostname or ""
-    if not host:
-        return False
-    try:
-        ip = socket.gethostbyname(host)
-        ip_int = _ip_to_int(ip)
-        for lo, hi in _PRIVATE_RANGES:
-            if _ip_to_int(lo) <= ip_int <= _ip_to_int(hi):
-                return False
-    except Exception:
-        return False  # Fail safe: unresolvable host is unsafe
-    return True
 
 
 @router.get("/api/image-proxy")
@@ -74,14 +39,25 @@ def image_proxy(
     """Proxy external images (e.g. Discord CDN) to avoid browser CORS restrictions."""
     if not _is_safe_url(url):
         raise HTTPException(status_code=400, detail="URL not allowed")
+    _max_proxy = 25 * 1024 * 1024
     try:
         r = _requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20, stream=True)
         r.raise_for_status()
         media_type = r.headers.get("content-type", "image/jpeg").split(";")[0].strip()
         if not media_type.startswith("image/") or media_type == "image/svg+xml":
             raise HTTPException(status_code=400, detail="URL is not an allowed image type")
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in r.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > _max_proxy:
+                raise HTTPException(status_code=413, detail="Image too large")
+            chunks.append(chunk)
+        body = b"".join(chunks)
         return Response(
-            content=r.content,
+            content=body,
             media_type=media_type,
             headers={"Cache-Control": "public, max-age=3600"},
         )

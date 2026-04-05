@@ -1,9 +1,9 @@
 from __future__ import annotations
+import re
 import uuid
-from functools import wraps
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from sqlalchemy import select
@@ -14,6 +14,13 @@ from .database import get_db
 from .db_models import User, UserRole, ProjectMember, ProjectMemberRole
 
 security = HTTPBearer(auto_error=False)
+
+# JWT in query string only for export URLs opened via window.open (cannot set Authorization header).
+_QUERY_TOKEN_PATH = re.compile(
+    r"^/api/sites/[0-9a-fA-F-]{36}/recipes/export/?$"
+    r"|^/api/sites/[0-9a-fA-F-]{36}/export/excel/?$"
+    r"|^/api/projects/[0-9a-fA-F-]{36}/export/excel/?$"
+)
 
 
 async def _decode_token(token: str, db: AsyncSession) -> User:
@@ -33,16 +40,21 @@ async def _decode_token(token: str, db: AsyncSession) -> User:
 
 
 async def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     db: Annotated[AsyncSession, Depends(get_db)],
     token: str | None = Query(default=None),
 ) -> User:
-    # Accept token from header OR ?token= query param (for file downloads via window.open)
     raw = None
     if credentials:
         raw = credentials.credentials
-    elif token:
+    elif token and _QUERY_TOKEN_PATH.match(request.url.path):
         raw = token
+    elif token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Use Authorization header; query token is only allowed for export endpoints",
+        )
     if not raw:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     return await _decode_token(raw, db)

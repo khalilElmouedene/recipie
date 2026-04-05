@@ -13,7 +13,7 @@ from ..crypto import encrypt, decrypt
 from ..database import get_db
 from ..db_models import User, Site, Recipe, Project, ProjectMemberRole
 from ..dependencies import get_current_user, check_project_access
-from .recipes import _is_safe_url
+from ..services.ssrf import is_safe_url_for_server_fetch as _is_safe_url
 from ..models import SiteCreate, SiteUpdate, SiteOut
 from ..services import wordpress as wp_service
 from ..site_credentials import get_random_wp_credentials
@@ -26,6 +26,40 @@ class MediaUploadResponse(BaseModel):
     media_url: str
     post_id: str | None = None
     post_url: str | None = None
+
+
+_MAX_IMAGE_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+
+
+def _detect_image_magic(data: bytes) -> bool:
+    if len(data) < 6:
+        return False
+    if data[:3] == b"\xff\xd8\xff":
+        return True
+    if len(data) >= 8 and data[:8] == b"\x89PNG\r\n\x1a\n":
+        return True
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return True
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return True
+    return False
+
+
+def _sanitize_upload_filename(name: str) -> str:
+    base = (name or "upload.png").replace("\\", "/").split("/")[-1]
+    if not base or base in (".", ".."):
+        base = "upload.png"
+    return base[:200]
+
+
+def _extension_from_magic(data: bytes) -> str:
+    if len(data) >= 8 and data[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    if len(data) >= 6 and data[:6] in (b"GIF87a", b"GIF89a"):
+        return ".gif"
+    return ".jpg"
 
 
 def _parse_wp_users(site: Site) -> list[dict]:
@@ -189,8 +223,18 @@ async def upload_media_to_wordpress(
 
     wp_username, wp_password = get_random_wp_credentials(site)
     file_content = await file.read()
-    filename = file.filename or "pin-design.png"
-    
+    if len(file_content) > _MAX_IMAGE_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Image exceeds maximum size (25 MB)",
+        )
+    if not _detect_image_magic(file_content):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be a JPEG, PNG, WebP, or GIF image",
+        )
+    filename = _sanitize_upload_filename(file.filename or "pin-design.png")
+
     try:
         media_result = wp_service.upload_media(
             wp_url=site.wp_url,
@@ -247,18 +291,38 @@ async def upload_from_url_to_wordpress(
     await check_project_access(site.project_id, user, db)
 
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(image_url, timeout=30)
-            resp.raise_for_status()
-            file_content = resp.content
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            async with client.stream("GET", image_url, timeout=30) as resp:
+                resp.raise_for_status()
+                ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+                if ctype and not ctype.startswith("image/"):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="URL does not point to an image",
+                    )
+                total = 0
+                chunks: list[bytes] = []
+                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                    total += len(chunk)
+                    if total > _MAX_IMAGE_UPLOAD_BYTES:
+                        raise HTTPException(
+                            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail="Image exceeds maximum size (25 MB)",
+                        )
+                    chunks.append(chunk)
+                file_content = b"".join(chunks)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to fetch image: {e}")
 
-    ext = ".jpg"
-    if "png" in (image_url.lower().split("?")[0] or ""):
-        ext = ".png"
-    elif "webp" in (image_url.lower().split("?")[0] or ""):
-        ext = ".webp"
+    if not _detect_image_magic(file_content):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Downloaded file is not a supported image type",
+        )
+
+    ext = _extension_from_magic(file_content)
     filename = f"recipe-{uuid.uuid4().hex[:8]}{ext}"
 
     wp_username, wp_password = get_random_wp_credentials(site)

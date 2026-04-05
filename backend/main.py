@@ -2,13 +2,18 @@ from contextlib import asynccontextmanager
 import asyncio
 import os
 from pathlib import Path
+
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from sqlalchemy import select
 from app.config import settings
+from app.rate_limit import limiter
+from app.security_startup import validate_production_security
 from app.database import init_db, SessionLocal
 from app.services.prompts import DEFAULT_PROMPTS
 
@@ -45,6 +50,7 @@ async def _migrate_prompts() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_production_security()
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     await init_db()
     await _migrate_prompts()
@@ -77,6 +83,9 @@ app = FastAPI(
     redoc_url="/redoc" if _debug else None,
     openapi_url="/openapi.json" if _debug else None,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):

@@ -24,6 +24,8 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       APP_ENV: ${APP_ENV:-production}
+      # Set to true to allow /api/auth/register and new Google accounts when APP_ENV=production
+      REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-}
       SERVER_BASE_URL: ${SERVER_BASE_URL:-http://localhost:8000}
       PINTEREST_CLIENT_ID: ${PINTEREST_CLIENT_ID:-}
       PINTEREST_CLIENT_SECRET: ${PINTEREST_CLIENT_SECRET:-}
