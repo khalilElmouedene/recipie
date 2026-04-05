@@ -12,7 +12,7 @@ from .wordpress import (
     upload_image, add_recipe, validate_recipe_json, set_rank_math_meta,
 )
 from wordpress_xmlrpc import Client as WPClient, WordPressPost
-from wordpress_xmlrpc.methods.posts import NewPost, GetPost
+from wordpress_xmlrpc.methods.posts import NewPost, GetPost, EditPost
 
 
 def _strip_title_decorations(title: str) -> str:
@@ -206,6 +206,21 @@ def publish_recipe(
                 set_rank_math_meta(post_id, focus_kw, meta_desc, site_config, seo_title=wp_title, log=_log)
         except Exception as seo_err:
             _log(f"Rank Math SEO meta failed (post published OK): {seo_err}")
+
+        # Set Yoast SEO meta via XML-RPC custom_fields (same as Articles_Publishing_Winsome.py)
+        # Works whether the site uses Yoast or not — non-Yoast sites simply ignore the extra fields.
+        try:
+            if focus_kw or meta_desc or wp_title:
+                yoast_post = WordPressPost()
+                yoast_post.custom_fields = [
+                    {"key": "_yoast_wpseo_title",    "value": wp_title},
+                    {"key": "_yoast_wpseo_metadesc", "value": meta_desc},
+                    {"key": "_yoast_wpseo_focuskw",  "value": focus_kw},
+                ]
+                wp.call(EditPost(post_id, yoast_post))
+                _log("Yoast SEO meta saved")
+        except Exception as yoast_err:
+            _log(f"Yoast SEO meta failed (post published OK): {yoast_err}")
 
     except Exception as e:
         _log(f"Publishing failed: {e}")
