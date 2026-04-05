@@ -92,6 +92,7 @@ function TemplateDesignerInner() {
   const [fontWeight, setFontWeight] = useState("normal");
   const [fontStyle, setFontStyle] = useState("normal");
   const [fontFamily, setFontFamily] = useState("Arial");
+  const [textVariable, setTextVariable] = useState<"" | "title" | "website">("");
   const [customFonts, setCustomFonts] = useState<string[]>([]);
   const [fontInput, setFontInput] = useState("");
   const [fontLoading, setFontLoading] = useState(false);
@@ -120,7 +121,7 @@ function TemplateDesignerInner() {
   const undoHistoryRef = useRef<string[]>([]);
   const isRestoringRef = useRef(false);
   const transformSaveDoneRef = useRef(false);
-  const UNDO_CUSTOM_KEYS = ["__id", "__ttype", "__strokeStyle"];
+  const UNDO_CUSTOM_KEYS = ["__id", "__ttype", "__strokeStyle", "__textVariable"];
   const MAX_UNDO = 50;
 
   useEffect(() => {
@@ -317,6 +318,7 @@ function TemplateDesignerInner() {
       setFontWeight(obj.fontWeight ?? "normal");
       setFontStyle(obj.fontStyle ?? "normal");
       setFontFamily(obj.fontFamily ?? "Arial");
+      setTextVariable((obj.__textVariable as "" | "title" | "website") ?? "");
     } else if (t === "band" || t === "image") {
       setElemColor(typeof obj.fill === "string" ? obj.fill : "#4a90d9");
     } else if (t === "frame") {
@@ -401,6 +403,7 @@ function TemplateDesignerInner() {
           });
           (tb as any).__id = el.id || uid("text");
           (tb as any).__ttype = "text";
+          (tb as any).__textVariable = (el as any).textVariable ?? "";
           applySelectionVisuals(tb);
           canvas.add(tb);
         } else if (el.type === "image") {
@@ -561,6 +564,7 @@ function TemplateDesignerInner() {
     });
     (tb as any).__id = uid("text");
     (tb as any).__ttype = "text";
+    (tb as any).__textVariable = "";
     applySelectionVisuals(tb);
     canvas.add(tb);
     canvas.setActiveObject(tb);
@@ -691,6 +695,7 @@ function TemplateDesignerInner() {
     });
     (tb as any).__id = uid("website");
     (tb as any).__ttype = "text";
+    (tb as any).__textVariable = "website";
     applySelectionVisuals(tb);
     canvas.add(tb);
     canvas.setActiveObject(tb);
@@ -1004,6 +1009,7 @@ function TemplateDesignerInner() {
           width: w || o.width || 800,
           height: h,
           defaultText: o.text ?? "",
+          textVariable: (o.__textVariable as string) ?? "",
           fontSize: o.fontSize ?? 48,
           fontWeight: o.fontWeight ?? "normal",
           fontStyle: o.fontStyle ?? "normal",
@@ -1417,6 +1423,36 @@ function TemplateDesignerInner() {
                   rows={3}
                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white resize-none focus:outline-none focus:border-brand-500"
                 />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1">
+                  Bind to (Pin Designer)
+                </label>
+                <select
+                  value={textVariable}
+                  onChange={(e) => {
+                    const v = e.target.value as "" | "title" | "website";
+                    setTextVariable(v);
+                    const obj = getActive();
+                    if (obj && obj.__ttype === "text") {
+                      obj.__textVariable = v;
+                      saveUndoState();
+                    }
+                  }}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
+                >
+                  <option value="">— None (static text) —</option>
+                  <option value="title">Recipe Title</option>
+                  <option value="website">Website URL</option>
+                </select>
+                {textVariable !== "" && (
+                  <p className="text-[10px] text-brand-400 mt-1">
+                    {textVariable === "title"
+                      ? "Will show the recipe title when used in Pin Designer."
+                      : "Will show the site domain when used in Pin Designer."}
+                  </p>
+                )}
               </div>
 
               <div>

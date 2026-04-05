@@ -373,9 +373,10 @@ export async function buildTemplateOnCanvas(
       const firstLine = titleLines[0] || title || "";
       const secondLine = titleLines[1] || "";
       const thirdLine = titleLines[2] || "";
-      const isTitle = el.id === "title" || el.id === "title1" || el.id === "title2" || el.id === "title3";
-      const isWebsite = el.id === "website";
-      const text = el.id === "title"
+      const tv = (el as any).textVariable ?? "";
+      const isTitle = tv === "title" || el.id === "title" || el.id === "title1" || el.id === "title2" || el.id === "title3";
+      const isWebsite = tv === "website" || el.id === "website";
+      const text = (tv === "title" || el.id === "title")
         ? (title || el.defaultText || "")
         : el.id === "title1"
           ? (firstLine || el.defaultText || "")
@@ -1700,7 +1701,8 @@ export default function PinDesigner({
         const firstLine = titleLines[0] || ttl || "";
         const secondLine = titleLines[1] || "";
         const thirdLine = titleLines[2] || "";
-        const textContent = el.id === "title"
+        const tv = (el as any).textVariable ?? "";
+        const textContent = (tv === "title" || el.id === "title")
           ? (ttl || el.defaultText || "Text")
           : el.id === "title1"
             ? (firstLine || el.defaultText || "Text")
@@ -1708,7 +1710,7 @@ export default function PinDesigner({
               ? secondLine
               : el.id === "title3"
                 ? thirdLine
-                : el.id === "website"
+                : (tv === "website" || el.id === "website")
                   ? (siteWebsite || el.defaultText || "Text")
                   : (el.defaultText || "Text");
         const textbox = new fabric.Textbox(
