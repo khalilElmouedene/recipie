@@ -8,10 +8,11 @@
  */
 
 import DOMPurify from "isomorphic-dompurify";
+import type { Config } from "dompurify";
 
 // Allow standard formatting tags used in AI-generated article HTML.
 // Explicitly forbid anything that can execute code or fetch resources.
-const PURIFY_CONFIG: DOMPurify.Config = {
+const PURIFY_CONFIG: Config = {
   USE_PROFILES: { html: true },
   FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form", "base", "link", "meta"],
   FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur", "onchange",
