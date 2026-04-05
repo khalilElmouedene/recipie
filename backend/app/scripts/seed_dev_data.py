@@ -24,7 +24,7 @@ if os.path.isfile(env_path):
 
 # Fallback when key files are not found; openai used directly so seed always has a key
 _LOCAL_KEYS = {
-    "openai": "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",
+    "openai": "",  # Never hard-code API keys here — set via .env or extract from source files
     "discord_app_id": "",
     "discord_guild": "",
     "discord_channel": "",

@@ -6,8 +6,10 @@ from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +21,7 @@ from ..dependencies import get_current_user
 from ..models import RegisterRequest, LoginRequest, TokenResponse, UserOut, ProfileUpdate, SetupPasswordRequest
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+limiter = Limiter(key_func=get_remote_address)
 
 # ── Google OAuth state store ─────────────────────────────────────────────────
 _GOOGLE_STATES: dict[str, float] = {}
@@ -54,7 +57,8 @@ class GoogleCallbackRequest(BaseModel):
 
 # ── Standard auth ────────────────────────────────────────────────────────────
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+@limiter.limit("5/hour")
+async def register(request: Request, body: RegisterRequest, db: Annotated[AsyncSession, Depends(get_db)]):
     existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -77,7 +81,8 @@ async def register(body: RegisterRequest, db: Annotated[AsyncSession, Depends(ge
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+@limiter.limit("10/minute")
+async def login(request: Request, body: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
     if not user or not user.password_hash or not verify_password(body.password, user.password_hash):

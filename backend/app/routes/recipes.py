@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..db_models import User, Site, Recipe, ProjectCredential, RecipeStatus
-from ..dependencies import get_current_user, check_project_access
+from ..dependencies import get_current_user, get_current_user_download, check_project_access
 from ..crypto import decrypt
 from ..site_credentials import get_random_wp_credentials
 from ..models import (
@@ -29,47 +29,51 @@ from ..models import (
 
 router = APIRouter(tags=["recipes"])
 
-# Private/reserved IP ranges blocked by the image proxy to prevent SSRF
-_PRIVATE_RANGES = [
-    ("127.0.0.0", "127.255.255.255"),    # Loopback
-    ("169.254.0.0", "169.254.255.255"),  # Link-local / AWS metadata
-    ("10.0.0.0", "10.255.255.255"),      # RFC 1918
-    ("172.16.0.0", "172.31.255.255"),    # RFC 1918
-    ("192.168.0.0", "192.168.255.255"),  # RFC 1918
-    ("0.0.0.0", "0.255.255.255"),        # Reserved
-    ("100.64.0.0", "100.127.255.255"),   # Shared address space
-]
-
-
-def _ip_to_int(ip: str) -> int:
-    import struct, socket
-    return struct.unpack("!I", socket.inet_aton(ip))[0]
-
-
 def _is_safe_url(url: str) -> bool:
+    """Return True only for public http/https URLs.
+
+    Blocks private, loopback, link-local, and reserved addresses for both
+    IPv4 and IPv6 to prevent SSRF.  Note: DNS rebinding is a known residual
+    risk with any pre-flight check; combine with egress firewall rules in prod.
+    """
+    import ipaddress
     import socket
     from urllib.parse import urlparse
+
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return False
     host = parsed.hostname or ""
     if not host:
         return False
+    # Reject bare IP literals that are non-public before DNS resolution
     try:
-        ip = socket.gethostbyname(host)
-        ip_int = _ip_to_int(ip)
-        for lo, hi in _PRIVATE_RANGES:
-            if _ip_to_int(lo) <= ip_int <= _ip_to_int(hi):
+        addr = ipaddress.ip_address(host)
+        if not addr.is_global:
+            return False
+        return True
+    except ValueError:
+        pass  # not an IP literal — proceed to DNS resolution
+
+    try:
+        # getaddrinfo returns all A/AAAA records; block if any resolve to non-public
+        infos = socket.getaddrinfo(host, None)
+        if not infos:
+            return False
+        for ai in infos:
+            ip_str = ai[4][0]
+            addr = ipaddress.ip_address(ip_str)
+            if not addr.is_global:
                 return False
     except Exception:
-        return False  # Fail safe: unresolvable host is unsafe
+        return False  # Fail safe: unresolvable host is blocked
     return True
 
 
 @router.get("/api/image-proxy")
 def image_proxy(
     url: str = Query(...),
-    _user: Annotated[User, Depends(get_current_user)] = None,
+    _user: Annotated[User, Depends(get_current_user_download)] = None,
 ):
     """Proxy external images (e.g. Discord CDN) to avoid browser CORS restrictions."""
     if not _is_safe_url(url):
@@ -611,7 +615,7 @@ async def export_site_excel(
 async def export_recipes_csv(
     site_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[User, Depends(get_current_user_download)],
 ):
     result = await db.execute(select(Site).where(Site.id == site_id))
     site = result.scalar_one_or_none()

@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "clsx": "^2.1.1",
+    "dompurify": "^3.3.3",
     "fabric": "^6.0.0",
+    "isomorphic-dompurify": "^2.19.0",
     "lucide-react": "^0.468.0",
     "next": "^15.1.0",
     "react": "^19.0.0",
@@ -21,6 +23,7 @@
   },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.9",
+    "@types/dompurify": "^3.3.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

@@ -35,9 +35,23 @@ async def _decode_token(token: str, db: AsyncSession) -> User:
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     db: Annotated[AsyncSession, Depends(get_db)],
+) -> User:
+    """Standard auth dependency — accepts Bearer token from Authorization header only."""
+    if not credentials:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return await _decode_token(credentials.credentials, db)
+
+
+async def get_current_user_download(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+    db: Annotated[AsyncSession, Depends(get_db)],
     token: str | None = Query(default=None),
 ) -> User:
-    # Accept token from header OR ?token= query param (for file downloads via window.open)
+    """Auth dependency for file-download / streaming endpoints opened via window.open().
+    Accepts a token from the Authorization header OR from the ?token= query parameter.
+    Do NOT use this for regular API routes — tokens in URLs leak via browser history and
+    server/proxy logs.
+    """
     raw = None
     if credentials:
         raw = credentials.credentials

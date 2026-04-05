@@ -330,8 +330,10 @@ export const api = {
 
   getJobLogs: (jobId: string) => request<JobLogOut[]>(`/api/jobs/${jobId}/logs`),
 
-  getJobGeneratedRecipes: (jobId: string) =>
-    request<GeneratedJobRecipeOut[]>(`/api/jobs/${jobId}/generated-recipes`),
+  getJobGeneratedRecipes: (jobId: string, siteId?: string) =>
+    request<GeneratedJobRecipeOut[]>(
+      `/api/jobs/${jobId}/generated-recipes${siteId ? `?site_id=${siteId}` : ""}`
+    ),
 
   stopJob: (jobId: string) =>
     request<JobOut>(`/api/jobs/${jobId}/stop`, { method: "POST" }),

@@ -1,8 +1,14 @@
 from __future__ import annotations
+import logging
+import secrets
 from pathlib import Path
 from pydantic_settings import BaseSettings
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+_INSECURE_JWT_DEFAULTS = {"change-me-to-a-random-secret", "secret", ""}
+
+_log = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -50,3 +56,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Warn loudly if JWT secret is still the insecure placeholder value.
+# In production this should raise an error; we use a warning so dev environments
+# without a .env file still start up.
+if settings.jwt_secret_key in _INSECURE_JWT_DEFAULTS or len(settings.jwt_secret_key) < 32:
+    _log.warning(
+        "INSECURE JWT SECRET: jwt_secret_key is weak or still set to the default placeholder. "
+        "Set JWT_SECRET_KEY to a random 64-character string in your .env file. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )

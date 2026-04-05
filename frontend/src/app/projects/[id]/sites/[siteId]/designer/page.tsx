@@ -56,11 +56,10 @@ export default function PinDesignerPage() {
         .catch(() => {})
         .finally(() => setLoading(false));
     } else if (jobParam) {
-      api.getJobGeneratedRecipes(jobParam)
+      api.getJobGeneratedRecipes(jobParam, params.siteId)
         .then((list) => {
-          const forSite = list.filter((r) => r.site_id === params.siteId);
           setFrames(
-            forSite.map((r) => ({
+            list.map((r) => ({
               recipeId: r.id,
               title: r.recipe_text?.split("\n")[0]?.trim() || "Recipe",
               images: imagesFromJobRecipe(r),

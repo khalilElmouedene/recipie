@@ -104,6 +104,7 @@ async def get_job_generated_recipes(
     job_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    site_id: uuid.UUID | None = None,
 ):
     result = await db.execute(select(Job).where(Job.id == job_id))
     job = result.scalar_one_or_none()
@@ -111,11 +112,15 @@ async def get_job_generated_recipes(
         raise HTTPException(status_code=404, detail="Job not found")
     await check_project_access(job.project_id, user, db)
 
-    rows = await db.execute(
+    query = (
         select(Recipe, Site.domain)
         .join(Site, Recipe.site_id == Site.id)
         .where(Recipe.created_by_job_id == job_id)
-        .order_by(Site.domain.asc(), Recipe.created_at.asc())
+    )
+    if site_id is not None:
+        query = query.where(Recipe.site_id == site_id)
+    rows = await db.execute(
+        query.order_by(Site.domain.asc(), Recipe.created_at.asc())
     )
     out: list[GeneratedJobRecipeOut] = []
     for recipe, domain in rows.all():

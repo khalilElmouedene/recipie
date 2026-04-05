@@ -187,8 +187,11 @@ async def upload_media_to_wordpress(
 
     await check_project_access(site.project_id, user, db)
 
+    _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
     wp_username, wp_password = get_random_wp_credentials(site)
     file_content = await file.read()
+    if len(file_content) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds the 10 MB size limit")
     filename = file.filename or "pin-design.png"
     
     try:

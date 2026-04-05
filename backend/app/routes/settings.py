@@ -178,7 +178,10 @@ async def import_boards_excel(
     file: UploadFile = File(...),
 ):
     """Parse an Excel file (column A = board name, row 1 = header) and return newline-separated boards."""
+    _MAX_EXCEL_BYTES = 5 * 1024 * 1024  # 5 MB
     content = await file.read()
+    if len(content) > _MAX_EXCEL_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds the 5 MB size limit")
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content))
     except Exception:
