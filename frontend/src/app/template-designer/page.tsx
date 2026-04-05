@@ -29,6 +29,8 @@ import {
   FlipHorizontal2,
   FlipVertical2,
   Square,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -831,6 +833,17 @@ function TemplateDesignerInner() {
     canvas.requestRenderAll();
   }
 
+  function zoomAsset(direction: "in" | "out") {
+    const canvas = fabricRef.current;
+    const obj = canvas?.getActiveObject() as any;
+    if (!canvas || !obj || obj.__ttype !== "asset") return;
+    saveUndoState();
+    const factor = direction === "in" ? 1.1 : 1 / 1.1;
+    obj.set({ scaleX: (obj.scaleX ?? 1) * factor, scaleY: (obj.scaleY ?? 1) * factor });
+    obj.setCoords?.();
+    canvas.requestRenderAll();
+  }
+
   // ── Layers ────────────────────────────────────────────────────────────────
   function getLayerLabel(type: string): string {
     switch (type) {
@@ -1346,6 +1359,9 @@ function TemplateDesignerInner() {
 
             {selType === "asset" && (
               <>
+                <div className="w-px h-4 bg-gray-700 mx-0.5" />
+                <button onClick={() => zoomAsset("in")}  title="Zoom in"  className="p-1 rounded hover:bg-gray-700 text-gray-300"><ZoomIn  size={14} /></button>
+                <button onClick={() => zoomAsset("out")} title="Zoom out" className="p-1 rounded hover:bg-gray-700 text-gray-300"><ZoomOut size={14} /></button>
                 <div className="w-px h-4 bg-gray-700 mx-0.5" />
                 <button onClick={flipHorizontal} title="Flip horizontal" className="p-1 rounded hover:bg-gray-700 text-gray-300"><FlipHorizontal2 size={14} /></button>
                 <button onClick={flipVertical}   title="Flip vertical"   className="p-1 rounded hover:bg-gray-700 text-gray-300"><FlipVertical2   size={14} /></button>
