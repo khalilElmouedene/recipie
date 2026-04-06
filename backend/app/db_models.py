@@ -284,6 +284,10 @@ class PinDesignerTemplate(Base):
     # Used by UI for quick preview. Optional.
     example_image: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # JSON array of project UUIDs this template is assigned to.
+    # null = available in all projects (global). [] = hidden from all projects.
+    project_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

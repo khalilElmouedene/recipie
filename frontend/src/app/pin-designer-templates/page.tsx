@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LayoutTemplate, Plus, Trash2, Pencil, Copy } from "lucide-react";
-import { api, PinDesignerTemplateOut } from "@/lib/api";
+import { LayoutTemplate, Plus, Trash2, Pencil, Copy, FolderOpen, X, Check } from "lucide-react";
+import { api, PinDesignerTemplateOut, ProjectOut } from "@/lib/api";
 
 const CANVAS_SIZE_PRESETS = [
   { label: "Pinterest Pin",    w: 1000, h: 1500 },
@@ -92,14 +92,58 @@ export default function PinDesignerTemplatesPage() {
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [showSizePicker, setShowSizePicker] = useState(false);
 
+  // Assign to projects state
+  const [projects, setProjects] = useState<ProjectOut[]>([]);
+  const [assigningTemplate, setAssigningTemplate] = useState<PinDesignerTemplateOut | null>(null);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+  const [isGlobal, setIsGlobal] = useState(true);
+  const [assignSaving, setAssignSaving] = useState(false);
+
   useEffect(() => {
     setTemplatesLoading(true);
-    api
-      .getPinDesignerTemplates()
-      .then(setTemplates)
+    Promise.all([
+      api.getPinDesignerTemplates(),
+      api.getProjects(),
+    ])
+      .then(([tmpls, projs]) => {
+        setTemplates(tmpls);
+        setProjects(projs);
+      })
       .catch(() => {})
       .finally(() => setTemplatesLoading(false));
   }, []);
+
+  const openAssignModal = (tmpl: PinDesignerTemplateOut) => {
+    setAssigningTemplate(tmpl);
+    if (tmpl.project_ids === null || tmpl.project_ids === undefined) {
+      setIsGlobal(true);
+      setSelectedProjectIds([]);
+    } else {
+      setIsGlobal(false);
+      setSelectedProjectIds(tmpl.project_ids);
+    }
+  };
+
+  const toggleProject = (projectId: string) => {
+    setSelectedProjectIds((prev) =>
+      prev.includes(projectId) ? prev.filter((id) => id !== projectId) : [...prev, projectId]
+    );
+  };
+
+  const handleSaveAssign = async () => {
+    if (!assigningTemplate) return;
+    setAssignSaving(true);
+    try {
+      const projectIds = isGlobal ? null : selectedProjectIds;
+      const updated = await api.assignTemplateToProjects(assigningTemplate.id, projectIds);
+      setTemplates((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      setAssigningTemplate(null);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to save assignment.");
+    } finally {
+      setAssignSaving(false);
+    }
+  };
 
   const handleDeleteTemplate = async (id: string) => {
     if (!confirm("Delete this template? This cannot be undone.")) return;
@@ -156,6 +200,92 @@ export default function PinDesignerTemplatesPage() {
           onConfirm={(w, h) => { setShowSizePicker(false); router.push(`/template-designer?w=${w}&h=${h}`); }}
           onClose={() => setShowSizePicker(false)}
         />
+      )}
+
+      {assigningTemplate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-white font-semibold text-base">Assign to Projects</h3>
+              <button onClick={() => setAssigningTemplate(null)} className="text-gray-500 hover:text-white transition">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mb-4">
+              Choose which projects can use <span className="text-white font-medium">{assigningTemplate.name}</span>.
+            </p>
+
+            <button
+              onClick={() => { setIsGlobal(true); setSelectedProjectIds([]); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border mb-2 text-sm transition ${
+                isGlobal
+                  ? "border-brand-500 bg-brand-500/10 text-white"
+                  : "border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200"
+              }`}
+            >
+              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${isGlobal ? "border-brand-500 bg-brand-500" : "border-gray-600"}`}>
+                {isGlobal && <Check size={10} className="text-white" />}
+              </div>
+              All projects (global)
+            </button>
+
+            <button
+              onClick={() => setIsGlobal(false)}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border mb-3 text-sm transition ${
+                !isGlobal
+                  ? "border-brand-500 bg-brand-500/10 text-white"
+                  : "border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200"
+              }`}
+            >
+              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${!isGlobal ? "border-brand-500 bg-brand-500" : "border-gray-600"}`}>
+                {!isGlobal && <Check size={10} className="text-white" />}
+              </div>
+              Specific projects only
+            </button>
+
+            {!isGlobal && (
+              <div className="max-h-48 overflow-y-auto space-y-1 mb-4 pr-1">
+                {projects.length === 0 && (
+                  <p className="text-xs text-gray-500 text-center py-4">No projects found.</p>
+                )}
+                {projects.map((proj) => {
+                  const checked = selectedProjectIds.includes(proj.id);
+                  return (
+                    <button
+                      key={proj.id}
+                      onClick={() => toggleProject(proj.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-sm transition ${
+                        checked
+                          ? "border-brand-500/50 bg-brand-500/10 text-white"
+                          : "border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-200"
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${checked ? "border-brand-500 bg-brand-500" : "border-gray-600"}`}>
+                        {checked && <Check size={10} className="text-white" />}
+                      </div>
+                      <span className="truncate text-left">{proj.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {isGlobal && <div className="mb-4" />}
+
+            <div className="flex gap-2">
+              <button onClick={() => setAssigningTemplate(null)} className="flex-1 px-4 py-2 rounded-lg border border-gray-700 text-gray-400 hover:text-white text-sm transition">
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveAssign}
+                disabled={assignSaving || (!isGlobal && selectedProjectIds.length === 0)}
+                className="flex-1 btn-primary text-sm disabled:opacity-50"
+              >
+                {assignSaving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="mb-6">
@@ -222,6 +352,18 @@ export default function PinDesignerTemplatesPage() {
                   >
                     <Pencil size={11} />
                     Edit
+                  </button>
+                  <button
+                    onClick={() => openAssignModal(tmpl)}
+                    title={tmpl.project_ids === null ? "Global (all projects)" : `${tmpl.project_ids?.length ?? 0} project(s)`}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] transition ${
+                      tmpl.project_ids === null
+                        ? "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                        : "bg-brand-900/60 text-brand-300 hover:bg-brand-900"
+                    }`}
+                  >
+                    <FolderOpen size={11} />
+                    {tmpl.project_ids === null ? "Global" : tmpl.project_ids.length}
                   </button>
                   <button
                     onClick={() => handleCloneTemplate(tmpl)}

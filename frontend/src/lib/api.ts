@@ -279,7 +279,12 @@ export const api = {
   getPinTemplates: () => request<PinTemplate[]>("/api/pin-templates"),
 
   // ── Pin Designer Templates (user-created layouts) ──────────────────────
-  getPinDesignerTemplates: () => request<PinDesignerTemplateOut[]>("/api/pin-designer-templates"),
+  getPinDesignerTemplates: (projectId?: string) => request<PinDesignerTemplateOut[]>(`/api/pin-designer-templates${projectId ? `?project_id=${projectId}` : ""}`),
+  assignTemplateToProjects: (templateId: string, projectIds: string[] | null) =>
+    request<PinDesignerTemplateOut>(`/api/pin-designer-templates/${templateId}`, {
+      method: "PUT",
+      body: JSON.stringify({ project_ids: projectIds }),
+    }),
   createPinDesignerTemplate: (data: PinDesignerTemplateCreate) =>
     request<PinDesignerTemplateOut>("/api/pin-designer-templates", {
       method: "POST",
@@ -618,6 +623,7 @@ export interface PinDesignerTemplateOut {
   canvasWidth: number;
   canvasHeight: number;
   previewLayout: string | null;
+  project_ids: string[] | null;
   elements: PinDesignerTemplateElement[];
 }
 
@@ -627,6 +633,7 @@ export interface PinDesignerTemplateCreate {
   bgColor: string;
   canvasWidth?: number;
   canvasHeight?: number;
+  project_ids?: string[] | null;
   elements: PinDesignerTemplateElement[];
 }
 

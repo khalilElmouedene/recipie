@@ -655,12 +655,12 @@ export default function PinDesigner({
       .catch(() => {});
   }, [injectFontStylesheet]);
 
-  // Load user-created Pin Designer templates
+  // Load user-created Pin Designer templates (filtered by project if available)
   useEffect(() => {
-    api.getPinDesignerTemplates()
+    api.getPinDesignerTemplates(projectId ?? undefined)
       .then((t) => setCustomTemplates(t as PinTemplate[]))
       .catch(() => {});
-  }, []);
+  }, [projectId]);
 
   const saveFontsToDb = useCallback((fonts: string[]) => {
     api.setCustomFonts(fonts).catch(() => {});

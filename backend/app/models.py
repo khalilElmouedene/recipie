@@ -393,6 +393,7 @@ class PinDesignerTemplateOut(BaseModel):
     canvasWidth: int = 1000
     canvasHeight: int = 1500
     previewLayout: str | None = None
+    project_ids: list[str] | None = None
     elements: list[PinDesignerTemplateElement]
 
 
@@ -402,6 +403,7 @@ class PinDesignerTemplateCreate(BaseModel):
     bgColor: str = Field(min_length=1, max_length=50)
     canvasWidth: int = 1000
     canvasHeight: int = 1500
+    project_ids: list[str] | None = None
     elements: list[PinDesignerTemplateElement]
 
 
@@ -411,6 +413,7 @@ class PinDesignerTemplateUpdate(BaseModel):
     bgColor: str | None = None
     canvasWidth: int | None = None
     canvasHeight: int | None = None
+    project_ids: list[str] | None = None
     elements: list[PinDesignerTemplateElement] | None = None
 
 

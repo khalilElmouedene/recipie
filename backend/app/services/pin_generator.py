@@ -174,9 +174,8 @@ def _render_recipe_card(
     y0 = 210
     img1 = _round_corners(_fit_crop(images[0], iw, ih), 16)
     canvas.paste(img1, (50, y0), img1)
-    if len(images) >= 2:
-        img2 = _round_corners(_fit_crop(images[1], iw, ih), 16)
-        canvas.paste(img2, (510, y0), img2)
+    img2 = _round_corners(_fit_crop(images[1 % len(images)], iw, ih), 16)
+    canvas.paste(img2, (510, y0), img2)
 
     # Separator
     sep = y0 + ih + 30
@@ -222,11 +221,10 @@ def _render_elegant(
     canvas = Image.alpha_composite(canvas, overlay)
 
     # Small inset
-    if len(images) >= 2:
-        inset = _round_corners(_fit_crop(images[1], 200, 200), 12)
-        border = Image.new("RGBA", (208, 208), (255, 255, 255, 180))
-        border.paste(inset, (4, 4), inset)
-        canvas.paste(border, (PIN_WIDTH - 240, 30), border)
+    inset = _round_corners(_fit_crop(images[1 % len(images)], 200, 200), 12)
+    border = Image.new("RGBA", (208, 208), (255, 255, 255, 180))
+    border.paste(inset, (4, 4), inset)
+    canvas.paste(border, (PIN_WIDTH - 240, 30), border)
 
     draw = ImageDraw.Draw(canvas)
     _wrap_draw(draw, title, 60, PIN_HEIGHT - 320, PIN_WIDTH - 120,
@@ -282,9 +280,8 @@ def _render_collage(
     ch = (PIN_HEIGHT - gap) // 2
     positions = [(0, 0), (cw + gap, 0), (0, ch + gap), (cw + gap, ch + gap)]
     for i, (px, py) in enumerate(positions):
-        if i < len(images):
-            img = _fit_crop(images[i], cw, ch)
-            canvas.paste(img, (px, py))
+        img = _fit_crop(images[i % len(images)], cw, ch)
+        canvas.paste(img, (px, py))
 
     # Banner
     bh = 160
