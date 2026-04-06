@@ -327,7 +327,7 @@ export default function PinDesignerTemplatesPage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           <button
             onClick={() => setShowSizePicker(true)}
-            className="rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-500 hover:bg-gray-900/40 transition-all flex flex-col items-center justify-center gap-2 text-gray-500 hover:text-white group py-6"
+            className="h-20 rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-500 hover:bg-gray-900/40 transition-all flex flex-col items-center justify-center gap-1.5 text-gray-500 hover:text-white group"
           >
             <div className="w-10 h-10 rounded-xl border-2 border-dashed border-current flex items-center justify-center group-hover:border-brand-400">
               <Plus size={22} />
@@ -338,52 +338,47 @@ export default function PinDesignerTemplatesPage() {
           {templates.map((tmpl) => (
             <div
               key={tmpl.id}
-              className="rounded-xl border border-gray-700 bg-gray-900/70 hover:border-gray-500 transition p-3 flex flex-col gap-2"
+              className="h-20 rounded-xl border border-gray-700 bg-gray-900/70 hover:border-gray-500 transition p-3 flex flex-col justify-between"
             >
-              {/* Name */}
               <p className="text-sm font-medium text-white truncate leading-tight">{tmpl.name}</p>
-
-              {/* Size + assign badge */}
               <div className="flex items-center justify-between">
                 <p className="text-[11px] text-gray-500">{tmpl.canvasWidth} × {tmpl.canvasHeight}</p>
-                <button
-                  onClick={() => openAssignModal(tmpl)}
-                  title={tmpl.project_ids === null ? "Global (all projects)" : `${tmpl.project_ids?.length ?? 0} project(s)`}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition ${
-                    tmpl.project_ids === null
-                      ? "bg-gray-800 text-gray-400 hover:bg-gray-700"
-                      : "bg-brand-900/60 text-brand-300 hover:bg-brand-900"
-                  }`}
-                >
-                  <FolderOpen size={10} />
-                  {tmpl.project_ids === null ? "Global" : `${tmpl.project_ids.length}p`}
-                </button>
-              </div>
-
-              {/* Action buttons */}
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => router.push(`/template-designer?templateId=${tmpl.id}&w=${tmpl.canvasWidth}&h=${tmpl.canvasHeight}`)}
-                  className="flex-1 flex items-center justify-center gap-1 py-1 rounded-lg bg-gray-800 text-gray-300 text-[11px] hover:bg-gray-700 transition"
-                >
-                  <Pencil size={11} /> Edit
-                </button>
-                <button
-                  onClick={() => handleCloneTemplate(tmpl)}
-                  disabled={cloningId === tmpl.id}
-                  title="Clone"
-                  className="p-1.5 rounded-lg bg-sky-900/60 text-sky-200 hover:bg-sky-900 transition disabled:opacity-50"
-                >
-                  <Copy size={12} />
-                </button>
-                <button
-                  onClick={() => handleDeleteTemplate(tmpl.id)}
-                  disabled={deletingId === tmpl.id}
-                  title="Delete"
-                  className="p-1.5 rounded-lg bg-red-900/60 text-red-300 hover:bg-red-900 transition disabled:opacity-50"
-                >
-                  <Trash2 size={12} />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => router.push(`/template-designer?templateId=${tmpl.id}&w=${tmpl.canvasWidth}&h=${tmpl.canvasHeight}`)}
+                    title="Edit"
+                    className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-700 hover:text-white transition"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    onClick={() => openAssignModal(tmpl)}
+                    title={tmpl.project_ids === null ? "Global (all projects)" : `Assigned to ${tmpl.project_ids?.length ?? 0} project(s)`}
+                    className={`p-1.5 rounded-lg transition ${
+                      tmpl.project_ids === null
+                        ? "text-gray-400 hover:bg-gray-700 hover:text-white"
+                        : "text-brand-400 hover:bg-brand-900/60"
+                    }`}
+                  >
+                    <FolderOpen size={13} />
+                  </button>
+                  <button
+                    onClick={() => handleCloneTemplate(tmpl)}
+                    disabled={cloningId === tmpl.id}
+                    title="Clone"
+                    className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-700 hover:text-white transition disabled:opacity-50"
+                  >
+                    <Copy size={13} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteTemplate(tmpl.id)}
+                    disabled={deletingId === tmpl.id}
+                    title="Delete"
+                    className="p-1.5 rounded-lg text-gray-400 hover:bg-red-900/60 hover:text-red-400 transition disabled:opacity-50"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
             </div>
           ))}
