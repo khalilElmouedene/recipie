@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "add_template_project_ids"
-down_revision = "add_threads_project_credentials"
+down_revision = "add_site_pinterest_url"
 branch_labels = None
 depends_on = None
 
