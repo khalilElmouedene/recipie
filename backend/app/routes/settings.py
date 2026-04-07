@@ -221,47 +221,34 @@ async def get_boards_template(
     )
 
 
-# ── Midjourney generation timers (project owner account) ───────────────────
+# ── Midjourney: configurable grid wait only (upscale gap & download wait fixed in code) ──
+
+MJ_UPSCALE_GAP_FIXED = 10
+MJ_POST_DOWNLOAD_WAIT_FIXED = 60
 
 
 class MidjourneyTimersOut(BaseModel):
     grid_wait_seconds: int
-    upscale_gap_seconds: int
-    post_upscale_wait_seconds: int
+    upscale_gap_seconds: int = MJ_UPSCALE_GAP_FIXED
+    post_upscale_wait_seconds: int = MJ_POST_DOWNLOAD_WAIT_FIXED
 
 
-class MidjourneyTimersUpdate(BaseModel):
+class MidjourneyGridWaitUpdate(BaseModel):
     grid_wait_seconds: int
-    upscale_gap_seconds: int
-    post_upscale_wait_seconds: int
 
 
-def _default_mj_timers() -> MidjourneyTimersOut:
-    return MidjourneyTimersOut(grid_wait_seconds=190, upscale_gap_seconds=10, post_upscale_wait_seconds=60)
+def _clamp_grid_wait(g: int) -> int:
+    return max(30, min(600, g))
 
 
-def _clamp_mj_timers(body: MidjourneyTimersUpdate) -> MidjourneyTimersOut:
-    return MidjourneyTimersOut(
-        grid_wait_seconds=max(30, min(600, body.grid_wait_seconds)),
-        upscale_gap_seconds=max(1, min(120, body.upscale_gap_seconds)),
-        post_upscale_wait_seconds=max(10, min(600, body.post_upscale_wait_seconds)),
-    )
-
-
-def _parse_timers_json(raw: str | None) -> MidjourneyTimersOut:
+def _parse_grid_wait_json(raw: str | None) -> int:
     if not raw:
-        return _default_mj_timers()
+        return 190
     try:
         j = json.loads(raw)
-        return _clamp_mj_timers(
-            MidjourneyTimersUpdate(
-                grid_wait_seconds=int(j.get("grid_wait_seconds", 190)),
-                upscale_gap_seconds=int(j.get("upscale_gap_seconds", 10)),
-                post_upscale_wait_seconds=int(j.get("post_upscale_wait_seconds", 60)),
-            )
-        )
+        return _clamp_grid_wait(int(j.get("grid_wait_seconds", 190)))
     except (ValueError, TypeError, json.JSONDecodeError):
-        return _default_mj_timers()
+        return 190
 
 
 @router.get("/midjourney-timers", response_model=MidjourneyTimersOut)
@@ -272,25 +259,28 @@ async def get_midjourney_timers(
     owner_id = await _resolve_owner_id(user)
     result = await db.execute(select(User).where(User.id == owner_id))
     owner = result.scalar_one_or_none()
-    if not owner:
-        return _default_mj_timers()
-    return _parse_timers_json(owner.mj_timer_settings)
+    grid = _parse_grid_wait_json(owner.mj_timer_settings if owner else None)
+    return MidjourneyTimersOut(
+        grid_wait_seconds=grid,
+        upscale_gap_seconds=MJ_UPSCALE_GAP_FIXED,
+        post_upscale_wait_seconds=MJ_POST_DOWNLOAD_WAIT_FIXED,
+    )
 
 
 @router.put("/midjourney-timers", response_model=MidjourneyTimersOut)
-async def set_midjourney_timers(
-    body: MidjourneyTimersUpdate,
+async def set_midjourney_grid_wait(
+    body: MidjourneyGridWaitUpdate,
     user: Annotated[User, Depends(require_owner)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    out = _clamp_mj_timers(body)
-    user.mj_timer_settings = json.dumps({
-        "grid_wait_seconds": out.grid_wait_seconds,
-        "upscale_gap_seconds": out.upscale_gap_seconds,
-        "post_upscale_wait_seconds": out.post_upscale_wait_seconds,
-    })
+    g = _clamp_grid_wait(body.grid_wait_seconds)
+    user.mj_timer_settings = json.dumps({"grid_wait_seconds": g})
     await db.commit()
-    return out
+    return MidjourneyTimersOut(
+        grid_wait_seconds=g,
+        upscale_gap_seconds=MJ_UPSCALE_GAP_FIXED,
+        post_upscale_wait_seconds=MJ_POST_DOWNLOAD_WAIT_FIXED,
+    )
 
 
 # ── Custom Fonts (per user) ──────────────────────────────────────────────────

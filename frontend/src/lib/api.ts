@@ -180,7 +180,7 @@ export const api = {
     }),
 
   getMidjourneyTimers: () => request<MidjourneyTimersOut>("/api/settings/midjourney-timers"),
-  setMidjourneyTimers: (data: MidjourneyTimersUpdate) =>
+  setMidjourneyGridWait: (data: { grid_wait_seconds: number }) =>
     request<MidjourneyTimersOut>("/api/settings/midjourney-timers", {
       method: "PUT",
       body: JSON.stringify(data),
@@ -463,13 +463,12 @@ export interface PromptOut {
   description: string;
 }
 
+/** Grid wait is user-configurable; upscale_gap and post_upscale are fixed server-side (10 / 60). */
 export interface MidjourneyTimersOut {
   grid_wait_seconds: number;
   upscale_gap_seconds: number;
   post_upscale_wait_seconds: number;
 }
-
-export type MidjourneyTimersUpdate = MidjourneyTimersOut;
 
 export interface WpUserOut {
   username: string;

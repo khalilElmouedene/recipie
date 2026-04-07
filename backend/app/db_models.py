@@ -63,7 +63,7 @@ class User(Base):
     google_id: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True, index=True)
     created_by_owner_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     custom_fonts: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # JSON: grid_wait_seconds, upscale_gap_seconds, post_upscale_wait_seconds (Midjourney delays).
+    # JSON: {"grid_wait_seconds": int} — upscale gap / post-download waits are fixed in code.
     mj_timer_settings: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

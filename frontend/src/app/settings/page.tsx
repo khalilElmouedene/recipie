@@ -88,19 +88,19 @@ export default function SettingsPage() {
         setMjTimers(data);
         setMjMessage("");
       })
-      .catch((e) => setMjError(e instanceof Error ? e.message : "Failed to load Midjourney timers."))
+      .catch((e) => setMjError(e instanceof Error ? e.message : "Failed to load Midjourney settings."))
       .finally(() => setMjLoading(false));
   }, [activeTab]);
 
-  const saveMjTimers = async () => {
+  const saveMjGridWait = async () => {
     if (!mjTimers) return;
     setMjSaving(true);
     setMjError("");
     setMjMessage("");
     try {
-      const updated = await api.setMidjourneyTimers(mjTimers);
+      const updated = await api.setMidjourneyGridWait({ grid_wait_seconds: mjTimers.grid_wait_seconds });
       setMjTimers(updated);
-      setMjMessage("Midjourney timer settings saved.");
+      setMjMessage("Grid wait saved.");
     } catch (e) {
       setMjError(e instanceof Error ? e.message : "Failed to save.");
     } finally {
@@ -281,7 +281,7 @@ export default function SettingsPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-sm text-gray-400 mt-1">
-          Manage your account, image cleanup, and Midjourney generation delays.
+          Manage your account, image cleanup, and Midjourney grid wait.
         </p>
       </div>
 
@@ -476,77 +476,44 @@ export default function SettingsPage() {
 
       {activeTab === "midjourney" && (
         <section className="rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-5">
-          <h2 className="text-lg font-semibold text-white">Midjourney generation timers</h2>
+          <h2 className="text-lg font-semibold text-white">Midjourney timers</h2>
           <p className="text-sm text-gray-400">
-            Seconds to wait at each step when generating images via Discord. Defaults match the previous fixed values
-            (190 / 10 / 60). Only the account owner can change these.
+            How long to wait after /imagine before reading the grid from Discord.
           </p>
 
           {mjLoading && <p className="text-sm text-gray-400">Loading…</p>}
 
           {!mjLoading && mjTimers && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">Grid wait (seconds)</label>
-                <input
-                  type="number"
-                  min={30}
-                  max={600}
-                  value={mjTimers.grid_wait_seconds}
-                  onChange={(e) =>
-                    setMjTimers({ ...mjTimers, grid_wait_seconds: Number(e.target.value) || 30 })
-                  }
-                  disabled={profile.role !== "owner"}
-                  className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-60"
-                />
-                <p className="mt-1 text-xs text-gray-500">After sending /imagine, wait before reading the grid (30–600).</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">Pause between upscales (seconds)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={120}
-                  value={mjTimers.upscale_gap_seconds}
-                  onChange={(e) =>
-                    setMjTimers({ ...mjTimers, upscale_gap_seconds: Number(e.target.value) || 1 })
-                  }
-                  disabled={profile.role !== "owner"}
-                  className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-60"
-                />
-                <p className="mt-1 text-xs text-gray-500">Delay after each U1–U4 click (1–120).</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">Wait before download (seconds)</label>
-                <input
-                  type="number"
-                  min={10}
-                  max={600}
-                  value={mjTimers.post_upscale_wait_seconds}
-                  onChange={(e) =>
-                    setMjTimers({ ...mjTimers, post_upscale_wait_seconds: Number(e.target.value) || 10 })
-                  }
-                  disabled={profile.role !== "owner"}
-                  className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-60"
-                />
-                <p className="mt-1 text-xs text-gray-500">After all upscales, wait before fetching image URLs (10–600).</p>
-              </div>
+            <div className="max-w-md space-y-1">
+              <label className="block text-sm font-medium text-gray-300 mb-1">Grid wait (seconds)</label>
+              <input
+                type="number"
+                min={30}
+                max={600}
+                value={mjTimers.grid_wait_seconds}
+                onChange={(e) =>
+                  setMjTimers({ ...mjTimers, grid_wait_seconds: Number(e.target.value) || 30 })
+                }
+                disabled={profile.role !== "owner"}
+                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-60"
+              />
+              <p className="mt-1 text-xs text-gray-500">After sending /imagine, wait before reading the grid (30–600).</p>
             </div>
           )}
 
           {profile.role === "owner" && !mjLoading && mjTimers && (
             <button
               type="button"
-              onClick={saveMjTimers}
+              onClick={saveMjGridWait}
               disabled={mjSaving}
               className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
             >
-              {mjSaving ? "Saving…" : "Save Midjourney timers"}
+              {mjSaving ? "Saving…" : "Save grid wait"}
             </button>
           )}
 
           {profile.role !== "owner" && (
-            <p className="text-xs text-gray-500">Timer values are controlled by your workspace owner.</p>
+            <p className="text-xs text-gray-500">Grid wait is controlled by your workspace owner.</p>
           )}
 
           {mjError && (

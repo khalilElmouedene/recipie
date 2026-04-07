@@ -24,24 +24,20 @@ _midjourney_lock = threading.Lock()
 
 UPLOADS_DIR = Path("/app/uploads")
 
+# Midjourney: grid wait is configurable (owner Settings); these two are fixed.
+_MJ_DEFAULT_GRID_WAIT_SEC = 190
+_MJ_UPSCALE_GAP_SEC = 10
+_MJ_POST_UPSCALE_WAIT_SEC = 60
 
-def _mj_timers_from_credentials(credentials: dict) -> tuple[int, int, int]:
-    """Parse Midjourney sleep timers from job credentials (see credentials_loader)."""
 
-    def _parse(key: str, default: int, lo: int, hi: int) -> int:
-        raw = credentials.get(key)
-        if raw is None or raw == "":
-            return default
-        try:
-            return max(lo, min(hi, int(str(raw).strip())))
-        except ValueError:
-            return default
-
-    return (
-        _parse("mj_grid_wait_seconds", 190, 30, 600),
-        _parse("mj_upscale_gap_seconds", 10, 1, 120),
-        _parse("mj_post_upscale_wait_seconds", 60, 10, 600),
-    )
+def _mj_grid_wait_from_credentials(credentials: dict) -> int:
+    raw = credentials.get("mj_grid_wait_seconds")
+    if raw is None or raw == "":
+        return _MJ_DEFAULT_GRID_WAIT_SEC
+    try:
+        return max(30, min(600, int(str(raw).strip())))
+    except ValueError:
+        return _MJ_DEFAULT_GRID_WAIT_SEC
 
 
 def _cache_image(url: str, log: Callable[[str], None] | None = None) -> str:
@@ -440,15 +436,15 @@ def generate_for_recipe(
                     return result
                 _log("Midjourney slot acquired — generating images...")
                 try:
-                    gw, ug, pw = _mj_timers_from_credentials(credentials)
+                    gw = _mj_grid_wait_from_credentials(credentials)
                     img_urls = midjourney.generate_images(
                         recipe_title,
                         image_url,
                         credentials,
                         prompts=prompts,
                         wait_time=gw,
-                        upscale_gap_seconds=ug,
-                        post_upscale_wait_seconds=pw,
+                        upscale_gap_seconds=_MJ_UPSCALE_GAP_SEC,
+                        post_upscale_wait_seconds=_MJ_POST_UPSCALE_WAIT_SEC,
                         log=_log,
                     )
                     # Cache immediately — Discord CDN URLs expire after a few hours
@@ -490,15 +486,15 @@ def generate_images_only(
         if _stop():
             return None
         _log("Midjourney slot acquired — generating images...")
-        gw, ug, pw = _mj_timers_from_credentials(credentials)
+        gw = _mj_grid_wait_from_credentials(credentials)
         img_urls = midjourney.generate_images(
             recipe_title,
             image_url,
             credentials,
             prompts=prompts,
             wait_time=gw,
-            upscale_gap_seconds=ug,
-            post_upscale_wait_seconds=pw,
+            upscale_gap_seconds=_MJ_UPSCALE_GAP_SEC,
+            post_upscale_wait_seconds=_MJ_POST_UPSCALE_WAIT_SEC,
             log=_log,
         )
         cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
