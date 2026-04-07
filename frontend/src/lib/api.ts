@@ -606,6 +606,8 @@ export interface PinDesignerTemplateElement {
   fill?: string | null;
   bgColor?: string | null;
   textAlign?: string | null;
+  textVariable?: string | null;
+  textTransform?: string | null;
   radius?: number | null;
   strokeWidth?: number | null;
   strokeStyle?: Record<string, unknown> | string | null;

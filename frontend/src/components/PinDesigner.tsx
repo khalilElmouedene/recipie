@@ -65,9 +65,13 @@ interface TemplateElement {
   fill?: string;
   bgColor?: string;
   textAlign?: string;
+  textVariable?: string;
+  textTransform?: string;
+  flipX?: boolean;
   strokeWidth?: number;
   strokeStyle?: StrokeStyle;
   radius?: number;
+  [key: string]: unknown; // allow extra fields from API
 }
 
 export interface PinTemplate {
