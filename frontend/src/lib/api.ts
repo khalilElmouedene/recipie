@@ -239,6 +239,23 @@ export const api = {
       { method: "POST" }
     ),
 
+  uploadPinImageToWordPress: async (siteId: string, dataUrl: string, title: string): Promise<string> => {
+    // Convert base64 data URL → Blob → FormData, POST to WP media upload endpoint
+    const token = getToken();
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const formData = new FormData();
+    formData.append("file", blob, `pin-${Date.now()}.png`);
+    const resp = await fetch(`${API_URL}/api/sites/${siteId}/upload-media?title=${encodeURIComponent(title)}`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (!resp.ok) throw new Error(`WP media upload failed: ${resp.status}`);
+    const data = await resp.json();
+    return (data.media_url as string) || "";
+  },
+
   // ── Recipes ────────────────────────────────────────────
   getRecipes: (siteId: string, summary = true) =>
     request<RecipeOut[]>(`/api/sites/${siteId}/recipes${summary ? "?summary=true" : ""}`),

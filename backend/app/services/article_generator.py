@@ -304,18 +304,7 @@ def generate_for_recipe(
         if _stop():
             return result
 
-        # 1. Focus keyword (AI-generated)
-        _log("Generating focus keyword...")
-        try:
-            focus_keyword = openai_service.generate_focus_keyword(recipe_title, openai_key, prompts=prompts, log=_log)
-            if not focus_keyword or len(focus_keyword) < 3:
-                focus_keyword = re.sub(r'[*#"]', '', clean_keyword(recipe_title))
-        except Exception:
-            focus_keyword = re.sub(r'[*#"]', '', clean_keyword(recipe_title))
-        result["focus_keyword"] = focus_keyword
-        _log(f"Focus keyword: {focus_keyword}")
-
-        # 2. Generate full recipe
+        # 1. Generate full recipe
         if _stop():
             return result
         _log("Generating full recipe...")
@@ -363,18 +352,7 @@ def generate_for_recipe(
             except Exception as e:
                 _log(f"SEO title generation failed (non-fatal): {e}")
 
-        # 6c. WordPress post tags
-        if not _stop():
-            _log("Generating WordPress post tags...")
-            try:
-                wp_tags = openai_service.generate_wp_tags(recipe_title, openai_key, prompts=prompts, log=_log)
-                if wp_tags:
-                    result["wp_tags"] = wp_tags
-                    _log(f"WordPress tags: {wp_tags}")
-            except Exception as e:
-                _log(f"WordPress tags generation failed (non-fatal): {e}")
-
-        # 6d. Pinterest board selection (AI picks best board from boards list)
+        # 6c. Pinterest board selection (AI picks best board from boards list)
         from .prompts import DEFAULT_PROMPTS as _DP
         boards_list = (prompts or {}).get("pinterest_boards_list") or _DP.get("pinterest_boards_list", {}).get("value", "")
         if boards_list and not _stop():
