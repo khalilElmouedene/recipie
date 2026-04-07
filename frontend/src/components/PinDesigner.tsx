@@ -279,6 +279,15 @@ export interface BulkOverrides {
   bgColor?: string;
 }
 
+// ─── Text case transform helper ──────────────────────────────────────────────
+
+export function applyTextTransform(text: string, transform: string): string {
+  if (transform === "uppercase") return text.toUpperCase();
+  if (transform === "lowercase") return text.toLowerCase();
+  if (transform === "capitalize") return text.replace(/\b\w/g, (c) => c.toUpperCase());
+  return text;
+}
+
 // ─── Standalone template renderer (used for batch Save All) ──────────────────
 
 export async function buildTemplateOnCanvas(
@@ -393,7 +402,9 @@ export async function buildTemplateOnCanvas(
       const isTitle = tv === "title" || el.id === "title" || el.id.startsWith("title") || el.id.startsWith("text_");
       const isWebsite = tv === "website" || el.id === "website" || el.id.startsWith("website_");
       const fill = isTitle && oTitleColor ? oTitleColor : (el.fill || "#333333");
-      const tb = new fabric.Textbox(text, {
+      const tt = (el as any).textTransform ?? "none";
+      const displayText = applyTextTransform(text, tt);
+      const tb = new fabric.Textbox(displayText, {
         left: el.x, top: el.y, width: el.width || 940, originX: "center", originY: "center",
         fontSize: (isTitle && oSize) ? oSize : (el.fontSize || 32),
         fontFamily: oFont || el.fontFamily || "Arial",
@@ -405,6 +416,8 @@ export async function buildTemplateOnCanvas(
       (tb as any).__pinId = el.id;
       (tb as any).__pinLabel = el.label;
       (tb as any).__pinType = "text";
+      (tb as any).__textTransform = tt;
+      (tb as any).__rawText = text;
       canvas.add(tb);
     }
   }
@@ -1294,12 +1307,13 @@ export default function PinDesigner({
 
     if (obj.__pinType === "text") {
       setTextProps({
-        editText: obj.text ?? "",
+        editText: obj.__rawText ?? obj.text ?? "",
         fontFamily: obj.fontFamily ?? "Arial",
         fontSize: obj.fontSize ?? 32,
         fontWeight: obj.fontWeight ?? "normal",
         textAlign: obj.textAlign ?? "center",
         textColor: obj.fill ?? "#333333",
+        textTransform: obj.__textTransform ?? "none",
       });
     } else if (obj.__pinType === "frame") {
       setFrameProps({
@@ -1338,7 +1352,7 @@ export default function PinDesigner({
   const MAX_UNDO = 50;
 
   // Fabric v6: toJSON() ignores propertiesToInclude — must use toObject() to include custom keys
-  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__flipX"];
+  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__flipX", "__textTransform", "__rawText"];
 
   const saveUndoState = () => {
     const canvas = fabricCanvasRef.current;
@@ -1415,12 +1429,13 @@ export default function PinDesigner({
 
       if (restoredObj.__pinType === "text") {
         setTextProps({
-          editText: restoredObj.text ?? "",
+          editText: restoredObj.__rawText ?? restoredObj.text ?? "",
           fontFamily: restoredObj.fontFamily ?? "Arial",
           fontSize: restoredObj.fontSize ?? 32,
           fontWeight: restoredObj.fontWeight ?? "normal",
           textAlign: restoredObj.textAlign ?? "center",
           textColor: restoredObj.fill ?? "#333333",
+          textTransform: restoredObj.__textTransform ?? "none",
         });
       } else if (restoredObj.__pinType === "frame") {
         setFrameProps({
@@ -2191,7 +2206,10 @@ export default function PinDesigner({
     const obj = getSelectedObject();
     if (!canvas || !obj || obj.__pinType !== "text") return;
     saveUndoState();
-    obj.set("text", textProps.editText);
+    const raw = textProps.editText;
+    const tt = (obj.__textTransform as string) ?? "none";
+    obj.__rawText = raw;
+    obj.set("text", applyTextTransform(raw, tt));
     if (typeof obj.initDimensions === "function") obj.initDimensions();
     obj.setCoords();
     canvas.renderAll();
@@ -2202,6 +2220,20 @@ export default function PinDesigner({
     const obj = getSelectedObject();
     if (!canvas || !obj || obj.__pinType !== "text") return;
     saveUndoState();
+
+    if (property === "textTransform") {
+      // Apply transform: re-derive displayed text from stored raw text
+      const raw = (obj.__rawText as string) ?? (obj.text as string) ?? "";
+      obj.__rawText = raw;
+      obj.__textTransform = value;
+      obj.set("text", applyTextTransform(raw, value as string));
+      if (typeof obj.initDimensions === "function") obj.initDimensions();
+      obj.setCoords();
+      setTextProps({ textTransform: value });
+      canvas.renderAll();
+      return;
+    }
+
     const propName = property === "fill" ? "fill" : property;
     const propValue = property === "fontSize" ? parseInt(value) : value;
     if (applyToAllPages) {
@@ -2908,6 +2940,18 @@ export default function PinDesigner({
                 className="p-1 rounded hover:bg-gray-700 text-gray-300 text-xs font-mono"
                 title="Increase font size"
               >A+</button>
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
+              {/* Text case */}
+              {(["uppercase", "capitalize", "lowercase", "none"] as const).map((tc) => (
+                <button
+                  key={tc}
+                  onClick={() => updateTextProperty("textTransform", tc)}
+                  title={{ uppercase: "UPPERCASE", capitalize: "Title Case", lowercase: "lowercase", none: "Normal" }[tc]}
+                  className={`p-1 rounded text-[11px] font-mono transition ${textProps.textTransform === tc ? "bg-brand-500 text-white" : "text-gray-300 hover:bg-gray-700"}`}
+                >
+                  {{ uppercase: "AA", capitalize: "Aa", lowercase: "aa", none: "a" }[tc]}
+                </button>
+              ))}
               <div className="w-px h-4 bg-gray-700 mx-0.5" />
             </>
           )}
@@ -3818,6 +3862,21 @@ export default function PinDesigner({
                           className={`flex-1 py-1.5 rounded text-xs font-medium transition ${textProps.textAlign === a ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
                         >
                           {a.charAt(0).toUpperCase() + a.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Text Case</label>
+                    <div className="flex gap-1">
+                      {([["uppercase", "AA", "UPPERCASE"], ["capitalize", "Aa", "Title Case"], ["lowercase", "aa", "lowercase"], ["none", "a", "Normal"]] as const).map(([val, label, title]) => (
+                        <button
+                          key={val}
+                          onClick={() => updateTextProperty("textTransform", val)}
+                          title={title}
+                          className={`flex-1 py-1.5 rounded text-xs font-mono transition ${textProps.textTransform === val ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
+                        >
+                          {label}
                         </button>
                       ))}
                     </div>
