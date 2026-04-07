@@ -407,15 +407,56 @@ export default function AllSitesGeneratePage() {
       </button>
 
       {/* ── Header ── */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Generate Articles For All Sites</h1>
-        <p className="text-sm text-gray-400 mt-1">
-          One Midjourney generation per recipe input, reused across all sites.
-        </p>
-        <p className="text-xs text-gray-500 mt-2">
-          Sites: {sites.length} · Valid recipe inputs: {validCount} · Planned article generations:{" "}
-          {validCount * sites.length}
-        </p>
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Generate Articles For All Sites</h1>
+          <p className="text-sm text-gray-400 mt-1">
+            One Midjourney generation per recipe input, reused across all sites.
+          </p>
+          <p className="text-xs text-gray-500 mt-2">
+            Sites: {sites.length} · Valid recipe inputs: {validCount} · Planned article generations:{" "}
+            {validCount * sites.length}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
+          <input
+            ref={excelInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void handleExcelImport(file);
+            }}
+          />
+          <button
+            type="button"
+            onClick={downloadExcelTemplate}
+            className="btn-secondary flex items-center gap-2"
+            title="Download required Excel template (image_url, recipe_text)"
+          >
+            <Download size={16} /> Download Excel Template
+          </button>
+          <button
+            type="button"
+            onClick={() => excelInputRef.current?.click()}
+            disabled={importingExcel}
+            className="btn-secondary flex items-center gap-2"
+            title='Import Excel columns: "image_url", "recipe_text"'
+          >
+            <Upload size={16} /> {importingExcel ? "Importing..." : "Upload Excel"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setRows((prev) => [...prev, { image_url: "", recipe_text: "" }])}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <Plus size={16} /> Add Recipe Input
+          </button>
+          <button onClick={handleRun} disabled={loading} className="btn-primary flex items-center gap-2">
+            <Send size={16} /> {loading ? "Starting..." : "Run All Sites Job"}
+          </button>
+        </div>
       </div>
 
       {/* ── 1. Recipe Inputs ── */}
@@ -453,47 +494,6 @@ export default function AllSitesGeneratePage() {
             )}
           </div>
         ))}
-      </div>
-
-      {/* ── Recipe Input action buttons ── */}
-      <div className="flex flex-wrap items-center gap-2 mb-8">
-        <input
-          ref={excelInputRef}
-          type="file"
-          accept=".xlsx,.xls"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) void handleExcelImport(file);
-          }}
-        />
-        <button
-          type="button"
-          onClick={downloadExcelTemplate}
-          className="btn-secondary flex items-center gap-2"
-          title="Download required Excel template (image_url, recipe_text)"
-        >
-          <Download size={16} /> Download Excel Template
-        </button>
-        <button
-          type="button"
-          onClick={() => excelInputRef.current?.click()}
-          disabled={importingExcel}
-          className="btn-secondary flex items-center gap-2"
-          title='Import Excel columns: "image_url", "recipe_text"'
-        >
-          <Upload size={16} /> {importingExcel ? "Importing..." : "Upload Excel"}
-        </button>
-        <button
-          type="button"
-          onClick={() => setRows((prev) => [...prev, { image_url: "", recipe_text: "" }])}
-          className="btn-secondary flex items-center gap-2"
-        >
-          <Plus size={16} /> Add Recipe Input
-        </button>
-        <button onClick={handleRun} disabled={loading} className="btn-primary flex items-center gap-2">
-          <Send size={16} /> {loading ? "Starting..." : "Run All Sites Job"}
-        </button>
       </div>
 
       {/* ── 2. History ── */}

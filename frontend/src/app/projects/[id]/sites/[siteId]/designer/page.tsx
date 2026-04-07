@@ -6,6 +6,8 @@ import PinDesigner, { FrameInfo } from "@/components/PinDesigner";
 import { api, RecipeOut, GeneratedJobRecipeOut } from "@/lib/api";
 
 function imagesFromJobRecipe(r: GeneratedJobRecipeOut): string[] {
+  // Only use generated_images (Midjourney output). Never include image_url,
+  // which is the input prompt image used to trigger generation — not the result.
   const images: string[] = [];
   if (r.generated_images) {
     try {
@@ -13,12 +15,12 @@ function imagesFromJobRecipe(r: GeneratedJobRecipeOut): string[] {
       if (Array.isArray(arr)) arr.forEach((url: string) => { if (url?.trim()) images.push(url.trim()); });
     } catch {}
   }
-  const u = r.image_url?.trim();
-  if (u && !images.includes(u)) images.push(u);
   return images;
 }
 
 function getRecipeImages(r: RecipeOut): string[] {
+  // Only use generated_images (Midjourney output). Never include image_url,
+  // which is the input prompt image used to trigger generation — not the result.
   const images: string[] = [];
   if (r.generated_images) {
     try {
@@ -26,7 +28,6 @@ function getRecipeImages(r: RecipeOut): string[] {
       if (Array.isArray(arr)) arr.forEach((url: string) => { if (url?.trim()) images.push(url.trim()); });
     } catch {}
   }
-  if (r.image_url && !images.includes(r.image_url)) images.push(r.image_url);
   return images;
 }
 
