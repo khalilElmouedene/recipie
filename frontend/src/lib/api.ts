@@ -614,6 +614,7 @@ export interface PinDesignerTemplateElement {
   imageUrl?: string | null;
   flipX?: boolean | null;
   flipY?: boolean | null;
+  [key: string]: unknown;
 }
 
 export interface PinDesignerTemplateOut {
