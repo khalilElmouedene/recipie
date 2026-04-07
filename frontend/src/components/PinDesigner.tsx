@@ -1742,8 +1742,9 @@ export default function PinDesigner({
         } else {
           textContent = el.defaultText || "Text";
         }
+        const tt = (el as any).textTransform ?? el.textTransform ?? "none";
         const textbox = new fabric.Textbox(
-          textContent,
+          applyTextTransform(textContent, tt),
           {
             left: el.x,
             top: el.y,
@@ -1764,6 +1765,8 @@ export default function PinDesigner({
         (textbox as any).__pinId = el.id;
         (textbox as any).__pinLabel = el.label;
         (textbox as any).__pinType = "text";
+        (textbox as any).__textTransform = tt;
+        (textbox as any).__rawText = textContent;
         canvas.add(textbox);
       } else if (el.type === "frame") {
         const strokeStyle = (el.strokeStyle as string) ?? (el as any).__strokeStyle ?? "solid";
