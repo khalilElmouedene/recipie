@@ -221,6 +221,78 @@ async def get_boards_template(
     )
 
 
+# ── Midjourney generation timers (project owner account) ───────────────────
+
+
+class MidjourneyTimersOut(BaseModel):
+    grid_wait_seconds: int
+    upscale_gap_seconds: int
+    post_upscale_wait_seconds: int
+
+
+class MidjourneyTimersUpdate(BaseModel):
+    grid_wait_seconds: int
+    upscale_gap_seconds: int
+    post_upscale_wait_seconds: int
+
+
+def _default_mj_timers() -> MidjourneyTimersOut:
+    return MidjourneyTimersOut(grid_wait_seconds=190, upscale_gap_seconds=10, post_upscale_wait_seconds=60)
+
+
+def _clamp_mj_timers(body: MidjourneyTimersUpdate) -> MidjourneyTimersOut:
+    return MidjourneyTimersOut(
+        grid_wait_seconds=max(30, min(600, body.grid_wait_seconds)),
+        upscale_gap_seconds=max(1, min(120, body.upscale_gap_seconds)),
+        post_upscale_wait_seconds=max(10, min(600, body.post_upscale_wait_seconds)),
+    )
+
+
+def _parse_timers_json(raw: str | None) -> MidjourneyTimersOut:
+    if not raw:
+        return _default_mj_timers()
+    try:
+        j = json.loads(raw)
+        return _clamp_mj_timers(
+            MidjourneyTimersUpdate(
+                grid_wait_seconds=int(j.get("grid_wait_seconds", 190)),
+                upscale_gap_seconds=int(j.get("upscale_gap_seconds", 10)),
+                post_upscale_wait_seconds=int(j.get("post_upscale_wait_seconds", 60)),
+            )
+        )
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return _default_mj_timers()
+
+
+@router.get("/midjourney-timers", response_model=MidjourneyTimersOut)
+async def get_midjourney_timers(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    owner_id = await _resolve_owner_id(user)
+    result = await db.execute(select(User).where(User.id == owner_id))
+    owner = result.scalar_one_or_none()
+    if not owner:
+        return _default_mj_timers()
+    return _parse_timers_json(owner.mj_timer_settings)
+
+
+@router.put("/midjourney-timers", response_model=MidjourneyTimersOut)
+async def set_midjourney_timers(
+    body: MidjourneyTimersUpdate,
+    user: Annotated[User, Depends(require_owner)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    out = _clamp_mj_timers(body)
+    user.mj_timer_settings = json.dumps({
+        "grid_wait_seconds": out.grid_wait_seconds,
+        "upscale_gap_seconds": out.upscale_gap_seconds,
+        "post_upscale_wait_seconds": out.post_upscale_wait_seconds,
+    })
+    await db.commit()
+    return out
+
+
 # ── Custom Fonts (per user) ──────────────────────────────────────────────────
 
 

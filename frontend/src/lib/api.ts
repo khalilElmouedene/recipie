@@ -179,6 +179,13 @@ export const api = {
       body: JSON.stringify({ fonts }),
     }),
 
+  getMidjourneyTimers: () => request<MidjourneyTimersOut>("/api/settings/midjourney-timers"),
+  setMidjourneyTimers: (data: MidjourneyTimersUpdate) =>
+    request<MidjourneyTimersOut>("/api/settings/midjourney-timers", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
   importBoardsExcel: async (file: File): Promise<{ boards: string }> => {
     const token = getToken();
     const formData = new FormData();
@@ -455,6 +462,14 @@ export interface PromptOut {
   value: string;
   description: string;
 }
+
+export interface MidjourneyTimersOut {
+  grid_wait_seconds: number;
+  upscale_gap_seconds: number;
+  post_upscale_wait_seconds: number;
+}
+
+export type MidjourneyTimersUpdate = MidjourneyTimersOut;
 
 export interface WpUserOut {
   username: string;

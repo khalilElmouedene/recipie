@@ -25,6 +25,25 @@ _midjourney_lock = threading.Lock()
 UPLOADS_DIR = Path("/app/uploads")
 
 
+def _mj_timers_from_credentials(credentials: dict) -> tuple[int, int, int]:
+    """Parse Midjourney sleep timers from job credentials (see credentials_loader)."""
+
+    def _parse(key: str, default: int, lo: int, hi: int) -> int:
+        raw = credentials.get(key)
+        if raw is None or raw == "":
+            return default
+        try:
+            return max(lo, min(hi, int(str(raw).strip())))
+        except ValueError:
+            return default
+
+    return (
+        _parse("mj_grid_wait_seconds", 190, 30, 600),
+        _parse("mj_upscale_gap_seconds", 10, 1, 120),
+        _parse("mj_post_upscale_wait_seconds", 60, 10, 600),
+    )
+
+
 def _cache_image(url: str, log: Callable[[str], None] | None = None) -> str:
     """Download a Discord CDN image and save it locally. Returns the permanent server URL."""
     _log = log or print
@@ -421,7 +440,17 @@ def generate_for_recipe(
                     return result
                 _log("Midjourney slot acquired — generating images...")
                 try:
-                    img_urls = midjourney.generate_images(recipe_title, image_url, credentials, prompts=prompts, wait_time=190, log=_log)
+                    gw, ug, pw = _mj_timers_from_credentials(credentials)
+                    img_urls = midjourney.generate_images(
+                        recipe_title,
+                        image_url,
+                        credentials,
+                        prompts=prompts,
+                        wait_time=gw,
+                        upscale_gap_seconds=ug,
+                        post_upscale_wait_seconds=pw,
+                        log=_log,
+                    )
                     # Cache immediately — Discord CDN URLs expire after a few hours
                     cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
                     result["generated_images"] = json.dumps(cached_urls)
@@ -461,7 +490,17 @@ def generate_images_only(
         if _stop():
             return None
         _log("Midjourney slot acquired — generating images...")
-        img_urls = midjourney.generate_images(recipe_title, image_url, credentials, prompts=prompts, wait_time=190, log=_log)
+        gw, ug, pw = _mj_timers_from_credentials(credentials)
+        img_urls = midjourney.generate_images(
+            recipe_title,
+            image_url,
+            credentials,
+            prompts=prompts,
+            wait_time=gw,
+            upscale_gap_seconds=ug,
+            post_upscale_wait_seconds=pw,
+            log=_log,
+        )
         cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
         return json.dumps(cached_urls)
 

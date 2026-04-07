@@ -17,6 +17,7 @@ class MidjourneyApi:
         mj_id: str,
         authorization: str,
         wait_time: int = 190,
+        upscale_gap_seconds: int = 10,
         log: Callable[[str], None] | None = None,
     ):
         self.application_id = application_id
@@ -27,6 +28,7 @@ class MidjourneyApi:
         self.authorization = authorization
         self.prompt = prompt
         self.wait_time = wait_time
+        self.upscale_gap_seconds = max(1, min(120, upscale_gap_seconds))
         self.message_id = ""
         self.custom_ids: list[str] = []
         self._log = log or print
@@ -151,7 +153,7 @@ class MidjourneyApi:
             response = requests.post(url, headers=self._headers(), json=data)
             if response.status_code != 204:
                 self._log(f"Failed to upscale button {custom_id}, status: {response.status_code}")
-            time.sleep(10)
+            time.sleep(self.upscale_gap_seconds)
         self._log("Upscale requests sent for all 4 images")
 
     def download_image(self) -> list[str]:
@@ -191,6 +193,8 @@ def generate_images(
     credentials: dict,
     prompts: dict[str, str] | None = None,
     wait_time: int = 190,
+    upscale_gap_seconds: int = 10,
+    post_upscale_wait_seconds: int = 60,
     log: Callable[[str], None] | None = None,
 ) -> list[str]:
     """High-level function to generate 4 Midjourney images for a recipe.
@@ -213,6 +217,7 @@ def generate_images(
                 mj_id=credentials.get("mj_id", ""),
                 authorization=credentials.get("discord_auth", ""),
                 wait_time=wait_time,
+                upscale_gap_seconds=upscale_gap_seconds,
                 log=_log,
             )
             break
@@ -222,6 +227,7 @@ def generate_images(
     mj.send_message()
     mj.choose_images()
 
-    time.sleep(60)
+    post_wait = max(10, min(600, post_upscale_wait_seconds))
+    time.sleep(post_wait)
 
     return mj.download_image()
