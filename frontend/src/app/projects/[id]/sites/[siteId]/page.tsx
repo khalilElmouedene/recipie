@@ -17,6 +17,9 @@ export default function SiteDetailPage() {
   const [recipes, setRecipes] = useState<RecipeOut[]>([]);
   const [imageUrl, setImageUrl] = useState("");
   const [recipeText, setRecipeText] = useState("");
+  const [imageSourceMode, setImageSourceMode] = useState<"url" | "upload">("url");
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState("");
   const [adding, setAdding] = useState(false);
   const [starting, setStarting] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -52,7 +55,9 @@ export default function SiteDetailPage() {
   // Saved pin design form (Pinterest tab)
   const [pinDesignTitle, setPinDesignTitle] = useState("");
   const [pinDesignDesc, setPinDesignDesc] = useState("");
+  const [pinDesignBoard, setPinDesignBoard] = useState("");
   const [pinDesignLink, setPinDesignLink] = useState("");
+  const [pinDesignPinUrl, setPinDesignPinUrl] = useState("");
   const [pinDesignSaving, setPinDesignSaving] = useState(false);
 
   // Bulk Pin Generator (site-level)
@@ -133,7 +138,9 @@ export default function SiteDetailPage() {
       const recipeTitle = r.recipe_text?.split("\n")[0]?.trim() || "";
       setPinDesignTitle(r.pin_title || recipeTitle);
       setPinDesignDesc(r.pin_description || r.meta_description || recipeTitle);
+      setPinDesignBoard(r.pin_board || "");
       setPinDesignLink(r.pin_blog_link || r.wp_permalink || "");
+      setPinDesignPinUrl(r.pin_url || "");
     }
   }, [expandedId, recipes]);
 
@@ -146,13 +153,87 @@ export default function SiteDetailPage() {
     loadRecipes();
   }, [projectId, siteId, router, loadRecipes]);
 
+  // Load boards from pinterest_boards_list prompt setting (already stored per-project, no OAuth needed)
+  const [pinterestNotConnected, setPinterestNotConnected] = useState(false);
+  useEffect(() => {
+    if (detailTab !== "pinterest" || boards.length > 0 || boardsLoading) return;
+    setBoardsLoading(true);
+    api.getSettingsPrompts(projectId)
+      .then((prompts) => {
+        const entry = prompts.find((p) => p.key === "pinterest_boards_list");
+        const raw = entry?.value || "";
+        const boardNames = raw.split("\n").map((s: string) => s.trim()).filter(Boolean);
+        if (boardNames.length > 0) {
+          setBoards(boardNames.map((name: string) => ({ id: name, name })));
+        } else {
+          setPinterestNotConnected(true);
+        }
+      })
+      .catch(() => { setPinterestNotConnected(true); })
+      .finally(() => setBoardsLoading(false));
+  }, [detailTab, boards.length, boardsLoading, projectId]);
+
+  const handleConnectPinterest = () => {
+    const token = localStorage.getItem("token");
+    fetch(`${API_URL}/pinterest/auth-url?project_id=${projectId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (!data) return;
+        localStorage.setItem("pinterest_oauth_project_id", projectId);
+        localStorage.setItem("pinterest_oauth_state", data.state);
+        window.location.href = data.url;
+      })
+      .catch(() => {});
+  };
+
+  const handleRecipeImageFile = async (file: File | null) => {
+    if (!file || !file.type.startsWith("image/")) {
+      setImageUploadError(file ? "Only image files are allowed" : "");
+      return;
+    }
+    setImageUploading(true);
+    setImageUploadError("");
+    try {
+      const { url } = await api.uploadRecipeImage(siteId, file);
+      setImageUrl(url);
+    } catch (err) {
+      setImageUploadError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setImageUploading(false);
+    }
+  };
+
+  // Global paste listener — Ctrl+V anywhere on the page uploads an image (upload mode only)
+  useEffect(() => {
+    if (imageSourceMode !== "upload") return;
+    const onPaste = (e: ClipboardEvent) => {
+      const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"));
+      if (item) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) void handleRecipeImageFile(file);
+      }
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteId, imageSourceMode]);
+
   const handleAddRecipe = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!imageUrl.trim()) {
+      setImageUploadError("Enter an image URL or paste an image (Ctrl+V)");
+      return;
+    }
     setAdding(true);
     try {
-      await api.createRecipe(siteId, { image_url: imageUrl, recipe_text: recipeText });
+      await api.createRecipe(siteId, { image_url: imageUrl.trim(), recipe_text: recipeText });
       setImageUrl("");
       setRecipeText("");
+      setImageSourceMode("url");
+      setImageUploadError("");
       loadRecipes();
     } catch {}
     setAdding(false);
@@ -351,16 +432,30 @@ export default function SiteDetailPage() {
     setPinLink(recipe.wp_permalink || "");
     setSelectedBoard("");
 
+    const aiBoard = recipe.pin_board?.trim().toLowerCase() ?? "";
+
+    const _pickBoard = (boardList: typeof boards) => {
+      if (boardList.length === 0) return;
+      const matched = aiBoard ? boardList.find((b) => b.name.trim().toLowerCase() === aiBoard) : null;
+      setSelectedBoard(matched ? matched.id : boardList[0].id);
+    };
+
     if (boards.length === 0) {
       setBoardsLoading(true);
       try {
-        const b = await api.getPinterestBoards(projectId);
+        const prompts = await api.getSettingsPrompts(projectId);
+        const entry = prompts.find((p) => p.key === "pinterest_boards_list");
+        const raw = entry?.value || "";
+        const boardNames = raw.split("\n").map((s: string) => s.trim()).filter(Boolean);
+        const b = boardNames.map((name: string) => ({ id: name, name }));
         setBoards(b);
-        if (b.length > 0) setSelectedBoard(b[0].id);
-      } catch (err: any) {
-        alert(err.message || "Failed to load Pinterest boards. Check your Pinterest credentials.");
+        _pickBoard(b);
+      } catch {
+        // ignore
       }
       setBoardsLoading(false);
+    } else {
+      _pickBoard(boards);
     }
   };
 
@@ -431,6 +526,18 @@ export default function SiteDetailPage() {
       alert(`Published to WordPress!\n\nPost: ${data.wp_permalink}`);
       loadRecipes();
     } catch (err: any) {
+      // The request may have timed out (Cloudflare proxy timeout) while the backend
+      // was still uploading images / creating the post. Refresh the recipe to check
+      // whether it was actually published despite the timeout error.
+      try {
+        const refreshed = await api.getRecipe(r.id);
+        if (refreshed.wp_post_id) {
+          loadRecipes();
+          alert(`Published to WordPress!\n\nPost: ${refreshed.wp_permalink || ""}`);
+          setWpPublishingId(null);
+          return;
+        }
+      } catch { /* ignore */ }
       alert(err.message || "Failed to publish to WordPress");
     }
     setWpPublishingId(null);
@@ -442,7 +549,9 @@ export default function SiteDetailPage() {
       await api.updateRecipe(recipeId, {
         pin_title: pinDesignTitle || undefined,
         pin_description: pinDesignDesc || undefined,
+        pin_board: pinDesignBoard || undefined,
         pin_blog_link: pinDesignLink || undefined,
+        pin_url: pinDesignPinUrl || undefined,
       });
       loadRecipes();
     } catch (err: any) {
@@ -601,37 +710,127 @@ export default function SiteDetailPage() {
         </div>
       </div>
 
-      <div className="card mb-6">
-        <h2 className="text-lg font-semibold text-white mb-4">Add Recipe</h2>
-        <form onSubmit={handleAddRecipe} className="space-y-4">
-          <div>
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-300 mb-1">
-              <Image size={14} /> Image URL
-            </label>
-            <input
-              value={imageUrl}
-              onChange={(e) => setImageUrl(e.target.value)}
-              required
-              className="input-field"
-              placeholder="https://example.com/image.jpg"
-            />
+      <div className="mb-6 rounded-2xl border border-gray-800 bg-gradient-to-br from-gray-900 via-gray-900 to-gray-800/60 overflow-hidden">
+        {/* Card header */}
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-800/80">
+          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-brand-600/20 text-brand-400">
+            <Plus size={16} />
           </div>
-          <div>
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-300 mb-1">
-              <FileText size={14} /> Recipe Text
-            </label>
-            <textarea
-              value={recipeText}
-              onChange={(e) => setRecipeText(e.target.value)}
-              required
-              rows={4}
-              className="input-field"
-              placeholder="Enter recipe name and details..."
-            />
+          <h2 className="text-base font-semibold text-white">Add Recipe</h2>
+        </div>
+
+        <form onSubmit={handleAddRecipe} className="p-6">
+          <div className="flex flex-col gap-5">
+
+            {/* Left: Source Image */}
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Source Image</span>
+                {imageUploading && <span className="flex items-center gap-1.5 text-xs text-brand-400"><Loader2 size={12} className="animate-spin" /> Uploading…</span>}
+              </div>
+
+              {/* Mode toggle */}
+              <div className="flex gap-1 p-1 bg-gray-800/80 rounded-xl w-fit border border-gray-700/50">
+                <button
+                  type="button"
+                  onClick={() => { setImageSourceMode("url"); setImageUrl(""); setImageUploadError(""); }}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${imageSourceMode === "url" ? "bg-gray-700 text-white shadow-sm" : "text-gray-500 hover:text-gray-300"}`}
+                >
+                  External URL
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setImageSourceMode("upload"); setImageUrl(""); setImageUploadError(""); }}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${imageSourceMode === "upload" ? "bg-gray-700 text-white shadow-sm" : "text-gray-500 hover:text-gray-300"}`}
+                >
+                  Upload / Paste
+                </button>
+              </div>
+
+              {imageSourceMode === "upload" && !imageUrl ? (
+                <div
+                  className="relative flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-600/60 bg-gray-800/30 hover:bg-brand-600/5 transition-all cursor-pointer py-8 px-4 text-center"
+                  onClick={() => document.getElementById("recipe-file-input")?.click()}
+                >
+                  <input
+                    id="recipe-file-input"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => handleRecipeImageFile(e.target.files?.[0] ?? null)}
+                  />
+                  <div className="w-10 h-10 rounded-full bg-gray-700/60 flex items-center justify-center">
+                    <Image size={18} className="text-gray-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-300">Click to upload or press <kbd className="px-1.5 py-0.5 text-[10px] rounded bg-gray-700 text-gray-300 font-mono">Ctrl+V</kbd></p>
+                    <p className="text-xs text-gray-500 mt-0.5">PNG, JPG, WEBP supported</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="relative">
+                  <input
+                    value={imageUrl}
+                    onChange={(e) => { setImageUrl(e.target.value); setImageUploadError(""); }}
+                    className="input-field pr-9"
+                    placeholder="https://example.com/image.jpg"
+                    disabled={imageUploading}
+                    readOnly={imageSourceMode === "upload"}
+                  />
+                  {imageUrl && (
+                    <button
+                      type="button"
+                      onClick={() => { setImageUrl(""); setImageUploadError(""); }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-400 transition"
+                      title="Remove"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Preview */}
+              {imageUrl && !imageUploading && (
+                <div className="relative group w-fit">
+                  <img src={imageUrl} alt="Preview" className="max-h-28 rounded-xl object-cover border border-gray-700 shadow" />
+                  <button
+                    type="button"
+                    onClick={() => { setImageUrl(""); setImageUploadError(""); }}
+                    className="absolute top-1.5 right-1.5 bg-gray-900/80 hover:bg-red-600 text-gray-300 hover:text-white rounded-md p-0.5 opacity-0 group-hover:opacity-100 transition"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+              {imageUploadError && <p className="text-xs text-red-400 flex items-center gap-1"><XCircle size={12} /> {imageUploadError}</p>}
+            </div>
+
+            {/* Right: Recipe Text */}
+            <div className="flex flex-col gap-3">
+              <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Recipe Text</span>
+              <textarea
+                value={recipeText}
+                onChange={(e) => setRecipeText(e.target.value)}
+                required
+                rows={4}
+                className="input-field resize-none"
+                placeholder="Paste recipe name and details here — the AI will generate a full article, SEO data, and Pinterest pin from this."
+              />
+            </div>
           </div>
-          <button type="submit" disabled={adding} className="btn-primary flex items-center gap-2">
-            <Plus size={16} /> {adding ? "Adding..." : "Add Recipe"}
-          </button>
+
+          {/* Submit */}
+          <div className="flex justify-end mt-5 pt-5 border-t border-gray-800/60">
+            <button
+              type="submit"
+              disabled={adding}
+              className="btn-primary flex items-center gap-2 px-6"
+            >
+              {adding ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+              {adding ? "Adding…" : "Add Recipe"}
+            </button>
+          </div>
         </form>
       </div>
 
@@ -670,7 +869,7 @@ export default function SiteDetailPage() {
                   </div>
                 ) : (
                   <div className="flex items-center gap-1.5">
-                    <p className="text-sm text-white font-medium truncate">{r.recipe_text.split("\n")[0]}</p>
+                    <p className="text-sm text-white font-medium truncate">{r.recipe_text.split("\n")[0].slice(0, 60)}{r.recipe_text.split("\n")[0].length > 60 ? "…" : ""}</p>
                     <button
                       onClick={(e) => { e.stopPropagation(); handleTitleEdit(r); }}
                       className="text-gray-600 hover:text-gray-300 p-0.5 flex-shrink-0"
@@ -887,7 +1086,12 @@ export default function SiteDetailPage() {
                                 <>
                                   {boards.length > 0 && (
                                     <div>
-                                      <label className="text-xs text-gray-400 mb-1 block">Board</label>
+                                      <div className="flex items-center justify-between mb-1">
+                                        <label className="text-xs text-gray-400">Board</label>
+                                        {r.pin_board && (
+                                          <span className="text-xs text-brand-400">AI picked: {r.pin_board}</span>
+                                        )}
+                                      </div>
                                       <select
                                         value={selectedBoard}
                                         onChange={(e) => setSelectedBoard(e.target.value)}
@@ -965,6 +1169,11 @@ export default function SiteDetailPage() {
                   )}
                   {detailTab === "pinterest" && (
                     <div className="space-y-4">
+                      {pinterestNotConnected && (
+                        <div className="p-3 rounded-xl bg-amber-900/20 border border-amber-800 text-xs text-amber-300">
+                          No Pinterest boards configured. Go to <strong>Project Settings → Prompts</strong> and add your boards under <code>pinterest_boards_list</code> (one board per line).
+                        </div>
+                      )}
                       {r.pin_design_image ? (
                         <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-4">
                           <div className="flex flex-col sm:flex-row gap-4">
@@ -1005,6 +1214,30 @@ export default function SiteDetailPage() {
                                 />
                               </div>
                               <div>
+                                <label className="text-xs text-gray-400 block mb-1">Board</label>
+                                {boardsLoading ? (
+                                  <p className="text-xs text-gray-500">Loading boards…</p>
+                                ) : boards.length > 0 ? (
+                                  <select
+                                    value={pinDesignBoard}
+                                    onChange={(e) => setPinDesignBoard(e.target.value)}
+                                    className="input-field text-sm w-full"
+                                  >
+                                    <option value="">— Select board —</option>
+                                    {boards.map((b) => (
+                                      <option key={b.id} value={b.name}>{b.name}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input
+                                    value={pinDesignBoard}
+                                    onChange={(e) => setPinDesignBoard(e.target.value)}
+                                    className="input-field text-sm w-full"
+                                    placeholder="Board name…"
+                                  />
+                                )}
+                              </div>
+                              <div>
                                 <label className="text-xs text-gray-400 block mb-1">Blog link (if already published on WordPress)</label>
                                 <input
                                   value={pinDesignLink}
@@ -1012,6 +1245,28 @@ export default function SiteDetailPage() {
                                   className="input-field text-sm w-full"
                                   placeholder="https://yoursite.com/recipe-post"
                                 />
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-400 block mb-1">Pinterest pin URL</label>
+                                <div className="flex gap-2">
+                                  <input
+                                    value={pinDesignPinUrl}
+                                    onChange={(e) => setPinDesignPinUrl(e.target.value)}
+                                    className="input-field text-sm w-full"
+                                    placeholder="https://www.pinterest.com/pin/..."
+                                  />
+                                  {pinDesignPinUrl && (
+                                    <a
+                                      href={pinDesignPinUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center px-3 rounded-lg border border-gray-600 text-gray-400 hover:text-white hover:border-gray-400 transition flex-shrink-0"
+                                      title="Open pin"
+                                    >
+                                      <ExternalLink size={14} />
+                                    </a>
+                                  )}
+                                </div>
                               </div>
                               <button
                                 onClick={() => handleSavePinDesign(r.id)}
