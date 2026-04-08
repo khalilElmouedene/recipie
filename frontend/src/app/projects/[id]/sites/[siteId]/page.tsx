@@ -18,6 +18,7 @@ export default function SiteDetailPage() {
   const [recipes, setRecipes] = useState<RecipeOut[]>([]);
   const [imageUrl, setImageUrl] = useState("");
   const [recipeText, setRecipeText] = useState("");
+  const [imageInputKey, setImageInputKey] = useState(0);
   const [adding, setAdding] = useState(false);
   const [starting, setStarting] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -193,6 +194,7 @@ export default function SiteDetailPage() {
       await api.createRecipe(siteId, { image_url: imageUrl, recipe_text: recipeText });
       setImageUrl("");
       setRecipeText("");
+      setImageInputKey((k) => k + 1);
       loadRecipes();
     } catch {}
     setAdding(false);
@@ -677,6 +679,7 @@ export default function SiteDetailPage() {
               <Image size={14} /> Image
             </label>
             <ImageUrlInput
+              key={imageInputKey}
               value={imageUrl}
               onChange={setImageUrl}
               siteId={siteId}
