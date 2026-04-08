@@ -222,6 +222,31 @@ export const api = {
   deleteSite: (siteId: string) =>
     request<void>(`/api/sites/${siteId}`, { method: "DELETE" }),
 
+  /** Store recipe source image on the app server (not WordPress). URL is subject to 7-day retention. */
+  uploadRecipeImage: async (siteId: string, file: File): Promise<{ url: string }> => {
+    const token = getToken();
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_URL}/api/sites/${siteId}/recipe-images`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (res.status === 401) {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("token");
+        window.location.href = "/login";
+      }
+      throw new Error("Unauthorized");
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const msg = typeof err.detail === "string" ? err.detail : "Upload failed";
+      throw new Error(msg);
+    }
+    return res.json();
+  },
+
   uploadToWordPressFromUrl: (siteId: string, params: { image_url: string; title: string; create_post?: boolean }) =>
     request<{ media_id: string; media_url: string; post_id?: string; post_url?: string }>(
       `/api/sites/${siteId}/upload-from-url?${new URLSearchParams({

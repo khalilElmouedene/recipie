@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
+from app.config import settings
 from app.database import SessionLocal
 from app.db_models import Recipe, RecipeStatus, Site, ThreadsPost, ThreadsPostStatus
 
@@ -16,44 +17,69 @@ from app.db_models import Recipe, RecipeStatus, Site, ThreadsPost, ThreadsPostSt
 UPLOADS_DIR = Path("/app/uploads")
 
 
-def _upload_paths_from_generated_images(recipe: Recipe) -> set[Path]:
+def _upload_subpath_from_url(url: str) -> str | None:
+    """Return path relative to uploads dir, e.g. 'recipes/abc.jpg' or 'threads/x.jpeg'."""
+    if not url or not isinstance(url, str):
+        return None
+    try:
+        parsed = urlparse(url)
+        path = (parsed.path or "").replace("\\", "/")
+        if "/uploads/" not in path:
+            return None
+        sub = path.split("/uploads/", 1)[1].strip("/")
+        if not sub or ".." in sub.split("/"):
+            return None
+        return sub
+    except Exception:
+        return None
+
+
+def _path_from_upload_url(url: str) -> Path | None:
+    sub = _upload_subpath_from_url(url)
+    if not sub:
+        return None
+    p = (UPLOADS_DIR / sub).resolve()
+    try:
+        p.relative_to(UPLOADS_DIR.resolve())
+    except ValueError:
+        return None
+    return p
+
+
+def _is_local_upload_url(url: str) -> bool:
+    """True if URL points to a file under our server_base_url /uploads/."""
+    if not _upload_subpath_from_url(url):
+        return False
+    try:
+        parsed = urlparse(url)
+        base = urlparse(settings.server_base_url)
+        if not base.netloc:
+            return True
+        if not parsed.netloc:
+            return True
+        return parsed.netloc.lower() == base.netloc.lower()
+    except Exception:
+        return False
+
+
+def _upload_paths_from_recipe(recipe: Recipe) -> set[Path]:
+    """On-disk paths for generated_images and self-hosted image_url."""
     files: set[Path] = set()
     try:
         urls = json.loads(recipe.generated_images) if recipe.generated_images else []
     except Exception:
         urls = []
-    if not isinstance(urls, list):
-        return files
-    for u in urls:
-        if not isinstance(u, str):
-            continue
-        fn = _extract_upload_filename(u)
-        if fn:
-            files.add(UPLOADS_DIR / fn)
+    if isinstance(urls, list):
+        for u in urls:
+            if isinstance(u, str):
+                p = _path_from_upload_url(u)
+                if p:
+                    files.add(p)
+    if recipe.image_url and _is_local_upload_url(recipe.image_url):
+        p = _path_from_upload_url(recipe.image_url)
+        if p:
+            files.add(p)
     return files
-
-
-def _extract_upload_filename(url: str) -> str | None:
-    """
-    Extract the filename for cached uploads URLs.
-    We expect something like: <base>/uploads/<filename>
-    """
-    if not url or not isinstance(url, str):
-        return None
-    try:
-        parsed = urlparse(url)
-        path = parsed.path or ""
-        if not path:
-            return None
-        # Only accept cached upload URLs.
-        if "/uploads/" not in path:
-            return None
-        # Take last segment after "/uploads/"
-        parts = path.split("/")
-        filename = parts[-1] if parts else ""
-        return filename or None
-    except Exception:
-        return None
 
 
 RETENTION_DAYS = 7  # Auto-cleanup: delete published recipes after 7 days
@@ -63,10 +89,10 @@ async def _cleanup_once() -> int:
     """
     Hourly retention pass (fixed 7-day retention):
 
-    - **Published** recipes older than 7 days: delete cached files from `generated_images`, then delete
-      the `Recipe` row. Does not remove posts on WordPress.
+    - **Published** recipes older than 7 days: delete cached files from `generated_images` and local
+      `image_url`, then delete the `Recipe` row. Does not remove posts on WordPress.
     - **Generated / failed** with `generated_images` older than 7 days: delete cached files and clear
-      `generated_images` only.
+      `generated_images`; clear local `image_url` after file removal.
 
     Returns how many recipe rows were updated or deleted.
     """
@@ -85,13 +111,17 @@ async def _cleanup_once() -> int:
                 Recipe.created_at <= candidate_threshold,
             )
         )
+        # Include rows with generated_images cache, or any local /uploads/ source image to clean up
         cache_stmt = (
             select(Recipe, Site.project_id)
             .join(Site, Recipe.site_id == Site.id)
             .where(
                 Recipe.status.in_([RecipeStatus.generated, RecipeStatus.failed]),
-                Recipe.generated_images.isnot(None),
                 Recipe.created_at <= candidate_threshold,
+                or_(
+                    Recipe.generated_images.isnot(None),
+                    Recipe.image_url.like("%/uploads/%"),
+                ),
             )
         )
         published_rows = (await db.execute(published_stmt)).all()
@@ -106,7 +136,7 @@ async def _cleanup_once() -> int:
             if recipe.id in seen_ids:
                 return
             seen_ids.add(recipe.id)
-            files_to_delete.update(_upload_paths_from_generated_images(recipe))
+            files_to_delete.update(_upload_paths_from_recipe(recipe))
             if allow_published_delete and recipe.status == RecipeStatus.published:
                 to_delete_rows.append(recipe)
             elif recipe.status in (RecipeStatus.generated, RecipeStatus.failed):
@@ -127,6 +157,8 @@ async def _cleanup_once() -> int:
         for r in to_clear:
             try:
                 r.generated_images = None
+                if _is_local_upload_url(r.image_url):
+                    r.image_url = ""
                 recipes_updated += 1
             except Exception:
                 pass
@@ -142,6 +174,41 @@ async def _cleanup_once() -> int:
             await db.commit()
 
     return recipes_updated + recipes_deleted
+
+
+async def _cleanup_pending_stale_source_images() -> int:
+    """Remove local source image files for pending recipes older than RETENTION_DAYS; clear image_url."""
+    now = datetime.now(timezone.utc)
+    threshold = now - timedelta(days=RETENTION_DAYS)
+    cleared = 0
+
+    async with SessionLocal() as db:
+        rows = await db.execute(
+            select(Recipe).where(
+                Recipe.status == RecipeStatus.pending,
+                Recipe.created_at <= threshold,
+            )
+        )
+        recipes = rows.scalars().all()
+
+        for recipe in recipes:
+            if not recipe.image_url or not recipe.image_url.strip():
+                continue
+            if not _is_local_upload_url(recipe.image_url):
+                continue
+            p = _path_from_upload_url(recipe.image_url)
+            if p and p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+            recipe.image_url = ""
+            cleared += 1
+
+        if cleared:
+            await db.commit()
+
+    return cleared
 
 
 async def cleanup_project_generated_images(
@@ -177,8 +244,8 @@ async def cleanup_project_generated_images(
             ]
             stmt = stmt.where(Recipe.status.in_(statuses))
             if retention_days is not None:
-                threshold = now - timedelta(days=max(1, retention_days))
-                stmt = stmt.where(Recipe.created_at <= threshold)
+                thr = now - timedelta(days=max(1, retention_days))
+                stmt = stmt.where(Recipe.created_at <= thr)
 
         candidates = (await db.execute(stmt)).all()
         files_to_delete: set[Path] = set()
@@ -186,23 +253,10 @@ async def cleanup_project_generated_images(
         to_delete: list[Recipe] = []
 
         for recipe, _ in candidates:
-            # Keep counting published recipes for delete-all mode even if they have no generated_images.
             if delete_all_published:
                 to_delete.append(recipe)
 
-            try:
-                urls = json.loads(recipe.generated_images) if recipe.generated_images else []
-            except Exception:
-                urls = []
-
-            if isinstance(urls, list):
-                for u in urls:
-                    if not isinstance(u, str):
-                        continue
-                    fn = _extract_upload_filename(u)
-                    if fn:
-                        files_to_delete.add(UPLOADS_DIR / fn)
-
+            files_to_delete.update(_upload_paths_from_recipe(recipe))
             to_update.append(recipe)
 
         for p in files_to_delete:
@@ -224,6 +278,8 @@ async def cleanup_project_generated_images(
             for r in to_update:
                 try:
                     r.generated_images = None
+                    if _is_local_upload_url(r.image_url):
+                        r.image_url = ""
                     recipes_updated += 1
                 except Exception:
                     pass
@@ -264,9 +320,10 @@ async def _cleanup_threads_media_once() -> int:
                     continue
                 try:
                     parsed_path = urlparse(u).path or ""
-                    # Strip leading /uploads/ to get subpath like "threads/abc.jpg"
                     if "/uploads/" in parsed_path:
                         sub = parsed_path.split("/uploads/", 1)[1]
+                        if ".." in sub.split("/"):
+                            continue
                         p = UPLOADS_DIR / sub
                         if p.exists():
                             p.unlink()
@@ -292,6 +349,10 @@ async def run_image_retention_scheduler(stop_event: asyncio.Event) -> None:
         except Exception:
             pass
         try:
+            await _cleanup_pending_stale_source_images()
+        except Exception:
+            pass
+        try:
             await _cleanup_threads_media_once()
         except Exception:
             pass
@@ -300,4 +361,3 @@ async def run_image_retention_scheduler(stop_event: asyncio.Event) -> None:
             await asyncio.wait_for(stop_event.wait(), timeout=3600)
         except asyncio.TimeoutError:
             pass
-

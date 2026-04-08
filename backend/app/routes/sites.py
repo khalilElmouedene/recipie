@@ -1,6 +1,8 @@
 from __future__ import annotations
 import json
+import mimetypes
 import uuid
+from pathlib import Path
 from typing import Annotated
 
 import httpx
@@ -15,8 +17,19 @@ from ..db_models import User, Site, Recipe, Project, ProjectMemberRole
 from ..dependencies import get_current_user, check_project_access
 from .recipes import _is_safe_url
 from ..models import SiteCreate, SiteUpdate, SiteOut
+from ..config import settings
 from ..services import wordpress as wp_service
 from ..site_credentials import get_random_wp_credentials
+
+UPLOADS_ROOT = Path("/app/uploads")
+_RECIPE_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+_RECIPE_IMAGE_EXT = {
+    ".jpg": ("image/jpeg", "image/jpg"),
+    ".jpeg": ("image/jpeg",),
+    ".png": ("image/png",),
+    ".webp": ("image/webp",),
+    ".gif": ("image/gif",),
+}
 
 router = APIRouter(tags=["sites"])
 
@@ -26,6 +39,36 @@ class MediaUploadResponse(BaseModel):
     media_url: str
     post_id: str | None = None
     post_url: str | None = None
+
+
+class RecipeImageUploadResponse(BaseModel):
+    url: str
+
+
+def _recipe_image_extension(file: UploadFile, raw: bytes) -> str:
+    """Return a normalized extension from filename, Content-Type, or sniff."""
+    name = (file.filename or "").lower().strip()
+    for ext in _RECIPE_IMAGE_EXT:
+        if name.endswith(ext):
+            return ".jpg" if ext == ".jpeg" else ext
+    ct = (file.content_type or "").split(";")[0].strip().lower()
+    for ext, types in _RECIPE_IMAGE_EXT.items():
+        if ct in types:
+            return ".jpg" if ext == ".jpeg" else ext
+    guess, _ = mimetypes.guess_type(file.filename or "")
+    if guess:
+        for ext, types in _RECIPE_IMAGE_EXT.items():
+            if guess.lower() in types:
+                return ".jpg" if ext == ".jpeg" else ext
+    if raw.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if raw.startswith(b"GIF87a") or raw.startswith(b"GIF89a"):
+        return ".gif"
+    if raw.startswith(b"RIFF") and len(raw) >= 12 and raw[8:12] == b"WEBP":
+        return ".webp"
+    raise HTTPException(status_code=400, detail="Unsupported image type; use JPEG, PNG, WebP, or GIF")
 
 
 def _parse_wp_users(site: Site) -> list[dict]:
@@ -168,6 +211,38 @@ async def delete_site(
     await check_project_access(site.project_id, user, db, require_roles=[ProjectMemberRole.admin])
     await db.execute(sql_delete(Site).where(Site.id == site_id))
     await db.commit()
+
+
+@router.post("/api/sites/{site_id}/recipe-images", response_model=RecipeImageUploadResponse)
+async def upload_recipe_source_image(
+    site_id: uuid.UUID,
+    file: UploadFile = File(...),
+    user: Annotated[User, Depends(get_current_user)] = None,
+    db: Annotated[AsyncSession, Depends(get_db)] = None,
+):
+    """Store a recipe source image on this server (not WordPress). Returns a public URL under /uploads/recipes/."""
+    result = await db.execute(select(Site).where(Site.id == site_id))
+    site = result.scalar_one_or_none()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    await check_project_access(site.project_id, user, db)
+
+    raw = await file.read()
+    if len(raw) > _RECIPE_IMAGE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds the 10 MB size limit")
+    if len(raw) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    ext = _recipe_image_extension(file, raw)
+    recipes_dir = UPLOADS_ROOT / "recipes"
+    recipes_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"{uuid.uuid4().hex}{ext}"
+    dest = recipes_dir / fname
+    dest.write_bytes(raw)
+
+    public_url = f"{settings.server_base_url.rstrip('/')}/uploads/recipes/{fname}"
+    return RecipeImageUploadResponse(url=public_url)
 
 
 @router.post("/api/sites/{site_id}/upload-media", response_model=MediaUploadResponse)
