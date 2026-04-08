@@ -720,7 +720,7 @@ export default function SiteDetailPage() {
         </div>
 
         <form onSubmit={handleAddRecipe} className="p-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div className="flex flex-col gap-5">
 
             {/* Left: Source Image */}
             <div className="flex flex-col gap-3">
@@ -813,8 +813,8 @@ export default function SiteDetailPage() {
                 value={recipeText}
                 onChange={(e) => setRecipeText(e.target.value)}
                 required
-                rows={6}
-                className="input-field resize-none flex-1"
+                rows={4}
+                className="input-field resize-none"
                 placeholder="Paste recipe name and details here — the AI will generate a full article, SEO data, and Pinterest pin from this."
               />
             </div>
