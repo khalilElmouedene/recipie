@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { Link, Upload, X } from "lucide-react";
 import { getApiBaseUrl } from "@/lib/api";
 
@@ -58,14 +58,21 @@ export default function ImageUrlInput({ value, onChange, siteId, required, place
     }
   };
 
-  const handlePaste = (e: React.ClipboardEvent) => {
-    const item = Array.from(e.clipboardData.items).find((i) => i.type.startsWith("image/"));
-    if (item) {
-      e.preventDefault();
-      const file = item.getAsFile();
-      if (file) handleFile(file);
-    }
-  };
+  // Global paste listener — works without clicking the dropzone first
+  useEffect(() => {
+    if (mode !== "upload") return;
+    const onWindowPaste = (e: ClipboardEvent) => {
+      const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"));
+      if (item) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) handleFile(file);
+      }
+    };
+    window.addEventListener("paste", onWindowPaste);
+    return () => window.removeEventListener("paste", onWindowPaste);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, siteId]);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -118,7 +125,6 @@ export default function ImageUrlInput({ value, onChange, siteId, required, place
             ref={dropRef}
             onDrop={handleDrop}
             onDragOver={(e) => e.preventDefault()}
-            onPaste={handlePaste}
             onClick={() => !uploading && fileInputRef.current?.click()}
             className="relative border-2 border-dashed border-gray-600 rounded-lg p-4 text-center cursor-pointer hover:border-brand-500 transition focus:outline-none"
             tabIndex={0}
