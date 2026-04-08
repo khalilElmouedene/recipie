@@ -185,52 +185,13 @@ export default function SiteDetailPage() {
       .catch(() => {});
   };
 
-  const handleRecipeImageFile = async (file: File | null) => {
-    if (!file || !file.type.startsWith("image/")) {
-      setImageUploadError(file ? "Only image files are allowed" : "");
-      return;
-    }
-    setImageUploading(true);
-    setImageUploadError("");
-    try {
-      const { url } = await api.uploadRecipeImage(siteId, file);
-      setImageUrl(url);
-    } catch (err) {
-      setImageUploadError(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setImageUploading(false);
-    }
-  };
-
-  // Global paste listener — Ctrl+V anywhere on the page uploads an image (upload mode only)
-  useEffect(() => {
-    if (imageSourceMode !== "upload") return;
-    const onPaste = (e: ClipboardEvent) => {
-      const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"));
-      if (item) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (file) void handleRecipeImageFile(file);
-      }
-    };
-    window.addEventListener("paste", onPaste);
-    return () => window.removeEventListener("paste", onPaste);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteId, imageSourceMode]);
-
   const handleAddRecipe = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!imageUrl.trim()) {
-      setImageUploadError("Enter an image URL or paste an image (Ctrl+V)");
-      return;
-    }
     setAdding(true);
     try {
       await api.createRecipe(siteId, { image_url: imageUrl.trim(), recipe_text: recipeText });
       setImageUrl("");
       setRecipeText("");
-      setImageSourceMode("url");
-      setImageUploadError("");
       loadRecipes();
     } catch {}
     setAdding(false);
