@@ -33,6 +33,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { applyTextTransform } from "@/components/PinDesigner";
 
 const SELECTION_ACCENT = "#2563eb";
 
@@ -92,6 +93,7 @@ function TemplateDesignerInner() {
   const [fontWeight, setFontWeight] = useState("normal");
   const [fontStyle, setFontStyle] = useState("normal");
   const [fontFamily, setFontFamily] = useState("Arial");
+  const [textTransform, setTextTransform] = useState<"none" | "uppercase" | "lowercase" | "capitalize">("none");
   const [textVariable, setTextVariable] = useState<"" | "title" | "website">("");
   const [customFonts, setCustomFonts] = useState<string[]>([]);
   const [fontInput, setFontInput] = useState("");
@@ -122,7 +124,7 @@ function TemplateDesignerInner() {
   const undoHistoryRef = useRef<string[]>([]);
   const isRestoringRef = useRef(false);
   const transformSaveDoneRef = useRef(false);
-  const UNDO_CUSTOM_KEYS = ["__id", "__ttype", "__strokeStyle", "__textVariable"];
+  const UNDO_CUSTOM_KEYS = ["__id", "__ttype", "__strokeStyle", "__textVariable", "__textTransform", "__rawText", "__flipX"];
   const MAX_UNDO = 50;
 
   useEffect(() => {
@@ -255,7 +257,12 @@ function TemplateDesignerInner() {
         });
         canvas.on("text:changed", (e: any) => {
           const t = e.target;
-          if (t?.__ttype === "text") setText(t.text ?? "");
+          if (t?.__ttype === "text") {
+            // When typing directly on canvas, the typed text becomes the new raw text.
+            // Store it and show it in the sidebar (without transform applied).
+            t.__rawText = t.text ?? "";
+            setText(t.text ?? "");
+          }
         });
         canvas.on("object:moving", () => {
           if (!transformSaveDoneRef.current) {
@@ -312,13 +319,14 @@ function TemplateDesignerInner() {
         : null;
     setSelType(t);
     if (t === "text") {
-      setText(obj.text ?? "");
+      setText((obj.__rawText as string) ?? obj.text ?? "");
       setFontSize(obj.fontSize ?? 48);
       setTextColor(typeof obj.fill === "string" ? obj.fill : "#333333");
       setTextAlign(obj.textAlign ?? "center");
       setFontWeight(obj.fontWeight ?? "normal");
       setFontStyle(obj.fontStyle ?? "normal");
       setFontFamily(obj.fontFamily ?? "Arial");
+      setTextTransform((obj.__textTransform as "none" | "uppercase" | "lowercase" | "capitalize") ?? "none");
       setTextVariable((obj.__textVariable as "" | "title" | "website") ?? "");
     } else if (t === "band" || t === "image") {
       setElemColor(typeof obj.fill === "string" ? obj.fill : "#4a90d9");
@@ -389,7 +397,9 @@ function TemplateDesignerInner() {
 
       for (const el of tmpl.elements || []) {
         if (el.type === "text") {
-          const tb = new fabric.Textbox(el.defaultText || "Text", {
+          const rawText = el.defaultText || "Text";
+          const tt = (el as any).textTransform ?? "none";
+          const tb = new fabric.Textbox(applyTextTransform(rawText, tt), {
             left: el.x ?? canvasW / 2,
             top: el.y ?? canvasH / 2,
             width: el.width || 800,
@@ -406,6 +416,8 @@ function TemplateDesignerInner() {
           (tb as any).__id = el.id || uid("text");
           (tb as any).__ttype = "text";
           (tb as any).__textVariable = (el as any).textVariable ?? "";
+          (tb as any).__textTransform = tt;
+          (tb as any).__rawText = rawText;
           applySelectionVisuals(tb);
           canvas.add(tb);
         } else if (el.type === "image") {
@@ -569,6 +581,8 @@ function TemplateDesignerInner() {
     (tb as any).__id = uid("text");
     (tb as any).__ttype = "text";
     (tb as any).__textVariable = "";
+    (tb as any).__textTransform = "none";
+    (tb as any).__rawText = "Text";
     applySelectionVisuals(tb);
     canvas.add(tb);
     canvas.setActiveObject(tb);
@@ -727,6 +741,8 @@ function TemplateDesignerInner() {
     (tb as any).__id = uid("website");
     (tb as any).__ttype = "text";
     (tb as any).__textVariable = "website";
+    (tb as any).__textTransform = "none";
+    (tb as any).__rawText = "WWW.YOURSITE.COM";
     applySelectionVisuals(tb);
     canvas.add(tb);
     canvas.setActiveObject(tb);
@@ -1002,6 +1018,20 @@ function TemplateDesignerInner() {
     const obj = getActive();
     if (!obj || obj.__ttype !== "text") return;
     saveUndoState();
+    // If updating text content, store raw and apply current transform
+    if ("text" in patch) {
+      const raw = patch.text as string;
+      obj.__rawText = raw;
+      const tt = (obj.__textTransform as string) ?? "none";
+      patch = { ...patch, text: applyTextTransform(raw, tt) };
+    }
+    // If updating textTransform, re-derive displayed text from raw
+    if ("textTransform" in patch) {
+      const raw = (obj.__rawText as string) ?? (obj.text as string) ?? "";
+      obj.__rawText = raw;
+      obj.__textTransform = patch.textTransform;
+      patch = { ...patch, text: applyTextTransform(raw, patch.textTransform as string) };
+    }
     obj.set(patch);
     fabricRef.current?.renderAll();
   }
@@ -1054,8 +1084,9 @@ function TemplateDesignerInner() {
           y: cp.y,
           width: w || o.width || 800,
           height: h,
-          defaultText: o.text ?? "",
+          defaultText: (o.__rawText as string) ?? o.text ?? "",
           textVariable: (o.__textVariable as string) ?? "",
+          textTransform: (o.__textTransform as string) ?? "none",
           fontSize: o.fontSize ?? 48,
           fontWeight: o.fontWeight ?? "normal",
           fontStyle: o.fontStyle ?? "normal",
@@ -1688,6 +1719,29 @@ function TemplateDesignerInner() {
                   >
                     I
                   </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1.5">Case</label>
+                <div className="flex gap-1">
+                  {([["uppercase", "AA", "UPPERCASE"], ["capitalize", "Aa", "Title Case"], ["lowercase", "aa", "lowercase"], ["none", "a", "Normal"]] as const).map(([val, label, title]) => (
+                    <button
+                      key={val}
+                      title={title}
+                      onClick={() => {
+                        setTextTransform(val);
+                        applyText({ textTransform: val });
+                      }}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-mono transition ${
+                        textTransform === val
+                          ? "bg-brand-600 text-white"
+                          : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
               </div>
 

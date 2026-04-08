@@ -1,12 +1,25 @@
 """Shared credential loading for jobs - same logic as Paramètres/Settings."""
 from __future__ import annotations
+import json
 import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..crypto import decrypt
-from ..db_models import Project, ProjectCredential, ProjectMember, UserCredential
+from ..db_models import Project, ProjectCredential, ProjectMember, User, UserCredential
+
+
+def _merge_mj_grid_wait(credentials: dict[str, str], owner: User | None) -> None:
+    g = 190
+    if owner and owner.mj_timer_settings:
+        try:
+            j = json.loads(owner.mj_timer_settings)
+            g = int(j.get("grid_wait_seconds", g))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+    g = max(30, min(600, g))
+    credentials["mj_grid_wait_seconds"] = str(g)
 
 
 async def load_credentials_for_job(
@@ -63,5 +76,10 @@ async def load_credentials_for_job(
                 )
                 for c in m_rows.scalars().all():
                     _add_cred(c.key_type, c.encrypted_value)
+
+    owner_user: User | None = None
+    if prj:
+        owner_user = (await db.execute(select(User).where(User.id == prj.owner_id))).scalar_one_or_none()
+    _merge_mj_grid_wait(credentials, owner_user)
 
     return credentials

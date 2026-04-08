@@ -65,9 +65,13 @@ interface TemplateElement {
   fill?: string;
   bgColor?: string;
   textAlign?: string;
+  textVariable?: string;
+  textTransform?: string;
+  flipX?: boolean;
   strokeWidth?: number;
   strokeStyle?: StrokeStyle;
   radius?: number;
+  [key: string]: unknown; // allow extra fields from API
 }
 
 export interface PinTemplate {
@@ -279,6 +283,15 @@ export interface BulkOverrides {
   bgColor?: string;
 }
 
+// ─── Text case transform helper ──────────────────────────────────────────────
+
+export function applyTextTransform(text: string, transform: string): string {
+  if (transform === "uppercase") return text.toUpperCase();
+  if (transform === "lowercase") return text.toLowerCase();
+  if (transform === "capitalize") return text.replace(/\b\w/g, (c) => c.toUpperCase());
+  return text;
+}
+
 // ─── Standalone template renderer (used for batch Save All) ──────────────────
 
 export async function buildTemplateOnCanvas(
@@ -393,7 +406,9 @@ export async function buildTemplateOnCanvas(
       const isTitle = tv === "title" || el.id === "title" || el.id.startsWith("title") || el.id.startsWith("text_");
       const isWebsite = tv === "website" || el.id === "website" || el.id.startsWith("website_");
       const fill = isTitle && oTitleColor ? oTitleColor : (el.fill || "#333333");
-      const tb = new fabric.Textbox(text, {
+      const tt = (el as any).textTransform ?? "none";
+      const displayText = applyTextTransform(text, tt);
+      const tb = new fabric.Textbox(displayText, {
         left: el.x, top: el.y, width: el.width || 940, originX: "center", originY: "center",
         fontSize: (isTitle && oSize) ? oSize : (el.fontSize || 32),
         fontFamily: oFont || el.fontFamily || "Arial",
@@ -405,6 +420,8 @@ export async function buildTemplateOnCanvas(
       (tb as any).__pinId = el.id;
       (tb as any).__pinLabel = el.label;
       (tb as any).__pinType = "text";
+      (tb as any).__textTransform = tt;
+      (tb as any).__rawText = text;
       canvas.add(tb);
     }
   }
@@ -760,6 +777,14 @@ export default function PinDesigner({
   const [publishing, setPublishing] = useState(false);
   const [savingToRecipe, setSavingToRecipe] = useState(false);
   const [wpBatchBusy, setWpBatchBusy] = useState<null | "wordpress_scheduled" | "manual_backdate">(null);
+  const [wpBatchDone, setWpBatchDone] = useState(false);
+  const [showCsvModal, setShowCsvModal] = useState(false);
+  const [csvStartDate, setCsvStartDate] = useState(() => {
+    const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
+    return d.toISOString().slice(0, 16);
+  });
+  const [csvInterval, setCsvInterval] = useState(300);
+  const [csvGenerating, setCsvGenerating] = useState(false);
   const [showWpScheduleModal, setShowWpScheduleModal] = useState(false);
   const [wpScheduleFirstAt, setWpScheduleFirstAt] = useState(() => {
     const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
@@ -958,10 +983,11 @@ export default function PinDesigner({
           await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe");
         }
       }
-      // 2. Now publish to WordPress — articles already contain the pin images
+      // 2. WordPress batch — backend only includes recipes with status "generated" (see publish_batch_to_wordpress).
       const res = await api.publishBatchToWordPress(projectId, { mode, ...opts });
       const extra = res.errors?.length ? `\n${res.errors.slice(0, 4).join("\n")}` : "";
       alert(`WordPress batch finished.\nSucceeded: ${res.succeeded} / ${res.total}\nFailed: ${res.failed}${extra}`);
+      if (res.succeeded > 0) setWpBatchDone(true);
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : "Batch publish failed");
     } finally {
@@ -1243,6 +1269,76 @@ export default function PinDesigner({
     if (data) publishToPinterest(data);
   };
 
+  const downloadPinterestCsv = async () => {
+    if (!frames || frames.length === 0) return;
+    setCsvGenerating(true);
+    try {
+
+    // Fetch fresh recipe data for all frames to get wp_permalink, pin fields, pin_design_image, etc.
+    const recipes = await Promise.all(
+      frames.map((f) => api.getRecipe(f.recipeId).catch(() => null))
+    );
+
+    const startMs = new Date(csvStartDate).getTime();
+    const intervalMs = csvInterval * 60 * 1000;
+
+    // CSV header matching the Pinterest bulk upload format
+    const header = ["Title", "Media URL", "Pinterest board", "Thumbnail", "Description", "Link", "Publish date", "Keywords"];
+
+    const rows: string[][] = [];
+
+    for (let i = 0; i < recipes.length; i++) {
+      const r = recipes[i];
+      if (!r) { rows.push(header.map(() => "")); continue; }
+
+      const publishDate = new Date(startMs + i * intervalMs);
+      // Format: M/D/YYYY H:MM (Pinterest scheduler format from sample)
+      const month = publishDate.getMonth() + 1;
+      const day = publishDate.getDate();
+      const year = publishDate.getFullYear();
+      const hours = publishDate.getHours();
+      const mins = String(publishDate.getMinutes()).padStart(2, "0");
+      const dateStr = `${month}/${day}/${year} ${hours}:${mins}`;
+
+      // Media URL: upload pin design image (from Pin Designer) to WordPress media to get a public URL
+      let mediaUrl = "";
+      const pinDesignImage = r.pin_design_image;
+      if (pinDesignImage?.startsWith("data:") && siteId) {
+        try {
+          const title = r.pin_title || r.recipe_text?.split("\n")[0]?.trim() || `Pin ${i + 1}`;
+          mediaUrl = await api.uploadPinImageToWordPress(siteId, pinDesignImage, title);
+        } catch { /* leave empty if upload fails */ }
+      }
+
+      const title = r.pin_title || r.recipe_text?.split("\n")[0]?.trim() || "";
+      const board = r.pin_board || "";
+      const description = r.pin_description || "";
+      const link = r.wp_permalink || "";
+      const keywords = r.pin_tags || "";
+
+      rows.push([title, mediaUrl, board, "", description, link, dateStr, keywords]);
+    }
+
+    const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const csvContent = [header, ...rows].map((row) => row.map(escape).join(",")).join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pinterest-pins-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setShowCsvModal(false);
+
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "CSV generation failed");
+    } finally {
+      setCsvGenerating(false);
+    }
+  };
+
   const handleSaveToRecipe = async () => {
     if (!recipeId) return;
     const data = getExportDataUrl();
@@ -1294,12 +1390,13 @@ export default function PinDesigner({
 
     if (obj.__pinType === "text") {
       setTextProps({
-        editText: obj.text ?? "",
+        editText: obj.__rawText ?? obj.text ?? "",
         fontFamily: obj.fontFamily ?? "Arial",
         fontSize: obj.fontSize ?? 32,
         fontWeight: obj.fontWeight ?? "normal",
         textAlign: obj.textAlign ?? "center",
         textColor: obj.fill ?? "#333333",
+        textTransform: obj.__textTransform ?? "none",
       });
     } else if (obj.__pinType === "frame") {
       setFrameProps({
@@ -1338,7 +1435,7 @@ export default function PinDesigner({
   const MAX_UNDO = 50;
 
   // Fabric v6: toJSON() ignores propertiesToInclude — must use toObject() to include custom keys
-  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__flipX"];
+  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__flipX", "__textTransform", "__rawText"];
 
   const saveUndoState = () => {
     const canvas = fabricCanvasRef.current;
@@ -1415,12 +1512,13 @@ export default function PinDesigner({
 
       if (restoredObj.__pinType === "text") {
         setTextProps({
-          editText: restoredObj.text ?? "",
+          editText: restoredObj.__rawText ?? restoredObj.text ?? "",
           fontFamily: restoredObj.fontFamily ?? "Arial",
           fontSize: restoredObj.fontSize ?? 32,
           fontWeight: restoredObj.fontWeight ?? "normal",
           textAlign: restoredObj.textAlign ?? "center",
           textColor: restoredObj.fill ?? "#333333",
+          textTransform: restoredObj.__textTransform ?? "none",
         });
       } else if (restoredObj.__pinType === "frame") {
         setFrameProps({
@@ -1723,8 +1821,9 @@ export default function PinDesigner({
         } else {
           textContent = el.defaultText || "Text";
         }
+        const tt = (el as any).textTransform ?? el.textTransform ?? "none";
         const textbox = new fabric.Textbox(
-          textContent,
+          applyTextTransform(textContent, tt),
           {
             left: el.x,
             top: el.y,
@@ -1745,6 +1844,8 @@ export default function PinDesigner({
         (textbox as any).__pinId = el.id;
         (textbox as any).__pinLabel = el.label;
         (textbox as any).__pinType = "text";
+        (textbox as any).__textTransform = tt;
+        (textbox as any).__rawText = textContent;
         canvas.add(textbox);
       } else if (el.type === "frame") {
         const strokeStyle = (el.strokeStyle as string) ?? (el as any).__strokeStyle ?? "solid";
@@ -2191,7 +2292,10 @@ export default function PinDesigner({
     const obj = getSelectedObject();
     if (!canvas || !obj || obj.__pinType !== "text") return;
     saveUndoState();
-    obj.set("text", textProps.editText);
+    const raw = textProps.editText;
+    const tt = (obj.__textTransform as string) ?? "none";
+    obj.__rawText = raw;
+    obj.set("text", applyTextTransform(raw, tt));
     if (typeof obj.initDimensions === "function") obj.initDimensions();
     obj.setCoords();
     canvas.renderAll();
@@ -2202,6 +2306,20 @@ export default function PinDesigner({
     const obj = getSelectedObject();
     if (!canvas || !obj || obj.__pinType !== "text") return;
     saveUndoState();
+
+    if (property === "textTransform") {
+      // Apply transform: re-derive displayed text from stored raw text
+      const raw = (obj.__rawText as string) ?? (obj.text as string) ?? "";
+      obj.__rawText = raw;
+      obj.__textTransform = value;
+      obj.set("text", applyTextTransform(raw, value as string));
+      if (typeof obj.initDimensions === "function") obj.initDimensions();
+      obj.setCoords();
+      setTextProps({ textTransform: value });
+      canvas.renderAll();
+      return;
+    }
+
     const propName = property === "fill" ? "fill" : property;
     const propValue = property === "fontSize" ? parseInt(value) : value;
     if (applyToAllPages) {
@@ -2909,6 +3027,18 @@ export default function PinDesigner({
                 title="Increase font size"
               >A+</button>
               <div className="w-px h-4 bg-gray-700 mx-0.5" />
+              {/* Text case */}
+              {(["uppercase", "capitalize", "lowercase", "none"] as const).map((tc) => (
+                <button
+                  key={tc}
+                  onClick={() => updateTextProperty("textTransform", tc)}
+                  title={{ uppercase: "UPPERCASE", capitalize: "Title Case", lowercase: "lowercase", none: "Normal" }[tc]}
+                  className={`p-1 rounded text-[11px] font-mono transition ${textProps.textTransform === tc ? "bg-brand-500 text-white" : "text-gray-300 hover:bg-gray-700"}`}
+                >
+                  {{ uppercase: "AA", capitalize: "Aa", lowercase: "aa", none: "a" }[tc]}
+                </button>
+              ))}
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
             </>
           )}
 
@@ -3081,6 +3211,16 @@ export default function PinDesigner({
                   {wpBatchBusy === "manual_backdate" ? "…" : "WP Backdate"}
                 </span>
               </button>
+              <button
+                type="button"
+                onClick={() => setShowCsvModal(true)}
+                disabled={!wpBatchDone}
+                className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-pink-800/50 text-pink-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                title={wpBatchDone ? "Download Pinterest scheduling CSV for all published pins" : "Publish to WordPress first to enable CSV download"}
+              >
+                <Download size={14} />
+                <span className="hidden lg:inline">Pinterest CSV</span>
+              </button>
             </>
           )}
           <button
@@ -3138,6 +3278,53 @@ export default function PinDesigner({
                   {wpBatchBusy === "wordpress_scheduled" ? "Scheduling…" : "Schedule Now"}
                 </button>
                 <button className="btn-secondary flex-1" onClick={() => setShowWpScheduleModal(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Pinterest CSV Modal ───────────────────────────────────────────── */}
+      {showCsvModal && (
+        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center">
+          <div className="bg-gray-900 rounded-xl p-6 w-full max-w-sm">
+            <h3 className="text-lg font-semibold text-white mb-1">Download Pinterest CSV</h3>
+            <p className="text-xs text-gray-400 mb-4">Configure publish schedule for the CSV. Each pin is staggered by the interval.</p>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">First pin publish date &amp; time</label>
+                <input
+                  type="datetime-local"
+                  value={csvStartDate}
+                  onChange={(e) => setCsvStartDate(e.target.value)}
+                  className="input-field w-full"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Interval between pins (minutes)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10080}
+                  value={csvInterval}
+                  onChange={(e) => setCsvInterval(Number(e.target.value) || 300)}
+                  className="input-field w-full"
+                />
+              </div>
+              {csvGenerating && (
+                <p className="text-xs text-gray-400">Uploading pin images to WordPress media… this may take a moment.</p>
+              )}
+              <div className="flex gap-2 pt-2">
+                <button
+                  className="btn-primary flex-1 flex items-center justify-center gap-2 disabled:opacity-50"
+                  disabled={csvGenerating}
+                  onClick={() => void downloadPinterestCsv()}
+                >
+                  <Download size={14} /> {csvGenerating ? "Uploading…" : "Download CSV"}
+                </button>
+                <button className="btn-secondary flex-1" disabled={csvGenerating} onClick={() => setShowCsvModal(false)}>
                   Cancel
                 </button>
               </div>
@@ -3818,6 +4005,21 @@ export default function PinDesigner({
                           className={`flex-1 py-1.5 rounded text-xs font-medium transition ${textProps.textAlign === a ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
                         >
                           {a.charAt(0).toUpperCase() + a.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Text Case</label>
+                    <div className="flex gap-1">
+                      {([["uppercase", "AA", "UPPERCASE"], ["capitalize", "Aa", "Title Case"], ["lowercase", "aa", "lowercase"], ["none", "a", "Normal"]] as const).map(([val, label, title]) => (
+                        <button
+                          key={val}
+                          onClick={() => updateTextProperty("textTransform", val)}
+                          title={title}
+                          className={`flex-1 py-1.5 rounded text-xs font-mono transition ${textProps.textTransform === val ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
+                        >
+                          {label}
                         </button>
                       ))}
                     </div>

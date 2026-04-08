@@ -24,6 +24,21 @@ _midjourney_lock = threading.Lock()
 
 UPLOADS_DIR = Path("/app/uploads")
 
+# Midjourney: grid wait is configurable (owner Settings); these two are fixed.
+_MJ_DEFAULT_GRID_WAIT_SEC = 190
+_MJ_UPSCALE_GAP_SEC = 10
+_MJ_POST_UPSCALE_WAIT_SEC = 60
+
+
+def _mj_grid_wait_from_credentials(credentials: dict) -> int:
+    raw = credentials.get("mj_grid_wait_seconds")
+    if raw is None or raw == "":
+        return _MJ_DEFAULT_GRID_WAIT_SEC
+    try:
+        return max(30, min(600, int(str(raw).strip())))
+    except ValueError:
+        return _MJ_DEFAULT_GRID_WAIT_SEC
+
 
 def _cache_image(url: str, log: Callable[[str], None] | None = None) -> str:
     """Download a Discord CDN image and save it locally. Returns the permanent server URL."""
@@ -289,18 +304,7 @@ def generate_for_recipe(
         if _stop():
             return result
 
-        # 1. Focus keyword (AI-generated)
-        _log("Generating focus keyword...")
-        try:
-            focus_keyword = openai_service.generate_focus_keyword(recipe_title, openai_key, prompts=prompts, log=_log)
-            if not focus_keyword or len(focus_keyword) < 3:
-                focus_keyword = re.sub(r'[*#"]', '', clean_keyword(recipe_title))
-        except Exception:
-            focus_keyword = re.sub(r'[*#"]', '', clean_keyword(recipe_title))
-        result["focus_keyword"] = focus_keyword
-        _log(f"Focus keyword: {focus_keyword}")
-
-        # 2. Generate full recipe
+        # 1. Generate full recipe
         if _stop():
             return result
         _log("Generating full recipe...")
@@ -348,18 +352,7 @@ def generate_for_recipe(
             except Exception as e:
                 _log(f"SEO title generation failed (non-fatal): {e}")
 
-        # 6c. WordPress post tags
-        if not _stop():
-            _log("Generating WordPress post tags...")
-            try:
-                wp_tags = openai_service.generate_wp_tags(recipe_title, openai_key, prompts=prompts, log=_log)
-                if wp_tags:
-                    result["wp_tags"] = wp_tags
-                    _log(f"WordPress tags: {wp_tags}")
-            except Exception as e:
-                _log(f"WordPress tags generation failed (non-fatal): {e}")
-
-        # 6d. Pinterest board selection (AI picks best board from boards list)
+        # 6c. Pinterest board selection (AI picks best board from boards list)
         from .prompts import DEFAULT_PROMPTS as _DP
         boards_list = (prompts or {}).get("pinterest_boards_list") or _DP.get("pinterest_boards_list", {}).get("value", "")
         if boards_list and not _stop():
@@ -421,7 +414,17 @@ def generate_for_recipe(
                     return result
                 _log("Midjourney slot acquired — generating images...")
                 try:
-                    img_urls = midjourney.generate_images(recipe_title, image_url, credentials, prompts=prompts, wait_time=190, log=_log)
+                    gw = _mj_grid_wait_from_credentials(credentials)
+                    img_urls = midjourney.generate_images(
+                        recipe_title,
+                        image_url,
+                        credentials,
+                        prompts=prompts,
+                        wait_time=gw,
+                        upscale_gap_seconds=_MJ_UPSCALE_GAP_SEC,
+                        post_upscale_wait_seconds=_MJ_POST_UPSCALE_WAIT_SEC,
+                        log=_log,
+                    )
                     # Cache immediately — Discord CDN URLs expire after a few hours
                     cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
                     result["generated_images"] = json.dumps(cached_urls)
@@ -461,7 +464,17 @@ def generate_images_only(
         if _stop():
             return None
         _log("Midjourney slot acquired — generating images...")
-        img_urls = midjourney.generate_images(recipe_title, image_url, credentials, prompts=prompts, wait_time=190, log=_log)
+        gw = _mj_grid_wait_from_credentials(credentials)
+        img_urls = midjourney.generate_images(
+            recipe_title,
+            image_url,
+            credentials,
+            prompts=prompts,
+            wait_time=gw,
+            upscale_gap_seconds=_MJ_UPSCALE_GAP_SEC,
+            post_upscale_wait_seconds=_MJ_POST_UPSCALE_WAIT_SEC,
+            log=_log,
+        )
         cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
         return json.dumps(cached_urls)
 

@@ -6,6 +6,8 @@ import PinDesigner, { FrameInfo } from "@/components/PinDesigner";
 import { api, RecipeOut, GeneratedJobRecipeOut } from "@/lib/api";
 
 function imagesFromJobRecipe(r: GeneratedJobRecipeOut): string[] {
+  // Only use generated_images (Midjourney output). Never include image_url,
+  // which is the input prompt image used to trigger generation — not the result.
   const images: string[] = [];
   if (r.generated_images) {
     try {
@@ -13,12 +15,12 @@ function imagesFromJobRecipe(r: GeneratedJobRecipeOut): string[] {
       if (Array.isArray(arr)) arr.forEach((url: string) => { if (url?.trim()) images.push(url.trim()); });
     } catch {}
   }
-  const u = r.image_url?.trim();
-  if (u && !images.includes(u)) images.push(u);
   return images;
 }
 
 function getRecipeImages(r: RecipeOut): string[] {
+  // Only use generated_images (Midjourney output). Never include image_url,
+  // which is the input prompt image used to trigger generation — not the result.
   const images: string[] = [];
   if (r.generated_images) {
     try {
@@ -26,7 +28,6 @@ function getRecipeImages(r: RecipeOut): string[] {
       if (Array.isArray(arr)) arr.forEach((url: string) => { if (url?.trim()) images.push(url.trim()); });
     } catch {}
   }
-  if (r.image_url && !images.includes(r.image_url)) images.push(r.image_url);
   return images;
 }
 
@@ -58,8 +59,9 @@ export default function PinDesignerPage() {
     } else if (jobParam) {
       api.getJobGeneratedRecipes(jobParam, params.siteId)
         .then((list) => {
+          const generatedOnly = list.filter((r) => r.status === "generated");
           setFrames(
-            list.map((r) => ({
+            generatedOnly.map((r) => ({
               recipeId: r.id,
               title: r.recipe_text?.split("\n")[0]?.trim() || "Recipe",
               images: imagesFromJobRecipe(r),
@@ -71,8 +73,7 @@ export default function PinDesignerPage() {
     } else {
       api.getRecipes(params.siteId)
         .then((all) => {
-          const generated = all.filter((r) => r.status === "generated" || r.status === "published");
-          const source = generated.length > 0 ? generated : all;
+          const source = all.filter((r) => r.status === "generated");
           setFrames(source.map((r) => ({
             recipeId: r.id,
             title: r.recipe_text?.split("\n")[0]?.trim() || "Recipe",
@@ -93,10 +94,12 @@ export default function PinDesignerPage() {
   }
 
   if (singleRecipe) {
+    const recipeImagesForDesigner =
+      singleRecipe.status === "generated" ? getRecipeImages(singleRecipe) : [];
     return (
       <PinDesigner
         recipeId={singleRecipe.id}
-        recipeImages={getRecipeImages(singleRecipe)}
+        recipeImages={recipeImagesForDesigner}
         initialTitle={singleRecipe.recipe_text?.split("\n")[0]?.trim() || "Recipe"}
         initialJson={singleRecipe.pin_design_image?.startsWith("{") ? singleRecipe.pin_design_image : undefined}
         initialTemplateId={singleRecipe.pin_template_id || undefined}

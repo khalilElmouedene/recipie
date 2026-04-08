@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Eye, EyeOff, Trash2 } from "lucide-react";
-import { api, getApiBaseUrl, ProjectOut } from "@/lib/api";
+import { api, getApiBaseUrl, ProjectOut, type MidjourneyTimersOut } from "@/lib/api";
 
 interface UserProfile {
   id: string;
@@ -13,13 +13,15 @@ interface UserProfile {
   has_password: boolean;
 }
 
-type SettingsTab = "profile" | "cleanup";
+type SettingsTab = "profile" | "cleanup" | "midjourney";
 
 export default function SettingsPage() {
   const searchParams = useSearchParams();
   const initialTab = useMemo<SettingsTab>(() => {
     const raw = searchParams.get("tab");
-    return raw === "cleanup" ? "cleanup" : "profile";
+    if (raw === "cleanup") return "cleanup";
+    if (raw === "midjourney") return "midjourney";
+    return "profile";
   }, [searchParams]);
 
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
@@ -53,6 +55,12 @@ export default function SettingsPage() {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [confirmDeleteInput, setConfirmDeleteInput] = useState("");
 
+  const [mjTimers, setMjTimers] = useState<MidjourneyTimersOut | null>(null);
+  const [mjLoading, setMjLoading] = useState(false);
+  const [mjSaving, setMjSaving] = useState(false);
+  const [mjMessage, setMjMessage] = useState("");
+  const [mjError, setMjError] = useState("");
+
   useEffect(() => {
     api
       .me()
@@ -69,6 +77,36 @@ export default function SettingsPage() {
       .then(setProjects)
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== "midjourney") return;
+    setMjLoading(true);
+    setMjError("");
+    api
+      .getMidjourneyTimers()
+      .then((data) => {
+        setMjTimers(data);
+        setMjMessage("");
+      })
+      .catch((e) => setMjError(e instanceof Error ? e.message : "Failed to load Midjourney settings."))
+      .finally(() => setMjLoading(false));
+  }, [activeTab]);
+
+  const saveMjGridWait = async () => {
+    if (!mjTimers) return;
+    setMjSaving(true);
+    setMjError("");
+    setMjMessage("");
+    try {
+      const updated = await api.setMidjourneyGridWait({ grid_wait_seconds: mjTimers.grid_wait_seconds });
+      setMjTimers(updated);
+      setMjMessage("Grid wait saved.");
+    } catch (e) {
+      setMjError(e instanceof Error ? e.message : "Failed to save.");
+    } finally {
+      setMjSaving(false);
+    }
+  };
 
   async function handleInfoSave(e: FormEvent) {
     e.preventDefault();
@@ -242,7 +280,9 @@ export default function SettingsPage() {
     <div className="max-w-4xl space-y-6">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Settings</h1>
-        <p className="text-sm text-gray-400 mt-1">Manage your account and image cleanup controls.</p>
+        <p className="text-sm text-gray-400 mt-1">
+          Manage your account, image cleanup, and Midjourney grid wait.
+        </p>
       </div>
 
       <div className="inline-flex rounded-xl border border-gray-700 bg-gray-900 p-1">
@@ -263,6 +303,15 @@ export default function SettingsPage() {
           }`}
         >
           Image Cleanup
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("midjourney")}
+          className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+            activeTab === "midjourney" ? "bg-brand-600 text-white" : "text-gray-300 hover:text-white"
+          }`}
+        >
+          Midjourney timers
         </button>
       </div>
 
@@ -423,6 +472,61 @@ export default function SettingsPage() {
             </form>
           </section>
         </div>
+      )}
+
+      {activeTab === "midjourney" && (
+        <section className="rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-5">
+          <h2 className="text-lg font-semibold text-white">Midjourney timers</h2>
+          <p className="text-sm text-gray-400">
+            How long to wait after /imagine before reading the grid from Discord.
+          </p>
+
+          {mjLoading && <p className="text-sm text-gray-400">Loading…</p>}
+
+          {!mjLoading && mjTimers && (
+            <div className="max-w-md space-y-1">
+              <label className="block text-sm font-medium text-gray-300 mb-1">Grid wait (seconds)</label>
+              <input
+                type="number"
+                min={30}
+                max={600}
+                value={mjTimers.grid_wait_seconds}
+                onChange={(e) =>
+                  setMjTimers({ ...mjTimers, grid_wait_seconds: Number(e.target.value) || 30 })
+                }
+                disabled={profile.role !== "owner"}
+                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-60"
+              />
+              <p className="mt-1 text-xs text-gray-500">After sending /imagine, wait before reading the grid (30–600).</p>
+            </div>
+          )}
+
+          {profile.role === "owner" && !mjLoading && mjTimers && (
+            <button
+              type="button"
+              onClick={saveMjGridWait}
+              disabled={mjSaving}
+              className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            >
+              {mjSaving ? "Saving…" : "Save grid wait"}
+            </button>
+          )}
+
+          {profile.role !== "owner" && (
+            <p className="text-xs text-gray-500">Grid wait is controlled by your workspace owner.</p>
+          )}
+
+          {mjError && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2">
+              <p className="text-sm text-red-400">{mjError}</p>
+            </div>
+          )}
+          {mjMessage && (
+            <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2">
+              <p className="text-sm text-green-400">{mjMessage}</p>
+            </div>
+          )}
+        </section>
       )}
 
       {activeTab === "cleanup" && (

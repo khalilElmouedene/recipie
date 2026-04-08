@@ -179,6 +179,13 @@ export const api = {
       body: JSON.stringify({ fonts }),
     }),
 
+  getMidjourneyTimers: () => request<MidjourneyTimersOut>("/api/settings/midjourney-timers"),
+  setMidjourneyGridWait: (data: { grid_wait_seconds: number }) =>
+    request<MidjourneyTimersOut>("/api/settings/midjourney-timers", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
   importBoardsExcel: async (file: File): Promise<{ boards: string }> => {
     const token = getToken();
     const formData = new FormData();
@@ -256,6 +263,23 @@ export const api = {
       })}`,
       { method: "POST" }
     ),
+
+  uploadPinImageToWordPress: async (siteId: string, dataUrl: string, title: string): Promise<string> => {
+    // Convert base64 data URL → Blob → FormData, POST to WP media upload endpoint
+    const token = getToken();
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const formData = new FormData();
+    formData.append("file", blob, `pin-${Date.now()}.png`);
+    const resp = await fetch(`${API_URL}/api/sites/${siteId}/upload-media?title=${encodeURIComponent(title)}`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (!resp.ok) throw new Error(`WP media upload failed: ${resp.status}`);
+    const data = await resp.json();
+    return (data.media_url as string) || "";
+  },
 
   // ── Recipes ────────────────────────────────────────────
   getRecipes: (siteId: string, summary = true) =>
@@ -481,6 +505,13 @@ export interface PromptOut {
   description: string;
 }
 
+/** Grid wait is user-configurable; upscale_gap and post_upscale are fixed server-side (10 / 60). */
+export interface MidjourneyTimersOut {
+  grid_wait_seconds: number;
+  upscale_gap_seconds: number;
+  post_upscale_wait_seconds: number;
+}
+
 export interface WpUserOut {
   username: string;
 }
@@ -631,12 +662,15 @@ export interface PinDesignerTemplateElement {
   fill?: string | null;
   bgColor?: string | null;
   textAlign?: string | null;
+  textVariable?: string | null;
+  textTransform?: string | null;
   radius?: number | null;
   strokeWidth?: number | null;
   strokeStyle?: Record<string, unknown> | string | null;
   imageUrl?: string | null;
   flipX?: boolean | null;
   flipY?: boolean | null;
+  [key: string]: unknown;
 }
 
 export interface PinDesignerTemplateOut {
