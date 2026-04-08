@@ -187,6 +187,7 @@ Rules:
 - Return ONLY the title on one line, nothing else.
 - DO NOT use this character: -
 - Use ONLY standard ASCII English punctuation: . , ? ! : ; ' " ( ) [ ] /
+- DO NOT start with or use overused filler words such as: Irresistible, Amazing, Incredible, Unbelievable, Mind-Blowing, Ultimate, Epic, Perfect, Best Ever, You Won't Believe.
 
 Recipe: {recipe_title}""",
         "description": "Pinterest title - placeholder: {recipe_title}",
@@ -255,6 +256,7 @@ Rules:
 - Return ONLY the title on one line, nothing else.
 - DO NOT use this character: -
 - Use ONLY standard ASCII English punctuation: . , ? ! : ; ' " ( ) [ ] /
+- DO NOT start with or use overused filler words such as: Irresistible, Amazing, Incredible, Unbelievable, Mind-Blowing, Ultimate, Epic, Perfect, Best Ever, You Won't Believe.
 
 Recipe: {recipe_title}""",
         "description": "SEO post title - placeholder: {recipe_title}",

@@ -31,6 +31,7 @@ import {
 } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
+import ImageUrlInput from "@/components/ImageUrlInput";
 
 function thumbUrl(r: GeneratedJobRecipeOut): string | null {
   if (r.generated_images) {
@@ -465,13 +466,13 @@ export default function AllSitesGeneratePage() {
           <div key={idx} className="card border border-gray-700">
             <div className="text-xs text-gray-500 mb-2">Recipe Input #{idx + 1}</div>
             <div className="space-y-2">
-              <input
+              <label className="text-xs text-gray-500">Image</label>
+              <ImageUrlInput
                 value={r.image_url}
-                onChange={(e) =>
-                  setRows((prev) => prev.map((x, i) => (i === idx ? { ...x, image_url: e.target.value } : x)))
+                onChange={(url) =>
+                  setRows((prev) => prev.map((x, i) => (i === idx ? { ...x, image_url: url } : x)))
                 }
-                className="input-field"
-                placeholder="Image URL"
+                siteId={sites[0]?.id}
               />
               <textarea
                 value={r.recipe_text}

@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles, Globe, Square, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import ImageUrlInput from "@/components/ImageUrlInput";
 import { api, getApiBaseUrl, SiteOut, RecipeOut, PinterestBoard, PinterestBulkResponse, PinTemplate, BulkGeneratePinsResponse, BulkPinItem, JobOut, getWsUrl } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -673,14 +674,13 @@ export default function SiteDetailPage() {
         <form onSubmit={handleAddRecipe} className="space-y-4">
           <div>
             <label className="flex items-center gap-2 text-sm font-medium text-gray-300 mb-1">
-              <Image size={14} /> Image URL
+              <Image size={14} /> Image
             </label>
-            <input
+            <ImageUrlInput
               value={imageUrl}
-              onChange={(e) => setImageUrl(e.target.value)}
+              onChange={setImageUrl}
+              siteId={siteId}
               required
-              className="input-field"
-              placeholder="https://example.com/image.jpg"
             />
           </div>
           <div>
