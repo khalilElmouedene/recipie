@@ -1305,8 +1305,7 @@ export default function PinDesigner({
       const pinDesignImage = r.pin_design_image;
       if (pinDesignImage?.startsWith("data:") && siteId) {
         try {
-          const title = r.pin_title || r.recipe_text?.split("\n")[0]?.trim() || `Pin ${i + 1}`;
-          mediaUrl = await api.uploadPinImageToWordPress(siteId, pinDesignImage, title);
+          mediaUrl = await api.uploadPinImageToServer(siteId, pinDesignImage);
         } catch { /* leave empty if upload fails */ }
       }
 
