@@ -983,7 +983,7 @@ export default function PinDesigner({
           await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe");
         }
       }
-      // 2. Now publish to WordPress — articles already contain the pin images
+      // 2. WordPress batch — backend only includes recipes with status "generated" (see publish_batch_to_wordpress).
       const res = await api.publishBatchToWordPress(projectId, { mode, ...opts });
       const extra = res.errors?.length ? `\n${res.errors.slice(0, 4).join("\n")}` : "";
       alert(`WordPress batch finished.\nSucceeded: ${res.succeeded} / ${res.total}\nFailed: ${res.failed}${extra}`);
