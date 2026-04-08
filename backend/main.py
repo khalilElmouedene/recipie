@@ -48,9 +48,24 @@ async def _migrate_prompts() -> None:
         await db.commit()
 
 
+async def _migrate_cleanup_config() -> None:
+    """Drop cleanup_config if it has the old schema (no owner_id column) so create_all rebuilds it."""
+    from sqlalchemy import text
+    from app.database import engine
+    async with engine.begin() as conn:
+        result = await conn.execute(text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name='cleanup_config' AND column_name='owner_id'"
+        ))
+        has_owner_id = result.fetchone() is not None
+        if not has_owner_id:
+            await conn.execute(text("DROP TABLE IF EXISTS cleanup_config"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    await _migrate_cleanup_config()
     await init_db()
     await _migrate_prompts()
     from app.services.publish_scheduler import run_publish_scheduler
