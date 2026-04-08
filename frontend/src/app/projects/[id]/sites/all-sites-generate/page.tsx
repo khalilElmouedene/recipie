@@ -19,6 +19,8 @@ import {
   RefreshCw,
   CalendarClock,
   History,
+  X,
+  Loader2,
 } from "lucide-react";
 import {
   api,
@@ -31,7 +33,6 @@ import {
 } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
-import ImageUrlInput from "@/components/ImageUrlInput";
 
 function thumbUrl(r: GeneratedJobRecipeOut): string | null {
   if (r.generated_images) {
@@ -67,6 +68,10 @@ export default function AllSitesGeneratePage() {
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<SharedRecipeInput[]>([{ image_url: "", recipe_text: "" }]);
+  const [rowModes, setRowModes] = useState<Record<number, "url" | "upload">>({});
+  const [rowUploading, setRowUploading] = useState<Record<number, boolean>>({});
+  const [rowErrors, setRowErrors] = useState<Record<number, string>>({});
+  const [pasteTargetIdx, setPasteTargetIdx] = useState<number | null>(null);
   const [history, setHistory] = useState<JobOut[]>([]);
   const [schedule, setSchedule] = useState<PublishScheduleOut | null>(null);
   const [enabled, setEnabled] = useState(false);
@@ -109,6 +114,38 @@ export default function AllSitesGeneratePage() {
       setLoadingRecipeDetailId((c) => (c === recipeId ? null : c));
     }
   }, []);
+
+  const handleRowImageFile = async (idx: number, file: File) => {
+    if (!file.type.startsWith("image/")) return;
+    const siteId = sites[0]?.id;
+    if (!siteId) return;
+    setRowUploading((prev) => ({ ...prev, [idx]: true }));
+    setRowErrors((prev) => ({ ...prev, [idx]: "" }));
+    try {
+      const { url } = await api.uploadRecipeImage(siteId, file);
+      setRows((prev) => prev.map((x, i) => (i === idx ? { ...x, image_url: url } : x)));
+    } catch (err) {
+      setRowErrors((prev) => ({ ...prev, [idx]: err instanceof Error ? err.message : "Upload failed" }));
+    } finally {
+      setRowUploading((prev) => ({ ...prev, [idx]: false }));
+    }
+  };
+
+  // Global paste → uploads to the currently active upload-mode row
+  useEffect(() => {
+    if (pasteTargetIdx === null) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"));
+      if (item) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) void handleRowImageFile(pasteTargetIdx, file);
+      }
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pasteTargetIdx, sites]);
 
   useEffect(() => {
     api.getSites(projectId).then(setSites).catch(() => {});
@@ -466,14 +503,67 @@ export default function AllSitesGeneratePage() {
           <div key={idx} className="card border border-gray-700">
             <div className="text-xs text-gray-500 mb-2">Recipe Input #{idx + 1}</div>
             <div className="space-y-2">
-              <label className="text-xs text-gray-500">Image</label>
-              <ImageUrlInput
-                value={r.image_url}
-                onChange={(url) =>
-                  setRows((prev) => prev.map((x, i) => (i === idx ? { ...x, image_url: url } : x)))
-                }
-                siteId={sites[0]?.id}
-              />
+              <label className="flex items-center gap-2 text-xs text-gray-500">
+                Image
+                {rowUploading[idx] && <Loader2 size={11} className="animate-spin text-brand-400" />}
+              </label>
+              {/* Mode toggle */}
+              <div className="flex gap-1 p-0.5 bg-gray-800 rounded-lg w-fit">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRowModes((p) => ({ ...p, [idx]: "url" }));
+                    setRows((prev) => prev.map((x, i) => (i === idx ? { ...x, image_url: "" } : x)));
+                    setRowErrors((p) => ({ ...p, [idx]: "" }));
+                    if (pasteTargetIdx === idx) setPasteTargetIdx(null);
+                  }}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition ${(rowModes[idx] ?? "url") === "url" ? "bg-gray-600 text-white" : "text-gray-400 hover:text-white"}`}
+                >
+                  External URL
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRowModes((p) => ({ ...p, [idx]: "upload" }));
+                    setRows((prev) => prev.map((x, i) => (i === idx ? { ...x, image_url: "" } : x)));
+                    setRowErrors((p) => ({ ...p, [idx]: "" }));
+                    setPasteTargetIdx(idx);
+                  }}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition ${(rowModes[idx] ?? "url") === "upload" ? "bg-gray-600 text-white" : "text-gray-400 hover:text-white"}`}
+                >
+                  Upload
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  value={r.image_url}
+                  onChange={(e) => {
+                    setRows((prev) => prev.map((x, i) => (i === idx ? { ...x, image_url: e.target.value } : x)));
+                    setRowErrors((p) => ({ ...p, [idx]: "" }));
+                  }}
+                  className="input-field flex-1"
+                  placeholder={(rowModes[idx] ?? "url") === "upload" ? "Press Ctrl+V to paste an image from clipboard" : "https://example.com/image.jpg"}
+                  disabled={rowUploading[idx]}
+                  readOnly={(rowModes[idx] ?? "url") === "upload"}
+                />
+                {r.image_url && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRows((prev) => prev.map((x, i) => (i === idx ? { ...x, image_url: "" } : x)));
+                      setRowErrors((p) => ({ ...p, [idx]: "" }));
+                    }}
+                    className="p-1.5 text-gray-400 hover:text-red-400 flex-shrink-0"
+                    title="Remove image"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              {r.image_url && !rowUploading[idx] && (
+                <img src={r.image_url} alt="" className="max-h-20 rounded object-contain" />
+              )}
+              {rowErrors[idx] && <p className="text-xs text-red-400">{rowErrors[idx]}</p>}
               <textarea
                 value={r.recipe_text}
                 onChange={(e) =>

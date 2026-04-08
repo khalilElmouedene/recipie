@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles, Globe, Square, CheckCircle, XCircle, Loader2, Upload } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles, Globe, Square, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { api, getApiBaseUrl, SiteOut, RecipeOut, PinterestBoard, PinterestBulkResponse, PinTemplate, BulkGeneratePinsResponse, BulkPinItem, JobOut, getWsUrl } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -17,10 +17,9 @@ export default function SiteDetailPage() {
   const [recipes, setRecipes] = useState<RecipeOut[]>([]);
   const [imageUrl, setImageUrl] = useState("");
   const [recipeText, setRecipeText] = useState("");
-  const [imageSourceMode, setImageSourceMode] = useState<"upload" | "external">("upload");
+  const [imageSourceMode, setImageSourceMode] = useState<"url" | "upload">("url");
   const [imageUploading, setImageUploading] = useState(false);
   const [imageUploadError, setImageUploadError] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [adding, setAdding] = useState(false);
   const [starting, setStarting] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -206,10 +205,26 @@ export default function SiteDetailPage() {
     }
   };
 
+  // Global paste listener — Ctrl+V anywhere on the page uploads an image (upload mode only)
+  useEffect(() => {
+    if (imageSourceMode !== "upload") return;
+    const onPaste = (e: ClipboardEvent) => {
+      const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"));
+      if (item) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) void handleRecipeImageFile(file);
+      }
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteId, imageSourceMode]);
+
   const handleAddRecipe = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!imageUrl.trim()) {
-      setImageUploadError(imageSourceMode === "upload" ? "Upload an image or switch to external URL" : "Enter an image URL");
+      setImageUploadError("Enter an image URL or paste an image (Ctrl+V)");
       return;
     }
     setAdding(true);
@@ -217,7 +232,8 @@ export default function SiteDetailPage() {
       await api.createRecipe(siteId, { image_url: imageUrl.trim(), recipe_text: recipeText });
       setImageUrl("");
       setRecipeText("");
-      setImageSourceMode("upload");
+      setImageSourceMode("url");
+      setImageUploadError("");
       loadRecipes();
     } catch {}
     setAdding(false);
@@ -700,108 +716,49 @@ export default function SiteDetailPage() {
           <div>
             <label className="flex items-center gap-2 text-sm font-medium text-gray-300 mb-1">
               <Image size={14} /> Source image
+              {imageUploading && <Loader2 size={13} className="animate-spin text-brand-400 ml-1" />}
             </label>
-            <div className="flex flex-wrap gap-2 mb-2">
+            {/* Mode toggle */}
+            <div className="flex gap-1 p-0.5 bg-gray-800 rounded-lg w-fit mb-2">
               <button
                 type="button"
-                onClick={() => {
-                  setImageSourceMode("upload");
-                  setImageUrl("");
-                  setImageUploadError("");
-                }}
-                className={`text-xs px-2 py-1 rounded ${imageSourceMode === "upload" ? "bg-brand-600 text-white" : "bg-gray-800 text-gray-400"}`}
-              >
-                Upload to server
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setImageSourceMode("external");
-                  setImageUrl("");
-                  setImageUploadError("");
-                }}
-                className={`text-xs px-2 py-1 rounded ${imageSourceMode === "external" ? "bg-brand-600 text-white" : "bg-gray-800 text-gray-400"}`}
+                onClick={() => { setImageSourceMode("url"); setImageUrl(""); setImageUploadError(""); }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition ${imageSourceMode === "url" ? "bg-gray-600 text-white" : "text-gray-400 hover:text-white"}`}
               >
                 External URL
               </button>
+              <button
+                type="button"
+                onClick={() => { setImageSourceMode("upload"); setImageUrl(""); setImageUploadError(""); }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition ${imageSourceMode === "upload" ? "bg-gray-600 text-white" : "text-gray-400 hover:text-white"}`}
+              >
+                Upload
+              </button>
             </div>
-            {imageSourceMode === "upload" ? (
-              <>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    void handleRecipeImageFile(f ?? null);
-                    e.target.value = "";
-                  }}
-                />
-                <div
-                  role="button"
-                  tabIndex={0}
-                  className="border border-dashed border-gray-600 rounded-lg p-6 text-center hover:border-brand-500 transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  onClick={() => fileInputRef.current?.click()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") fileInputRef.current?.click();
-                  }}
-                  onPaste={(e) => {
-                    const items = e.clipboardData?.items;
-                    if (!items) return;
-                    for (let i = 0; i < items.length; i++) {
-                      if (items[i].type.startsWith("image/")) {
-                        const file = items[i].getAsFile();
-                        if (file) {
-                          e.preventDefault();
-                          void handleRecipeImageFile(file);
-                          break;
-                        }
-                      }
-                    }
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const f = e.dataTransfer.files?.[0];
-                    void handleRecipeImageFile(f ?? null);
-                  }}
+            <div className="flex items-center gap-2">
+              <input
+                value={imageUrl}
+                onChange={(e) => { setImageUrl(e.target.value); setImageUploadError(""); }}
+                className="input-field flex-1"
+                placeholder={imageSourceMode === "upload" ? "Press Ctrl+V to paste an image from clipboard" : "https://example.com/image.jpg"}
+                disabled={imageUploading}
+                readOnly={imageSourceMode === "upload"}
+              />
+              {imageUrl && (
+                <button
+                  type="button"
+                  onClick={() => { setImageUrl(""); setImageUploadError(""); }}
+                  className="p-1.5 text-gray-400 hover:text-red-400 flex-shrink-0"
+                  title="Remove image"
                 >
-                  {imageUploading ? (
-                    <p className="text-sm text-gray-400 flex items-center justify-center gap-2">
-                      <Loader2 className="animate-spin" size={18} /> Uploading…
-                    </p>
-                  ) : imageUrl ? (
-                    <div className="flex flex-col items-center gap-2">
-                      <img src={imageUrl} alt="" className="max-h-40 rounded-lg object-contain" />
-                      <span className="text-xs text-brand-400">Click or paste to replace</span>
-                    </div>
-                  ) : (
-                    <>
-                      <Upload className="mx-auto mb-2 text-gray-500" size={28} />
-                      <p className="text-sm text-gray-400">Click to choose, drag and drop, or paste an image (Ctrl+V)</p>
-                      <p className="text-xs text-gray-500 mt-1">Stored on this app; auto-deleted after 7 days per retention rules.</p>
-                    </>
-                  )}
-                </div>
-              </>
-            ) : (
-              <>
-                <input
-                  value={imageUrl}
-                  onChange={(e) => setImageUrl(e.target.value)}
-                  className="input-field"
-                  placeholder="https://example.com/image.jpg"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  External URLs are not removed by our 7-day image cleanup (only files on this server are).
-                </p>
-              </>
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+            {imageUrl && !imageUploading && (
+              <img src={imageUrl} alt="" className="mt-2 max-h-24 rounded-lg object-contain" />
             )}
-            {imageUploadError && <p className="text-sm text-red-400 mt-2">{imageUploadError}</p>}
+            {imageUploadError && <p className="text-sm text-red-400 mt-1">{imageUploadError}</p>}
           </div>
           <div>
             <label className="flex items-center gap-2 text-sm font-medium text-gray-300 mb-1">
