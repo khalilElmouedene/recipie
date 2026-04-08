@@ -345,10 +345,12 @@ class ThreadsPost(Base):
 
 
 class CleanupConfig(Base):
-    """Singleton global configuration for the background cleanup service."""
+    """Per-owner configuration for the background cleanup service."""
     __tablename__ = "cleanup_config"
+    __table_args__ = (UniqueConstraint("owner_id", name="uq_cleanup_config_owner"),)
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     interval_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

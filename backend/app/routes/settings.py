@@ -284,7 +284,7 @@ async def set_midjourney_grid_wait(
     )
 
 
-# ── Global Cleanup Config ────────────────────────────────────────────────────
+# ── Cleanup Config (per owner) ───────────────────────────────────────────────
 
 
 class CleanupConfigOut(BaseModel):
@@ -301,11 +301,11 @@ class CleanupConfigUpdate(BaseModel):
     interval_days: int = Field(ge=1, le=3650)
 
 
-async def _get_or_create_cleanup_config(db: AsyncSession) -> CleanupConfig:
-    row = await db.execute(select(CleanupConfig).where(CleanupConfig.id == 1))
+async def _get_or_create_cleanup_config(db: AsyncSession, owner_id: uuid.UUID) -> CleanupConfig:
+    row = await db.execute(select(CleanupConfig).where(CleanupConfig.owner_id == owner_id))
     cfg = row.scalar_one_or_none()
     if not cfg:
-        cfg = CleanupConfig(id=1, enabled=False, interval_days=7)
+        cfg = CleanupConfig(owner_id=owner_id, enabled=False, interval_days=7)
         db.add(cfg)
         await db.commit()
         await db.refresh(cfg)
@@ -317,7 +317,7 @@ async def get_cleanup_config(
     user: Annotated[User, Depends(require_owner)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    cfg = await _get_or_create_cleanup_config(db)
+    cfg = await _get_or_create_cleanup_config(db, user.id)
     return CleanupConfigOut(enabled=cfg.enabled, interval_days=cfg.interval_days, last_run_at=cfg.last_run_at)
 
 
@@ -327,7 +327,7 @@ async def update_cleanup_config(
     user: Annotated[User, Depends(require_owner)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    cfg = await _get_or_create_cleanup_config(db)
+    cfg = await _get_or_create_cleanup_config(db, user.id)
     cfg.enabled = body.enabled
     cfg.interval_days = max(1, body.interval_days)
     await db.commit()
@@ -340,11 +340,10 @@ async def run_cleanup_now(
     user: Annotated[User, Depends(require_owner)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Immediately delete all published recipes and their local images across all sites."""
+    """Immediately delete all published recipes belonging to this owner and their local images."""
     from ..services.image_retention_scheduler import run_full_published_cleanup
-    result = await run_full_published_cleanup()
-    # Update last_run_at
-    cfg = await _get_or_create_cleanup_config(db)
+    result = await run_full_published_cleanup(owner_id=user.id)
+    cfg = await _get_or_create_cleanup_config(db, user.id)
     from datetime import datetime, timezone
     cfg.last_run_at = datetime.now(timezone.utc)
     await db.commit()
