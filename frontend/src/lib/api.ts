@@ -454,6 +454,14 @@ export const api = {
     request<ThreadsPostOut>(`/api/threads-posts/${postId}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteThreadsPost: (postId: string) =>
     request<void>(`/api/threads-posts/${postId}`, { method: "DELETE" }),
+
+  // ── Cleanup Config ─────────────────────────────────────
+  getCleanupConfig: () =>
+    request<CleanupConfigOut>("/api/settings/cleanup-config"),
+  setCleanupConfig: (data: { enabled: boolean; interval_days: number }) =>
+    request<CleanupConfigOut>("/api/settings/cleanup-config", { method: "PUT", body: JSON.stringify(data) }),
+  runCleanupNow: () =>
+    request<{ recipes_deleted: number; files_deleted: number }>("/api/settings/cleanup-config/run-now", { method: "POST" }),
 };
 
 export function getWsUrl(jobId: string): string {
@@ -463,6 +471,12 @@ export function getWsUrl(jobId: string): string {
 }
 
 // ── Types ────────────────────────────────────────────────
+
+export interface CleanupConfigOut {
+  enabled: boolean;
+  interval_days: number;
+  last_run_at: string | null;
+}
 
 export interface UserOut {
   id: string;

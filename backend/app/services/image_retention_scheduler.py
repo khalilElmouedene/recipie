@@ -11,7 +11,7 @@ from sqlalchemy import or_, select
 
 from app.config import settings
 from app.database import SessionLocal
-from app.db_models import Recipe, RecipeStatus, Site, ThreadsPost, ThreadsPostStatus
+from app.db_models import CleanupConfig, Recipe, RecipeStatus, Site, ThreadsPost, ThreadsPostStatus
 
 
 UPLOADS_DIR = Path("/app/uploads")
@@ -82,17 +82,76 @@ def _upload_paths_from_recipe(recipe: Recipe) -> set[Path]:
     return files
 
 
-RETENTION_DAYS = 7  # Auto-cleanup: delete published recipes after 7 days
+_DEFAULT_RETENTION_DAYS = 7
 
 
-async def _cleanup_once() -> int:
+async def _get_cleanup_config() -> tuple[bool, int]:
+    """Return (enabled, interval_days) from the DB, defaulting to (False, 7)."""
+    try:
+        async with SessionLocal() as db:
+            row = await db.execute(select(CleanupConfig).where(CleanupConfig.id == 1))
+            cfg = row.scalar_one_or_none()
+            if cfg:
+                return cfg.enabled, max(1, cfg.interval_days)
+    except Exception:
+        pass
+    return False, _DEFAULT_RETENTION_DAYS
+
+
+async def _update_last_run_at() -> None:
+    try:
+        async with SessionLocal() as db:
+            row = await db.execute(select(CleanupConfig).where(CleanupConfig.id == 1))
+            cfg = row.scalar_one_or_none()
+            if cfg:
+                cfg.last_run_at = datetime.now(timezone.utc)
+                await db.commit()
+    except Exception:
+        pass
+
+
+async def run_full_published_cleanup() -> dict:
+    """Delete ALL published recipes and their local images. Used for manual 'Delete All Now' action."""
+    recipes_deleted = 0
+    files_deleted = 0
+
+    async with SessionLocal() as db:
+        stmt = (
+            select(Recipe, Site.project_id)
+            .join(Site, Recipe.site_id == Site.id)
+            .where(Recipe.status == RecipeStatus.published)
+        )
+        rows = (await db.execute(stmt)).all()
+        files_to_delete: set[Path] = set()
+
+        for recipe, _ in rows:
+            files_to_delete.update(_upload_paths_from_recipe(recipe))
+            try:
+                await db.delete(recipe)
+                recipes_deleted += 1
+            except Exception:
+                pass
+
+        for p in files_to_delete:
+            try:
+                if p.exists():
+                    p.unlink()
+                    files_deleted += 1
+            except Exception:
+                pass
+
+        if rows:
+            await db.commit()
+
+    return {"recipes_deleted": recipes_deleted, "files_deleted": files_deleted}
+
+
+async def _cleanup_once(retention_days: int) -> int:
     """
-    Hourly retention pass (fixed 7-day retention):
+    Retention pass: delete published recipes older than retention_days and clear cached images.
 
-    - **Published** recipes older than 7 days: delete cached files from `generated_images` and local
-      `image_url`, then delete the `Recipe` row. Does not remove posts on WordPress.
-    - **Generated / failed** with `generated_images` older than 7 days: delete cached files and clear
-      `generated_images`; clear local `image_url` after file removal.
+    - **Published** recipes older than retention_days: delete local files then delete the Recipe row.
+    - **Generated / failed** with generated_images older than retention_days: delete cached files only.
 
     Returns how many recipe rows were updated or deleted.
     """
@@ -101,7 +160,7 @@ async def _cleanup_once() -> int:
     recipes_deleted = 0
 
     async with SessionLocal() as db:
-        candidate_threshold = now - timedelta(days=RETENTION_DAYS)
+        candidate_threshold = now - timedelta(days=retention_days)
 
         published_stmt = (
             select(Recipe, Site.project_id)
@@ -176,10 +235,10 @@ async def _cleanup_once() -> int:
     return recipes_updated + recipes_deleted
 
 
-async def _cleanup_pending_stale_source_images() -> int:
-    """Remove local source image files for pending recipes older than RETENTION_DAYS; clear image_url."""
+async def _cleanup_pending_stale_source_images(retention_days: int) -> int:
+    """Remove local source image files for pending recipes older than retention_days; clear image_url."""
     now = datetime.now(timezone.utc)
-    threshold = now - timedelta(days=RETENTION_DAYS)
+    threshold = now - timedelta(days=retention_days)
     cleared = 0
 
     async with SessionLocal() as db:
@@ -294,10 +353,10 @@ async def cleanup_project_generated_images(
     }
 
 
-async def _cleanup_threads_media_once() -> int:
-    """Delete uploaded media files for Threads posts published more than 7 days ago."""
+async def _cleanup_threads_media_once(retention_days: int) -> int:
+    """Delete uploaded media files for Threads posts published more than retention_days days ago."""
     now = datetime.now(timezone.utc)
-    threshold = now - timedelta(days=RETENTION_DAYS)
+    threshold = now - timedelta(days=retention_days)
     cleared = 0
 
     async with SessionLocal() as db:
@@ -340,23 +399,49 @@ async def _cleanup_threads_media_once() -> int:
 
 async def run_image_retention_scheduler(stop_event: asyncio.Event) -> None:
     """
-    Background loop to periodically run cache cleanup.
-    Default cadence is 1 hour (retention is measured in days).
+    Background loop: checks every hour whether cleanup should run.
+    Only runs when enabled=True in CleanupConfig and the configured interval has elapsed.
+    Config changes apply within one hour without restart.
     """
     while not stop_event.is_set():
         try:
-            await _cleanup_once()
-        except Exception:
-            pass
-        try:
-            await _cleanup_pending_stale_source_images()
-        except Exception:
-            pass
-        try:
-            await _cleanup_threads_media_once()
+            enabled, interval_days = await _get_cleanup_config()
+            if enabled:
+                # Check if interval has elapsed since last run
+                should_run = False
+                try:
+                    async with SessionLocal() as db:
+                        row = await db.execute(select(CleanupConfig).where(CleanupConfig.id == 1))
+                        cfg = row.scalar_one_or_none()
+                        if cfg:
+                            if cfg.last_run_at is None:
+                                should_run = True
+                            else:
+                                elapsed = datetime.now(timezone.utc) - cfg.last_run_at
+                                should_run = elapsed.total_seconds() >= interval_days * 86400
+                        else:
+                            should_run = True
+                except Exception:
+                    should_run = False
+
+                if should_run:
+                    try:
+                        await _cleanup_once(interval_days)
+                    except Exception:
+                        pass
+                    try:
+                        await _cleanup_pending_stale_source_images(interval_days)
+                    except Exception:
+                        pass
+                    try:
+                        await _cleanup_threads_media_once(interval_days)
+                    except Exception:
+                        pass
+                    await _update_last_run_at()
         except Exception:
             pass
 
+        # Check every hour — picks up config changes quickly
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=3600)
         except asyncio.TimeoutError:

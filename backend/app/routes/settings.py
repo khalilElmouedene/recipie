@@ -3,18 +3,19 @@ from __future__ import annotations
 import io
 import json
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 import openpyxl
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..crypto import encrypt, decrypt
 from ..database import get_db
-from ..db_models import User, UserCredential, Prompt, UserRole
+from ..db_models import User, UserCredential, Prompt, UserRole, CleanupConfig
 from ..dependencies import get_current_user, require_owner
 from ..models import CredentialSet, CredentialOut, PromptOut, PromptsUpdate
 from ..services.prompts import DEFAULT_PROMPTS
@@ -281,6 +282,73 @@ async def set_midjourney_grid_wait(
         upscale_gap_seconds=MJ_UPSCALE_GAP_FIXED,
         post_upscale_wait_seconds=MJ_POST_DOWNLOAD_WAIT_FIXED,
     )
+
+
+# ── Global Cleanup Config ────────────────────────────────────────────────────
+
+
+class CleanupConfigOut(BaseModel):
+    enabled: bool
+    interval_days: int
+    last_run_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class CleanupConfigUpdate(BaseModel):
+    enabled: bool
+    interval_days: int = Field(ge=1, le=3650)
+
+
+async def _get_or_create_cleanup_config(db: AsyncSession) -> CleanupConfig:
+    row = await db.execute(select(CleanupConfig).where(CleanupConfig.id == 1))
+    cfg = row.scalar_one_or_none()
+    if not cfg:
+        cfg = CleanupConfig(id=1, enabled=False, interval_days=7)
+        db.add(cfg)
+        await db.commit()
+        await db.refresh(cfg)
+    return cfg
+
+
+@router.get("/cleanup-config", response_model=CleanupConfigOut)
+async def get_cleanup_config(
+    user: Annotated[User, Depends(require_owner)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    cfg = await _get_or_create_cleanup_config(db)
+    return CleanupConfigOut(enabled=cfg.enabled, interval_days=cfg.interval_days, last_run_at=cfg.last_run_at)
+
+
+@router.put("/cleanup-config", response_model=CleanupConfigOut)
+async def update_cleanup_config(
+    body: CleanupConfigUpdate,
+    user: Annotated[User, Depends(require_owner)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    cfg = await _get_or_create_cleanup_config(db)
+    cfg.enabled = body.enabled
+    cfg.interval_days = max(1, body.interval_days)
+    await db.commit()
+    await db.refresh(cfg)
+    return CleanupConfigOut(enabled=cfg.enabled, interval_days=cfg.interval_days, last_run_at=cfg.last_run_at)
+
+
+@router.post("/cleanup-config/run-now", response_model=dict)
+async def run_cleanup_now(
+    user: Annotated[User, Depends(require_owner)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Immediately delete all published recipes and their local images across all sites."""
+    from ..services.image_retention_scheduler import run_full_published_cleanup
+    result = await run_full_published_cleanup()
+    # Update last_run_at
+    cfg = await _get_or_create_cleanup_config(db)
+    from datetime import datetime, timezone
+    cfg.last_run_at = datetime.now(timezone.utc)
+    await db.commit()
+    return result
 
 
 # ── Custom Fonts (per user) ──────────────────────────────────────────────────

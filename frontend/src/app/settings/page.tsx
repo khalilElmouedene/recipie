@@ -2,8 +2,8 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Eye, EyeOff, Trash2 } from "lucide-react";
-import { api, getApiBaseUrl, ProjectOut, type MidjourneyTimersOut } from "@/lib/api";
+import { Eye, EyeOff, Trash2, Save } from "lucide-react";
+import { api, getApiBaseUrl, ProjectOut, type MidjourneyTimersOut, type CleanupConfigOut } from "@/lib/api";
 
 interface UserProfile {
   id: string;
@@ -46,14 +46,16 @@ export default function SettingsPage() {
   const [showConfirm, setShowConfirm] = useState(false);
 
   const [projects, setProjects] = useState<ProjectOut[]>([]);
-  const [cleanupLoading, setCleanupLoading] = useState(false);
-  const [scheduleSaving, setScheduleSaving] = useState(false);
+
+  // Cleanup config
+  const [cleanupConfig, setCleanupConfig] = useState<CleanupConfigOut | null>(null);
+  const [cleanupEnabled, setCleanupEnabled] = useState(false);
+  const [cleanupIntervalDays, setCleanupIntervalDays] = useState(7);
+  const [cleanupSaving, setCleanupSaving] = useState(false);
+  const [cleanupRunning, setCleanupRunning] = useState(false);
   const [cleanupMessage, setCleanupMessage] = useState("");
   const [cleanupError, setCleanupError] = useState("");
-  const [retentionDays, setRetentionDays] = useState(4);
-  const [publishedOnly, setPublishedOnly] = useState(true);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
-  const [confirmDeleteInput, setConfirmDeleteInput] = useState("");
 
   const [mjTimers, setMjTimers] = useState<MidjourneyTimersOut | null>(null);
   const [mjLoading, setMjLoading] = useState(false);
@@ -72,11 +74,19 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    api
-      .getProjects()
-      .then(setProjects)
-      .catch(() => {});
+    api.getProjects().then(setProjects).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== "cleanup") return;
+    api.getCleanupConfig()
+      .then((cfg) => {
+        setCleanupConfig(cfg);
+        setCleanupEnabled(cfg.enabled);
+        setCleanupIntervalDays(cfg.interval_days);
+      })
+      .catch(() => {});
+  }, [activeTab]);
 
   useEffect(() => {
     if (activeTab !== "midjourney") return;
@@ -183,88 +193,39 @@ export default function SettingsPage() {
     }
   }
 
-  const saveRetention = async () => {
-    if (projects.length === 0) {
-      setCleanupError("No projects found.");
+  const saveCleanupConfig = async () => {
+    if (cleanupIntervalDays < 1) {
+      setCleanupError("Interval must be greater than 0.");
       return;
     }
-    setScheduleSaving(true);
+    setCleanupSaving(true);
     setCleanupError("");
     setCleanupMessage("");
     try {
-      let updated = 0;
-      let failed = 0;
-      const nextDays = Math.max(1, retentionDays);
-      for (const project of projects) {
-        try {
-          const current = await api.getPublishSchedule(project.id);
-          await api.setPublishSchedule(project.id, {
-            enabled: current.enabled,
-            interval_minutes: current.interval_minutes,
-            image_retention_days: nextDays,
-          });
-          updated += 1;
-        } catch {
-          failed += 1;
-        }
-      }
-      if (updated === 0) {
-        setCleanupError("Could not update cleanup settings for any project.");
-      } else if (failed > 0) {
-        setCleanupMessage(`Cleanup settings updated for ${updated} project(s). Failed: ${failed}.`);
-      } else {
-        setCleanupMessage(`Cleanup settings updated for all ${updated} project(s).`);
-      }
+      const updated = await api.setCleanupConfig({ enabled: cleanupEnabled, interval_days: cleanupIntervalDays });
+      setCleanupConfig(updated);
+      setCleanupMessage("Settings saved.");
     } catch (err) {
-      setCleanupError(err instanceof Error ? err.message : "Failed to save cleanup settings.");
+      setCleanupError(err instanceof Error ? err.message : "Failed to save.");
     } finally {
-      setScheduleSaving(false);
+      setCleanupSaving(false);
     }
   };
 
-  const runCleanup = async (mode: "retention" | "all_published") => {
-    if (projects.length === 0) {
-      setCleanupError("No projects found.");
-      return;
-    }
-    if (mode === "all_published") {
-      setConfirmDeleteOpen(true);
-      setConfirmDeleteInput("");
-      return;
-    }
-    await executeCleanup(mode);
-  };
-
-  const executeCleanup = async (mode: "retention" | "all_published") => {
-    setCleanupLoading(true);
+  const executeDeleteAll = async () => {
+    setCleanupRunning(true);
     setCleanupError("");
     setCleanupMessage("");
     try {
-      let totalRecipesUpdated = 0;
-      let totalRecipesDeleted = 0;
-      let totalFilesDeleted = 0;
-      let failed = 0;
-      for (const project of projects) {
-        try {
-          const result = await api.runProjectImageCleanup(project.id, {
-            delete_all_published: mode === "all_published",
-            published_only: mode === "all_published" ? true : publishedOnly,
-            retention_days: mode === "retention" ? Math.max(1, retentionDays) : undefined,
-          });
-          totalRecipesUpdated += result.recipes_updated;
-          totalRecipesDeleted += result.recipes_deleted || 0;
-          totalFilesDeleted += result.files_deleted;
-        } catch {
-          failed += 1;
-        }
-      }
-      setCleanupMessage(
-        `Cleanup complete (${mode}). Updated recipes: ${totalRecipesUpdated}. Deleted recipes: ${totalRecipesDeleted}. Deleted files: ${totalFilesDeleted}.${failed > 0 ? ` Failed projects: ${failed}.` : ""}`
-      );
+      const result = await api.runCleanupNow();
+      setCleanupMessage(`Done. Deleted ${result.recipes_deleted} recipe(s) and ${result.files_deleted} file(s).`);
+      // Refresh last_run_at
+      const cfg = await api.getCleanupConfig();
+      setCleanupConfig(cfg);
     } catch (err) {
       setCleanupError(err instanceof Error ? err.message : "Cleanup failed.");
     } finally {
-      setCleanupLoading(false);
+      setCleanupRunning(false);
     }
   };
 
@@ -530,63 +491,77 @@ export default function SettingsPage() {
       )}
 
       {activeTab === "cleanup" && (
-        <section className="rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-5">
-          <h2 className="text-lg font-semibold text-white">Image Cleanup Controls</h2>
-          <p className="text-sm text-gray-400">
-            Actions below apply to all your accessible projects ({projects.length}).
-          </p>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Retention days</label>
-              <input
-                type="number"
-                min={1}
-                value={retentionDays}
-                onChange={(e) => setRetentionDays(Number(e.target.value || 1))}
-                className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              />
-              <p className="mt-1 text-xs text-gray-500">Delete generated images older than this number of days.</p>
-            </div>
-            <div className="flex items-end">
-              <button
-                type="button"
-                onClick={saveRetention}
-                disabled={projects.length === 0 || scheduleSaving}
-                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-              >
-                {scheduleSaving ? "Saving..." : "Save Cleanup Settings"}
-              </button>
-            </div>
+        <section className="rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-6">
+          <div>
+            <h2 className="text-lg font-semibold text-white">Automatic Cleanup</h2>
+            <p className="text-sm text-gray-400 mt-1">
+              When enabled, the background service automatically deletes all published recipes and their
+              local images after the configured interval.
+            </p>
           </div>
 
-          <label className="inline-flex items-center gap-2 text-sm text-gray-300">
-            <input
-              type="checkbox"
-              checked={publishedOnly}
-              onChange={(e) => setPublishedOnly(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-700 bg-gray-800 text-brand-600 focus:ring-brand-500"
-            />
-            Retention cleanup applies to published recipes only
-          </label>
-
-          <div className="flex flex-wrap gap-3">
+          {/* Enable toggle */}
+          <div className="flex items-center justify-between rounded-lg border border-gray-700 bg-gray-800/50 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-gray-200">Enable Automatic Cleanup</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {cleanupEnabled ? "Service is active — will run every " + cleanupIntervalDays + " day(s)." : "Service is disabled — no automatic deletion will occur."}
+              </p>
+            </div>
             <button
               type="button"
-              onClick={() => runCleanup("retention")}
-              disabled={projects.length === 0 || cleanupLoading}
-              className="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-gray-100 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              onClick={() => setCleanupEnabled((v) => !v)}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${cleanupEnabled ? "bg-brand-600" : "bg-gray-600"}`}
             >
-              {cleanupLoading ? "Running..." : "Run Retention Cleanup Now"}
+              <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${cleanupEnabled ? "translate-x-5" : "translate-x-0"}`} />
             </button>
+          </div>
+
+          {/* Interval input */}
+          <div className="max-w-xs">
+            <label className="block text-sm font-medium text-gray-300 mb-1">Cleanup Interval (Days)</label>
+            <input
+              type="number"
+              min={1}
+              value={cleanupIntervalDays}
+              onChange={(e) => setCleanupIntervalDays(Math.max(1, Number(e.target.value) || 1))}
+              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              How often the cleanup runs. Must be greater than 0.{" "}
+              {cleanupConfig?.last_run_at && (
+                <span>Last run: {new Date(cleanupConfig.last_run_at).toLocaleString()}.</span>
+              )}
+            </p>
+          </div>
+
+          {/* Save button */}
+          <button
+            type="button"
+            onClick={saveCleanupConfig}
+            disabled={cleanupSaving}
+            className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          >
+            <Save size={15} />
+            {cleanupSaving ? "Saving..." : "Save Settings"}
+          </button>
+
+          <hr className="border-gray-700" />
+
+          {/* Manual delete */}
+          <div>
+            <h3 className="text-sm font-semibold text-gray-200 mb-1">Manual Deletion</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Immediately deletes all published recipes and their local images across all projects. This action cannot be undone.
+            </p>
             <button
               type="button"
-              onClick={() => runCleanup("all_published")}
-              disabled={projects.length === 0 || cleanupLoading}
-              className="rounded-lg bg-red-900/70 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-900 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-2"
+              onClick={() => { setConfirmDeleteOpen(true); setCleanupMessage(""); setCleanupError(""); }}
+              disabled={cleanupRunning}
+              className="flex items-center gap-2 rounded-lg bg-red-900/70 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-900 disabled:opacity-50 disabled:cursor-not-allowed transition"
             >
               <Trash2 size={15} />
-              {cleanupLoading ? "Running..." : "Delete ALL Published Images + Recipes Now"}
+              {cleanupRunning ? "Deleting..." : "Delete All Recipes Now"}
             </button>
           </div>
 
@@ -606,42 +581,28 @@ export default function SettingsPage() {
       {confirmDeleteOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-xl border border-red-800/60 bg-gray-900 p-5 space-y-4 shadow-2xl">
-            <h3 className="text-lg font-semibold text-white">Confirm destructive delete</h3>
+            <h3 className="text-lg font-semibold text-white">Confirm deletion</h3>
             <p className="text-sm text-gray-300">
-              This will delete ALL published recipes and their generated images across all your projects.
+              Are you sure you want to delete all published recipes and their images? This cannot be undone.
             </p>
-            <p className="text-xs text-red-300">
-              Type <span className="font-bold">DELETE</span> to continue.
-            </p>
-            <input
-              value={confirmDeleteInput}
-              onChange={(e) => setConfirmDeleteInput(e.target.value)}
-              placeholder="Type DELETE"
-              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
-            />
             <div className="flex justify-end gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => {
-                  if (cleanupLoading) return;
-                  setConfirmDeleteOpen(false);
-                  setConfirmDeleteInput("");
-                }}
+                onClick={() => setConfirmDeleteOpen(false)}
                 className="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-300 hover:bg-gray-800"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={cleanupLoading || confirmDeleteInput !== "DELETE"}
+                disabled={cleanupRunning}
                 onClick={async () => {
                   setConfirmDeleteOpen(false);
-                  setConfirmDeleteInput("");
-                  await executeCleanup("all_published");
+                  await executeDeleteAll();
                 }}
                 className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {cleanupLoading ? "Running..." : "Delete Now"}
+                Yes, Delete All
               </button>
             </div>
           </div>
