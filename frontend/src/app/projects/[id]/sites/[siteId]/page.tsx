@@ -710,72 +710,127 @@ export default function SiteDetailPage() {
         </div>
       </div>
 
-      <div className="card mb-6">
-        <h2 className="text-lg font-semibold text-white mb-4">Add Recipe</h2>
-        <form onSubmit={handleAddRecipe} className="space-y-4">
-          <div>
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-300 mb-1">
-              <Image size={14} /> Source image
-              {imageUploading && <Loader2 size={13} className="animate-spin text-brand-400 ml-1" />}
-            </label>
-            {/* Mode toggle */}
-            <div className="flex gap-1 p-0.5 bg-gray-800 rounded-lg w-fit mb-2">
-              <button
-                type="button"
-                onClick={() => { setImageSourceMode("url"); setImageUrl(""); setImageUploadError(""); }}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition ${imageSourceMode === "url" ? "bg-gray-600 text-white" : "text-gray-400 hover:text-white"}`}
-              >
-                External URL
-              </button>
-              <button
-                type="button"
-                onClick={() => { setImageSourceMode("upload"); setImageUrl(""); setImageUploadError(""); }}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition ${imageSourceMode === "upload" ? "bg-gray-600 text-white" : "text-gray-400 hover:text-white"}`}
-              >
-                Upload
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                value={imageUrl}
-                onChange={(e) => { setImageUrl(e.target.value); setImageUploadError(""); }}
-                className="input-field flex-1"
-                placeholder={imageSourceMode === "upload" ? "Press Ctrl+V to paste an image from clipboard" : "https://example.com/image.jpg"}
-                disabled={imageUploading}
-                readOnly={imageSourceMode === "upload"}
-              />
-              {imageUrl && (
+      <div className="mb-6 rounded-2xl border border-gray-800 bg-gradient-to-br from-gray-900 via-gray-900 to-gray-800/60 overflow-hidden">
+        {/* Card header */}
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-800/80">
+          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-brand-600/20 text-brand-400">
+            <Plus size={16} />
+          </div>
+          <h2 className="text-base font-semibold text-white">Add Recipe</h2>
+        </div>
+
+        <form onSubmit={handleAddRecipe} className="p-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+            {/* Left: Source Image */}
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Source Image</span>
+                {imageUploading && <span className="flex items-center gap-1.5 text-xs text-brand-400"><Loader2 size={12} className="animate-spin" /> Uploading…</span>}
+              </div>
+
+              {/* Mode toggle */}
+              <div className="flex gap-1 p-1 bg-gray-800/80 rounded-xl w-fit border border-gray-700/50">
                 <button
                   type="button"
-                  onClick={() => { setImageUrl(""); setImageUploadError(""); }}
-                  className="p-1.5 text-gray-400 hover:text-red-400 flex-shrink-0"
-                  title="Remove image"
+                  onClick={() => { setImageSourceMode("url"); setImageUrl(""); setImageUploadError(""); }}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${imageSourceMode === "url" ? "bg-gray-700 text-white shadow-sm" : "text-gray-500 hover:text-gray-300"}`}
                 >
-                  <X size={16} />
+                  External URL
                 </button>
+                <button
+                  type="button"
+                  onClick={() => { setImageSourceMode("upload"); setImageUrl(""); setImageUploadError(""); }}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${imageSourceMode === "upload" ? "bg-gray-700 text-white shadow-sm" : "text-gray-500 hover:text-gray-300"}`}
+                >
+                  Upload / Paste
+                </button>
+              </div>
+
+              {imageSourceMode === "upload" && !imageUrl ? (
+                <div
+                  className="relative flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-600/60 bg-gray-800/30 hover:bg-brand-600/5 transition-all cursor-pointer py-8 px-4 text-center"
+                  onClick={() => document.getElementById("recipe-file-input")?.click()}
+                >
+                  <input
+                    id="recipe-file-input"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => handleRecipeImageFile(e.target.files?.[0] ?? null)}
+                  />
+                  <div className="w-10 h-10 rounded-full bg-gray-700/60 flex items-center justify-center">
+                    <Image size={18} className="text-gray-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-300">Click to upload or press <kbd className="px-1.5 py-0.5 text-[10px] rounded bg-gray-700 text-gray-300 font-mono">Ctrl+V</kbd></p>
+                    <p className="text-xs text-gray-500 mt-0.5">PNG, JPG, WEBP supported</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="relative">
+                  <input
+                    value={imageUrl}
+                    onChange={(e) => { setImageUrl(e.target.value); setImageUploadError(""); }}
+                    className="input-field pr-9"
+                    placeholder="https://example.com/image.jpg"
+                    disabled={imageUploading}
+                    readOnly={imageSourceMode === "upload"}
+                  />
+                  {imageUrl && (
+                    <button
+                      type="button"
+                      onClick={() => { setImageUrl(""); setImageUploadError(""); }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-400 transition"
+                      title="Remove"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
               )}
+
+              {/* Preview */}
+              {imageUrl && !imageUploading && (
+                <div className="relative group w-fit">
+                  <img src={imageUrl} alt="Preview" className="max-h-28 rounded-xl object-cover border border-gray-700 shadow" />
+                  <button
+                    type="button"
+                    onClick={() => { setImageUrl(""); setImageUploadError(""); }}
+                    className="absolute top-1.5 right-1.5 bg-gray-900/80 hover:bg-red-600 text-gray-300 hover:text-white rounded-md p-0.5 opacity-0 group-hover:opacity-100 transition"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+              {imageUploadError && <p className="text-xs text-red-400 flex items-center gap-1"><XCircle size={12} /> {imageUploadError}</p>}
             </div>
-            {imageUrl && !imageUploading && (
-              <img src={imageUrl} alt="" className="mt-2 max-h-24 rounded-lg object-contain" />
-            )}
-            {imageUploadError && <p className="text-sm text-red-400 mt-1">{imageUploadError}</p>}
+
+            {/* Right: Recipe Text */}
+            <div className="flex flex-col gap-3">
+              <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Recipe Text</span>
+              <textarea
+                value={recipeText}
+                onChange={(e) => setRecipeText(e.target.value)}
+                required
+                rows={6}
+                className="input-field resize-none flex-1"
+                placeholder="Paste recipe name and details here — the AI will generate a full article, SEO data, and Pinterest pin from this."
+              />
+            </div>
           </div>
-          <div>
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-300 mb-1">
-              <FileText size={14} /> Recipe Text
-            </label>
-            <textarea
-              value={recipeText}
-              onChange={(e) => setRecipeText(e.target.value)}
-              required
-              rows={4}
-              className="input-field"
-              placeholder="Enter recipe name and details..."
-            />
+
+          {/* Submit */}
+          <div className="flex justify-end mt-5 pt-5 border-t border-gray-800/60">
+            <button
+              type="submit"
+              disabled={adding}
+              className="btn-primary flex items-center gap-2 px-6"
+            >
+              {adding ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+              {adding ? "Adding…" : "Add Recipe"}
+            </button>
           </div>
-          <button type="submit" disabled={adding} className="btn-primary flex items-center gap-2">
-            <Plus size={16} /> {adding ? "Adding..." : "Add Recipe"}
-          </button>
         </form>
       </div>
 
