@@ -344,6 +344,14 @@ class ThreadsPost(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class SystemCleanupState(Base):
+    """Singleton tracking the last time the system-wide automatic cleanup ran."""
+    __tablename__ = "system_cleanup_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class CleanupConfig(Base):
     """Per-owner configuration for the background cleanup service."""
     __tablename__ = "cleanup_config"

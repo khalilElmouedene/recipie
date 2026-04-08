@@ -11,7 +11,7 @@ from sqlalchemy import or_, select
 
 from app.config import settings
 from app.database import SessionLocal
-from app.db_models import CleanupConfig, Project, Recipe, RecipeStatus, Site, ThreadsPost, ThreadsPostStatus
+from app.db_models import CleanupConfig, Project, Recipe, RecipeStatus, Site, SystemCleanupState, ThreadsPost, ThreadsPostStatus
 
 
 UPLOADS_DIR = Path("/app/uploads")
@@ -116,6 +116,69 @@ async def _update_last_run_at(owner_id: Any) -> None:
                 await db.commit()
     except Exception:
         pass
+
+
+# ── System-level cleanup (every 7 days, all users, no config required) ────────
+
+_SYSTEM_CLEANUP_INTERVAL_DAYS = 7
+
+
+async def _is_system_cleanup_due() -> bool:
+    """Return True if the system-wide cleanup hasn't run in the last 7 days."""
+    try:
+        async with SessionLocal() as db:
+            row = await db.execute(select(SystemCleanupState).where(SystemCleanupState.id == 1))
+            state = row.scalar_one_or_none()
+            if state is None or state.last_run_at is None:
+                return True
+            elapsed = datetime.now(timezone.utc) - state.last_run_at
+            return elapsed.total_seconds() >= _SYSTEM_CLEANUP_INTERVAL_DAYS * 86400
+    except Exception:
+        return False
+
+
+async def _update_system_cleanup_last_run() -> None:
+    try:
+        async with SessionLocal() as db:
+            row = await db.execute(select(SystemCleanupState).where(SystemCleanupState.id == 1))
+            state = row.scalar_one_or_none()
+            if state is None:
+                state = SystemCleanupState(id=1, last_run_at=datetime.now(timezone.utc))
+                db.add(state)
+            else:
+                state.last_run_at = datetime.now(timezone.utc)
+            await db.commit()
+    except Exception:
+        pass
+
+
+async def _system_cleanup_all_published() -> int:
+    """Delete ALL published recipes and their local images across every user/project."""
+    deleted = 0
+    async with SessionLocal() as db:
+        stmt = (
+            select(Recipe)
+            .join(Site, Recipe.site_id == Site.id)
+            .where(Recipe.status == RecipeStatus.published)
+        )
+        rows = (await db.execute(stmt)).scalars().all()
+        files_to_delete: set[Path] = set()
+        for recipe in rows:
+            files_to_delete.update(_upload_paths_from_recipe(recipe))
+            try:
+                await db.delete(recipe)
+                deleted += 1
+            except Exception:
+                pass
+        for p in files_to_delete:
+            try:
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                pass
+        if rows:
+            await db.commit()
+    return deleted
 
 
 async def run_full_published_cleanup(owner_id: Any) -> dict:
@@ -417,11 +480,32 @@ async def _cleanup_threads_media_once(retention_days: int) -> int:
 
 async def run_image_retention_scheduler(stop_event: asyncio.Event) -> None:
     """
-    Background loop: checks every hour for owners whose cleanup is enabled and due.
-    Each owner's cleanup is scoped to their own projects only.
-    Config changes apply within one hour without restart.
+    Background loop — two independent cleanup tracks, checked every hour:
+
+    1. SYSTEM cleanup (hardcoded, every 7 days): deletes ALL published recipes + images
+       across every user automatically, no configuration required. Acts as a server
+       health safety net regardless of individual user settings.
+
+    2. PER-OWNER cleanup (configurable): only runs when the owner has explicitly
+       enabled it; scoped strictly to that owner's projects.
     """
     while not stop_event.is_set():
+        # ── Track 1: System-wide automatic cleanup (every 7 days, all users) ──
+        try:
+            if await _is_system_cleanup_due():
+                try:
+                    await _system_cleanup_all_published()
+                except Exception:
+                    pass
+                try:
+                    await _cleanup_threads_media_once(_SYSTEM_CLEANUP_INTERVAL_DAYS)
+                except Exception:
+                    pass
+                await _update_system_cleanup_last_run()
+        except Exception:
+            pass
+
+        # ── Track 2: Per-owner configurable cleanup ──
         try:
             due_configs = await _get_due_cleanup_configs()
             for owner_id, interval_days in due_configs:
@@ -431,10 +515,6 @@ async def run_image_retention_scheduler(stop_event: asyncio.Event) -> None:
                     pass
                 try:
                     await _cleanup_pending_stale_source_images(owner_id, interval_days)
-                except Exception:
-                    pass
-                try:
-                    await _cleanup_threads_media_once(interval_days)
                 except Exception:
                     pass
                 await _update_last_run_at(owner_id)
