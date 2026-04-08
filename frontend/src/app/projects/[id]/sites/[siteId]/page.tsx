@@ -17,9 +17,6 @@ export default function SiteDetailPage() {
   const [recipes, setRecipes] = useState<RecipeOut[]>([]);
   const [imageUrl, setImageUrl] = useState("");
   const [recipeText, setRecipeText] = useState("");
-  const [imageSourceMode, setImageSourceMode] = useState<"url" | "upload">("url");
-  const [imageUploading, setImageUploading] = useState(false);
-  const [imageUploadError, setImageUploadError] = useState("");
   const [adding, setAdding] = useState(false);
   const [starting, setStarting] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -720,92 +717,44 @@ export default function SiteDetailPage() {
         </div>
 
         <form onSubmit={handleAddRecipe} className="p-6 space-y-5">
-          {/* Source Image */}
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Source Image</span>
-              {imageUploading && <span className="flex items-center gap-1.5 text-xs text-brand-400"><Loader2 size={12} className="animate-spin" /> Uploading…</span>}
+          {/* Image URL */}
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Image URL</span>
+            <div className="relative">
+              <input
+                value={imageUrl}
+                onChange={(e) => setImageUrl(e.target.value)}
+                required
+                className="input-field pr-9"
+                placeholder="https://example.com/image.jpg"
+              />
+              {imageUrl && (
+                <button
+                  type="button"
+                  onClick={() => setImageUrl("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-400 transition"
+                  title="Clear"
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
-
-            {/* Mode toggle */}
-            <div className="flex gap-1 p-1 bg-gray-800/80 rounded-xl w-fit border border-gray-700/50">
-              <button
-                type="button"
-                onClick={() => { setImageSourceMode("url"); setImageUrl(""); setImageUploadError(""); }}
-                className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${imageSourceMode === "url" ? "bg-gray-700 text-white shadow-sm" : "text-gray-500 hover:text-gray-300"}`}
-              >
-                External URL
-              </button>
-              <button
-                type="button"
-                onClick={() => { setImageSourceMode("upload"); setImageUrl(""); setImageUploadError(""); }}
-                className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${imageSourceMode === "upload" ? "bg-gray-700 text-white shadow-sm" : "text-gray-500 hover:text-gray-300"}`}
-              >
-                Upload / Paste
-              </button>
-            </div>
-
-            {imageSourceMode === "upload" && !imageUrl ? (
-              <div
-                className="relative flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-600/60 bg-gray-800/30 hover:bg-brand-600/5 transition-all cursor-pointer py-8 px-4 text-center"
-                onClick={() => document.getElementById("recipe-file-input")?.click()}
-              >
-                <input
-                  id="recipe-file-input"
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => handleRecipeImageFile(e.target.files?.[0] ?? null)}
-                />
-                <div className="w-10 h-10 rounded-full bg-gray-700/60 flex items-center justify-center">
-                  <Image size={18} className="text-gray-400" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-300">Click to upload or press <kbd className="px-1.5 py-0.5 text-[10px] rounded bg-gray-700 text-gray-300 font-mono">Ctrl+V</kbd></p>
-                  <p className="text-xs text-gray-500 mt-0.5">PNG, JPG, WEBP supported</p>
-                </div>
-              </div>
-            ) : (
-              <div className="relative">
-                <input
-                  value={imageUrl}
-                  onChange={(e) => { setImageUrl(e.target.value); setImageUploadError(""); }}
-                  className="input-field pr-9"
-                  placeholder="https://example.com/image.jpg"
-                  disabled={imageUploading}
-                  readOnly={imageSourceMode === "upload"}
-                />
-                {imageUrl && (
-                  <button
-                    type="button"
-                    onClick={() => { setImageUrl(""); setImageUploadError(""); }}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-400 transition"
-                    title="Remove"
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Preview */}
-            {imageUrl && !imageUploading && (
+            {imageUrl && (
               <div className="relative group w-fit">
                 <img src={imageUrl} alt="Preview" className="max-h-28 rounded-xl object-cover border border-gray-700 shadow" />
                 <button
                   type="button"
-                  onClick={() => { setImageUrl(""); setImageUploadError(""); }}
+                  onClick={() => setImageUrl("")}
                   className="absolute top-1.5 right-1.5 bg-gray-900/80 hover:bg-red-600 text-gray-300 hover:text-white rounded-md p-0.5 opacity-0 group-hover:opacity-100 transition"
                 >
                   <X size={12} />
                 </button>
               </div>
             )}
-            {imageUploadError && <p className="text-xs text-red-400 flex items-center gap-1"><XCircle size={12} /> {imageUploadError}</p>}
           </div>
 
           {/* Recipe Text */}
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Recipe Text</span>
             <textarea
               value={recipeText}
