@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Eye, EyeOff, Trash2, Save } from "lucide-react";
+import { Eye, EyeOff, Trash2, Save, RotateCcw, AlertTriangle } from "lucide-react";
 import { api, getApiBaseUrl, ProjectOut, type MidjourneyTimersOut, type CleanupConfigOut } from "@/lib/api";
 
 interface UserProfile {
@@ -13,7 +13,7 @@ interface UserProfile {
   has_password: boolean;
 }
 
-type SettingsTab = "profile" | "cleanup" | "midjourney";
+type SettingsTab = "profile" | "cleanup" | "midjourney" | "prompts";
 
 export default function SettingsPage() {
   const searchParams = useSearchParams();
@@ -21,6 +21,7 @@ export default function SettingsPage() {
     const raw = searchParams.get("tab");
     if (raw === "cleanup") return "cleanup";
     if (raw === "midjourney") return "midjourney";
+    if (raw === "prompts") return "prompts";
     return "profile";
   }, [searchParams]);
 
@@ -56,6 +57,11 @@ export default function SettingsPage() {
   const [cleanupMessage, setCleanupMessage] = useState("");
   const [cleanupError, setCleanupError] = useState("");
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+
+  const [showResetAllDialog, setShowResetAllDialog] = useState(false);
+  const [resettingAllPrompts, setResettingAllPrompts] = useState(false);
+  const [resetAllMessage, setResetAllMessage] = useState("");
+  const [resetAllError, setResetAllError] = useState("");
 
   const [mjTimers, setMjTimers] = useState<MidjourneyTimersOut | null>(null);
   const [mjLoading, setMjLoading] = useState(false);
@@ -115,6 +121,21 @@ export default function SettingsPage() {
       setMjError(e instanceof Error ? e.message : "Failed to save.");
     } finally {
       setMjSaving(false);
+    }
+  };
+
+  const handleResetAllPrompts = async () => {
+    setResettingAllPrompts(true);
+    setResetAllMessage("");
+    setResetAllError("");
+    try {
+      await api.resetAllPrompts();
+      setResetAllMessage("All prompts have been reset to defaults across every project.");
+    } catch {
+      setResetAllError("Failed to reset prompts. Please try again.");
+    } finally {
+      setResettingAllPrompts(false);
+      setShowResetAllDialog(false);
     }
   };
 
@@ -273,6 +294,15 @@ export default function SettingsPage() {
           }`}
         >
           Midjourney timers
+        </button>
+        <button
+          type="button"
+          onClick={() => { setActiveTab("prompts"); setResetAllMessage(""); setResetAllError(""); }}
+          className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+            activeTab === "prompts" ? "bg-brand-600 text-white" : "text-gray-300 hover:text-white"
+          }`}
+        >
+          AI Prompts
         </button>
       </div>
 
@@ -576,6 +606,85 @@ export default function SettingsPage() {
             </div>
           )}
         </section>
+      )}
+
+      {activeTab === "prompts" && (
+        <section className="rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-5">
+          <div>
+            <h2 className="text-lg font-semibold text-white">AI Prompts</h2>
+            <p className="text-sm text-gray-400 mt-1">
+              Manage the AI generation prompts used across all your projects.
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-amber-800/40 bg-amber-950/20 p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={18} className="text-amber-400 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-amber-200">Reset all prompts to defaults</p>
+                <p className="text-xs text-amber-200/70 mt-1">
+                  This will delete all custom prompt texts across <strong>every project</strong> and restore the built-in defaults. Use this if users are experiencing generation errors due to outdated prompt formats.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setShowResetAllDialog(true); setResetAllMessage(""); setResetAllError(""); }}
+              disabled={resettingAllPrompts}
+              className="flex items-center gap-2 rounded-lg border border-red-700/60 bg-red-900/30 px-4 py-2 text-sm font-medium text-red-300 hover:bg-red-900/60 hover:text-red-200 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            >
+              <RotateCcw size={14} />
+              {resettingAllPrompts ? "Resetting..." : "Reset all prompts to defaults"}
+            </button>
+          </div>
+
+          {resetAllMessage && (
+            <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2">
+              <p className="text-sm text-green-400">{resetAllMessage}</p>
+            </div>
+          )}
+          {resetAllError && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2">
+              <p className="text-sm text-red-400">{resetAllError}</p>
+            </div>
+          )}
+        </section>
+      )}
+
+      {showResetAllDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 rounded-full bg-red-900/40 border border-red-800/60 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle size={20} className="text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-white">Reset all prompts?</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Affects every project — cannot be undone</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-300 mb-6">
+              All custom prompt texts across <strong className="text-white">every project</strong> will be permanently deleted and replaced with the built-in default prompts. This is useful when users face generation errors due to outdated prompt variables.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowResetAllDialog(false)}
+                disabled={resettingAllPrompts}
+                className="px-4 py-2 text-sm rounded-lg border border-gray-600 text-gray-300 hover:border-gray-400 hover:text-white transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleResetAllPrompts}
+                disabled={resettingAllPrompts}
+                className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium transition flex items-center gap-2 disabled:opacity-60"
+              >
+                <RotateCcw size={14} />
+                {resettingAllPrompts ? "Resetting..." : "Yes, reset all projects"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {confirmDeleteOpen && (

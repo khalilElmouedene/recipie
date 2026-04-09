@@ -143,6 +143,20 @@ async def reset_prompts(
     await db.commit()
 
 
+@router.delete("/prompts/all", status_code=204)
+async def reset_all_prompts(
+    user: Annotated[User, Depends(require_owner)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Delete ALL custom prompt rows for this owner across every project so defaults are used."""
+    result = await db.execute(
+        select(Prompt).where(Prompt.owner_id == user.id)
+    )
+    for row in result.scalars().all():
+        await db.delete(row)
+    await db.commit()
+
+
 @router.put("/prompts", response_model=list[PromptOut])
 async def update_prompts(
     body: PromptsUpdate,
