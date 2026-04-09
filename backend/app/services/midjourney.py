@@ -204,7 +204,7 @@ def generate_images(
     _log = log or print
     from .prompts import get_prompt
     tpl = get_prompt(prompts or {}, "midjourney_imagine")
-    prompt = tpl.format(recipe_name=recipe_name, img_url=img_url)
+    prompt = tpl.format(recipe_name=recipe_name, img_url=img_url, source_img=img_url)
 
     while True:
         try:

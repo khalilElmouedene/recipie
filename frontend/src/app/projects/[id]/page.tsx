@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload } from "lucide-react";
+import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload, RotateCcw, AlertTriangle } from "lucide-react";
 import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 
@@ -596,6 +596,8 @@ function SettingsTab({ projectId }: { projectId: string }) {
   const [prompts, setPrompts] = useState<PromptOut[]>([]);
   const [promptValues, setPromptValues] = useState<Record<string, string>>({});
   const [savingPrompts, setSavingPrompts] = useState(false);
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const [resettingPrompts, setResettingPrompts] = useState(false);
 
   // Pinterest boards
   const [boardsMode, setBoardsMode] = useState<BoardsInputMode>("text");
@@ -637,6 +639,18 @@ function SettingsTab({ projectId }: { projectId: string }) {
       setPrompts(updated);
     } catch { }
     setSavingPrompts(false);
+  };
+
+  const handleResetPrompts = async () => {
+    setResettingPrompts(true);
+    try {
+      await api.resetSettingsPrompts(projectId);
+      const list = await api.getSettingsPrompts(projectId);
+      setPrompts(list);
+      setPromptValues(Object.fromEntries(list.map((p) => [p.key, p.value])));
+    } catch { }
+    setResettingPrompts(false);
+    setShowResetDialog(false);
   };
 
   const handleImportBoards = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -753,13 +767,54 @@ function SettingsTab({ projectId }: { projectId: string }) {
 
       {subTab === "prompts" && (
         <>
-          {hasPromptChanges && (
-            <div className="flex justify-end mb-4">
+          {showResetDialog && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+              <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-md p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="h-10 w-10 rounded-full bg-red-900/40 border border-red-800/60 flex items-center justify-center flex-shrink-0">
+                    <AlertTriangle size={20} className="text-red-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold text-white">Reset all prompts?</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">This cannot be undone</p>
+                  </div>
+                </div>
+                <p className="text-sm text-gray-300 mb-6">
+                  All your custom prompt texts will be deleted and replaced with the built-in default prompts. Any edits you have made will be permanently lost.
+                </p>
+                <div className="flex gap-3 justify-end">
+                  <button
+                    onClick={() => setShowResetDialog(false)}
+                    disabled={resettingPrompts}
+                    className="px-4 py-2 text-sm rounded-lg border border-gray-600 text-gray-300 hover:border-gray-400 hover:text-white transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleResetPrompts}
+                    disabled={resettingPrompts}
+                    className="px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium transition flex items-center gap-2 disabled:opacity-60"
+                  >
+                    <RotateCcw size={14} />
+                    {resettingPrompts ? "Resetting..." : "Yes, reset to defaults"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="flex justify-between items-center mb-4">
+            <button
+              onClick={() => setShowResetDialog(true)}
+              className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border border-gray-600 text-gray-400 hover:border-red-600 hover:text-red-400 transition"
+            >
+              <RotateCcw size={14} /> Reset to defaults
+            </button>
+            {hasPromptChanges && (
               <button onClick={handleSavePrompts} disabled={savingPrompts} className="btn-primary flex items-center gap-2">
                 <Save size={16} /> {savingPrompts ? "Saving..." : "Save prompts"}
               </button>
-            </div>
-          )}
+            )}
+          </div>
           <div className="space-y-4">
             {PROMPT_GROUPS.map((group) => (
               <div key={group.label} className="card">

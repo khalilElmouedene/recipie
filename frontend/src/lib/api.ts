@@ -198,6 +198,8 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ prompts }),
     }),
+  resetSettingsPrompts: (projectId: string) =>
+    request<void>(`/api/settings/prompts?project_id=${projectId}`, { method: "DELETE" }),
 
   getCustomFonts: () => request<string[]>(`/api/settings/fonts`),
   setCustomFonts: (fonts: string[]) =>
