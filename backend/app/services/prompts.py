@@ -20,16 +20,16 @@ Format the article in clean HTML, following this structure exactly (no extra tag
 - Lists: <ul>, <li>
 
 Structure:
-<h1>Catchy SEO-optimized title for {recipe_title}</h1>
+<h1>Catchy SEO-optimized title for {recipe_name}</h1>
 Start with a nostalgic or emotional hook. Mention how easy, quick, or memorable the recipe is.
 
-<h2>Why You'll Love {recipe_title} </h2>
+<h2>Why You'll Love {recipe_name} </h2>
 <ul><li>Fast</li><li>Easy</li><li>Giftable</li><li>Crowd-pleasing</li></ul>
 
 <h2>Ingredients</h2>
 List ingredients with short comments about them.
 
-<h2>How to Make {recipe_title}</h2>
+<h2>How to Make {recipe_name}</h2>
 Step-by-step instructions.
 
 <h2>Substitutions and Additions</h2>
@@ -38,7 +38,7 @@ Suggest swaps and creative upgrades.
 <h2>Tips for Success</h2>
 Common mistakes and prep-ahead ideas.
 
-<h2>How to Store {recipe_title}</h2>
+<h2>How to Store {recipe_name}</h2>
 Storage tips and shelf life.
 
 <h2>FAQs</h2>
@@ -55,12 +55,12 @@ Internal links instructions:
 At the very end of the article, add a short sentence encouraging readers to follow the Pinterest account. Use the word Pinterest as the anchor text, linking it to: {pinterest_url}
 
 Recipe to base the article on:
-{full_recipe}""",
-        "description": "Article generation - placeholders: {recipe_title}, {full_recipe}, {internal_links}",
+{new_recipe}""",
+        "description": "Article generation - placeholders: {recipe_name}, {new_recipe}, {internal_links}, {pinterest_url}",
     },
     "full_recipe": {
-        "value": "Rewrite in English language the following food recipe in a clean and professional format. Only include title, ingredients, and instructions. Do not add commentary.\n\n{recipe_title}",
-        "description": "Full recipe rewrite - placeholder: {recipe_title}",
+        "value": "Rewrite in English language the following food recipe in a clean and professional format. Only include title, ingredients, and instructions. Do not add commentary.\n\n{original_recipe}",
+        "description": "Full recipe rewrite - placeholder: {original_recipe}",
     },
     "recipe_json": {
         "value": """You are an expert recipe-card generator. Parse the following food article and return ONLY a valid JSON object (no backticks, no markdown) that follows THIS schema exactly:
@@ -144,8 +144,8 @@ Rules:
 - Do NOT wrap the JSON in backticks or markdown.
 
 ARTICLE:
-{full_recipe}""",
-        "description": "Recipe JSON - placeholder: {full_recipe}",
+{article}""",
+        "description": "Recipe JSON - placeholder: {article}",
     },
     "meta_description": {
         "value": """You are an SEO expert for a US food blog.
@@ -160,8 +160,9 @@ Rules:
 - DO NOT use this character: -
 - Use ONLY standard ASCII English punctuation: . , ? ! : ; ' " ( ) [ ] /
 
-Recipe: {recipe_title}""",
-        "description": "Meta description - placeholder: {recipe_title}",
+Article:
+{article}""",
+        "description": "Meta description - placeholder: {article}",
     },
     "category": {
         "value": """You are a food classification expert.
@@ -172,8 +173,9 @@ Breakfast, Dinner, Salad, Dessert, Snacks, All Recipes, Drinks, Lunch
 
 No other text or explanation.
 
-Recipe: {recipe_title}""",
-        "description": "Category - placeholder: {recipe_title}",
+Article:
+{article}""",
+        "description": "Category - placeholder: {article}",
     },
     "pinterest_title": {
         "value": """You are a Pinterest food blogger with 10 years of success.
@@ -189,8 +191,9 @@ Rules:
 - Use ONLY standard ASCII English punctuation: . , ? ! : ; ' " ( ) [ ] /
 - DO NOT start with or use overused filler words such as: Irresistible, Amazing, Incredible, Unbelievable, Mind-Blowing, Ultimate, Epic, Perfect, Best Ever, You Won't Believe.
 
-Recipe: {recipe_title}""",
-        "description": "Pinterest title - placeholder: {recipe_title}",
+Article:
+{article}""",
+        "description": "Pinterest title - placeholder: {article}",
     },
     "pinterest_description": {
         "value": """You are a Pinterest food blogger with 10 years of success.
@@ -208,8 +211,9 @@ Rules:
 - DO NOT use this character: -
 - Use ONLY standard ASCII English punctuation: . , ? ! : ; ' " ( ) [ ] /
 
-Recipe: {recipe_title}""",
-        "description": "Pinterest description - placeholder: {recipe_title}",
+Article:
+{article}""",
+        "description": "Pinterest description - placeholder: {article}",
     },
     "pinterest_tags": {
         "value": """You are a Pinterest SEO expert.
@@ -225,8 +229,9 @@ Rules:
 
 Return ONLY the comma-separated list, nothing else.
 
-Recipe: {recipe_title}""",
-        "description": "Pinterest tags - placeholder: {recipe_title}",
+Article:
+{article}""",
+        "description": "Pinterest tags - placeholder: {article}",
     },
     "pinterest_board": {
         "value": """You are a Pinterest content strategist who selects the best board for each pin.
@@ -240,8 +245,9 @@ Rules:
 - It must match one of the names exactly.
 - No extra words or explanation.
 
-Recipe: {recipe_title}""",
-        "description": "Pinterest board selection - placeholders: {recipe_title}, {boards_list}",
+Article:
+{article}""",
+        "description": "Pinterest board selection - placeholders: {article}, {boards_list}",
     },
     "seo_title": {
         "value": """You are an SEO expert for a US food blog.
@@ -258,8 +264,9 @@ Rules:
 - Use ONLY standard ASCII English punctuation: . , ? ! : ; ' " ( ) [ ] /
 - DO NOT start with or use overused filler words such as: Irresistible, Amazing, Incredible, Unbelievable, Mind-Blowing, Ultimate, Epic, Perfect, Best Ever, You Won't Believe.
 
-Recipe: {recipe_title}""",
-        "description": "SEO post title - placeholder: {recipe_title}",
+Article:
+{article}""",
+        "description": "SEO post title - placeholder: {article}",
     },
     "focus_keyword": {
         "value": """Create a single focus keyphrase for this recipe article.
@@ -272,8 +279,9 @@ Rules:
 
 Return ONLY the keyphrase, nothing else.
 
-Recipe: {recipe_title}""",
-        "description": "Focus keyphrase - placeholder: {recipe_title}",
+Article:
+{article}""",
+        "description": "Focus keyphrase - placeholder: {article}",
     },
     "wp_tags": {
         "value": """Generate 3 to 5 relevant WordPress post tags for this recipe article.
@@ -287,12 +295,13 @@ Rules:
 
 Return ONLY the comma-separated list, nothing else.
 
-Recipe: {recipe_title}""",
-        "description": "WordPress post tags - placeholder: {recipe_title}",
+Article:
+{article}""",
+        "description": "WordPress post tags - placeholder: {article}",
     },
     "midjourney_imagine": {
-        "value": "/imagine prompt: {source_img} Amateur photo from Reddit. The photo was taken by an amateur using her phone camera. RECIPE NAME: {recipe_name} Recipe --style raw --stylize 30 --iw 3 --v 6.1",
-        "description": "Midjourney image prompt - placeholders: {recipe_name}, {source_img}",
+        "value": "/imagine prompt: {img_url} Amateur photo from Reddit. The photo was taken by an amateur using her phone camera. RECIPE NAME: {recipe_name} Recipe --style raw --stylize 30 --iw 3 --v 6.1",
+        "description": "Midjourney image prompt - placeholders: {recipe_name}, {img_url}",
     },
     "pinterest_boards_list": {
         "value": "Air Fryer Dinners & Snacks\n30-Minute Weeknight Meals\nBrunch & Breakfast Bakes\nDesserts & Chaos Cakes\nPickle Fix (Dill-icious Recipes)\nRebel Floats & Fun Drinks\nCharcuterie & Party Boards\nOne-Pot & Casserole Comforts\nPasta & Pizza Night\nBBQ & Grilling Classics\nHealthy Salads & Veggie Sides\nSlow Cooker & Instant Pot Comforts\nBread & Pastry Workshop\nProtein-Packed Lunch Prep\nSauces, Dips & Seasonings\nSoups, Stews & Chowders\nCanning, Ferments & Pickles\nKitchen Hacks & How-To Guides\nHoliday & Seasonal Recipes\nBudget-Friendly & 5-Ingredient Meals\nKid-Friendly Snacks & Lunches",

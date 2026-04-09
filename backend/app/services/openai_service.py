@@ -69,8 +69,8 @@ def generate_article(recipe_title: str, full_recipe: str, external_links: str, i
             f"- Use natural, descriptive anchor text."
         )
     prompt = tpl.format(
-        recipe_title=recipe_title,
-        full_recipe=full_recipe,
+        recipe_name=recipe_title,
+        new_recipe=full_recipe,
         external_links=external_links or "",
         internal_links=links_instruction,
         pinterest_url=pinterest_url or "",
@@ -83,18 +83,19 @@ def generate_article(recipe_title: str, full_recipe: str, external_links: str, i
 
 def generate_full_recipe(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
     tpl = get_prompt(prompts or {}, "full_recipe")
-    prompt = tpl.format(recipe_title=recipe_title)
+    prompt = tpl.format(original_recipe=recipe_title)
     result = generate_with_openai(prompt, api_key, log=log)
     return re.sub(r'[*#]+', '', result)
 
 
-def generate_recipe_json(recipe_title: str, full_recipe: str, author: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+def generate_recipe_json(recipe_title: str, article: str, author: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
     tpl = get_prompt(prompts or {}, "recipe_json")
-    prompt = tpl.format(full_recipe=full_recipe)
+    prompt = tpl.format(article=article)
     model_response = generate_with_openai(prompt, api_key, log=log)
     clean_json = re.sub(r'```(?:json)?(.*?)```', r'\1', model_response, flags=re.DOTALL).strip()
 
     base_template = _get_wp_recipe_template(recipe_title, f"Delicious {recipe_title} recipe.")
+    # recipe_title kept for base template fallback; article is used in the prompt
     base_template["author"]["name"] = author if author else "Recipe Author"
 
     try:
@@ -116,16 +117,16 @@ def generate_recipe_json(recipe_title: str, full_recipe: str, author: str, api_k
     return json.dumps(base_template, indent=2)
 
 
-def generate_meta_description(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+def generate_meta_description(article: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
     tpl = get_prompt(prompts or {}, "meta_description")
-    prompt = tpl.format(recipe_title=recipe_title)
+    prompt = tpl.format(article=article)
     result = generate_with_openai(prompt, api_key, log=log)
     return re.sub(r'[*#"]', '', result)
 
 
-def generate_category(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+def generate_category(article: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
     tpl = get_prompt(prompts or {}, "category")
-    prompt = tpl.format(recipe_title=recipe_title)
+    prompt = tpl.format(article=article)
     client = _get_client(api_key)
     response = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -136,9 +137,9 @@ def generate_category(recipe_title: str, api_key: str, prompts: dict[str, str] |
     return response.choices[0].message.content.strip()
 
 
-def generate_seo_title(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+def generate_seo_title(article: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
     tpl = get_prompt(prompts or {}, "seo_title")
-    prompt = tpl.format(recipe_title=recipe_title)
+    prompt = tpl.format(article=article)
     client = _get_client(api_key)
     response = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -149,9 +150,9 @@ def generate_seo_title(recipe_title: str, api_key: str, prompts: dict[str, str] 
     return re.sub(r'[*#"]', '', response.choices[0].message.content.strip())
 
 
-def generate_focus_keyword(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+def generate_focus_keyword(article: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
     tpl = get_prompt(prompts or {}, "focus_keyword")
-    prompt = tpl.format(recipe_title=recipe_title)
+    prompt = tpl.format(article=article)
     client = _get_client(api_key)
     response = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -162,37 +163,37 @@ def generate_focus_keyword(recipe_title: str, api_key: str, prompts: dict[str, s
     return re.sub(r'[*#"]', '', response.choices[0].message.content.strip())
 
 
-def generate_wp_tags(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+def generate_wp_tags(article: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
     tpl = get_prompt(prompts or {}, "wp_tags")
-    prompt = tpl.format(recipe_title=recipe_title)
+    prompt = tpl.format(article=article)
     result = generate_with_openai(prompt, api_key, log=log)
     return re.sub(r'[*#"]', '', result)
 
 
-def generate_pinterest_pin_title(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+def generate_pinterest_pin_title(article: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
     tpl = get_prompt(prompts or {}, "pinterest_title")
-    prompt = tpl.format(recipe_title=recipe_title)
+    prompt = tpl.format(article=article)
     result = generate_with_openai(prompt, api_key, log=log)
     return re.sub(r'[*#"]', '', result)
 
 
-def generate_pinterest_pin_description(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+def generate_pinterest_pin_description(article: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
     tpl = get_prompt(prompts or {}, "pinterest_description")
-    prompt = tpl.format(recipe_title=recipe_title)
+    prompt = tpl.format(article=article)
     result = generate_with_openai(prompt, api_key, log=log)
     return re.sub(r'[*#"]', '', result)
 
 
-def generate_pinterest_pin_tags(recipe_title: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+def generate_pinterest_pin_tags(article: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
     tpl = get_prompt(prompts or {}, "pinterest_tags")
-    prompt = tpl.format(recipe_title=recipe_title)
+    prompt = tpl.format(article=article)
     result = generate_with_openai(prompt, api_key, log=log)
     return re.sub(r'[*#"]', '', result)
 
 
-def generate_pinterest_pin_board(recipe_title: str, boards_list: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
+def generate_pinterest_pin_board(article: str, boards_list: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
     tpl = get_prompt(prompts or {}, "pinterest_board")
-    prompt = tpl.format(recipe_title=recipe_title, boards_list=boards_list)
+    prompt = tpl.format(article=article, boards_list=boards_list)
     client = _get_client(api_key)
     response = client.chat.completions.create(
         model="gpt-4o-mini",

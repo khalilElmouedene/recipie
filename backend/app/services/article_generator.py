@@ -304,21 +304,14 @@ def generate_for_recipe(
         if _stop():
             return result
 
-        # 1. Generate full recipe
+        # 1. Generate full recipe (new_recipe)
         if _stop():
             return result
         _log("Generating full recipe...")
         full_recipe = openai_service.generate_full_recipe(recipe_title, openai_key, prompts=prompts, log=_log)
         result["generated_full_recipe"] = full_recipe
 
-        # 3. Generate recipe JSON for WP Recipe Maker
-        if _stop():
-            return result
-        _log("Generating recipe JSON...")
-        recipe_json = openai_service.generate_recipe_json(recipe_title, full_recipe, "", openai_key, prompts=prompts, log=_log)
-        result["generated_json"] = recipe_json
-
-        # 4. Generate article HTML
+        # 2. Generate article HTML
         if _stop():
             return result
         _log("Generating article HTML...")
@@ -327,39 +320,46 @@ def generate_for_recipe(
         article = openai_service.generate_article(recipe_title, full_recipe, "", internal_links, openai_key, prompts=prompts, log=_log, site_domain=site_domain, pinterest_url=pinterest_url)
         result["generated_article"] = article
 
-        # 5. Meta description
+        # 3. Generate recipe JSON for WP Recipe Maker (uses full article)
+        if _stop():
+            return result
+        _log("Generating recipe JSON...")
+        recipe_json = openai_service.generate_recipe_json(recipe_title, article, "", openai_key, prompts=prompts, log=_log)
+        result["generated_json"] = recipe_json
+
+        # 4. Meta description
         if _stop():
             return result
         _log("Generating meta description...")
-        meta = openai_service.generate_meta_description(recipe_title, openai_key, prompts=prompts, log=_log)
+        meta = openai_service.generate_meta_description(article, openai_key, prompts=prompts, log=_log)
         result["meta_description"] = meta
 
-        # 6. Category
+        # 5. Category
         if _stop():
             return result
         _log("Generating category...")
-        category = openai_service.generate_category(recipe_title, openai_key, prompts=prompts, log=_log)
+        category = openai_service.generate_category(article, openai_key, prompts=prompts, log=_log)
         result["category"] = category
 
-        # 6b. SEO title (AI-generated, used as WP post title + Rank Math title)
+        # 6. SEO title (AI-generated, used as WP post title + Rank Math title)
         if not _stop():
             _log("Generating SEO title...")
             try:
-                seo_title = openai_service.generate_seo_title(recipe_title, openai_key, prompts=prompts, log=_log)
+                seo_title = openai_service.generate_seo_title(article, openai_key, prompts=prompts, log=_log)
                 if seo_title and len(seo_title) > 3:
                     result["seo_title"] = seo_title
                     _log(f"SEO title: {seo_title}")
             except Exception as e:
                 _log(f"SEO title generation failed (non-fatal): {e}")
 
-        # 6c. Pinterest board selection (AI picks best board from boards list)
+        # 7. Pinterest board selection (AI picks best board from boards list)
         from .prompts import DEFAULT_PROMPTS as _DP
         boards_list = (prompts or {}).get("pinterest_boards_list") or _DP.get("pinterest_boards_list", {}).get("value", "")
         if boards_list and not _stop():
             _log("Selecting Pinterest board...")
             try:
                 pin_board = openai_service.generate_pinterest_pin_board(
-                    recipe_title, boards_list, openai_key, prompts=prompts, log=_log
+                    article, boards_list, openai_key, prompts=prompts, log=_log
                 )
                 pin_board = pin_board.strip().strip('"').strip("'")
                 result["pin_board"] = pin_board
@@ -367,36 +367,36 @@ def generate_for_recipe(
             except Exception as e:
                 _log(f"Pinterest board selection failed (non-fatal): {e}")
 
-        # 6e. Pinterest pin title
+        # 8. Pinterest pin title
         if not _stop():
             _log("Generating Pinterest pin title...")
             try:
                 pin_title = openai_service.generate_pinterest_pin_title(
-                    recipe_title, openai_key, prompts=prompts, log=_log
+                    article, openai_key, prompts=prompts, log=_log
                 )
                 result["pin_title"] = pin_title.strip().strip('"').strip("'")
                 _log(f"Pinterest pin title: {result['pin_title']}")
             except Exception as e:
                 _log(f"Pinterest pin title generation failed (non-fatal): {e}")
 
-        # 6f. Pinterest pin description
+        # 9. Pinterest pin description
         if not _stop():
             _log("Generating Pinterest pin description...")
             try:
                 pin_description = openai_service.generate_pinterest_pin_description(
-                    recipe_title, openai_key, prompts=prompts, log=_log
+                    article, openai_key, prompts=prompts, log=_log
                 )
                 result["pin_description"] = pin_description.strip()
                 _log(f"Pinterest pin description generated ({len(result['pin_description'])} chars)")
             except Exception as e:
                 _log(f"Pinterest pin description generation failed (non-fatal): {e}")
 
-        # 6g. Pinterest pin tags
+        # 10. Pinterest pin tags
         if not _stop():
             _log("Generating Pinterest pin tags...")
             try:
                 pin_tags = openai_service.generate_pinterest_pin_tags(
-                    recipe_title, openai_key, prompts=prompts, log=_log
+                    article, openai_key, prompts=prompts, log=_log
                 )
                 result["pin_tags"] = pin_tags.strip()
                 _log(f"Pinterest pin tags: {result['pin_tags']}")
