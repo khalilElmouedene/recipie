@@ -89,7 +89,7 @@ Now write the full HTML article using the following recipe:
         "value": """You are an expert recipe-card generator.
 Parse the following english food article and return ONLY a JSON object (no backticks, no markdown) that follows THIS schema exactly:
 
-{
+{{
   "name": "Garlic Butter Chicken Bites with Creamy Parmesan Pasta",
   "summary": "<p>Juicy garlic butter chicken bites served over rich, creamy Parmesan pasta—this easy yet elegant meal is perfect for busy weeknights or cozy weekends.</p>",
   "author_display": "disabled",
@@ -106,117 +106,117 @@ Parse the following english food article and return ONLY a JSON object (no backt
   "custom_time": "",
   "custom_time_zero": "",
   "custom_time_label": "",
-  "tags": {
+  "tags": {{
     "course": ["Dinner", "Main Course"],
     "cuisine": ["American", "Italian-Inspired"],
     "keyword": ["Garlic Butter Chicken", "Creamy Pasta", "Parmesan"],
     "difficulty": []
-  },
+  }},
   "equipment": [
-    { "name": "Large Skillet" },
-    { "name": "Large Pot" },
-    { "name": "Tongs or Spatula" }
+    {{ "name": "Large Skillet" }},
+    {{ "name": "Large Pot" }},
+    {{ "name": "Tongs or Spatula" }}
   ],
   "ingredients_flat": [
-    {
+    {{
       "name": "For the Garlic Butter Chicken Bites",
       "type": "group"
-    },
-    {
+    }},
+    {{
       "amount": "1",
       "unit": "lb",
       "name": "boneless chicken breasts",
       "notes": "cut into bite-sized pieces",
-      "converted": {
-        "2": { "amount": "450", "unit": "g" }
-      },
+      "converted": {{
+        "2": {{ "amount": "450", "unit": "g" }}
+      }},
       "type": "ingredient"
-    },
-    {
+    }},
+    {{
       "amount": "2",
       "unit": "tbsp",
       "name": "olive oil",
       "notes": "",
-      "converted": {
-        "2": { "amount": "30", "unit": "ml" }
-      },
+      "converted": {{
+        "2": {{ "amount": "30", "unit": "ml" }}
+      }},
       "type": "ingredient"
-    },
-    {
+    }},
+    {{
       "amount": "3",
       "unit": "tbsp",
       "name": "unsalted butter",
       "notes": "",
-      "converted": {
-        "2": { "amount": "45", "unit": "g" }
-      },
+      "converted": {{
+        "2": {{ "amount": "45", "unit": "g" }}
+      }},
       "type": "ingredient"
-    },
-    {
+    }},
+    {{
       "amount": "3",
       "unit": "cloves",
       "name": "garlic",
       "notes": "minced",
-      "converted": {
-        "2": { "amount": "3", "unit": "cloves" }
-      },
+      "converted": {{
+        "2": {{ "amount": "3", "unit": "cloves" }}
+      }},
       "type": "ingredient"
-    },
-    {
+    }},
+    {{
       "name": "For the Creamy Parmesan Pasta",
       "type": "group"
-    },
-    {
+    }},
+    {{
       "amount": "12",
       "unit": "oz",
       "name": "fettuccine",
       "notes": "or linguine",
-      "converted": {
-        "2": { "amount": "340", "unit": "g" }
-      },
+      "converted": {{
+        "2": {{ "amount": "340", "unit": "g" }}
+      }},
       "type": "ingredient"
-    },
-    {
+    }},
+    {{
       "amount": "1.5",
       "unit": "cups",
       "name": "heavy cream",
       "notes": "",
-      "converted": {
-        "2": { "amount": "360", "unit": "ml" }
-      },
+      "converted": {{
+        "2": {{ "amount": "360", "unit": "ml" }}
+      }},
       "type": "ingredient"
-    },
-    {
+    }},
+    {{
       "amount": "1",
       "unit": "cup",
       "name": "Parmesan cheese",
       "notes": "grated",
-      "converted": {
-        "2": { "amount": "100", "unit": "g" }
-      },
+      "converted": {{
+        "2": {{ "amount": "100", "unit": "g" }}
+      }},
       "type": "ingredient"
-    }
+    }}
   ],
   "instructions_flat": [
-    {
+    {{
       "text": "<p><strong>Step 1:</strong> Cook pasta in a large pot of salted water until al dente. Reserve 1/2 cup of pasta water. Drain and set aside.</p>",
       "type": "instruction",
       "image_url": ""
-    },
-    {
+    }},
+    {{
       "text": "<p><strong>Step 2:</strong> In a skillet, heat olive oil over medium-high. Season chicken with paprika, Italian seasoning, salt, and pepper. Sear for 3-4 minutes per side until golden and cooked through. Remove and set aside.</p>",
       "type": "instruction",
       "image_url": ""
-    },
-    {
+    }},
+    {{
       "text": "<p><strong>Step 3:</strong> In the same skillet, melt butter and add minced garlic. Saute for 1 minute. Return chicken to the pan and toss in garlic butter.</p>",
       "type": "instruction",
       "image_url": ""
-    }
+    }}
   ],
   "video_embed": "",
   "notes": "<p>Make it lighter by swapping heavy cream with half-and-half. Store leftovers in the fridge up to 3 days.</p>",
-  "nutrition": {
+  "nutrition": {{
     "calories": 670,
     "carbohydrates": 40,
     "protein": 38,
@@ -231,10 +231,10 @@ Parse the following english food article and return ONLY a JSON object (no backt
     "vitamin_c": 6,
     "calcium": 280,
     "iron": 2
-  },
-  "custom_fields": {},
+  }},
+  "custom_fields": {{}},
   "ingredient_links_type": "global"
-}
+}}
 
 Rules:
 • Fill every blank with info from the article.
