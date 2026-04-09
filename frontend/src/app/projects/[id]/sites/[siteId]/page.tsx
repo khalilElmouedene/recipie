@@ -388,7 +388,7 @@ export default function SiteDetailPage() {
   };
 
   const handleExportExcel = () => {
-    window.open(api.getExcelExportUrl(siteId), "_blank");
+    api.downloadSiteExcel(siteId, site?.domain || siteId);
   };
 
   const handleTitleEdit = (recipe: RecipeOut) => {

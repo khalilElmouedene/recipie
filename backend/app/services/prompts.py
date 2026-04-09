@@ -23,7 +23,7 @@ Structure:
 <h1>Catchy SEO-optimized title for {recipe_title}</h1>
 Start with a nostalgic or emotional hook. Mention how easy, quick, or memorable the recipe is.
 
-<h2>Why You'll Love {recipe_title}</h2>
+<h2>Why You'll Love {recipe_title} </h2>
 <ul><li>Fast</li><li>Easy</li><li>Giftable</li><li>Crowd-pleasing</li></ul>
 
 <h2>Ingredients</h2>

@@ -56,7 +56,7 @@ export default function ProjectDetailPage() {
             </button>
           )}
           <button
-            onClick={() => window.open(api.getProjectExcelExportUrl(id), "_blank")}
+            onClick={() => api.downloadProjectExcel(id, project.name)}
             disabled={project.recipe_count === 0}
             className="btn-secondary flex items-center justify-center gap-2 border-green-700 text-green-400 hover:text-green-300 disabled:opacity-40 disabled:cursor-not-allowed w-full sm:w-auto"
             title="Export all sites as Excel — same format as V1 Project"

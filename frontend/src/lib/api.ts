@@ -19,6 +19,33 @@ function getToken(): string | null {
   return localStorage.getItem("token");
 }
 
+async function downloadFile(path: string, filename: string): Promise<void> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API_URL}${path}`, { headers });
+  if (res.status === 401) {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("token");
+      window.location.href = "/login";
+    }
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(typeof err.detail === "string" ? err.detail : "Download failed");
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -359,20 +386,11 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  getExportUrl: (siteId: string) => {
-    const token = getToken();
-    return `${API_URL}/api/sites/${siteId}/recipes/export?token=${token}`;
-  },
+  downloadSiteExcel: (siteId: string, domain: string) =>
+    downloadFile(`/api/sites/${siteId}/export/excel`, `${domain.replace(/[^a-z0-9]/gi, "_")}.xlsx`),
 
-  getExcelExportUrl: (siteId: string) => {
-    const token = getToken();
-    return `${API_URL}/api/sites/${siteId}/export/excel?token=${token}`;
-  },
-
-  getProjectExcelExportUrl: (projectId: string) => {
-    const token = getToken();
-    return `${API_URL}/api/projects/${projectId}/export/excel?token=${token}`;
-  },
+  downloadProjectExcel: (projectId: string, projectName: string) =>
+    downloadFile(`/api/projects/${projectId}/export/excel`, `${projectName.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}.xlsx`),
 
   // ── Jobs ───────────────────────────────────────────────
   getProjectJobs: (projectId: string) => request<JobOut[]>(`/api/projects/${projectId}/jobs`),
