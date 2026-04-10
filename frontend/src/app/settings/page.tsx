@@ -295,15 +295,17 @@ export default function SettingsPage() {
         >
           Midjourney timers
         </button>
-        <button
-          type="button"
-          onClick={() => { setActiveTab("prompts"); setResetAllMessage(""); setResetAllError(""); }}
-          className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-            activeTab === "prompts" ? "bg-brand-600 text-white" : "text-gray-300 hover:text-white"
-          }`}
-        >
-          AI Prompts
-        </button>
+        {profile.role === "owner" && (
+          <button
+            type="button"
+            onClick={() => { setActiveTab("prompts"); setResetAllMessage(""); setResetAllError(""); }}
+            className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+              activeTab === "prompts" ? "bg-brand-600 text-white" : "text-gray-300 hover:text-white"
+            }`}
+          >
+            AI Prompts
+          </button>
+        )}
       </div>
 
       {activeTab === "profile" && (
