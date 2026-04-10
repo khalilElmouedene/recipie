@@ -384,6 +384,7 @@ class PinDesignerTemplateElement(BaseModel):
     imageUrl: str | None = None
     flipX: bool | None = None
     flipY: bool | None = None
+    locked: bool | None = None
 
 
 class PinDesignerTemplateOut(BaseModel):

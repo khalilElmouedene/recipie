@@ -72,6 +72,7 @@ interface TemplateElement {
   strokeWidth?: number;
   strokeStyle?: StrokeStyle;
   radius?: number;
+  locked?: boolean;
   [key: string]: unknown; // allow extra fields from API
 }
 
@@ -295,6 +296,12 @@ export function applyTextTransform(text: string, transform: string): string {
 
 // ─── Standalone template renderer (used for batch Save All) ──────────────────
 
+function _applyTemplateLock(obj: any, locked: boolean | undefined) {
+  if (!locked) return;
+  obj.__pinLocked = true;
+  obj.set({ lockMovementX: true, lockMovementY: true, lockRotation: true, lockScalingX: true, lockScalingY: true, hasControls: false });
+}
+
 export async function buildTemplateOnCanvas(
   fabric: any,
   canvas: any,
@@ -362,6 +369,7 @@ export async function buildTemplateOnCanvas(
           const scale = Math.max(el.width / (img.width || 1), el.height / (img.height || 1));
           img.set({ left: el.x + el.width / 2, top: el.y + el.height / 2, originX: "center", originY: "center", scaleX: scale, scaleY: scale });
           (img as any).__pinId = el.id; (img as any).__pinType = "image";
+          _applyTemplateLock(img, el.locked);
           const clipRect = new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, absolutePositioned: true, fill: "" });
           (img as any).clipPath = clipRect;
           canvas.add(img);
@@ -378,6 +386,7 @@ export async function buildTemplateOnCanvas(
       const shape = el.type === "circle"
         ? new fabric.Circle({ left: el.x, top: el.y, radius: el.radius || 60, fill: bandFill, originX: "center", originY: "center" })
         : new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: bandFill, strokeWidth: 0 });
+      _applyTemplateLock(shape, el.locked);
       canvas.add(shape);
     } else if (el.type === "text") {
       const titleLines = (title || "")
@@ -423,6 +432,7 @@ export async function buildTemplateOnCanvas(
       (tb as any).__pinType = "text";
       (tb as any).__textTransform = tt;
       (tb as any).__rawText = text;
+      _applyTemplateLock(tb, el.locked);
       canvas.add(tb);
     }
   }
@@ -1691,6 +1701,7 @@ export default function PinDesigner({
           (img as any).__pinId = el.id;
           (img as any).__pinType = "image";
           (img as any).__pinLabel = el.label || "Image";
+          applyLockState(img);
           canvas.add(img);
         } catch { /* ignore broken images */ }
         continue;
@@ -1740,6 +1751,8 @@ export default function PinDesigner({
             (img as any).__pinId = el.id;
             (img as any).__pinLabel = el.label;
             (img as any).__pinType = "image";
+            (img as any).__pinLocked = !!(el as any).locked;
+            applyLockState(img);
 
             // Clip the image to its zone so it never visually overlaps adjacent elements
             const clipRect = new fabric.Rect({
@@ -1775,6 +1788,8 @@ export default function PinDesigner({
           (rect as any).__pinId = el.id;
           (rect as any).__pinLabel = el.label;
           (rect as any).__pinType = "image";
+          (rect as any).__pinLocked = !!(el as any).locked;
+          applyLockState(rect);
           canvas.add(rect);
 
           const label = new FabricText(el.label, {
@@ -1824,6 +1839,8 @@ export default function PinDesigner({
         (band as any).__pinId = el.id;
         (band as any).__pinLabel = el.label;
         (band as any).__pinType = "band";
+        (band as any).__pinLocked = !!(el as any).locked;
+        applyLockState(band);
         canvas.add(band);
       } else if (el.type === "text") {
         const titleLines = (ttl || "")
@@ -1873,6 +1890,8 @@ export default function PinDesigner({
         (textbox as any).__pinType = "text";
         (textbox as any).__textTransform = tt;
         (textbox as any).__rawText = textContent;
+        (textbox as any).__pinLocked = !!(el as any).locked;
+        applyLockState(textbox);
         canvas.add(textbox);
       } else if (el.type === "frame") {
         const strokeStyle = (el.strokeStyle as string) ?? (el as any).__strokeStyle ?? "solid";
@@ -1899,6 +1918,8 @@ export default function PinDesigner({
         (frame as any).__pinLabel = el.label || "Frame";
         (frame as any).__pinType = "frame";
         (frame as any).__strokeStyle = strokeStyle;
+        (frame as any).__pinLocked = !!(el as any).locked;
+        applyLockState(frame);
         canvas.add(frame);
       }
     }

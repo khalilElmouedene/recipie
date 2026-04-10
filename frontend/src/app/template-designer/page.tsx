@@ -31,6 +31,8 @@ import {
   Square,
   ZoomIn,
   ZoomOut,
+  Lock,
+  Unlock,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { applyTextTransform } from "@/components/PinDesigner";
@@ -113,7 +115,7 @@ function TemplateDesignerInner() {
   const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
 
   // Layers panel
-  const [layers, setLayers] = useState<{ id: string; type: string; label: string; visible: boolean }[]>([]);
+  const [layers, setLayers] = useState<{ id: string; type: string; label: string; visible: boolean; locked: boolean }[]>([]);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   const [editingLabelValue, setEditingLabelValue] = useState("");
@@ -124,7 +126,7 @@ function TemplateDesignerInner() {
   const undoHistoryRef = useRef<string[]>([]);
   const isRestoringRef = useRef(false);
   const transformSaveDoneRef = useRef(false);
-  const UNDO_CUSTOM_KEYS = ["__id", "__ttype", "__strokeStyle", "__textVariable", "__textTransform", "__rawText", "__flipX"];
+  const UNDO_CUSTOM_KEYS = ["__id", "__ttype", "__strokeStyle", "__textVariable", "__textTransform", "__rawText", "__flipX", "__pinLocked"];
   const MAX_UNDO = 50;
 
   useEffect(() => {
@@ -418,6 +420,8 @@ function TemplateDesignerInner() {
           (tb as any).__textVariable = (el as any).textVariable ?? "";
           (tb as any).__textTransform = tt;
           (tb as any).__rawText = rawText;
+          (tb as any).__pinLocked = !!(el as any).locked;
+          applyLockStateDesigner(tb);
           applySelectionVisuals(tb);
           canvas.add(tb);
         } else if (el.type === "image") {
@@ -438,6 +442,8 @@ function TemplateDesignerInner() {
           (rect as any).__id = el.id || uid("image");
           (rect as any).__flipX = isFlip;
           (rect as any).__ttype = "image";
+          (rect as any).__pinLocked = !!(el as any).locked;
+          applyLockStateDesigner(rect);
           applySelectionVisuals(rect);
           canvas.add(rect);
         } else if (el.type === "band") {
@@ -452,6 +458,8 @@ function TemplateDesignerInner() {
           });
           (rect as any).__id = el.id || uid("band");
           (rect as any).__ttype = "band";
+          (rect as any).__pinLocked = !!(el as any).locked;
+          applyLockStateDesigner(rect);
           applySelectionVisuals(rect);
           canvas.add(rect);
         } else if (el.type === "asset" && el.imageUrl) {
@@ -484,6 +492,8 @@ function TemplateDesignerInner() {
             });
             (img as any).__id = el.id || uid("img");
             (img as any).__ttype = "asset";
+            (img as any).__pinLocked = !!(el as any).locked;
+            applyLockStateDesigner(img);
             applySelectionVisuals(img);
             canvas.add(img);
           } catch { /* ignore broken image */ }
@@ -510,6 +520,8 @@ function TemplateDesignerInner() {
           (rect as any).__id = el.id || uid("frame");
           (rect as any).__ttype = "frame";
           (rect as any).__strokeStyle = strokeStyle;
+          (rect as any).__pinLocked = !!(el as any).locked;
+          applyLockStateDesigner(rect);
           applySelectionVisuals(rect);
           canvas.add(rect);
         }
@@ -922,6 +934,27 @@ function TemplateDesignerInner() {
     }
   }
 
+  function applyLockStateDesigner(obj: any) {
+    const locked = !!obj.__pinLocked;
+    obj.set({
+      lockMovementX: locked, lockMovementY: locked,
+      lockRotation: locked, lockScalingX: locked, lockScalingY: locked,
+      hasControls: !locked,
+    });
+  }
+
+  function toggleLockDesigner(id: string) {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const obj = (canvas.getObjects() as any[]).find(o => o.__id === id);
+    if (!obj) return;
+    obj.__pinLocked = !obj.__pinLocked;
+    applyLockStateDesigner(obj);
+    canvas.renderAll();
+    syncLayers();
+    saveUndoState();
+  }
+
   function syncLayers() {
     const canvas = fabricRef.current;
     if (!canvas) return;
@@ -932,6 +965,7 @@ function TemplateDesignerInner() {
       type: o.__ttype as string,
       label: (o.__label as string) || getLayerLabel(o.__ttype),
       visible: o.visible !== false,
+      locked: !!o.__pinLocked,
     })));
     const active = canvas.getActiveObject() as any;
     setSelectedLayerId(active?.__id ?? null);
@@ -1093,6 +1127,7 @@ function TemplateDesignerInner() {
           fontFamily: o.fontFamily ?? "Arial",
           fill: typeof o.fill === "string" ? o.fill : "#333333",
           textAlign: o.textAlign ?? "center",
+          locked: !!o.__pinLocked,
         });
       } else if (type === "image") {
         if (o.type !== "rect") continue;
@@ -1106,6 +1141,7 @@ function TemplateDesignerInner() {
           height: h,
           bgColor: typeof o.fill === "string" ? o.fill : "#e8e8e8",
           flipX: o.__flipX === true,
+          locked: !!o.__pinLocked,
         });
       } else if (type === "band") {
         results.push({
@@ -1117,6 +1153,7 @@ function TemplateDesignerInner() {
           width: w,
           height: h,
           bgColor: typeof o.fill === "string" ? o.fill : "#4a90d9",
+          locked: !!o.__pinLocked,
         });
       } else if (type === "asset") {
         // Actual uploaded image — persist its src so it can be restored on reload
@@ -1133,6 +1170,7 @@ function TemplateDesignerInner() {
           imageUrl: src,
           flipX: o.flipX ?? false,
           flipY: o.flipY ?? false,
+          locked: !!o.__pinLocked,
         });
       } else if (type === "frame") {
         results.push({
@@ -1147,6 +1185,7 @@ function TemplateDesignerInner() {
           strokeStyle: (o.__strokeStyle as string) ?? "solid",
           fill: typeof o.stroke === "string" ? o.stroke : "#333333",
           radius: o.rx ?? 0,
+          locked: !!o.__pinLocked,
         });
       }
     }
@@ -1898,7 +1937,7 @@ function TemplateDesignerInner() {
                     onClick={() => selectLayer(layer.id)}
                     className={`group flex items-center gap-1.5 px-2 py-1.5 cursor-pointer transition select-none ${
                       isSelected ? "bg-brand-500/15 border-l-2 border-brand-500" : "hover:bg-gray-800/60 border-l-2 border-transparent"
-                    }`}
+                    } ${layer.locked ? "opacity-60" : ""}`}
                   >
                     {/* Type icon */}
                     <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-gray-500">
@@ -1940,6 +1979,14 @@ function TemplateDesignerInner() {
 
                     {/* Action buttons — visible on hover or when selected */}
                     <div className={`flex items-center gap-0.5 flex-shrink-0 ${isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"} transition-opacity`}>
+                      {/* Lock */}
+                      <button
+                        title={layer.locked ? "Unlock layer" : "Lock layer"}
+                        onClick={(e) => { e.stopPropagation(); toggleLockDesigner(layer.id); }}
+                        className={`w-5 h-5 flex items-center justify-center rounded transition ${layer.locked ? "text-amber-400 hover:text-amber-300 !opacity-100" : "text-gray-500 hover:text-white"}`}
+                      >
+                        {layer.locked ? <Lock size={9} /> : <Unlock size={9} />}
+                      </button>
                       {/* Rename */}
                       <button
                         title="Rename"
@@ -1977,8 +2024,9 @@ function TemplateDesignerInner() {
                       {/* Delete */}
                       <button
                         title="Delete layer"
+                        disabled={layer.locked}
                         onClick={(e) => { e.stopPropagation(); deleteLayerById(layer.id); }}
-                        className="w-5 h-5 flex items-center justify-center rounded hover:bg-red-900/60 text-gray-500 hover:text-red-400 transition"
+                        className="w-5 h-5 flex items-center justify-center rounded hover:bg-red-900/60 text-gray-500 hover:text-red-400 transition disabled:opacity-20 disabled:pointer-events-none"
                       >
                         <Trash2 size={9} />
                       </button>
