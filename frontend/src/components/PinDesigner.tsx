@@ -11,6 +11,7 @@ import {
   CalendarClock,
   History,
   FlipHorizontal2, FlipVertical2,
+  Lock, Unlock,
 } from "lucide-react";
 import { api, getApiBaseUrl } from "@/lib/api";
 import { appendPinImageToArticleHtml } from "@/lib/pinArticleEmbed";
@@ -806,7 +807,7 @@ export default function PinDesigner({
 
     // Save current frame JSON
     frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
-      canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"])
+      canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked"])
     );
 
     // Generate preview of current frame before switching
@@ -903,7 +904,7 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (canvas) {
       frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
-        canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"])
+        canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked"])
       );
     }
     setSavingAll(true);
@@ -1434,7 +1435,7 @@ export default function PinDesigner({
   const MAX_UNDO = 50;
 
   // Fabric v6: toJSON() ignores propertiesToInclude — must use toObject() to include custom keys
-  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__flipX", "__textTransform", "__rawText"];
+  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__flipX", "__textTransform", "__rawText", "__pinLocked"];
 
   const saveUndoState = () => {
     const canvas = fabricCanvasRef.current;
@@ -1483,7 +1484,8 @@ export default function PinDesigner({
       });
 
       const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel);
-      setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType })));
+      objs.forEach((o: any) => applyLockState(o));
+      setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType, locked: !!o.__pinLocked })));
       ok = true;
     } catch {
       undoHistoryRef.current.push(entry);
@@ -1570,7 +1572,31 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
     const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel);
-    setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType })));
+    setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType, locked: !!o.__pinLocked })));
+  };
+
+  const applyLockState = (obj: any) => {
+    const locked = !!obj.__pinLocked;
+    obj.set({
+      lockMovementX: locked,
+      lockMovementY: locked,
+      lockRotation: locked,
+      lockScalingX: locked,
+      lockScalingY: locked,
+      hasControls: !locked,
+    });
+  };
+
+  const toggleLock = (id: string) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+    const obj = canvas.getObjects().find((o: any) => o.__pinId === id) as any;
+    if (!obj) return;
+    obj.__pinLocked = !obj.__pinLocked;
+    applyLockState(obj);
+    canvas.renderAll();
+    updateLayers();
+    saveUndoState();
   };
 
   // Repair old JSON objects missing pin metadata so selection/properties keep working.
@@ -1594,6 +1620,8 @@ export default function PinDesigner({
         else if (o.__pinType === "shape") o.__pinLabel = "Shape";
         else o.__pinLabel = o.__pinId;
       }
+      // Reapply lock constraints (lost after loadFromJSON)
+      applyLockState(o);
     });
   };
 
@@ -2135,7 +2163,7 @@ export default function PinDesigner({
       getJson: () => {
         const canvas = fabricCanvasRef.current;
         if (!canvas) return "{}";
-        return JSON.stringify(canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"]));
+        return JSON.stringify(canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked"]));
       },
       exportPng: getExportDataUrl,
     });
@@ -2176,6 +2204,7 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     const obj = getSelectedObject();
     if (!canvas || !obj) return;
+    if (obj.__pinLocked) return;
     saveUndoState();
     obj.set("left", (obj.left ?? 0) + dx);
     obj.set("top", (obj.top ?? 0) + dy);
@@ -2221,6 +2250,7 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     const obj = getSelectedObject();
     if (!canvas || !obj) return;
+    if (obj.__pinLocked) return;
     saveUndoState();
     const pid = obj.__pinId;
     canvas.remove(obj);
@@ -3097,6 +3127,25 @@ export default function PinDesigner({
             </>
           )}
 
+          {/* Lock / Unlock */}
+          {(() => {
+            const isLocked = layers.find((l) => l.id === selectedId)?.locked ?? false;
+            return (
+              <>
+                <div className="w-px h-4 bg-gray-700 mx-0.5" />
+                <button
+                  onClick={() => selectedId && toggleLock(selectedId)}
+                  title={isLocked ? "Unlock layer" : "Lock layer"}
+                  className={`p-1 rounded transition ${isLocked ? "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30" : "hover:bg-gray-700 text-gray-300"}`}
+                >
+                  {isLocked ? <Lock size={14} /> : <Unlock size={14} />}
+                </button>
+              </>
+            );
+          })()}
+
+          <div className="w-px h-4 bg-gray-700 mx-0.5" />
+
           {/* Delete */}
           <button
             onClick={deleteSelectedElement}
@@ -3621,14 +3670,25 @@ export default function PinDesigner({
                 <p className="text-xs text-gray-400 mb-2">Click to select & edit:</p>
                 {layers.length === 0 && <p className="text-xs text-gray-500">No layers</p>}
                 {[...layers].reverse().map((l) => (
-                  <button
+                  <div
                     key={l.id}
-                    onClick={() => selectById(l.id)}
-                    className={`w-full text-left px-3 py-2 rounded text-sm flex items-center gap-2 ${selectedId === l.id ? "bg-brand-500/20 text-brand-400" : "text-gray-300 hover:bg-gray-800"}`}
+                    className={`w-full px-2 py-1.5 rounded text-sm flex items-center gap-2 group ${selectedId === l.id ? "bg-brand-500/20" : "hover:bg-gray-800"} ${l.locked ? "opacity-60" : ""}`}
                   >
-                    {l.type === "image" ? <ImageIcon size={14} /> : l.type === "text" ? <Type size={14} /> : l.type === "band" ? <Minus size={14} /> : <Square size={14} />}
-                    {l.label}
-                  </button>
+                    <button
+                      onClick={() => selectById(l.id)}
+                      className={`flex items-center gap-2 flex-1 min-w-0 text-left ${selectedId === l.id ? "text-brand-400" : "text-gray-300"}`}
+                    >
+                      {l.type === "image" ? <ImageIcon size={14} className="flex-shrink-0" /> : l.type === "text" ? <Type size={14} className="flex-shrink-0" /> : l.type === "band" ? <Minus size={14} className="flex-shrink-0" /> : <Square size={14} className="flex-shrink-0" />}
+                      <span className="truncate">{l.label}</span>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleLock(l.id); }}
+                      title={l.locked ? "Unlock layer" : "Lock layer"}
+                      className={`flex-shrink-0 p-1 rounded transition ${l.locked ? "text-amber-400 hover:text-amber-300" : "text-gray-600 hover:text-gray-300 opacity-0 group-hover:opacity-100"}`}
+                    >
+                      {l.locked ? <Lock size={12} /> : <Unlock size={12} />}
+                    </button>
+                  </div>
                 ))}
               </div>
             )}

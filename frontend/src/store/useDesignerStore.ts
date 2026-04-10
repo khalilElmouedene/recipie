@@ -9,6 +9,7 @@ export interface Layer {
   id: string;
   label: string;
   type: string;
+  locked?: boolean;
 }
 
 export interface TextProps {
