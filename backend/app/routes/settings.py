@@ -148,10 +148,8 @@ async def reset_all_prompts(
     user: Annotated[User, Depends(require_owner)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Delete ALL custom prompt rows for this owner across every project so defaults are used."""
-    result = await db.execute(
-        select(Prompt).where(Prompt.owner_id == user.id)
-    )
+    """Delete ALL custom prompt rows for every owner/project system-wide so defaults are used."""
+    result = await db.execute(select(Prompt))
     for row in result.scalars().all():
         await db.delete(row)
     await db.commit()
