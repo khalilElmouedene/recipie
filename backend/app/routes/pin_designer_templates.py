@@ -58,9 +58,18 @@ async def list_pin_designer_templates(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Resolve effective owner: members see their owner's templates
+    from ..db_models import UserRole
+    if user.role == UserRole.owner:
+        owner_id = user.id
+    elif user.created_by_owner_id:
+        owner_id = user.created_by_owner_id
+    else:
+        return []
+
     rows = await db.execute(
         select(PinDesignerTemplate)
-        .where(PinDesignerTemplate.owner_id == user.id)
+        .where(PinDesignerTemplate.owner_id == owner_id)
         .order_by(PinDesignerTemplate.created_at.desc())
     )
     templates = rows.scalars().all()
