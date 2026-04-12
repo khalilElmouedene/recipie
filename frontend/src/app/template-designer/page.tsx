@@ -368,16 +368,79 @@ function TemplateDesignerInner() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      const isUndo = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z";
-      if (!isUndo) return;
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
-      if (tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable) return;
-      e.preventDefault();
-      void performUndo();
+      const isEditing = tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable;
+
+      // Undo (Ctrl/Cmd+Z)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        if (isEditing) return;
+        e.preventDefault();
+        void performUndo();
+        return;
+      }
+
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+
+      // Duplicate (Ctrl/Cmd+D)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+        if (isEditing) return;
+        const obj = canvas.getActiveObject();
+        if (!obj) return;
+        e.preventDefault();
+        obj.clone().then((cloned: any) => {
+          cloned.__id = uid(cloned.__ttype || "obj");
+          cloned.__label = (cloned.__label || getLayerLabel(cloned.__ttype)) + " copy";
+          cloned.set({ left: (obj.left ?? 0) + 20, top: (obj.top ?? 0) + 20 });
+          saveUndoState();
+          canvas.add(cloned);
+          canvas.setActiveObject(cloned);
+          canvas.renderAll();
+          syncLayers();
+        });
+        return;
+      }
+
+      // Delete (Delete or Backspace)
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (isEditing) return;
+        const obj = canvas.getActiveObject() as any;
+        if (!obj) return;
+        if (obj.__pinLocked) return;
+        e.preventDefault();
+        saveUndoState();
+        canvas.remove(obj);
+        canvas.discardActiveObject();
+        canvas.renderAll();
+        setSelType(null);
+        syncLayers();
+        return;
+      }
+
+      // Arrow keys — move selected object by 1px (10px with Shift)
+      const arrowKeys: Record<string, [number, number]> = {
+        ArrowLeft:  [-1, 0],
+        ArrowRight: [1, 0],
+        ArrowUp:    [0, -1],
+        ArrowDown:  [0, 1],
+      };
+      if (e.key in arrowKeys) {
+        if (isEditing) return;
+        const obj = canvas.getActiveObject() as any;
+        if (!obj) return;
+        e.preventDefault();
+        const [dx, dy] = arrowKeys[e.key];
+        const step = e.shiftKey ? 10 : 1;
+        saveUndoState();
+        obj.set({ left: (obj.left ?? 0) + dx * step, top: (obj.top ?? 0) + dy * step });
+        obj.setCoords();
+        canvas.renderAll();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [performUndo]);
 
   const loadExistingTemplate = useCallback(async () => {
