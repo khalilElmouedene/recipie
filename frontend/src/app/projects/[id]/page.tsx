@@ -4,28 +4,45 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload, RotateCcw, AlertTriangle } from "lucide-react";
 import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut } from "@/lib/api";
-import { getUserRole } from "@/lib/auth";
+import { getUserRole, getUserId } from "@/lib/auth";
 
 type Tab = "sites" | "members" | "jobs" | "settings";
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const role = getUserRole();
+  const globalRole = getUserRole();
+  const currentUserId = getUserId();
   const [project, setProject] = useState<ProjectOut | null>(null);
   const [tab, setTab] = useState<Tab>("sites");
+  // project-level role of the current user ("admin" | "member" | null)
+  const [projectRole, setProjectRole] = useState<string | null>(null);
 
   useEffect(() => {
     api.getProject(id).then(setProject).catch(() => router.push("/projects"));
   }, [id, router]);
 
+  useEffect(() => {
+    if (globalRole === "owner") return; // owner already has full access
+    api.getMembers(id)
+      .then((members) => {
+        const me = members.find((m) => m.user_id.toString() === currentUserId);
+        setProjectRole(me?.role ?? null);
+      })
+      .catch(() => {});
+  }, [id, globalRole, currentUserId]);
+
   if (!project) return <div className="text-gray-400">Loading...</div>;
+
+  // canManage: can create/edit/delete sites, run jobs, use pin designer, etc.
+  // Settings tab is excluded — it stays owner-only.
+  const canManage = globalRole === "owner" || projectRole === "admin";
 
   const tabs: { key: Tab; label: string; icon: React.ElementType }[] = [
     { key: "sites", label: "Sites", icon: Globe },
     { key: "members", label: "Members", icon: Users },
     { key: "jobs", label: "Jobs", icon: Briefcase },
-    ...(role === "owner" ? [{ key: "settings" as Tab, label: "Settings", icon: Settings }] : []),
+    ...(globalRole === "owner" ? [{ key: "settings" as Tab, label: "Settings", icon: Settings }] : []),
   ];
 
   return (
@@ -46,7 +63,7 @@ export default function ProjectDetailPage() {
           </div>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-          {tab === "sites" && (role === "owner" || role === "admin") && (
+          {tab === "sites" && canManage && (
             <button
               onClick={() => router.push(`/projects/${id}/sites/all-sites-generate`)}
               className="btn-secondary flex items-center justify-center gap-2 border-brand-700 text-brand-400 hover:text-brand-300 w-full sm:w-auto"
@@ -80,8 +97,8 @@ export default function ProjectDetailPage() {
         ))}
       </div>
 
-      {tab === "sites" && <SitesTab projectId={id} role={role} router={router} />}
-      {tab === "members" && <MembersTab projectId={id} role={role} />}
+      {tab === "sites" && <SitesTab projectId={id} canManage={canManage} router={router} />}
+      {tab === "members" && <MembersTab projectId={id} role={globalRole} />}
       {tab === "jobs" && <JobsTab projectId={id} />}
       {tab === "settings" && <SettingsTab projectId={id} />}
     </div>
@@ -92,7 +109,7 @@ const MAX_SITES_PER_PROJECT = 4;
 
 const emptyWpUser = () => ({ username: "", password: "" });
 
-function SitesTab({ projectId, role, router }: { projectId: string; role: string | null; router: ReturnType<typeof useRouter> }) {
+function SitesTab({ projectId, canManage, router }: { projectId: string; canManage: boolean; router: ReturnType<typeof useRouter> }) {
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
   const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
@@ -183,7 +200,7 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
     setEditing(false);
   };
 
-  const canAddSite = (role === "owner" || role === "admin") && sites.length < MAX_SITES_PER_PROJECT;
+  const canAddSite = canManage && sites.length < MAX_SITES_PER_PROJECT;
 
   return (
     <div>
@@ -193,7 +210,7 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
             <Plus size={18} /> Add Site
           </button>
         )}
-        {sites.length >= MAX_SITES_PER_PROJECT && (role === "owner" || role === "admin") && (
+        {sites.length >= MAX_SITES_PER_PROJECT && canManage && (
           <span className="text-sm text-amber-400">Maximum {MAX_SITES_PER_PROJECT} sites par projet</span>
         )}
       </div>
@@ -265,7 +282,7 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
               >
                 <Info size={16} />
               </button>
-              {(role === "owner" || role === "admin") && (
+              {canManage && (
                 <button
                   onClick={() => openEdit(s)}
                   className="text-gray-400 hover:text-brand-400 transition p-2"
@@ -282,7 +299,7 @@ function SitesTab({ projectId, role, router }: { projectId: string; role: string
               >
                 <Send size={16} />
               </button>
-              {(role === "owner" || role === "admin") && (
+              {canManage && (
                 <button onClick={() => handleDelete(s.id)} className="text-gray-500 hover:text-red-400 transition p-2">
                   <Trash2 size={16} />
                 </button>
