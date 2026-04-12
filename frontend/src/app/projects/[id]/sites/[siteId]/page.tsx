@@ -148,8 +148,8 @@ export default function SiteDetailPage() {
     api.getSites(projectId).then((sites) => {
       const found = sites.find((s) => s.id === siteId);
       if (found) setSite(found);
-      else router.push(`/projects/${projectId}`);
-    });
+      else router.replace("/");
+    }).catch(() => router.replace("/"));
     loadRecipes();
   }, [projectId, siteId, router, loadRecipes]);
 
@@ -591,7 +591,7 @@ export default function SiteDetailPage() {
   const publishedCount = recipes.filter((r) => r.status === "published").length;
   const failedCount = recipes.filter((r) => r.status === "failed").length;
 
-  if (!site) return <div className="text-gray-400">Loading...</div>;
+  if (!site) return null;
 
   return (
     <div className="relative">

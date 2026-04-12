@@ -14,12 +14,18 @@ export default function ProjectDetailPage() {
   const globalRole = getUserRole();
   const currentUserId = getUserId();
   const [project, setProject] = useState<ProjectOut | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [tab, setTab] = useState<Tab>("sites");
   // project-level role of the current user ("admin" | "member" | null)
   const [projectRole, setProjectRole] = useState<string | null>(null);
 
   useEffect(() => {
-    api.getProject(id).then(setProject).catch(() => router.push("/projects"));
+    api.getProject(id)
+      .then(setProject)
+      .catch(() => {
+        setNotFound(true);
+        router.replace("/");
+      });
   }, [id, router]);
 
   useEffect(() => {
@@ -32,7 +38,7 @@ export default function ProjectDetailPage() {
       .catch(() => {});
   }, [id, globalRole, currentUserId]);
 
-  if (!project) return <div className="text-gray-400">Loading...</div>;
+  if (notFound || !project) return null;
 
   // canManage: can create/edit/delete sites, run jobs, use pin designer, etc.
   // Settings tab is excluded — it stays owner-only.
