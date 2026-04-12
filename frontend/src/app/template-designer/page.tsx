@@ -465,6 +465,7 @@ function TemplateDesignerInner() {
         if (el.type === "text") {
           const rawText = el.defaultText || "Text";
           const tt = (el as any).textTransform ?? "none";
+          const boundVar = (el as any).textVariable ?? "";
           const tb = new fabric.Textbox(applyTextTransform(rawText, tt), {
             left: el.x ?? canvasW / 2,
             top: el.y ?? canvasH / 2,
@@ -477,11 +478,11 @@ function TemplateDesignerInner() {
             textAlign: (el.textAlign as any) || "center",
             originX: "center",
             originY: "center",
-            editable: true,
+            editable: boundVar === "",
           });
           (tb as any).__id = el.id || uid("text");
           (tb as any).__ttype = "text";
-          (tb as any).__textVariable = (el as any).textVariable ?? "";
+          (tb as any).__textVariable = boundVar;
           (tb as any).__textTransform = tt;
           (tb as any).__rawText = rawText;
           (tb as any).__pinLocked = !!(el as any).locked;
@@ -812,7 +813,7 @@ function TemplateDesignerInner() {
       textAlign: "center",
       originX: "center",
       originY: "center",
-      editable: true,
+      editable: false,
     });
     (tb as any).__id = uid("website");
     (tb as any).__ttype = "text";
@@ -1656,6 +1657,8 @@ function TemplateDesignerInner() {
                     const obj = getActive();
                     if (obj && obj.__ttype === "text") {
                       obj.__textVariable = v;
+                      obj.set("editable", v === "");
+                      fabricRef.current?.requestRenderAll();
                       saveUndoState();
                     }
                   }}
