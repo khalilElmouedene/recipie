@@ -1621,13 +1621,26 @@ function TemplateDesignerInner() {
                   Content
                 </label>
                 <textarea
-                  value={text}
+                  value={textVariable !== "" ? "" : text}
                   onChange={(e) => {
+                    if (textVariable !== "") return;
                     setText(e.target.value);
                     applyText({ text: e.target.value });
                   }}
                   rows={3}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white resize-none focus:outline-none focus:border-brand-500"
+                  disabled={textVariable !== ""}
+                  placeholder={
+                    textVariable === "title"
+                      ? "Auto-filled from recipe title"
+                      : textVariable === "website"
+                      ? "Auto-filled from site domain"
+                      : undefined
+                  }
+                  className={`w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm resize-none focus:outline-none focus:border-brand-500 ${
+                    textVariable !== ""
+                      ? "opacity-40 cursor-not-allowed text-gray-500 placeholder-gray-600"
+                      : "text-white"
+                  }`}
                 />
               </div>
 
