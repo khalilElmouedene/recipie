@@ -105,31 +105,24 @@ def publish_recipe(
         wp_title = seo_title if seo_title else _wordpress_display_title(recipe, title_from_html)
         slug = slugify(focus_kw or wp_title)
 
-        # Resolve image sources (support 1 or 2 images from generated_images list)
+        # Resolve image source — use first generated image if available, fall back to image_url
         img1_source = image_url
-        img2_source = None
         if generated_images_str:
             try:
                 imgs = json.loads(generated_images_str)
                 if imgs and isinstance(imgs, list):
                     img1_source = imgs[0]
-                    if len(imgs) >= 2:
-                        img2_source = imgs[1]
             except Exception:
                 pass
 
-        # Upload image 1 (featured + inline top)
+        # Upload image (featured + inline top)
         img1_id, img1_url = upload_image(img1_source, wp, wp_title, focus_kw, log=_log)
         # Fallback to original image_url if generated image URL expired/failed
         if img1_id is None and img1_source != image_url and image_url:
             _log("Generated image failed, retrying with original image_url...")
             img1_id, img1_url = upload_image(image_url, wp, wp_title, focus_kw, log=_log)
 
-        # Upload image 2 (mid-article, optional)
-        img2_id, img2_url = None, None
-        if img2_source:
-            img2_id, img2_url = upload_image(img2_source, wp, wp_title, focus_kw,
-                                              image_slug=slugify(wp_title) + "-2", log=_log)
+        img2_url = None
 
         # Normalize HTTP → HTTPS (XML-RPC sometimes returns http:// on https sites)
         def _to_https(url):
@@ -138,13 +131,12 @@ def publish_recipe(
             return url
 
         img1_url = _to_https(img1_url)
-        img2_url = _to_https(img2_url)
 
         # Upload any pin embed base64 images to WordPress (replaces data: URL with real WP media URL)
         upload_pin_embed_images(soup, wp, wp_title, log=_log)
 
-        # Inject images into the article using BeautifulSoup (img1 before first <p>, img2 before 4th <h2>)
-        content = inject_images_into_html(soup, img1_url, img2_url)
+        # Inject image into the article using BeautifulSoup (before first <p>)
+        content = inject_images_into_html(soup, img1_url)
 
         # Recipe card shortcode
         wp_recipe_id = None
