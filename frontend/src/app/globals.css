@@ -42,6 +42,58 @@
   }
 }
 
+/* ── Light mode overrides ────────────────────────────────────────────────── */
+/* Remap dark gray palette to light equivalents when .dark is absent         */
+html:not(.dark) body {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+html:not(.dark) .bg-gray-950 { background-color: #f1f5f9 !important; }
+html:not(.dark) .bg-gray-900 { background-color: #ffffff !important; }
+html:not(.dark) .bg-gray-800 { background-color: #f8fafc !important; }
+html:not(.dark) .bg-gray-700 { background-color: #e2e8f0 !important; }
+html:not(.dark) .bg-gray-800\/60 { background-color: rgba(241,245,249,0.8) !important; }
+html:not(.dark) .bg-gray-800\/40 { background-color: rgba(241,245,249,0.6) !important; }
+
+html:not(.dark) .border-gray-800 { border-color: #e2e8f0 !important; }
+html:not(.dark) .border-gray-700 { border-color: #cbd5e1 !important; }
+html:not(.dark) .border-gray-700\/60 { border-color: rgba(203,213,225,0.7) !important; }
+
+html:not(.dark) .text-white   { color: #0f172a !important; }
+html:not(.dark) .text-gray-100 { color: #1e293b !important; }
+html:not(.dark) .text-gray-200 { color: #334155 !important; }
+html:not(.dark) .text-gray-300 { color: #475569 !important; }
+html:not(.dark) .text-gray-400 { color: #64748b !important; }
+html:not(.dark) .text-gray-500 { color: #94a3b8 !important; }
+
+html:not(.dark) .hover\:bg-gray-800:hover { background-color: #f1f5f9 !important; }
+html:not(.dark) .hover\:bg-gray-700:hover { background-color: #e2e8f0 !important; }
+
+html:not(.dark) .input-field {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+html:not(.dark) .input-field::placeholder { color: #94a3b8 !important; }
+
+html:not(.dark) .card {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+html:not(.dark) .btn-secondary {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #334155 !important;
+}
+html:not(.dark) .btn-secondary:hover {
+  background-color: #e2e8f0 !important;
+}
+
+/* Scrollbar — light mode */
+html:not(.dark) ::-webkit-scrollbar-track { background: #f1f5f9; }
+html:not(.dark) ::-webkit-scrollbar-thumb { background: #cbd5e1; }
+html:not(.dark) ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
 @layer components {
   .card {
     @apply rounded-xl border border-gray-800 bg-gray-900 p-6;

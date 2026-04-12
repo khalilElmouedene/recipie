@@ -4,6 +4,7 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle } from "lucide-react";
 import { clearToken, getUserRole, getUserEmail } from "@/lib/auth";
+import ThemeToggle from "@/components/ThemeToggle";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -89,7 +90,11 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         })}
       </nav>
 
-      <div className="border-t border-gray-800 p-3">
+      <div className="border-t border-gray-800 p-3 space-y-2">
+        <div className="flex items-center justify-between px-1">
+          <span className="text-xs text-gray-500">Theme</span>
+          <ThemeToggle />
+        </div>
         <button
           onClick={() => { clearToken(); router.push("/login"); }}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition"
