@@ -389,7 +389,8 @@ function TemplateDesignerInner() {
         const obj = canvas.getActiveObject();
         if (!obj) return;
         e.preventDefault();
-        obj.clone().then((cloned: any) => {
+        const customKeys = [...UNDO_CUSTOM_KEYS, "__label"];
+        obj.clone(customKeys).then((cloned: any) => {
           cloned.__id = uid(cloned.__ttype || "obj");
           cloned.__label = (cloned.__label || getLayerLabel(cloned.__ttype)) + " copy";
           cloned.set({ left: (obj.left ?? 0) + 20, top: (obj.top ?? 0) + 20 });
