@@ -76,7 +76,7 @@ async def register(request: Request, body: RegisterRequest, db: Annotated[AsyncS
     await db.commit()
     await db.refresh(user)
 
-    token = create_access_token(str(user.id), user.role.value)
+    token = create_access_token(str(user.id), user.role.value, user.email)
     return TokenResponse(access_token=token)
 
 
@@ -88,7 +88,7 @@ async def login(request: Request, body: LoginRequest, db: Annotated[AsyncSession
     if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    token = create_access_token(str(user.id), user.role.value)
+    token = create_access_token(str(user.id), user.role.value, user.email)
     return TokenResponse(access_token=token)
 
 
@@ -148,7 +148,7 @@ async def setup_password(
     record.used = True
     await db.commit()
 
-    token = create_access_token(str(user.id), user.role.value)
+    token = create_access_token(str(user.id), user.role.value, user.email)
     return TokenResponse(access_token=token)
 
 
@@ -249,5 +249,5 @@ async def google_callback(
     await db.commit()
     await db.refresh(user)
 
-    token = create_access_token(str(user.id), user.role.value)
+    token = create_access_token(str(user.id), user.role.value, user.email)
     return TokenResponse(access_token=token)
