@@ -397,10 +397,10 @@ export async function buildTemplateOnCanvas(
       const secondLine = titleLines[1] || "";
       const thirdLine = titleLines[2] || "";
       const tv = (el as any).textVariable ?? "";
-      // Resolve text content — explicit textVariable binding wins, then ID-based matching.
-      // Custom-template IDs follow the pattern "<prefix>_<timestamp>_<n>" (e.g. "text_…", "website_…").
+      // Explicit textVariable wins. ID-based fallbacks only apply for built-in semantic IDs,
+      // never for auto-generated IDs (text_*, website_*) — those must use textVariable.
       let text: string;
-      if (tv === "title" || el.id === "title" || el.id.startsWith("text_")) {
+      if (tv === "title" || el.id === "title") {
         text = title || el.defaultText || "";
       } else if (el.id === "title1") {
         text = firstLine || el.defaultText || "";
@@ -408,13 +408,13 @@ export async function buildTemplateOnCanvas(
         text = secondLine || el.defaultText || "";
       } else if (el.id === "title3") {
         text = thirdLine || el.defaultText || "";
-      } else if (tv === "website" || el.id === "website" || el.id.startsWith("website_")) {
+      } else if (tv === "website" || el.id === "website") {
         text = oWebsite || website || el.defaultText || "";
       } else {
         text = el.defaultText || "";
       }
-      const isTitle = tv === "title" || el.id === "title" || el.id.startsWith("title") || el.id.startsWith("text_");
-      const isWebsite = tv === "website" || el.id === "website" || el.id.startsWith("website_");
+      const isTitle = tv === "title" || el.id === "title";
+      const isWebsite = tv === "website" || el.id === "website";
       const fill = isTitle && oTitleColor ? oTitleColor : (el.fill || "#333333");
       const tt = (el as any).textTransform ?? "none";
       const displayText = applyTextTransform(text, tt);
@@ -1900,7 +1900,7 @@ export default function PinDesigner({
         const thirdLine = titleLines[2] || "";
         const tv = (el as any).textVariable ?? "";
         let textContent: string;
-        if (tv === "title" || el.id === "title" || el.id.startsWith("text_")) {
+        if (tv === "title" || el.id === "title") {
           textContent = ttl || el.defaultText || "Text";
         } else if (el.id === "title1") {
           textContent = firstLine || el.defaultText || "Text";
@@ -1908,7 +1908,7 @@ export default function PinDesigner({
           textContent = secondLine || el.defaultText || "";
         } else if (el.id === "title3") {
           textContent = thirdLine || el.defaultText || "";
-        } else if (tv === "website" || el.id === "website" || el.id.startsWith("website_")) {
+        } else if (tv === "website" || el.id === "website") {
           textContent = siteWebsite || el.defaultText || "Text";
         } else {
           textContent = el.defaultText || "Text";
