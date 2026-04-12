@@ -605,8 +605,8 @@ function SettingsTab({ projectId }: { projectId: string }) {
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
 
   useEffect(() => {
-    api.getSettingsCredentials().then(setCreds).catch(() => {});
-  }, []);
+    api.getCredentials(projectId).then(setCreds).catch(() => {});
+  }, [projectId]);
 
   useEffect(() => {
     if (subTab === "prompts") {
@@ -625,7 +625,7 @@ function SettingsTab({ projectId }: { projectId: string }) {
       .map(([key_type, value]) => ({ key_type, value }));
     if (!toSave.length) return;
     setSaving(true);
-    const updated = await api.setSettingsCredentials(toSave);
+    const updated = await api.setCredentials(projectId, toSave);
     setCreds(updated);
     setValues({});
     setSaving(false);
@@ -703,9 +703,9 @@ function SettingsTab({ projectId }: { projectId: string }) {
 
       {subTab === "credentials" && (
         <>
-          <div className="card mb-4 flex items-start gap-3 p-4 border-amber-800/50 bg-amber-950/20">
-            <Shield size={18} className="text-amber-400 mt-0.5 flex-shrink-0" />
-            <p className="text-sm text-amber-200/90">These keys are personal and shared across all your projects.</p>
+          <div className="card mb-4 flex items-start gap-3 p-4 border-blue-800/50 bg-blue-950/20">
+            <Shield size={18} className="text-blue-400 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-blue-200/90">These API keys are specific to this project and do not affect other projects.</p>
           </div>
           {hasChanges && (
             <div className="flex justify-end mb-4">

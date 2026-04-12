@@ -285,7 +285,7 @@ class JobManager:
                 await db.execute(
                     update(Recipe)
                     .where(Recipe.id.in_(recipe_ids))
-                    .values(status=RecipeStatus.generating, created_by_job_id=db_job.id)
+                    .values(status=RecipeStatus.generating, created_by_job_id=db_job.id, error_message=None)
                 )
 
         rj = RunningJob(db_job.id)
@@ -445,8 +445,10 @@ class JobManager:
                     recipe.status = RecipeStatus.failed
                 elif job_type in (JobType.articles, JobType.articles_all_sites):
                     recipe.status = RecipeStatus.generated
+                    recipe.error_message = None
                 elif job_type == JobType.publisher:
                     recipe.status = RecipeStatus.published
+                    recipe.error_message = None
                 await session.commit()
 
         def _revert_generating(recipes_list: list[dict]):
@@ -685,8 +687,10 @@ class JobManager:
                         recipe.status = RecipeStatus.failed
                     elif job_type in (JobType.articles, JobType.articles_all_sites):
                         recipe.status = RecipeStatus.generated
+                        recipe.error_message = None
                     elif job_type == JobType.publisher:
                         recipe.status = RecipeStatus.published
+                        recipe.error_message = None
                     await session.commit()
 
             async def _persist_progress(jid: str, current: int, total: int):

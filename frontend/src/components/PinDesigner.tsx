@@ -817,15 +817,15 @@ export default function PinDesigner({
 
     // Save current frame JSON
     frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
-      canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked"])
+      canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId"])
     );
 
     // Generate preview of current frame before switching
     try {
-      canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+      canvas.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
       canvas.renderAll();
       const preview = canvas.toDataURL({ format: "png", multiplier: 0.5 });
-      canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", true));
+      canvas.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", true));
       canvas.renderAll();
       setFramePreviews((prev) => ({ ...prev, [activeFrameIdx]: preview }));
     } catch { /* skip */ }
@@ -853,20 +853,22 @@ export default function PinDesigner({
     const fabricMod = await import("fabric");
     const proxyBase = getApiBaseUrl();
     const newPreviews: Record<number, string> = {};
+    const tmplW = template.canvasWidth || PIN_W;
+    const tmplH = template.canvasHeight || PIN_H;
 
     for (let i = 0; i < frames.length; i++) {
       if (i === activeFrameIdx) continue;
       const frame = frames[i];
       const savedJson = frameJsonsRef.current[i];
       const canvasEl = document.createElement("canvas");
-      canvasEl.width = PIN_W;
-      canvasEl.height = PIN_H;
+      canvasEl.width = tmplW;
+      canvasEl.height = tmplH;
       canvasEl.style.display = "none";
       document.body.appendChild(canvasEl);
 
       try {
         const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
-        const fc = new FC(canvasEl, { width: PIN_W, height: PIN_H, enableRetinaScaling: false });
+        const fc = new FC(canvasEl, { width: tmplW, height: tmplH, enableRetinaScaling: false });
 
         if (savedJson && savedJson !== "{}") {
           await fc.loadFromJSON(savedJson);
@@ -874,7 +876,7 @@ export default function PinDesigner({
           await buildTemplateOnCanvas(fabricMod, fc, template, frame.images, proxyBase, frame.title, website);
         }
 
-        fc.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+        fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
         fc.renderAll();
         newPreviews[i] = fc.toDataURL({ format: "png", multiplier: 0.5 });
         fc.dispose();
@@ -914,7 +916,7 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (canvas) {
       frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
-        canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked"])
+        canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId"])
       );
     }
     setSavingAll(true);
@@ -922,6 +924,8 @@ export default function PinDesigner({
 
     const fabricMod = await import("fabric");
     const proxyBase = getApiBaseUrl();
+    const tmplW = selectedTemplate?.canvasWidth || PIN_W;
+    const tmplH = selectedTemplate?.canvasHeight || PIN_H;
 
     for (let i = 0; i < frames.length; i++) {
       const frame = frames[i];
@@ -930,13 +934,13 @@ export default function PinDesigner({
 
       let dataUrl: string | null = null;
       const canvasEl = document.createElement("canvas");
-      canvasEl.width = 1000;
-      canvasEl.height = 1500;
+      canvasEl.width = tmplW;
+      canvasEl.height = tmplH;
       document.body.appendChild(canvasEl);
 
       try {
         const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
-        const fc = new FC(canvasEl, { width: 1000, height: 1500, enableRetinaScaling: false });
+        const fc = new FC(canvasEl, { width: tmplW, height: tmplH, enableRetinaScaling: false });
 
         if (savedJson && savedJson !== "{}") {
           await fc.loadFromJSON(savedJson);
@@ -945,7 +949,7 @@ export default function PinDesigner({
           await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website);
         }
 
-        fc.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+        fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
         fc.renderAll();
         dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
         fc.dispose();
@@ -1258,10 +1262,10 @@ export default function PinDesigner({
   const getExportDataUrl = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return null;
-    canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+    canvas.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
     canvas.renderAll();
     const data = canvas.toDataURL({ format: "png", multiplier: 1 });
-    canvas.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", true));
+    canvas.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", true));
     canvas.renderAll();
     return data;
   };
@@ -1445,7 +1449,7 @@ export default function PinDesigner({
   const MAX_UNDO = 50;
 
   // Fabric v6: toJSON() ignores propertiesToInclude — must use toObject() to include custom keys
-  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__flipX", "__textTransform", "__rawText", "__pinLocked"];
+  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__flipX", "__textTransform", "__rawText", "__pinLocked", "__designerBorder", "__forPinId"];
 
   const saveUndoState = () => {
     const canvas = fabricCanvasRef.current;
@@ -1493,7 +1497,7 @@ export default function PinDesigner({
         }
       });
 
-      const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel);
+      const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel && !o.__designerBorder);
       objs.forEach((o: any) => applyLockState(o));
       setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType, locked: !!o.__pinLocked })));
       ok = true;
@@ -1581,7 +1585,7 @@ export default function PinDesigner({
   const updateLayers = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel);
+    const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel && !o.__designerBorder);
     setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType, locked: !!o.__pinLocked })));
   };
 
@@ -1615,7 +1619,7 @@ export default function PinDesigner({
     if (!canvas) return;
     const objs = canvas.getObjects() as any[];
     objs.forEach((o, idx) => {
-      if (o.__isLabel) return;
+      if (o.__isLabel || o.__designerBorder) return;
       if (!o.__pinType) {
         if (o.type === "textbox") o.__pinType = "text";
         else if (o.type === "image") o.__pinType = "image";
@@ -1649,6 +1653,40 @@ export default function PinDesigner({
       if (obj) return obj;
     }
     return null;
+  };
+
+  // ── Designer border overlay helper ────────────────────────────────────────
+
+  const addDesignerBorder = (fabric: any, canvas: any, x: number, y: number, w: number, h: number, forPinId?: string) => {
+    const border = new fabric.Rect({
+      left: x,
+      top: y,
+      width: w,
+      height: h,
+      fill: "transparent",
+      stroke: "rgba(99,102,241,0.55)",
+      strokeWidth: 2,
+      strokeDashArray: [6, 4],
+      selectable: false,
+      evented: false,
+      originX: "left",
+      originY: "top",
+      objectCaching: false,
+    });
+    (border as any).__designerBorder = true;
+    if (forPinId) (border as any).__forPinId = forPinId;
+    canvas.add(border);
+    return border;
+  };
+
+  /** Update a designer border's position/size to match its linked element's bounding box. */
+  const syncDesignerBorder = (canvas: any, obj: any) => {
+    if (!obj.__pinId) return;
+    const border = canvas.getObjects().find((o: any) => o.__designerBorder && o.__forPinId === obj.__pinId);
+    if (!border) return;
+    const br = obj.getBoundingRect(true);
+    border.set({ left: br.left, top: br.top, width: br.width, height: br.height });
+    border.setCoords();
   };
 
   // ── Template loading ──────────────────────────────────────────────────────
@@ -1766,6 +1804,7 @@ export default function PinDesigner({
             (img as any).clipPath = clipRect;
 
             canvas.add(img);
+            addDesignerBorder(fabric, canvas, el.x, el.y, el.width, el.height, el.id);
             imageLoaded = true;
           } catch {
             // fall through to placeholder
@@ -1782,8 +1821,8 @@ export default function PinDesigner({
             rx: 0,
             ry: 0,
             selectable: true,
-            strokeWidth: 2,
-            stroke: "#cccccc",
+            strokeWidth: 0,
+            stroke: "transparent",
           });
           (rect as any).__pinId = el.id;
           (rect as any).__pinLabel = el.label;
@@ -1791,6 +1830,7 @@ export default function PinDesigner({
           (rect as any).__pinLocked = !!(el as any).locked;
           applyLockState(rect);
           canvas.add(rect);
+          addDesignerBorder(fabric, canvas, el.x, el.y, el.width, el.height, el.id);
 
           const label = new FabricText(el.label, {
             left: el.x + el.width / 2,
@@ -1842,6 +1882,7 @@ export default function PinDesigner({
         (band as any).__pinLocked = !!(el as any).locked;
         applyLockState(band);
         canvas.add(band);
+        addDesignerBorder(fabric, canvas, el.x, el.y, el.width, el.height, el.id);
       } else if (el.type === "text") {
         const titleLines = (ttl || "")
           .split(/\r?\n/)
@@ -1893,6 +1934,7 @@ export default function PinDesigner({
         (textbox as any).__pinLocked = !!(el as any).locked;
         applyLockState(textbox);
         canvas.add(textbox);
+        addDesignerBorder(fabric, canvas, el.x - (el.width || 940) / 2, el.y - (el.height || 50) / 2, el.width || 940, el.height || 50, el.id);
       } else if (el.type === "frame") {
         const strokeStyle = (el.strokeStyle as string) ?? (el as any).__strokeStyle ?? "solid";
         let dashArray: number[] | null = null;
@@ -2066,6 +2108,7 @@ export default function PinDesigner({
             obj.left = Math.max(minLeft, Math.min(maxLeft, obj.left));
             obj.top  = Math.max(minTop,  Math.min(maxTop,  obj.top));
           }
+          syncDesignerBorder(canvas, obj);
           recalcToolbarPos(obj);
         });
         canvas.on("object:scaling", (e: any) => {
@@ -2133,6 +2176,7 @@ export default function PinDesigner({
             }
           }
 
+          syncDesignerBorder(canvas, obj);
           recalcToolbarPos(obj);
           canvas.renderAll();
           updateLayers();
@@ -2184,7 +2228,7 @@ export default function PinDesigner({
       getJson: () => {
         const canvas = fabricCanvasRef.current;
         if (!canvas) return "{}";
-        return JSON.stringify(canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked"]));
+        return JSON.stringify(canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId"]));
       },
       exportPng: getExportDataUrl,
     });
@@ -2277,6 +2321,8 @@ export default function PinDesigner({
     canvas.remove(obj);
     const label = canvas.getObjects().find((o: any) => o.__forId === pid);
     if (label) canvas.remove(label);
+    const border = canvas.getObjects().find((o: any) => o.__designerBorder && o.__forPinId === pid);
+    if (border) canvas.remove(border);
     canvas.discardActiveObject();
     setSelectedId(null);
     setToolbarPos(null);
@@ -2394,19 +2440,21 @@ export default function PinDesigner({
     const fabricMod = await import("fabric");
     const proxyBase = getApiBaseUrl();
     const newPreviews: Record<number, string> = {};
+    const tmplW = selectedTemplate.canvasWidth || PIN_W;
+    const tmplH = selectedTemplate.canvasHeight || PIN_H;
 
     for (let i = 0; i < frames.length; i++) {
       if (i === activeFrameIdx) continue;
       const frame = frames[i];
       const canvasEl = document.createElement("canvas");
-      canvasEl.width = PIN_W;
-      canvasEl.height = PIN_H;
+      canvasEl.width = tmplW;
+      canvasEl.height = tmplH;
       canvasEl.style.display = "none";
       document.body.appendChild(canvasEl);
 
       try {
         const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
-        const fc = new FC(canvasEl, { width: PIN_W, height: PIN_H, enableRetinaScaling: false });
+        const fc = new FC(canvasEl, { width: tmplW, height: tmplH, enableRetinaScaling: false });
 
         const savedJson = refs[i];
         if (savedJson && savedJson !== "{}") {
@@ -2425,10 +2473,10 @@ export default function PinDesigner({
         fc.renderAll();
 
         refs[i] = JSON.stringify(
-          fc.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle"])
+          fc.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__designerBorder", "__forPinId"])
         );
 
-        fc.getObjects().filter((o: any) => o.__isLabel).forEach((o: any) => o.set("visible", false));
+        fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
         fc.renderAll();
         newPreviews[i] = fc.toDataURL({ format: "png", multiplier: 0.5 });
         fc.dispose();
