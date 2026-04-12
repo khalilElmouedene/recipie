@@ -624,6 +624,8 @@ export interface PinDesignerProps {
   frames?: FrameInfo[];
   /** Website/domain to display on pin templates that have a website element */
   website?: string;
+  /** Override access level — pass true for project admins who have global role "member" */
+  canManage?: boolean;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -645,6 +647,7 @@ export default function PinDesigner({
   embedded = false,
   frames,
   website = "",
+  canManage,
 }: PinDesignerProps) {
   // ── Multi-frame state ────────────────────────────────────────────────────
   const [activeFrameIdx, setActiveFrameIdx] = useState(0);
@@ -807,7 +810,11 @@ export default function PinDesigner({
 
   const wpPublishRole = typeof window !== "undefined" ? getUserRole() : null;
   const canPublishWpBatch =
-    Boolean(projectId) && (wpPublishRole === "owner" || wpPublishRole === "admin");
+    Boolean(projectId) && (
+      canManage === true ||
+      wpPublishRole === "owner" ||
+      wpPublishRole === "admin"
+    );
 
   // ── Frame switching ──────────────────────────────────────────────────────
   const switchToFrame = async (newIdx: number) => {

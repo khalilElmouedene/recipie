@@ -4,6 +4,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import PinDesigner, { FrameInfo } from "@/components/PinDesigner";
 import { api, RecipeOut, GeneratedJobRecipeOut } from "@/lib/api";
+import { getUserRole, getUserId } from "@/lib/auth";
 
 function imagesFromJobRecipe(r: GeneratedJobRecipeOut): string[] {
   // Only use generated_images (Midjourney output). Never include image_url,
@@ -42,6 +43,7 @@ export default function PinDesignerPage() {
   const [singleRecipe, setSingleRecipe] = useState<RecipeOut | null>(null);
   const [siteDomain, setSiteDomain] = useState("");
   const [loading, setLoading] = useState(true);
+  const [canManage, setCanManage] = useState(false);
 
   useEffect(() => {
     if (!params.siteId) return;
@@ -50,6 +52,19 @@ export default function PinDesignerPage() {
       const found = sites.find((s) => s.id === params.siteId);
       if (found) setSiteDomain(found.domain || "");
     }).catch(() => {});
+
+    const globalRole = getUserRole();
+    if (globalRole === "owner") {
+      setCanManage(true);
+    } else {
+      const currentUserId = getUserId();
+      api.getMembers(params.id)
+        .then((members) => {
+          const me = members.find((m) => m.user_id.toString() === currentUserId);
+          setCanManage(me?.role === "admin");
+        })
+        .catch(() => {});
+    }
 
     if (recipeParam) {
       api.getRecipe(recipeParam)
@@ -108,6 +123,7 @@ export default function PinDesignerPage() {
         projectId={params.id}
         siteId={params.siteId}
         website={siteDomain}
+        canManage={canManage}
         onClose={() =>
           router.push(
             jobParam ? `/projects/${params.id}/sites/all-sites-pins/${jobParam}` : `/projects/${params.id}/sites/${params.siteId}`
@@ -127,6 +143,7 @@ export default function PinDesignerPage() {
       projectId={params.id}
       siteId={params.siteId}
       website={siteDomain}
+      canManage={canManage}
       onClose={() => router.push(designerBack)}
     />
   );
