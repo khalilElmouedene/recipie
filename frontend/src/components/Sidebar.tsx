@@ -3,13 +3,14 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle } from "lucide-react";
-import { clearToken, getUserRole, getUserEmail } from "@/lib/auth";
+import { clearToken, getUserRole } from "@/lib/auth";
 import ThemeToggle from "@/components/ThemeToggle";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/threads", label: "Threads", icon: MessageCircle },
+  { href: "/pinterest-gallery", label: "Pinterest", icon: PinterestIcon },
   { href: "/pin-designer-templates", label: "Own Templates", icon: LayoutTemplate },
 ];
 
@@ -28,15 +29,9 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const role = getUserRole();
-  const email = getUserEmail();
-
-  const pinterestItem = { href: "/pinterest-gallery", label: "Pinterest", icon: PinterestIcon };
-
-  const items = role === "owner"
+  const allItems = role === "owner"
     ? [...NAV, { href: "/users", label: "Users", icon: Users }, { href: "/settings", label: "Settings", icon: Settings }]
     : [...NAV, { href: "/settings", label: "Settings", icon: Settings }];
-
-  const allItems = email === "khalil@gmail.com" ? [...items, pinterestItem] : items;
 
   return (
     <aside
@@ -91,10 +86,12 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       </nav>
 
       <div className="border-t border-gray-800 p-3 space-y-2">
+        {/* Theme toggle — temporarily disabled
         <div className="flex items-center justify-between px-1">
           <span className="text-xs text-gray-500">Theme</span>
           <ThemeToggle />
         </div>
+        */}
         <button
           onClick={() => { clearToken(); router.push("/login"); }}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition"

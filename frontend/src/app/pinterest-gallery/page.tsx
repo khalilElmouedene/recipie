@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
 import {
   Download,
   ExternalLink,
@@ -15,9 +14,6 @@ import {
   Loader2,
 } from "lucide-react";
 import { api, ProjectOut, SiteOut, RecipeOut } from "@/lib/api";
-import { getUserEmail } from "@/lib/auth";
-
-const ALLOWED_EMAIL = "khalil@gmail.com";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface EnrichedRecipe extends RecipeOut {
@@ -49,20 +45,6 @@ function formatDateTimeLocal(d: Date): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function PinterestGalleryPage() {
-  const router = useRouter();
-
-  // Access guard
-  const [allowed, setAllowed] = useState<boolean | null>(null);
-  useEffect(() => {
-    const email = getUserEmail();
-    if (email === ALLOWED_EMAIL) {
-      setAllowed(true);
-    } else {
-      setAllowed(false);
-      router.replace("/");
-    }
-  }, [router]);
-
   // Data
   const [projects, setProjects] = useState<ProjectOut[]>([]);
   const [allRecipes, setAllRecipes] = useState<EnrichedRecipe[]>([]);
@@ -88,7 +70,6 @@ export default function PinterestGalleryPage() {
 
   // ── Fetch all published recipes across all projects/sites ──
   useEffect(() => {
-    if (!allowed) return;
     setLoading(true);
     setError(null);
 
@@ -243,10 +224,6 @@ export default function PinterestGalleryPage() {
       setExcelDownloading(false);
     }
   };
-
-  // ── Render guards ──
-  if (allowed === null) return null;
-  if (!allowed) return null;
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
