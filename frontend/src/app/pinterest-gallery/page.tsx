@@ -114,7 +114,7 @@ export default function PinterestGalleryPage() {
         setError(e?.message || "Failed to load recipes");
         setLoading(false);
       });
-  }, [allowed]);
+  }, []);
 
   // Set default excel project when projects load
   useEffect(() => {
