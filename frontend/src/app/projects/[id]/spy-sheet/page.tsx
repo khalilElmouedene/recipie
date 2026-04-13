@@ -56,6 +56,13 @@ interface Selection {
   col: number;
 }
 
+interface CellRange {
+  startRow: number;
+  startCol: number;
+  endRow: number;
+  endCol: number;
+}
+
 interface CtxMenu {
   x: number;
   y: number;
@@ -74,6 +81,31 @@ const colLabel = (c: number): string => {
   return s;
 };
 const cellKey = (r: number, c: number) => `${r}_${c}`;
+const clampIndex = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+const normalizeRange = (range: CellRange): CellRange => ({
+  startRow: Math.min(range.startRow, range.endRow),
+  startCol: Math.min(range.startCol, range.endCol),
+  endRow: Math.max(range.startRow, range.endRow),
+  endCol: Math.max(range.startCol, range.endCol),
+});
+const singleCellRange = (row: number, col: number): CellRange => ({
+  startRow: row,
+  startCol: col,
+  endRow: row,
+  endCol: col,
+});
+const buildRange = (a: Selection, b: Selection): CellRange =>
+  normalizeRange({ startRow: a.row, startCol: a.col, endRow: b.row, endCol: b.col });
+const isCellInRange = (row: number, col: number, range: CellRange): boolean => {
+  const n = normalizeRange(range);
+  return row >= n.startRow && row <= n.endRow && col >= n.startCol && col <= n.endCol;
+};
+const rangeToAddress = (range: CellRange): string => {
+  const n = normalizeRange(range);
+  const start = `${colLabel(n.startCol)}${n.startRow + 1}`;
+  const end = `${colLabel(n.endCol)}${n.endRow + 1}`;
+  return start === end ? start : `${start}:${end}`;
+};
 
 const emptySheetData = (): SheetData => ({
   cells: {},
@@ -151,6 +183,8 @@ export default function SpySheetPage() {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [sel, setSel] = useState<Selection>({ row: 0, col: 0 });
+  const [selectionAnchor, setSelectionAnchor] = useState<Selection>({ row: 0, col: 0 });
+  const [selectionRanges, setSelectionRanges] = useState<CellRange[]>([singleCellRange(0, 0)]);
   const [editKey, setEditKey] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
   const [formulaVal, setFormulaVal] = useState("");
@@ -166,10 +200,47 @@ export default function SpySheetPage() {
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const selectionRangesRef = useRef<CellRange[]>([singleCellRange(0, 0)]);
+  const dragSelectionRef = useRef<{ origin: Selection; additive: boolean; baseRanges: CellRange[] } | null>(null);
 
   // ── Active sheet ──
   const activeSheet = workbook.sheets.find((s) => s.id === workbook.activeId)
     ?? workbook.sheets[0];
+  const sheetRows = activeSheet?.data.rows ?? DEFAULT_ROWS;
+  const sheetCols = activeSheet?.data.cols ?? DEFAULT_COLS;
+
+  const clampToSheet = useCallback((row: number, col: number): Selection => ({
+    row: clampIndex(row, 0, sheetRows - 1),
+    col: clampIndex(col, 0, sheetCols - 1),
+  }), [sheetRows, sheetCols]);
+
+  const setSingleSelection = useCallback((row: number, col: number) => {
+    const bounded = clampToSheet(row, col);
+    setSel(bounded);
+    setSelectionAnchor(bounded);
+    setSelectionRanges([singleCellRange(bounded.row, bounded.col)]);
+  }, [clampToSheet]);
+
+  const selectedCellsFromRanges = useCallback((ranges: CellRange[]): Selection[] => {
+    const seen = new Set<string>();
+    const out: Selection[] = [];
+    ranges.forEach((range) => {
+      const n = normalizeRange(range);
+      const startRow = clampIndex(n.startRow, 0, sheetRows - 1);
+      const endRow = clampIndex(n.endRow, 0, sheetRows - 1);
+      const startCol = clampIndex(n.startCol, 0, sheetCols - 1);
+      const endCol = clampIndex(n.endCol, 0, sheetCols - 1);
+      for (let r = startRow; r <= endRow; r++) {
+        for (let c = startCol; c <= endCol; c++) {
+          const key = cellKey(r, c);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({ row: r, col: c });
+        }
+      }
+    });
+    return out;
+  }, [sheetRows, sheetCols]);
 
   // ── Load ──
   useEffect(() => {
@@ -190,6 +261,10 @@ export default function SpySheetPage() {
     }
   }, [sel, workbook, editKey, activeSheet]);
 
+  useEffect(() => {
+    selectionRangesRef.current = selectionRanges;
+  }, [selectionRanges]);
+
   // ── Close context menu on outside click ──
   useEffect(() => {
     if (!ctxMenu) return;
@@ -197,6 +272,14 @@ export default function SpySheetPage() {
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
   }, [ctxMenu]);
+
+  useEffect(() => {
+    const stopDragSelection = () => {
+      dragSelectionRef.current = null;
+    };
+    window.addEventListener("mouseup", stopDragSelection);
+    return () => window.removeEventListener("mouseup", stopDragSelection);
+  }, []);
 
   // ── Auto-save ──
   const scheduleAutoSave = useCallback((wb: Workbook) => {
@@ -255,6 +338,44 @@ export default function SpySheetPage() {
     });
   };
 
+  const applyPatchToSelection = useCallback((patch: Partial<Cell>) => {
+    const targets = selectedCellsFromRanges(selectionRangesRef.current);
+    if (!targets.length) return;
+    updateActiveData((prev) => {
+      const nextCells = { ...prev.cells };
+      targets.forEach(({ row, col }) => {
+        const key = cellKey(row, col);
+        const existing = nextCells[key] ?? {};
+        const merged = { ...existing, ...patch };
+        if (merged.v === "") delete merged.v;
+        if (Object.keys(merged).length === 0) {
+          delete nextCells[key];
+          return;
+        }
+        nextCells[key] = merged;
+      });
+      return { ...prev, cells: nextCells };
+    });
+  }, [selectedCellsFromRanges, updateActiveData]);
+
+  const isSelectedCell = useCallback((row: number, col: number): boolean =>
+    selectionRanges.some((range) => isCellInRange(row, col, range)),
+  [selectionRanges]);
+
+  const isSelectedRow = useCallback((row: number): boolean =>
+    selectionRanges.some((range) => {
+      const n = normalizeRange(range);
+      return row >= n.startRow && row <= n.endRow;
+    }),
+  [selectionRanges]);
+
+  const isSelectedCol = useCallback((col: number): boolean =>
+    selectionRanges.some((range) => {
+      const n = normalizeRange(range);
+      return col >= n.startCol && col <= n.endCol;
+    }),
+  [selectionRanges]);
+
   // ── Editing ──
   const startEdit = (r: number, c: number, initialChar?: string) => {
     const key = cellKey(r, c);
@@ -272,37 +393,80 @@ export default function SpySheetPage() {
     const c = parseInt(cStr);
     setCell(r, c, { v: editVal });
     setEditKey(null);
-    const rows = activeSheet?.data.rows ?? DEFAULT_ROWS;
-    const cols = activeSheet?.data.cols ?? DEFAULT_COLS;
-    setSel({ row: Math.max(0, Math.min(rows - 1, r + moveRow)), col: Math.max(0, Math.min(cols - 1, c + moveCol)) });
-  }, [editKey, editVal, activeSheet]); // eslint-disable-line
+    setSingleSelection(r + moveRow, c + moveCol);
+  }, [editKey, editVal, setSingleSelection]); // eslint-disable-line
 
   // ── Formatting ──
   const toggleProp = (prop: keyof Cell) => {
     const cell = getCell(sel.row, sel.col);
-    setCell(sel.row, sel.col, { [prop]: !cell[prop as "b"] });
+    applyPatchToSelection({ [prop]: !cell[prop as "b"] } as Partial<Cell>);
   };
   const setProp = (prop: keyof Cell, val: unknown) =>
-    setCell(sel.row, sel.col, { [prop]: val } as Partial<Cell>);
+    applyPatchToSelection({ [prop]: val } as Partial<Cell>);
+
+  const moveSelectionBy = (dRow: number, dCol: number, extend: boolean) => {
+    const next = clampToSheet(sel.row + dRow, sel.col + dCol);
+    setSel(next);
+    if (extend) {
+      setSelectionRanges([buildRange(selectionAnchor, next)]);
+      return;
+    }
+    setSelectionAnchor(next);
+    setSelectionRanges([singleCellRange(next.row, next.col)]);
+  };
 
   // ── Grid keyboard ──
   const handleGridKeyDown = (e: React.KeyboardEvent) => {
     if (editKey !== null) return;
-    const { row, col } = sel;
-    const rows = activeSheet?.data.rows ?? DEFAULT_ROWS;
-    const cols = activeSheet?.data.cols ?? DEFAULT_COLS;
-    if (e.key === "ArrowUp") { e.preventDefault(); setSel({ row: Math.max(0, row - 1), col }); }
-    else if (e.key === "ArrowDown") { e.preventDefault(); setSel({ row: Math.min(rows - 1, row + 1), col }); }
-    else if (e.key === "ArrowLeft") { e.preventDefault(); setSel({ row, col: Math.max(0, col - 1) }); }
-    else if (e.key === "ArrowRight" || e.key === "Tab") { e.preventDefault(); setSel({ row, col: Math.min(cols - 1, col + 1) }); }
-    else if (e.key === "Enter") { startEdit(row, col); }
-    else if (e.key === "Delete" || e.key === "Backspace") { setCell(row, col, { v: "" }); }
-    else if (e.key === "F2") { e.preventDefault(); startEdit(row, col); }
-    else if (e.ctrlKey && e.key === "b") { e.preventDefault(); toggleProp("b"); }
-    else if (e.ctrlKey && e.key === "i") { e.preventDefault(); toggleProp("i"); }
-    else if (e.ctrlKey && e.key === "u") { e.preventDefault(); toggleProp("u"); }
-    else if (e.ctrlKey && e.key === "s") { e.preventDefault(); void handleSave(); }
-    else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) { startEdit(row, col, e.key); }
+    const ctrlOrMeta = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    if (e.key === "ArrowUp") { e.preventDefault(); moveSelectionBy(-1, 0, e.shiftKey); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); moveSelectionBy(1, 0, e.shiftKey); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); moveSelectionBy(0, -1, e.shiftKey); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); moveSelectionBy(0, 1, e.shiftKey); }
+    else if (e.key === "Tab") { e.preventDefault(); moveSelectionBy(0, e.shiftKey ? -1 : 1, false); }
+    else if (e.key === "Enter") { startEdit(sel.row, sel.col); }
+    else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); applyPatchToSelection({ v: "" }); }
+    else if (e.key === "F2") { e.preventDefault(); startEdit(sel.row, sel.col); }
+    else if (ctrlOrMeta && key === "a") {
+      e.preventDefault();
+      const origin = { row: 0, col: 0 };
+      setSelectionAnchor(origin);
+      setSelectionRanges([buildRange(origin, { row: sheetRows - 1, col: sheetCols - 1 })]);
+    }
+    else if (ctrlOrMeta && key === "b") { e.preventDefault(); toggleProp("b"); }
+    else if (ctrlOrMeta && key === "i") { e.preventDefault(); toggleProp("i"); }
+    else if (ctrlOrMeta && key === "u") { e.preventDefault(); toggleProp("u"); }
+    else if (ctrlOrMeta && key === "s") { e.preventDefault(); void handleSave(); }
+    else if (!ctrlOrMeta && !e.altKey && e.key.length === 1) { startEdit(sel.row, sel.col, e.key); }
+  };
+
+  const handleCellMouseDown = (e: React.MouseEvent<HTMLTableCellElement>, row: number, col: number) => {
+    if (e.button !== 0) return;
+    if (editKey !== null) commitEdit();
+    gridRef.current?.focus();
+
+    const cell = clampToSheet(row, col);
+    const additive = e.ctrlKey || e.metaKey;
+    const anchor = e.shiftKey ? selectionAnchor : cell;
+    const baseRanges = additive ? selectionRangesRef.current : [];
+    const nextRange = buildRange(anchor, cell);
+
+    setSel(cell);
+    if (!e.shiftKey) setSelectionAnchor(cell);
+    setSelectionRanges(additive ? [...baseRanges, nextRange] : [nextRange]);
+    dragSelectionRef.current = { origin: anchor, additive, baseRanges };
+    e.preventDefault();
+  };
+
+  const handleCellMouseEnter = (e: React.MouseEvent<HTMLTableCellElement>, row: number, col: number) => {
+    if ((e.buttons & 1) !== 1) return;
+    const drag = dragSelectionRef.current;
+    if (!drag) return;
+    const cell = clampToSheet(row, col);
+    const nextRange = buildRange(drag.origin, cell);
+    setSel(cell);
+    setSelectionRanges(drag.additive ? [...drag.baseRanges, nextRange] : [nextRange]);
   };
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -326,14 +490,14 @@ export default function SpySheetPage() {
     while (existing.includes(name)) name = `Sheet${++n}`;
     const t = newTab(name);
     updateWorkbook((wb) => ({ sheets: [...wb.sheets, t], activeId: t.id }));
-    setSel({ row: 0, col: 0 });
+    setSingleSelection(0, 0);
     setEditKey(null);
   };
 
   const switchSheet = (sheetId: string) => {
     if (editKey !== null) commitEdit();
     updateWorkbook((wb) => ({ ...wb, activeId: sheetId }));
-    setSel({ row: 0, col: 0 });
+    setSingleSelection(0, 0);
     setEditKey(null);
   };
 
@@ -346,6 +510,8 @@ export default function SpySheetPage() {
         : wb.activeId;
       return { sheets, activeId };
     });
+    setSingleSelection(0, 0);
+    setEditKey(null);
   };
 
   const duplicateSheet = (sheetId: string) => {
@@ -357,6 +523,8 @@ export default function SpySheetPage() {
       const sheets = [...wb.sheets.slice(0, idx + 1), t, ...wb.sheets.slice(idx + 1)];
       return { sheets, activeId: t.id };
     });
+    setSingleSelection(0, 0);
+    setEditKey(null);
   };
 
   const startRename = (sheetId: string) => {
@@ -369,7 +537,7 @@ export default function SpySheetPage() {
 
   const commitRename = () => {
     if (!renamingId) return;
-    const name = renameVal.trim() || workbook.sheets.find((s) => s.id === renamingId)?.name ?? "Sheet";
+    const name = renameVal.trim() || (workbook.sheets.find((s) => s.id === renamingId)?.name ?? "Sheet");
     updateWorkbook((wb) => ({
       ...wb,
       sheets: wb.sheets.map((s) => s.id === renamingId ? { ...s, name } : s),
@@ -386,7 +554,7 @@ export default function SpySheetPage() {
       const wb = xlsxToWorkbook(ev.target?.result as ArrayBuffer);
       setWorkbook(wb);
       scheduleAutoSave(wb);
-      setSel({ row: 0, col: 0 });
+      setSingleSelection(0, 0);
     };
     reader.readAsArrayBuffer(file);
     e.target.value = "";
@@ -409,6 +577,10 @@ export default function SpySheetPage() {
   const selAddr = `${colLabel(sel.col)}${sel.row + 1}`;
   const sheet = activeSheet?.data ?? emptySheetData();
   const alignMap: Record<string, React.CSSProperties["textAlign"]> = { l: "left", c: "center", r: "right" };
+  const selectedCells = selectedCellsFromRanges(selectionRanges);
+  const selectionLabel = selectionRanges.length === 1
+    ? rangeToAddress(selectionRanges[0])
+    : `${selectionRanges.length} ranges (${selectedCells.length} cells)`;
 
   if (loading) {
     return (
@@ -538,8 +710,8 @@ export default function SpySheetPage() {
                 <th
                   key={c}
                   style={{ width: sheet.colWidths[c] ?? DEFAULT_COL_WIDTH }}
-                  className={`sticky top-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] font-semibold cursor-pointer ${sel.col === c ? "bg-purple-900/30 text-purple-300" : "text-gray-400"}`}
-                  onClick={() => setSel({ row: sel.row, col: c })}
+                  className={`sticky top-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] font-semibold cursor-pointer ${isSelectedCol(c) ? "bg-purple-900/30 text-purple-300" : "text-gray-400"}`}
+                  onClick={() => setSingleSelection(sel.row, c)}
                 >
                   {colLabel(c)}
                 </th>
@@ -550,15 +722,16 @@ export default function SpySheetPage() {
             {Array.from({ length: sheet.rows }, (_, r) => (
               <tr key={r} style={{ height: sheet.rowHeights[r] ?? DEFAULT_ROW_HEIGHT }}>
                 <td
-                  className={`sticky left-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] text-gray-500 cursor-pointer ${sel.row === r ? "bg-purple-900/30 text-purple-300 font-semibold" : ""}`}
-                  onClick={() => setSel({ row: r, col: sel.col })}
+                  className={`sticky left-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] text-gray-500 cursor-pointer ${isSelectedRow(r) ? "bg-purple-900/30 text-purple-300 font-semibold" : ""}`}
+                  onClick={() => setSingleSelection(r, sel.col)}
                 >
                   {r + 1}
                 </td>
                 {Array.from({ length: sheet.cols }, (_, c) => {
                   const key = cellKey(r, c);
                   const cell = sheet.cells[key] ?? {};
-                  const isSelected = sel.row === r && sel.col === c;
+                  const isSelected = isSelectedCell(r, c);
+                  const isActiveCell = sel.row === r && sel.col === c;
                   const isEditing = editKey === key;
                   const cellStyle: React.CSSProperties = {
                     backgroundColor: cell.bg || undefined,
@@ -573,8 +746,15 @@ export default function SpySheetPage() {
                     <td
                       key={c}
                       style={cellStyle}
-                      className={`relative border-b border-r border-gray-800 px-1.5 overflow-hidden whitespace-nowrap text-gray-100 cursor-default transition-colors ${isSelected ? "outline outline-2 outline-purple-500 outline-offset-[-1px] bg-purple-950/20" : "hover:bg-gray-800/40"}`}
-                      onClick={() => { if (editKey !== null) commitEdit(); setSel({ row: r, col: c }); gridRef.current?.focus(); }}
+                      className={`relative border-b border-r border-gray-800 px-1.5 overflow-hidden whitespace-nowrap text-gray-100 cursor-default transition-colors ${
+                        isActiveCell
+                          ? "outline outline-2 outline-purple-500 outline-offset-[-1px] bg-purple-950/20"
+                          : isSelected
+                            ? "outline outline-1 outline-purple-700/80 outline-offset-[-1px] bg-purple-950/10"
+                            : "hover:bg-gray-800/40"
+                      }`}
+                      onMouseDown={(e) => handleCellMouseDown(e, r, c)}
+                      onMouseEnter={(e) => handleCellMouseEnter(e, r, c)}
                       onDoubleClick={() => startEdit(r, c)}
                     >
                       {isEditing ? (
@@ -651,7 +831,7 @@ export default function SpySheetPage() {
       <div className="shrink-0 flex items-center justify-between border-t border-gray-800 bg-gray-900 px-4 py-1">
         <span className="text-[11px] text-gray-500">{sheet.rows} rows × {sheet.cols} cols</span>
         <span className="text-[11px] text-gray-500">{Object.keys(sheet.cells).length} cells used</span>
-        <span className="text-[11px] text-gray-500">{selAddr}{selCell.v ? ` = ${selCell.v}` : ""}</span>
+        <span className="text-[11px] text-gray-500">{selectionLabel}{selCell.v ? ` = ${selCell.v}` : ""}</span>
       </div>
 
       {/* ── Tab context menu ── */}
