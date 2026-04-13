@@ -65,7 +65,8 @@ interface CellRange {
 
 type DragSelectionState =
   | { mode: "cells"; origin: Selection; additive: boolean; baseRanges: CellRange[] }
-  | { mode: "rows"; originRow: number; additive: boolean; baseRanges: CellRange[] };
+  | { mode: "rows"; originRow: number; additive: boolean; baseRanges: CellRange[] }
+  | { mode: "cols"; originCol: number; additive: boolean; baseRanges: CellRange[] };
 
 interface CtxMenu {
   x: number;
@@ -515,6 +516,10 @@ export default function SpySheetPage() {
     buildRange({ row: fromRow, col: 0 }, { row: toRow, col: sheetCols - 1 }),
   [sheetCols]);
 
+  const buildColSelectionRange = useCallback((fromCol: number, toCol: number): CellRange =>
+    buildRange({ row: 0, col: fromCol }, { row: sheetRows - 1, col: toCol }),
+  [sheetRows]);
+
   // ── Grid keyboard ──
   const handleGridKeyDown = (e: React.KeyboardEvent) => {
     if (editKey !== null) return;
@@ -595,6 +600,35 @@ export default function SpySheetPage() {
     const boundedRow = clampIndex(row, 0, sheetRows - 1);
     const nextRange = buildRowSelectionRange(drag.originRow, boundedRow);
     setSel({ row: boundedRow, col: 0 });
+    setSelectionRanges(drag.additive ? [...drag.baseRanges, nextRange] : [nextRange]);
+  };
+
+  const handleColHeaderMouseDown = (e: React.MouseEvent<HTMLTableCellElement>, col: number) => {
+    if (e.button !== 0) return;
+    if (editKey !== null) commitEdit();
+    gridRef.current?.focus();
+
+    const boundedCol = clampIndex(col, 0, sheetCols - 1);
+    const additive = e.ctrlKey || e.metaKey;
+    const anchorCol = e.shiftKey ? clampIndex(selectionAnchor.col, 0, sheetCols - 1) : boundedCol;
+    const baseRanges = additive ? selectionRangesRef.current : [];
+    const nextRange = buildColSelectionRange(anchorCol, boundedCol);
+
+    setSel({ row: 0, col: boundedCol });
+    if (!e.shiftKey) setSelectionAnchor({ row: 0, col: boundedCol });
+    setSelectionRanges(additive ? [...baseRanges, nextRange] : [nextRange]);
+    dragSelectionRef.current = { mode: "cols", originCol: anchorCol, additive, baseRanges };
+    e.preventDefault();
+  };
+
+  const handleColHeaderMouseEnter = (e: React.MouseEvent<HTMLTableCellElement>, col: number) => {
+    if ((e.buttons & 1) !== 1) return;
+    const drag = dragSelectionRef.current;
+    if (!drag || drag.mode !== "cols") return;
+
+    const boundedCol = clampIndex(col, 0, sheetCols - 1);
+    const nextRange = buildColSelectionRange(drag.originCol, boundedCol);
+    setSel({ row: 0, col: boundedCol });
     setSelectionRanges(drag.additive ? [...drag.baseRanges, nextRange] : [nextRange]);
   };
 
@@ -862,7 +896,8 @@ export default function SpySheetPage() {
                   key={c}
                   style={{ width: sheet.colWidths[c] ?? DEFAULT_COL_WIDTH }}
                   className={`sticky top-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] font-semibold cursor-pointer ${isSelectedCol(c) ? "bg-purple-900/30 text-purple-300" : "text-gray-400"}`}
-                  onClick={() => setSingleSelection(sel.row, c)}
+                  onMouseDown={(e) => handleColHeaderMouseDown(e, c)}
+                  onMouseEnter={(e) => handleColHeaderMouseEnter(e, c)}
                 >
                   {colLabel(c)}
                 </th>
