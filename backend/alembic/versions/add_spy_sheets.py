@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "add_spy_sheets"
-down_revision = "add_template_project_ids"
+down_revision = "add_user_mj_grid_wait_settings"
 branch_labels = None
 depends_on = None
 
