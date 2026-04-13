@@ -486,13 +486,14 @@ export default function SpySheetPage() {
                   const isSelected = sel.row === r && sel.col === c;
                   const isEditing = editKey === key;
 
+                  const alignMap: Record<string, React.CSSProperties["textAlign"]> = { l: "left", c: "center", r: "right" };
                   const cellStyle: React.CSSProperties = {
                     backgroundColor: cell.bg || undefined,
                     color: cell.fg || undefined,
                     fontWeight: cell.b ? "bold" : undefined,
                     fontStyle: cell.i ? "italic" : undefined,
                     textDecoration: [cell.u && "underline", cell.s && "line-through"].filter(Boolean).join(" ") || undefined,
-                    textAlign: cell.ha ?? "left",
+                    textAlign: alignMap[cell.ha ?? "l"] ?? "left",
                     fontSize: cell.fs ? `${cell.fs}px` : "13px",
                   };
 
@@ -524,7 +525,7 @@ export default function SpySheetPage() {
                             fontSize: cell.fs ? `${cell.fs}px` : "13px",
                             fontWeight: cell.b ? "bold" : undefined,
                             fontStyle: cell.i ? "italic" : undefined,
-                            textAlign: cell.ha ?? "left",
+                            textAlign: alignMap[cell.ha ?? "l"] ?? "left",
                             zIndex: 5,
                           }}
                         />
