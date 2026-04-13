@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
   Download,
   ExternalLink,
@@ -12,8 +13,17 @@ import {
   X,
   ChevronDown,
   Loader2,
+  Sheet,
 } from "lucide-react";
 import { api, ProjectOut, SiteOut, RecipeOut } from "@/lib/api";
+import {
+  PINTEREST_WORKSHEET_HEADER,
+  PINTEREST_WORKSHEET_INIT_KEY,
+  PinterestWorksheetRecipe,
+  PinterestWorksheetSnapshot,
+  buildPinterestWorksheetRows,
+  rowsToCsv,
+} from "@/lib/pinterestWorksheet";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface EnrichedRecipe extends RecipeOut {
@@ -45,6 +55,7 @@ function formatDateTimeLocal(d: Date): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function PinterestGalleryPage() {
+  const router = useRouter();
   // Data
   const [projects, setProjects] = useState<ProjectOut[]>([]);
   const [allRecipes, setAllRecipes] = useState<EnrichedRecipe[]>([]);
@@ -60,6 +71,7 @@ export default function PinterestGalleryPage() {
   const [csvStartDate, setCsvStartDate] = useState(() => formatDateTimeLocal(new Date()));
   const [csvInterval, setCsvInterval] = useState(300);
   const [csvGenerating, setCsvGenerating] = useState(false);
+  const [worksheetPreparing, setWorksheetPreparing] = useState(false);
 
   // Excel modal
   const [showExcelModal, setShowExcelModal] = useState(false);
@@ -147,47 +159,43 @@ export default function PinterestGalleryPage() {
     return list;
   }, [allRecipes, selectedBoard, search]);
 
+  const worksheetSourceRows = useMemo<PinterestWorksheetRecipe[]>(
+    () => filtered.map((r) => ({
+      siteId: r.siteId,
+      pinTitle: r.pin_title,
+      recipeText: r.recipe_text || "",
+      pinDesignImage: r.pin_design_image,
+      pinBoard: r.pin_board,
+      pinDescription: r.pin_description,
+      wpPermalink: r.wp_permalink,
+      pinTags: r.pin_tags,
+    })),
+    [filtered],
+  );
+
+  const resolveWorksheetMediaUrl = async (recipe: PinterestWorksheetRecipe): Promise<string> => {
+    if (recipe.pinDesignImage?.startsWith("data:") && recipe.siteId) {
+      try { return await api.uploadPinImageToServer(recipe.siteId, recipe.pinDesignImage); } catch {}
+      return "";
+    }
+    if (recipe.pinDesignImage && !recipe.pinDesignImage.startsWith("data:")) {
+      return recipe.pinDesignImage;
+    }
+    return "";
+  };
+
   // ── CSV export ──
   const downloadCsv = async () => {
     if (filtered.length === 0) return;
     setCsvGenerating(true);
     try {
-      const startMs = new Date(csvStartDate).getTime();
-      const intervalMs = csvInterval * 60 * 1000;
-      const header = ["Title", "Media URL", "Pinterest board", "Thumbnail", "Description", "Link", "Publish date", "Keywords"];
-      const rows: string[][] = [];
-
-      for (let i = 0; i < filtered.length; i++) {
-        const r = filtered[i];
-        const publishDate = new Date(startMs + i * intervalMs);
-        const month = publishDate.getMonth() + 1;
-        const day = publishDate.getDate();
-        const year = publishDate.getFullYear();
-        const hours = publishDate.getHours();
-        const mins = String(publishDate.getMinutes()).padStart(2, "0");
-        const dateStr = `${month}/${day}/${year} ${hours}:${mins}`;
-
-        let mediaUrl = "";
-        if (r.pin_design_image?.startsWith("data:") && r.siteId) {
-          try { mediaUrl = await api.uploadPinImageToServer(r.siteId, r.pin_design_image); } catch {}
-        } else if (r.pin_design_image && !r.pin_design_image.startsWith("data:")) {
-          mediaUrl = r.pin_design_image;
-        }
-
-        rows.push([
-          r.pin_title || r.recipe_text?.split("\n")[0]?.trim() || "",
-          mediaUrl,
-          r.pin_board || "",
-          "",
-          r.pin_description || "",
-          r.wp_permalink || "",
-          dateStr,
-          r.pin_tags || "",
-        ]);
-      }
-
-      const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
-      const csv = [header, ...rows].map((row) => row.map(escape).join(",")).join("\r\n");
+      const rows = await buildPinterestWorksheetRows(
+        worksheetSourceRows,
+        csvStartDate,
+        csvInterval,
+        resolveWorksheetMediaUrl,
+      );
+      const csv = rowsToCsv(PINTEREST_WORKSHEET_HEADER, rows);
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -202,6 +210,32 @@ export default function PinterestGalleryPage() {
       alert(e instanceof Error ? e.message : "CSV generation failed");
     } finally {
       setCsvGenerating(false);
+    }
+  };
+
+  const openWorksheet = async () => {
+    if (worksheetSourceRows.length === 0) return;
+    setWorksheetPreparing(true);
+    try {
+      const rows = await buildPinterestWorksheetRows(
+        worksheetSourceRows,
+        csvStartDate,
+        csvInterval,
+        resolveWorksheetMediaUrl,
+      );
+      const snapshot: PinterestWorksheetSnapshot = {
+        header: PINTEREST_WORKSHEET_HEADER,
+        rows,
+        generatedAt: new Date().toISOString(),
+        startDate: csvStartDate,
+        intervalMinutes: csvInterval,
+      };
+      sessionStorage.setItem(PINTEREST_WORKSHEET_INIT_KEY, JSON.stringify(snapshot));
+      router.push("/pinterest-gallery/worksheet");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Worksheet initialization failed");
+    } finally {
+      setWorksheetPreparing(false);
     }
   };
 
@@ -246,6 +280,15 @@ export default function PinterestGalleryPage() {
 
             {/* Actions */}
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => void openWorksheet()}
+                className="flex items-center gap-2 rounded-lg border border-blue-700/60 bg-blue-950/40 px-3 py-2 text-xs font-medium text-blue-300 transition hover:bg-blue-900/50 hover:text-blue-200 disabled:opacity-40"
+                disabled={filtered.length === 0 || worksheetPreparing}
+                title="Open Pinterest Worksheet"
+              >
+                {worksheetPreparing ? <Loader2 size={14} className="animate-spin" /> : <Sheet size={14} />}
+                <span className="hidden sm:inline">{worksheetPreparing ? "Preparing..." : "Sheet"}</span>
+              </button>
               <button
                 onClick={() => setShowExcelModal(true)}
                 className="flex items-center gap-2 rounded-lg border border-green-700/60 bg-green-950/40 px-3 py-2 text-xs font-medium text-green-400 transition hover:bg-green-900/50 hover:text-green-300 disabled:opacity-40"
