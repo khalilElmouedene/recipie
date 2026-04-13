@@ -63,6 +63,10 @@ interface CellRange {
   endCol: number;
 }
 
+type DragSelectionState =
+  | { mode: "cells"; origin: Selection; additive: boolean; baseRanges: CellRange[] }
+  | { mode: "rows"; originRow: number; additive: boolean; baseRanges: CellRange[] };
+
 interface CtxMenu {
   x: number;
   y: number;
@@ -201,7 +205,8 @@ export default function SpySheetPage() {
   const editInputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const selectionRangesRef = useRef<CellRange[]>([singleCellRange(0, 0)]);
-  const dragSelectionRef = useRef<{ origin: Selection; additive: boolean; baseRanges: CellRange[] } | null>(null);
+  const dragSelectionRef = useRef<DragSelectionState | null>(null);
+  const clipboardFallbackRef = useRef("");
 
   // ── Active sheet ──
   const activeSheet = workbook.sheets.find((s) => s.id === workbook.activeId)
@@ -376,6 +381,90 @@ export default function SpySheetPage() {
     }),
   [selectionRanges]);
 
+  const writeClipboardText = useCallback(async (text: string) => {
+    clipboardFallbackRef.current = text;
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {}
+  }, []);
+
+  const readClipboardText = useCallback(async (): Promise<string> => {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
+      return clipboardFallbackRef.current;
+    }
+    try {
+      const text = await navigator.clipboard.readText();
+      return text || clipboardFallbackRef.current;
+    } catch {
+      return clipboardFallbackRef.current;
+    }
+  }, []);
+
+  const serializeSelectionToTsv = useCallback((range: CellRange): string => {
+    const n = normalizeRange(range);
+    const lines: string[] = [];
+    for (let r = n.startRow; r <= n.endRow; r++) {
+      const rowVals: string[] = [];
+      for (let c = n.startCol; c <= n.endCol; c++) {
+        rowVals.push(getCell(r, c).v ?? "");
+      }
+      lines.push(rowVals.join("\t"));
+    }
+    return lines.join("\n");
+  }, [getCell]);
+
+  const handleCopySelection = useCallback(async () => {
+    const ranges = selectionRangesRef.current;
+    const sourceRange = ranges[ranges.length - 1] ?? singleCellRange(sel.row, sel.col);
+    await writeClipboardText(serializeSelectionToTsv(sourceRange));
+  }, [sel.row, sel.col, serializeSelectionToTsv, writeClipboardText]);
+
+  const pasteTextAtSelection = useCallback((text: string) => {
+    const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    let rows = normalized.split("\n");
+    if (rows.length > 0 && rows[rows.length - 1] === "") rows = rows.slice(0, -1);
+    if (!rows.length) return;
+
+    const matrix = rows.map((rowText) => rowText.split("\t"));
+    const oneCellPaste = matrix.length === 1 && matrix[0].length === 1;
+    const selectedTargets = selectedCellsFromRanges(selectionRangesRef.current);
+
+    updateActiveData((prev) => {
+      const nextCells = { ...prev.cells };
+      const setValue = (row: number, col: number, value: string) => {
+        if (row < 0 || col < 0 || row >= prev.rows || col >= prev.cols) return;
+        const key = cellKey(row, col);
+        const existing = nextCells[key] ?? {};
+        const merged: Partial<Cell> = { ...existing, v: value };
+        if (merged.v === "") delete merged.v;
+        if (Object.keys(merged).length === 0) {
+          delete nextCells[key];
+          return;
+        }
+        nextCells[key] = merged;
+      };
+
+      if (oneCellPaste && selectedTargets.length > 1) {
+        const value = matrix[0][0] ?? "";
+        selectedTargets.forEach(({ row, col }) => setValue(row, col, value));
+      } else {
+        matrix.forEach((rowVals, rOffset) => {
+          rowVals.forEach((value, cOffset) => {
+            setValue(sel.row + rOffset, sel.col + cOffset, value);
+          });
+        });
+      }
+      return { ...prev, cells: nextCells };
+    });
+  }, [sel.row, sel.col, selectedCellsFromRanges, updateActiveData]);
+
+  const handlePasteFromClipboard = useCallback(async () => {
+    const text = await readClipboardText();
+    if (!text) return;
+    pasteTextAtSelection(text);
+  }, [pasteTextAtSelection, readClipboardText]);
+
   // ── Editing ──
   const startEdit = (r: number, c: number, initialChar?: string) => {
     const key = cellKey(r, c);
@@ -415,6 +504,17 @@ export default function SpySheetPage() {
     setSelectionRanges([singleCellRange(next.row, next.col)]);
   };
 
+  const selectAllCells = useCallback(() => {
+    const origin = { row: 0, col: 0 };
+    setSel(origin);
+    setSelectionAnchor(origin);
+    setSelectionRanges([buildRange(origin, { row: sheetRows - 1, col: sheetCols - 1 })]);
+  }, [sheetRows, sheetCols]);
+
+  const buildRowSelectionRange = useCallback((fromRow: number, toRow: number): CellRange =>
+    buildRange({ row: fromRow, col: 0 }, { row: toRow, col: sheetCols - 1 }),
+  [sheetCols]);
+
   // ── Grid keyboard ──
   const handleGridKeyDown = (e: React.KeyboardEvent) => {
     if (editKey !== null) return;
@@ -430,10 +530,10 @@ export default function SpySheetPage() {
     else if (e.key === "F2") { e.preventDefault(); startEdit(sel.row, sel.col); }
     else if (ctrlOrMeta && key === "a") {
       e.preventDefault();
-      const origin = { row: 0, col: 0 };
-      setSelectionAnchor(origin);
-      setSelectionRanges([buildRange(origin, { row: sheetRows - 1, col: sheetCols - 1 })]);
+      selectAllCells();
     }
+    else if (ctrlOrMeta && key === "c") { e.preventDefault(); void handleCopySelection(); }
+    else if (ctrlOrMeta && key === "v") { e.preventDefault(); void handlePasteFromClipboard(); }
     else if (ctrlOrMeta && key === "b") { e.preventDefault(); toggleProp("b"); }
     else if (ctrlOrMeta && key === "i") { e.preventDefault(); toggleProp("i"); }
     else if (ctrlOrMeta && key === "u") { e.preventDefault(); toggleProp("u"); }
@@ -455,17 +555,46 @@ export default function SpySheetPage() {
     setSel(cell);
     if (!e.shiftKey) setSelectionAnchor(cell);
     setSelectionRanges(additive ? [...baseRanges, nextRange] : [nextRange]);
-    dragSelectionRef.current = { origin: anchor, additive, baseRanges };
+    dragSelectionRef.current = { mode: "cells", origin: anchor, additive, baseRanges };
     e.preventDefault();
   };
 
   const handleCellMouseEnter = (e: React.MouseEvent<HTMLTableCellElement>, row: number, col: number) => {
     if ((e.buttons & 1) !== 1) return;
     const drag = dragSelectionRef.current;
-    if (!drag) return;
+    if (!drag || drag.mode !== "cells") return;
     const cell = clampToSheet(row, col);
     const nextRange = buildRange(drag.origin, cell);
     setSel(cell);
+    setSelectionRanges(drag.additive ? [...drag.baseRanges, nextRange] : [nextRange]);
+  };
+
+  const handleRowHeaderMouseDown = (e: React.MouseEvent<HTMLTableCellElement>, row: number) => {
+    if (e.button !== 0) return;
+    if (editKey !== null) commitEdit();
+    gridRef.current?.focus();
+
+    const boundedRow = clampIndex(row, 0, sheetRows - 1);
+    const additive = e.ctrlKey || e.metaKey;
+    const anchorRow = e.shiftKey ? clampIndex(selectionAnchor.row, 0, sheetRows - 1) : boundedRow;
+    const baseRanges = additive ? selectionRangesRef.current : [];
+    const nextRange = buildRowSelectionRange(anchorRow, boundedRow);
+
+    setSel({ row: boundedRow, col: 0 });
+    if (!e.shiftKey) setSelectionAnchor({ row: boundedRow, col: 0 });
+    setSelectionRanges(additive ? [...baseRanges, nextRange] : [nextRange]);
+    dragSelectionRef.current = { mode: "rows", originRow: anchorRow, additive, baseRanges };
+    e.preventDefault();
+  };
+
+  const handleRowHeaderMouseEnter = (e: React.MouseEvent<HTMLTableCellElement>, row: number) => {
+    if ((e.buttons & 1) !== 1) return;
+    const drag = dragSelectionRef.current;
+    if (!drag || drag.mode !== "rows") return;
+
+    const boundedRow = clampIndex(row, 0, sheetRows - 1);
+    const nextRange = buildRowSelectionRange(drag.originRow, boundedRow);
+    setSel({ row: boundedRow, col: 0 });
     setSelectionRanges(drag.additive ? [...drag.baseRanges, nextRange] : [nextRange]);
   };
 
@@ -700,12 +829,34 @@ export default function SpySheetPage() {
         className="flex-1 overflow-auto outline-none"
         tabIndex={0}
         onKeyDown={handleGridKeyDown}
+        onCopy={(e) => {
+          if (editKey !== null) return;
+          e.preventDefault();
+          void handleCopySelection();
+        }}
+        onPaste={(e) => {
+          if (editKey !== null) return;
+          const text = e.clipboardData.getData("text/plain");
+          if (!text) return;
+          e.preventDefault();
+          pasteTextAtSelection(text);
+        }}
         style={{ fontFamily: "Inter, system-ui, sans-serif" }}
       >
         <table className="border-collapse" style={{ tableLayout: "fixed", minWidth: HEADER_WIDTH + sheet.cols * DEFAULT_COL_WIDTH }}>
           <thead>
             <tr style={{ height: HEADER_HEIGHT }}>
-              <th style={{ width: HEADER_WIDTH, minWidth: HEADER_WIDTH }} className="sticky top-0 left-0 z-20 border-b border-r border-gray-700 bg-gray-800" />
+              <th
+                style={{ width: HEADER_WIDTH, minWidth: HEADER_WIDTH }}
+                className="sticky top-0 left-0 z-20 border-b border-r border-gray-700 bg-gray-800 cursor-pointer hover:bg-gray-700/80"
+                onMouseDown={(e) => {
+                  if (e.button !== 0) return;
+                  gridRef.current?.focus();
+                  if (editKey !== null) commitEdit();
+                  selectAllCells();
+                  e.preventDefault();
+                }}
+              />
               {Array.from({ length: sheet.cols }, (_, c) => (
                 <th
                   key={c}
@@ -723,7 +874,8 @@ export default function SpySheetPage() {
               <tr key={r} style={{ height: sheet.rowHeights[r] ?? DEFAULT_ROW_HEIGHT }}>
                 <td
                   className={`sticky left-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] text-gray-500 cursor-pointer ${isSelectedRow(r) ? "bg-purple-900/30 text-purple-300 font-semibold" : ""}`}
-                  onClick={() => setSingleSelection(r, sel.col)}
+                  onMouseDown={(e) => handleRowHeaderMouseDown(e, r)}
+                  onMouseEnter={(e) => handleRowHeaderMouseEnter(e, r)}
                 >
                   {r + 1}
                 </td>
