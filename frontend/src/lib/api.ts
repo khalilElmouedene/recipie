@@ -390,6 +390,16 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  // ── Spy Sheet ──────────────────────────────────────────
+  getSpySheet: (projectId: string) =>
+    request<{ project_id: string; data: string | null; updated_at: string | null }>(`/api/projects/${projectId}/spy-sheet`),
+
+  saveSpySheet: (projectId: string, data: string | null) =>
+    request<{ project_id: string; data: string | null; updated_at: string | null }>(
+      `/api/projects/${projectId}/spy-sheet`,
+      { method: "PUT", body: JSON.stringify({ data }) },
+    ),
+
   downloadSiteExcel: (siteId: string, domain: string) =>
     downloadFile(`/api/sites/${siteId}/export/excel`, `${domain.replace(/[^a-z0-9]/gi, "_")}.xlsx`),
 

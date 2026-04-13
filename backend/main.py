@@ -133,6 +133,7 @@ from app.routes.pinterest import router as pinterest_router
 from app.routes.settings import router as settings_router
 from app.routes.pin_designer_templates import router as pin_designer_templates_router
 from app.routes.threads import router as threads_router
+from app.routes.spy_sheet import router as spy_sheet_router
 from app.ws.logs import router as ws_router
 
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
@@ -150,4 +151,5 @@ app.include_router(pinterest_router)
 app.include_router(settings_router)
 app.include_router(pin_designer_templates_router)
 app.include_router(threads_router)
+app.include_router(spy_sheet_router)
 app.include_router(ws_router)

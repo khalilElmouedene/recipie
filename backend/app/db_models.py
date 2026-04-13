@@ -111,6 +111,19 @@ class UserCredential(Base):
     user: Mapped["User"] = relationship(back_populates="credentials")
 
 
+class SpySheet(Base):
+    """Per-project spreadsheet data stored as JSON."""
+    __tablename__ = "spy_sheets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True,
+    )
+    data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
 class Project(Base):
     __tablename__ = "projects"
 

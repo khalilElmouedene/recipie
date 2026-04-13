@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload, RotateCcw, AlertTriangle } from "lucide-react";
+import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload, RotateCcw, AlertTriangle, Sheet } from "lucide-react";
 import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut } from "@/lib/api";
 import { getUserRole, getUserId } from "@/lib/auth";
 
@@ -78,6 +78,13 @@ export default function ProjectDetailPage() {
               <Send size={16} /> Generate All Sites
             </button>
           )}
+          <button
+            onClick={() => router.push(`/projects/${id}/spy-sheet`)}
+            className="btn-secondary flex items-center justify-center gap-2 border-purple-700 text-purple-400 hover:text-purple-300 w-full sm:w-auto"
+            title="Open project spreadsheet"
+          >
+            <Sheet size={16} /> Spy Sheet
+          </button>
           <button
             onClick={() => api.downloadProjectExcel(id, project.name)}
             disabled={project.recipe_count === 0}
