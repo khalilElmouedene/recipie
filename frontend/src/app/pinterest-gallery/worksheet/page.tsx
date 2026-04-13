@@ -152,10 +152,12 @@ export default function PinterestWorksheetPage() {
 
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const bottomScrollRef = useRef<HTMLDivElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const selectionRangesRef = useRef<CellRange[]>([singleCellRange(0, 0)]);
   const dragSelectionRef = useRef<DragSelectionState | null>(null);
   const clipboardFallbackRef = useRef("");
+  const syncingScrollRef = useRef<"grid" | "bottom" | null>(null);
 
   const rowsCount = sheet.rows.length;
   const colsCount = sheet.header.length;
@@ -273,6 +275,39 @@ export default function PinterestWorksheetPage() {
     window.addEventListener("mouseup", stopDragSelection);
     return () => window.removeEventListener("mouseup", stopDragSelection);
   }, []);
+
+  useEffect(() => {
+    const grid = gridRef.current;
+    const bottom = bottomScrollRef.current;
+    if (!grid || !bottom) return;
+
+    const syncFromGrid = () => {
+      if (syncingScrollRef.current === "bottom") {
+        syncingScrollRef.current = null;
+        return;
+      }
+      syncingScrollRef.current = "grid";
+      bottom.scrollLeft = grid.scrollLeft;
+    };
+
+    const syncFromBottom = () => {
+      if (syncingScrollRef.current === "grid") {
+        syncingScrollRef.current = null;
+        return;
+      }
+      syncingScrollRef.current = "bottom";
+      grid.scrollLeft = bottom.scrollLeft;
+    };
+
+    grid.addEventListener("scroll", syncFromGrid);
+    bottom.addEventListener("scroll", syncFromBottom);
+    bottom.scrollLeft = grid.scrollLeft;
+
+    return () => {
+      grid.removeEventListener("scroll", syncFromGrid);
+      bottom.removeEventListener("scroll", syncFromBottom);
+    };
+  }, [colsCount]);
 
   useEffect(() => {
     if (!hydrated || loading) return;
@@ -559,6 +594,7 @@ export default function PinterestWorksheetPage() {
   const selectionLabel = selectionRanges.length === 1
     ? rangeToAddress(selectionRanges[0], 2)
     : `${selectionRanges.length} ranges (${selectedCells.length} cells)`;
+  const tableMinWidth = HEADER_WIDTH + colsCount * DEFAULT_COL_WIDTH;
 
   if (loading) {
     return (
@@ -643,7 +679,7 @@ export default function PinterestWorksheetPage() {
           pasteTextAtSelection(text);
         }}
       >
-        <table className="border-collapse" style={{ tableLayout: "fixed", minWidth: HEADER_WIDTH + colsCount * DEFAULT_COL_WIDTH }}>
+        <table className="border-collapse" style={{ tableLayout: "fixed", minWidth: tableMinWidth }}>
           <thead>
             <tr style={{ height: HEADER_HEIGHT }}>
               <th
@@ -726,6 +762,14 @@ export default function PinterestWorksheetPage() {
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div
+        ref={bottomScrollRef}
+        className="shrink-0 overflow-x-auto overflow-y-hidden border-t border-gray-800 bg-gray-900/80"
+        aria-label="Horizontal worksheet scroll"
+      >
+        <div style={{ width: tableMinWidth, height: 12 }} />
       </div>
 
       <div className="shrink-0 border-t border-gray-800 bg-gray-900 px-4 py-1 text-[11px] text-gray-500">
