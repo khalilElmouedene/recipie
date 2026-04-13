@@ -86,15 +86,23 @@ function emptyWorksheet(): WorksheetData {
 }
 
 function normalizeWorksheet(raw: WorksheetData): WorksheetData {
-  const header = raw.header.length > 0 ? raw.header : [...PINTEREST_WORKSHEET_HEADER];
-  const rows = raw.rows.length > 0 ? raw.rows : [Array(header.length).fill("")];
-  return {
-    header,
-    rows: rows.map((row) => {
-      if (row.length === header.length) return [...row];
-      if (row.length > header.length) return row.slice(0, header.length);
-      return [...row, ...Array(header.length - row.length).fill("")];
+  const expectedHeader = [...PINTEREST_WORKSHEET_HEADER];
+  const sourceHeader = Array.isArray(raw.header) ? raw.header : [];
+  const columnMap = expectedHeader.map((col) =>
+    sourceHeader.findIndex((h) => h.trim().toLowerCase() === col.trim().toLowerCase()),
+  );
+  const sourceRows = raw.rows.length > 0 ? raw.rows : [Array(expectedHeader.length).fill("")];
+  const rows = sourceRows.map((row) =>
+    expectedHeader.map((_, colIndex) => {
+      const srcIndex = columnMap[colIndex];
+      if (srcIndex < 0 || srcIndex >= row.length) return "";
+      return row[srcIndex] ?? "";
     }),
+  );
+
+  return {
+    header: expectedHeader,
+    rows,
   };
 }
 
