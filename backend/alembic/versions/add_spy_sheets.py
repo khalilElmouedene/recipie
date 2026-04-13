@@ -15,13 +15,15 @@ depends_on = None
 
 
 def upgrade():
-    op.create_table(
-        "spy_sheets",
-        sa.Column("id", UUID(as_uuid=True), primary_key=True),
-        sa.Column("project_id", UUID(as_uuid=True), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True, index=True),
-        sa.Column("data", sa.Text(), nullable=True),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
-    )
+    conn = op.get_bind()
+    if not conn.dialect.has_table(conn, "spy_sheets"):
+        op.create_table(
+            "spy_sheets",
+            sa.Column("id", UUID(as_uuid=True), primary_key=True),
+            sa.Column("project_id", UUID(as_uuid=True), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True, index=True),
+            sa.Column("data", sa.Text(), nullable=True),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+        )
 
 
 def downgrade():
