@@ -6,7 +6,7 @@ import {
   ArrowLeft, Save, Download, Upload, Plus, Minus,
   Bold, Italic, Underline, Strikethrough,
   AlignLeft, AlignCenter, AlignRight,
-  Palette, PaintBucket, Loader2, Check,
+  Palette, PaintBucket, Loader2, Check, Copy, Trash2, Pencil,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import * as XLSX from "xlsx";
@@ -21,33 +21,49 @@ const HEADER_HEIGHT = 26;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Cell {
-  v?: string;         // value
-  b?: boolean;        // bold
-  i?: boolean;        // italic
-  u?: boolean;        // underline
-  s?: boolean;        // strikethrough
-  fg?: string;        // text color
-  bg?: string;        // background color
-  ha?: "l" | "c" | "r"; // horizontal align
-  fs?: number;        // font size
+  v?: string;
+  b?: boolean;
+  i?: boolean;
+  u?: boolean;
+  s?: boolean;
+  fg?: string;
+  bg?: string;
+  ha?: "l" | "c" | "r";
+  fs?: number;
 }
 
 interface SheetData {
-  cells: Record<string, Cell>;   // "row_col" -> cell
+  cells: Record<string, Cell>;
   colWidths: Record<number, number>;
   rowHeights: Record<number, number>;
   rows: number;
   cols: number;
 }
 
+interface SheetTab {
+  id: string;
+  name: string;
+  data: SheetData;
+}
+
+interface Workbook {
+  sheets: SheetTab[];
+  activeId: string;
+}
+
 interface Selection {
   row: number;
   col: number;
-  row2?: number; // range end (for future multi-select)
-  col2?: number;
+}
+
+interface CtxMenu {
+  x: number;
+  y: number;
+  sheetId: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+const uid = () => Math.random().toString(36).slice(2, 9);
 const colLabel = (c: number): string => {
   let s = "";
   let n = c + 1;
@@ -57,10 +73,9 @@ const colLabel = (c: number): string => {
   }
   return s;
 };
-
 const cellKey = (r: number, c: number) => `${r}_${c}`;
 
-const emptySheet = (): SheetData => ({
+const emptySheetData = (): SheetData => ({
   cells: {},
   colWidths: {},
   rowHeights: {},
@@ -68,38 +83,62 @@ const emptySheet = (): SheetData => ({
   cols: DEFAULT_COLS,
 });
 
-function sheetToXlsx(sheet: SheetData): ArrayBuffer {
-  const wb = XLSX.utils.book_new();
-  const wsData: string[][] = [];
-  for (let r = 0; r < sheet.rows; r++) {
-    const row: string[] = [];
-    for (let c = 0; c < sheet.cols; c++) {
-      row.push(sheet.cells[cellKey(r, c)]?.v ?? "");
+const newTab = (name: string): SheetTab => ({ id: uid(), name, data: emptySheetData() });
+
+const emptyWorkbook = (): Workbook => {
+  const t = newTab("Sheet1");
+  return { sheets: [t], activeId: t.id };
+};
+
+/** Migrate old single-sheet format → Workbook */
+function parseStored(raw: string): Workbook {
+  try {
+    const parsed = JSON.parse(raw);
+    // New format
+    if (parsed.sheets && parsed.activeId) return parsed as Workbook;
+    // Old format — wrap in workbook
+    if (parsed.cells !== undefined) {
+      const t: SheetTab = { id: uid(), name: "Sheet1", data: parsed as SheetData };
+      return { sheets: [t], activeId: t.id };
     }
-    wsData.push(row);
-  }
-  const ws = XLSX.utils.aoa_to_sheet(wsData);
-  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-  return XLSX.write(wb, { type: "array", bookType: "xlsx" });
+  } catch {}
+  return emptyWorkbook();
 }
 
-function xlsxToSheet(buffer: ArrayBuffer): SheetData {
-  const wb = XLSX.read(buffer, { type: "array" });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows2d: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as string[][];
-  const sheet = emptySheet();
-  const numRows = Math.max(DEFAULT_ROWS, rows2d.length);
-  const numCols = Math.max(DEFAULT_COLS, Math.max(...rows2d.map((r) => r.length), 0));
-  sheet.rows = numRows;
-  sheet.cols = numCols;
-  rows2d.forEach((row, r) => {
-    row.forEach((val, c) => {
-      if (val !== "" && val != null) {
-        sheet.cells[cellKey(r, c)] = { v: String(val) };
+function workbookToXlsx(wb: Workbook): ArrayBuffer {
+  const xlWb = XLSX.utils.book_new();
+  wb.sheets.forEach((tab) => {
+    const wsData: string[][] = [];
+    for (let r = 0; r < tab.data.rows; r++) {
+      const row: string[] = [];
+      for (let c = 0; c < tab.data.cols; c++) {
+        row.push(tab.data.cells[cellKey(r, c)]?.v ?? "");
       }
-    });
+      wsData.push(row);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    XLSX.utils.book_append_sheet(xlWb, ws, tab.name);
   });
-  return sheet;
+  return XLSX.write(xlWb, { type: "array", bookType: "xlsx" });
+}
+
+function xlsxToWorkbook(buffer: ArrayBuffer): Workbook {
+  const xlWb = XLSX.read(buffer, { type: "array" });
+  const tabs: SheetTab[] = xlWb.SheetNames.map((name) => {
+    const ws = xlWb.Sheets[name];
+    const rows2d: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as string[][];
+    const data = emptySheetData();
+    data.rows = Math.max(DEFAULT_ROWS, rows2d.length);
+    data.cols = Math.max(DEFAULT_COLS, Math.max(...rows2d.map((r) => r.length), 0));
+    rows2d.forEach((row, r) => {
+      row.forEach((val, c) => {
+        if (val !== "" && val != null) data.cells[cellKey(r, c)] = { v: String(val) };
+      });
+    });
+    return { id: uid(), name, data };
+  });
+  const first = tabs[0] ?? newTab("Sheet1");
+  return { sheets: tabs.length ? tabs : [first], activeId: first.id };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -107,62 +146,91 @@ export default function SpySheetPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
 
-  const [sheet, setSheet] = useState<SheetData>(emptySheet());
+  const [workbook, setWorkbook] = useState<Workbook>(emptyWorkbook());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [sel, setSel] = useState<Selection>({ row: 0, col: 0 });
-  const [editKey, setEditKey] = useState<string | null>(null); // currently editing cell key
+  const [editKey, setEditKey] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
-  const [formulaVal, setFormulaVal] = useState(""); // formula bar content
+  const [formulaVal, setFormulaVal] = useState("");
+
+  // Sheet tab rename state
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameVal, setRenameVal] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
+  // Context menu
+  const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
+
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+
+  // ── Active sheet ──
+  const activeSheet = workbook.sheets.find((s) => s.id === workbook.activeId)
+    ?? workbook.sheets[0];
 
   // ── Load ──
   useEffect(() => {
     api.getSpySheet(id)
       .then((res) => {
-        if (res.data) {
-          try { setSheet(JSON.parse(res.data)); } catch { setSheet(emptySheet()); }
-        }
+        if (res.data) setWorkbook(parseStored(res.data));
         if (res.updated_at) setSavedAt(res.updated_at);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [id]);
 
-  // Keep formula bar in sync with selection
+  // ── Formula bar sync ──
   useEffect(() => {
     if (editKey === null) {
-      const cell = sheet.cells[cellKey(sel.row, sel.col)];
+      const cell = activeSheet?.data.cells[cellKey(sel.row, sel.col)];
       setFormulaVal(cell?.v ?? "");
     }
-  }, [sel, sheet, editKey]);
+  }, [sel, workbook, editKey, activeSheet]);
 
-  // ── Auto-save (debounced 2s after last change) ──
-  const scheduleAutoSave = useCallback((s: SheetData) => {
+  // ── Close context menu on outside click ──
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [ctxMenu]);
+
+  // ── Auto-save ──
+  const scheduleAutoSave = useCallback((wb: Workbook) => {
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
-      api.saveSpySheet(id, JSON.stringify(s))
+      api.saveSpySheet(id, JSON.stringify(wb))
         .then((res) => { if (res.updated_at) setSavedAt(res.updated_at); })
         .catch(() => {});
     }, 2000);
   }, [id]);
 
-  const updateSheet = useCallback((updater: (prev: SheetData) => SheetData) => {
-    setSheet((prev) => {
+  const updateWorkbook = useCallback((updater: (prev: Workbook) => Workbook) => {
+    setWorkbook((prev) => {
       const next = updater(prev);
       scheduleAutoSave(next);
       return next;
     });
   }, [scheduleAutoSave]);
 
+  // Helper: update only the active sheet's data
+  const updateActiveData = useCallback((updater: (prev: SheetData) => SheetData) => {
+    updateWorkbook((wb) => ({
+      ...wb,
+      sheets: wb.sheets.map((s) =>
+        s.id === wb.activeId ? { ...s, data: updater(s.data) } : s
+      ),
+    }));
+  }, [updateWorkbook]);
+
   // ── Manual save ──
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await api.saveSpySheet(id, JSON.stringify(sheet));
+      const res = await api.saveSpySheet(id, JSON.stringify(workbook));
       if (res.updated_at) setSavedAt(res.updated_at);
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     } catch {}
@@ -171,14 +239,13 @@ export default function SpySheetPage() {
 
   // ── Cell helpers ──
   const getCell = (r: number, c: number): Cell =>
-    sheet.cells[cellKey(r, c)] ?? {};
+    activeSheet?.data.cells[cellKey(r, c)] ?? {};
 
   const setCell = (r: number, c: number, patch: Partial<Cell>) => {
-    updateSheet((prev) => {
+    updateActiveData((prev) => {
       const key = cellKey(r, c);
       const existing = prev.cells[key] ?? {};
       const merged = { ...existing, ...patch };
-      // Clean empty values
       if (merged.v === "") delete merged.v;
       if (Object.keys(merged).length === 0) {
         const { [key]: _, ...rest } = prev.cells;
@@ -188,17 +255,16 @@ export default function SpySheetPage() {
     });
   };
 
-  // ── Start editing ──
+  // ── Editing ──
   const startEdit = (r: number, c: number, initialChar?: string) => {
     const key = cellKey(r, c);
-    const val = initialChar !== undefined ? initialChar : (sheet.cells[key]?.v ?? "");
+    const val = initialChar !== undefined ? initialChar : (activeSheet?.data.cells[key]?.v ?? "");
     setEditKey(key);
     setEditVal(val);
     setFormulaVal(val);
     setTimeout(() => editInputRef.current?.focus(), 0);
   };
 
-  // ── Commit edit ──
   const commitEdit = useCallback((moveRow = 0, moveCol = 0) => {
     if (editKey === null) return;
     const [rStr, cStr] = editKey.split("_");
@@ -206,74 +272,128 @@ export default function SpySheetPage() {
     const c = parseInt(cStr);
     setCell(r, c, { v: editVal });
     setEditKey(null);
-    const newRow = Math.max(0, Math.min(sheet.rows - 1, r + moveRow));
-    const newCol = Math.max(0, Math.min(sheet.cols - 1, c + moveCol));
-    setSel({ row: newRow, col: newCol });
-  }, [editKey, editVal, sheet.rows, sheet.cols]); // eslint-disable-line
+    const rows = activeSheet?.data.rows ?? DEFAULT_ROWS;
+    const cols = activeSheet?.data.cols ?? DEFAULT_COLS;
+    setSel({ row: Math.max(0, Math.min(rows - 1, r + moveRow)), col: Math.max(0, Math.min(cols - 1, c + moveCol)) });
+  }, [editKey, editVal, activeSheet]); // eslint-disable-line
 
   // ── Formatting ──
   const toggleProp = (prop: keyof Cell) => {
     const cell = getCell(sel.row, sel.col);
     setCell(sel.row, sel.col, { [prop]: !cell[prop as "b"] });
   };
-  const setProp = (prop: keyof Cell, val: unknown) => {
+  const setProp = (prop: keyof Cell, val: unknown) =>
     setCell(sel.row, sel.col, { [prop]: val } as Partial<Cell>);
-  };
 
-  // ── Keyboard handling on grid ──
+  // ── Grid keyboard ──
   const handleGridKeyDown = (e: React.KeyboardEvent) => {
-    if (editKey !== null) return; // handled by input
-
+    if (editKey !== null) return;
     const { row, col } = sel;
+    const rows = activeSheet?.data.rows ?? DEFAULT_ROWS;
+    const cols = activeSheet?.data.cols ?? DEFAULT_COLS;
     if (e.key === "ArrowUp") { e.preventDefault(); setSel({ row: Math.max(0, row - 1), col }); }
-    else if (e.key === "ArrowDown") { e.preventDefault(); setSel({ row: Math.min(sheet.rows - 1, row + 1), col }); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); setSel({ row: Math.min(rows - 1, row + 1), col }); }
     else if (e.key === "ArrowLeft") { e.preventDefault(); setSel({ row, col: Math.max(0, col - 1) }); }
-    else if (e.key === "ArrowRight" || e.key === "Tab") { e.preventDefault(); setSel({ row, col: Math.min(sheet.cols - 1, col + 1) }); }
+    else if (e.key === "ArrowRight" || e.key === "Tab") { e.preventDefault(); setSel({ row, col: Math.min(cols - 1, col + 1) }); }
     else if (e.key === "Enter") { startEdit(row, col); }
-    else if (e.key === "Delete" || e.key === "Backspace") {
-      setCell(row, col, { v: "" });
-    } else if (e.key === "F2") { e.preventDefault(); startEdit(row, col); }
+    else if (e.key === "Delete" || e.key === "Backspace") { setCell(row, col, { v: "" }); }
+    else if (e.key === "F2") { e.preventDefault(); startEdit(row, col); }
     else if (e.ctrlKey && e.key === "b") { e.preventDefault(); toggleProp("b"); }
     else if (e.ctrlKey && e.key === "i") { e.preventDefault(); toggleProp("i"); }
     else if (e.ctrlKey && e.key === "u") { e.preventDefault(); toggleProp("u"); }
     else if (e.ctrlKey && e.key === "s") { e.preventDefault(); void handleSave(); }
-    else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
-      startEdit(row, col, e.key);
-    }
+    else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) { startEdit(row, col, e.key); }
   };
 
-  // ── Input keyboard (inside cell) ──
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") { e.preventDefault(); commitEdit(1, 0); }
     else if (e.key === "Tab") { e.preventDefault(); commitEdit(0, 1); }
-    else if (e.key === "Escape") { setEditKey(null); setSel(sel); }
+    else if (e.key === "Escape") { setEditKey(null); }
     else if (e.key === "ArrowUp") { commitEdit(-1, 0); }
     else if (e.key === "ArrowDown") { commitEdit(1, 0); }
   };
 
-  // ── Add / remove rows / cols ──
-  const addRow = () => updateSheet((p) => ({ ...p, rows: p.rows + 10 }));
-  const addCol = () => updateSheet((p) => ({ ...p, cols: p.cols + 1 }));
-  const removeRow = () => updateSheet((p) => ({ ...p, rows: Math.max(10, p.rows - 10) }));
+  // ── Rows / cols ──
+  const addRow = () => updateActiveData((p) => ({ ...p, rows: p.rows + 10 }));
+  const addCol = () => updateActiveData((p) => ({ ...p, cols: p.cols + 1 }));
+  const removeRow = () => updateActiveData((p) => ({ ...p, rows: Math.max(10, p.rows - 10) }));
 
-  // ── Excel import ──
+  // ── Sheet tab operations ──
+  const addSheet = () => {
+    const existing = workbook.sheets.map((s) => s.name);
+    let n = workbook.sheets.length + 1;
+    let name = `Sheet${n}`;
+    while (existing.includes(name)) name = `Sheet${++n}`;
+    const t = newTab(name);
+    updateWorkbook((wb) => ({ sheets: [...wb.sheets, t], activeId: t.id }));
+    setSel({ row: 0, col: 0 });
+    setEditKey(null);
+  };
+
+  const switchSheet = (sheetId: string) => {
+    if (editKey !== null) commitEdit();
+    updateWorkbook((wb) => ({ ...wb, activeId: sheetId }));
+    setSel({ row: 0, col: 0 });
+    setEditKey(null);
+  };
+
+  const deleteSheet = (sheetId: string) => {
+    if (workbook.sheets.length === 1) return; // must keep at least one
+    updateWorkbook((wb) => {
+      const sheets = wb.sheets.filter((s) => s.id !== sheetId);
+      const activeId = wb.activeId === sheetId
+        ? (sheets[sheets.findIndex((_, i) => wb.sheets[i]?.id === sheetId) - 1] ?? sheets[0]).id
+        : wb.activeId;
+      return { sheets, activeId };
+    });
+  };
+
+  const duplicateSheet = (sheetId: string) => {
+    const src = workbook.sheets.find((s) => s.id === sheetId);
+    if (!src) return;
+    const t: SheetTab = { id: uid(), name: `${src.name} (copy)`, data: JSON.parse(JSON.stringify(src.data)) };
+    updateWorkbook((wb) => {
+      const idx = wb.sheets.findIndex((s) => s.id === sheetId);
+      const sheets = [...wb.sheets.slice(0, idx + 1), t, ...wb.sheets.slice(idx + 1)];
+      return { sheets, activeId: t.id };
+    });
+  };
+
+  const startRename = (sheetId: string) => {
+    const tab = workbook.sheets.find((s) => s.id === sheetId);
+    if (!tab) return;
+    setRenamingId(sheetId);
+    setRenameVal(tab.name);
+    setTimeout(() => renameInputRef.current?.focus(), 0);
+  };
+
+  const commitRename = () => {
+    if (!renamingId) return;
+    const name = renameVal.trim() || workbook.sheets.find((s) => s.id === renamingId)?.name ?? "Sheet";
+    updateWorkbook((wb) => ({
+      ...wb,
+      sheets: wb.sheets.map((s) => s.id === renamingId ? { ...s, name } : s),
+    }));
+    setRenamingId(null);
+  };
+
+  // ── Import / Export ──
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const buf = ev.target?.result as ArrayBuffer;
-      const imported = xlsxToSheet(buf);
-      setSheet(imported);
-      scheduleAutoSave(imported);
+      const wb = xlsxToWorkbook(ev.target?.result as ArrayBuffer);
+      setWorkbook(wb);
+      scheduleAutoSave(wb);
+      setSel({ row: 0, col: 0 });
     };
     reader.readAsArrayBuffer(file);
     e.target.value = "";
   };
 
-  // ── Excel export ──
   const handleExport = () => {
-    const buf = sheetToXlsx(sheet);
+    const buf = workbookToXlsx(workbook);
     const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -287,6 +407,8 @@ export default function SpySheetPage() {
 
   const selCell = getCell(sel.row, sel.col);
   const selAddr = `${colLabel(sel.col)}${sel.row + 1}`;
+  const sheet = activeSheet?.data ?? emptySheetData();
+  const alignMap: Record<string, React.CSSProperties["textAlign"]> = { l: "left", c: "center", r: "right" };
 
   if (loading) {
     return (
@@ -312,35 +434,20 @@ export default function SpySheetPage() {
           </button>
           <span className="text-sm font-semibold text-white ml-1">Spy Sheet</span>
           <div className="flex-1" />
-
-          {/* Saved indicator */}
           {savedAt && !saving && (
             <span className="flex items-center gap-1 text-[11px] text-gray-500">
               <Check size={11} className="text-green-500" />
               Saved {new Date(savedAt).toLocaleTimeString()}
             </span>
           )}
-
-          {/* Import */}
           <label className="flex cursor-pointer items-center gap-1.5 rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs font-medium text-gray-300 hover:bg-gray-700 transition">
             <Upload size={13} /> Import Excel
             <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} />
           </label>
-
-          {/* Export */}
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-1.5 rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs font-medium text-gray-300 hover:bg-gray-700 transition"
-          >
+          <button onClick={handleExport} className="flex items-center gap-1.5 rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs font-medium text-gray-300 hover:bg-gray-700 transition">
             <Download size={13} /> Export Excel
           </button>
-
-          {/* Save */}
-          <button
-            onClick={() => void handleSave()}
-            disabled={saving}
-            className="flex items-center gap-1.5 rounded-md bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-500 disabled:opacity-50 transition"
-          >
+          <button onClick={() => void handleSave()} disabled={saving} className="flex items-center gap-1.5 rounded-md bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-500 disabled:opacity-50 transition">
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
             {saving ? "Saving…" : "Save"}
           </button>
@@ -348,18 +455,13 @@ export default function SpySheetPage() {
 
         {/* Row 2: formatting toolbar */}
         <div className="flex items-center gap-0.5 px-3 py-1.5 overflow-x-auto">
-
-          {/* Bold / Italic / Underline / Strikethrough */}
           <ToolbarGroup>
             <FmtBtn active={!!selCell.b} title="Bold (Ctrl+B)" onClick={() => toggleProp("b")}><Bold size={14} /></FmtBtn>
             <FmtBtn active={!!selCell.i} title="Italic (Ctrl+I)" onClick={() => toggleProp("i")}><Italic size={14} /></FmtBtn>
             <FmtBtn active={!!selCell.u} title="Underline (Ctrl+U)" onClick={() => toggleProp("u")}><Underline size={14} /></FmtBtn>
             <FmtBtn active={!!selCell.s} title="Strikethrough" onClick={() => toggleProp("s")}><Strikethrough size={14} /></FmtBtn>
           </ToolbarGroup>
-
           <Sep />
-
-          {/* Font size */}
           <ToolbarGroup>
             <select
               value={selCell.fs ?? 13}
@@ -372,19 +474,13 @@ export default function SpySheetPage() {
               ))}
             </select>
           </ToolbarGroup>
-
           <Sep />
-
-          {/* Alignment */}
           <ToolbarGroup>
             <FmtBtn active={selCell.ha === "l" || !selCell.ha} title="Align Left" onClick={() => setProp("ha", "l")}><AlignLeft size={14} /></FmtBtn>
             <FmtBtn active={selCell.ha === "c"} title="Align Center" onClick={() => setProp("ha", "c")}><AlignCenter size={14} /></FmtBtn>
             <FmtBtn active={selCell.ha === "r"} title="Align Right" onClick={() => setProp("ha", "r")}><AlignRight size={14} /></FmtBtn>
           </ToolbarGroup>
-
           <Sep />
-
-          {/* Text color */}
           <ToolbarGroup>
             <label className="relative flex h-7 w-7 cursor-pointer items-center justify-center rounded hover:bg-gray-700 transition" title="Text color">
               <Palette size={14} className="text-gray-300" />
@@ -397,10 +493,7 @@ export default function SpySheetPage() {
               <input type="color" value={selCell.bg ?? "#1f2937"} onChange={(e) => setProp("bg", e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
             </label>
           </ToolbarGroup>
-
           <Sep />
-
-          {/* Add/remove rows & cols */}
           <ToolbarGroup>
             <FmtBtn title="Add 10 rows" onClick={addRow}><Plus size={13} /><span className="text-[10px]">Row</span></FmtBtn>
             <FmtBtn title="Remove 10 rows" onClick={removeRow}><Minus size={13} /><span className="text-[10px]">Row</span></FmtBtn>
@@ -418,16 +511,10 @@ export default function SpySheetPage() {
             onChange={(e) => {
               setFormulaVal(e.target.value);
               if (editKey !== null) setEditVal(e.target.value);
-              else {
-                setCell(sel.row, sel.col, { v: e.target.value });
-              }
+              else setCell(sel.row, sel.col, { v: e.target.value });
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                commitEdit(1, 0);
-                gridRef.current?.focus();
-              }
+              if (e.key === "Enter") { e.preventDefault(); commitEdit(1, 0); gridRef.current?.focus(); }
             }}
             placeholder="Cell value…"
             className="flex-1 rounded border border-gray-700 bg-gray-800 px-2.5 py-1 text-xs text-gray-100 placeholder-gray-600 focus:border-purple-500 focus:outline-none transition font-mono"
@@ -443,23 +530,15 @@ export default function SpySheetPage() {
         onKeyDown={handleGridKeyDown}
         style={{ fontFamily: "Inter, system-ui, sans-serif" }}
       >
-        <table
-          className="border-collapse"
-          style={{ tableLayout: "fixed", minWidth: HEADER_WIDTH + sheet.cols * DEFAULT_COL_WIDTH }}
-        >
-          {/* Column header row */}
+        <table className="border-collapse" style={{ tableLayout: "fixed", minWidth: HEADER_WIDTH + sheet.cols * DEFAULT_COL_WIDTH }}>
           <thead>
             <tr style={{ height: HEADER_HEIGHT }}>
-              {/* corner cell */}
-              <th
-                style={{ width: HEADER_WIDTH, minWidth: HEADER_WIDTH }}
-                className="sticky top-0 left-0 z-20 border-b border-r border-gray-700 bg-gray-800"
-              />
+              <th style={{ width: HEADER_WIDTH, minWidth: HEADER_WIDTH }} className="sticky top-0 left-0 z-20 border-b border-r border-gray-700 bg-gray-800" />
               {Array.from({ length: sheet.cols }, (_, c) => (
                 <th
                   key={c}
                   style={{ width: sheet.colWidths[c] ?? DEFAULT_COL_WIDTH }}
-                  className={`sticky top-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] font-semibold text-gray-400 ${sel.col === c ? "bg-purple-900/30 text-purple-300" : ""}`}
+                  className={`sticky top-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] font-semibold cursor-pointer ${sel.col === c ? "bg-purple-900/30 text-purple-300" : "text-gray-400"}`}
                   onClick={() => setSel({ row: sel.row, col: c })}
                 >
                   {colLabel(c)}
@@ -467,26 +546,20 @@ export default function SpySheetPage() {
               ))}
             </tr>
           </thead>
-
           <tbody>
             {Array.from({ length: sheet.rows }, (_, r) => (
               <tr key={r} style={{ height: sheet.rowHeights[r] ?? DEFAULT_ROW_HEIGHT }}>
-                {/* Row header */}
                 <td
-                  className={`sticky left-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] text-gray-500 select-none ${sel.row === r ? "bg-purple-900/30 text-purple-300 font-semibold" : ""}`}
+                  className={`sticky left-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] text-gray-500 cursor-pointer ${sel.row === r ? "bg-purple-900/30 text-purple-300 font-semibold" : ""}`}
                   onClick={() => setSel({ row: r, col: sel.col })}
                 >
                   {r + 1}
                 </td>
-
-                {/* Data cells */}
                 {Array.from({ length: sheet.cols }, (_, c) => {
                   const key = cellKey(r, c);
                   const cell = sheet.cells[key] ?? {};
                   const isSelected = sel.row === r && sel.col === c;
                   const isEditing = editKey === key;
-
-                  const alignMap: Record<string, React.CSSProperties["textAlign"]> = { l: "left", c: "center", r: "right" };
                   const cellStyle: React.CSSProperties = {
                     backgroundColor: cell.bg || undefined,
                     color: cell.fg || undefined,
@@ -496,21 +569,12 @@ export default function SpySheetPage() {
                     textAlign: alignMap[cell.ha ?? "l"] ?? "left",
                     fontSize: cell.fs ? `${cell.fs}px` : "13px",
                   };
-
                   return (
                     <td
                       key={c}
                       style={cellStyle}
-                      className={`relative border-b border-r border-gray-800 px-1.5 overflow-hidden whitespace-nowrap text-gray-100 cursor-default transition-colors ${
-                        isSelected
-                          ? "outline outline-2 outline-purple-500 outline-offset-[-1px] bg-purple-950/20"
-                          : "hover:bg-gray-800/40"
-                      }`}
-                      onClick={() => {
-                        if (editKey !== null) commitEdit();
-                        setSel({ row: r, col: c });
-                        gridRef.current?.focus();
-                      }}
+                      className={`relative border-b border-r border-gray-800 px-1.5 overflow-hidden whitespace-nowrap text-gray-100 cursor-default transition-colors ${isSelected ? "outline outline-2 outline-purple-500 outline-offset-[-1px] bg-purple-950/20" : "hover:bg-gray-800/40"}`}
+                      onClick={() => { if (editKey !== null) commitEdit(); setSel({ row: r, col: c }); gridRef.current?.focus(); }}
                       onDoubleClick={() => startEdit(r, c)}
                     >
                       {isEditing ? (
@@ -521,18 +585,10 @@ export default function SpySheetPage() {
                           onKeyDown={handleInputKeyDown}
                           onBlur={() => commitEdit()}
                           className="absolute inset-0 w-full h-full bg-white/5 px-1.5 text-gray-100 focus:outline-none"
-                          style={{
-                            fontSize: cell.fs ? `${cell.fs}px` : "13px",
-                            fontWeight: cell.b ? "bold" : undefined,
-                            fontStyle: cell.i ? "italic" : undefined,
-                            textAlign: alignMap[cell.ha ?? "l"] ?? "left",
-                            zIndex: 5,
-                          }}
+                          style={{ fontSize: cell.fs ? `${cell.fs}px` : "13px", fontWeight: cell.b ? "bold" : undefined, fontStyle: cell.i ? "italic" : undefined, textAlign: alignMap[cell.ha ?? "l"] ?? "left", zIndex: 5 }}
                         />
                       ) : (
-                        <span style={cellStyle} className="block truncate">
-                          {cell.v ?? ""}
-                        </span>
+                        <span style={cellStyle} className="block truncate">{cell.v ?? ""}</span>
                       )}
                     </td>
                   );
@@ -543,51 +599,106 @@ export default function SpySheetPage() {
         </table>
       </div>
 
+      {/* ── Sheet tabs bar ── */}
+      <div className="shrink-0 flex items-stretch border-t border-gray-700 bg-gray-900">
+        {/* Scrollable tabs */}
+        <div className="flex items-stretch overflow-x-auto flex-1 min-w-0">
+          {workbook.sheets.map((tab) => {
+            const isActive = tab.id === workbook.activeId;
+            const isRenaming = renamingId === tab.id;
+            return (
+              <div
+                key={tab.id}
+                className={`group relative flex items-center shrink-0 border-r border-gray-700 px-3 cursor-pointer select-none transition-colors ${
+                  isActive
+                    ? "bg-gray-950 border-t-2 border-t-purple-500 text-white"
+                    : "bg-gray-900 text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+                }`}
+                style={{ minWidth: 80, maxWidth: 180 }}
+                onClick={() => !isRenaming && switchSheet(tab.id)}
+                onDoubleClick={() => startRename(tab.id)}
+                onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, sheetId: tab.id }); }}
+              >
+                {isRenaming ? (
+                  <input
+                    ref={renameInputRef}
+                    value={renameVal}
+                    onChange={(e) => setRenameVal(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => { if (e.key === "Enter") commitRename(); else if (e.key === "Escape") setRenamingId(null); }}
+                    className="w-full bg-transparent text-xs text-white outline-none border-b border-purple-400"
+                    style={{ minWidth: 60 }}
+                  />
+                ) : (
+                  <span className="text-xs truncate">{tab.name}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Add sheet button */}
+        <button
+          onClick={addSheet}
+          className="shrink-0 flex items-center justify-center w-8 border-l border-gray-700 text-gray-500 hover:text-gray-200 hover:bg-gray-800 transition"
+          title="Add sheet"
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+
       {/* ── Status bar ── */}
       <div className="shrink-0 flex items-center justify-between border-t border-gray-800 bg-gray-900 px-4 py-1">
-        <span className="text-[11px] text-gray-500">
-          {sheet.rows} rows × {sheet.cols} cols
-        </span>
-        <span className="text-[11px] text-gray-500">
-          {Object.keys(sheet.cells).length} cells used
-        </span>
-        <span className="text-[11px] text-gray-500">
-          {selAddr} {selCell.v ? `= ${selCell.v}` : ""}
-        </span>
+        <span className="text-[11px] text-gray-500">{sheet.rows} rows × {sheet.cols} cols</span>
+        <span className="text-[11px] text-gray-500">{Object.keys(sheet.cells).length} cells used</span>
+        <span className="text-[11px] text-gray-500">{selAddr}{selCell.v ? ` = ${selCell.v}` : ""}</span>
       </div>
+
+      {/* ── Tab context menu ── */}
+      {ctxMenu && (
+        <div
+          className="fixed z-50 min-w-[160px] rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-2xl"
+          style={{ top: ctxMenu.y, left: ctxMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <CtxItem icon={<Pencil size={13} />} label="Rename" onClick={() => { startRename(ctxMenu.sheetId); setCtxMenu(null); }} />
+          <CtxItem icon={<Copy size={13} />} label="Duplicate" onClick={() => { duplicateSheet(ctxMenu.sheetId); setCtxMenu(null); }} />
+          <div className="my-1 border-t border-gray-800" />
+          <CtxItem
+            icon={<Trash2 size={13} />}
+            label="Delete"
+            danger
+            disabled={workbook.sheets.length === 1}
+            onClick={() => { deleteSheet(ctxMenu.sheetId); setCtxMenu(null); }}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Micro components ─────────────────────────────────────────────────────────
-
 function ToolbarGroup({ children }: { children: React.ReactNode }) {
   return <div className="flex items-center gap-0.5">{children}</div>;
 }
-
 function Sep() {
   return <div className="mx-1.5 h-5 w-px bg-gray-700" />;
 }
-
-function FmtBtn({
-  active, title, onClick, children,
-}: {
-  active?: boolean;
-  title?: string;
-  onClick?: () => void;
-  children: React.ReactNode;
-}) {
+function FmtBtn({ active, title, onClick, children }: { active?: boolean; title?: string; onClick?: () => void; children: React.ReactNode }) {
+  return (
+    <button title={title} onClick={onClick} className={`flex items-center gap-0.5 h-7 min-w-7 px-1.5 rounded text-xs transition ${active ? "bg-purple-600/30 text-purple-300" : "text-gray-400 hover:bg-gray-700 hover:text-gray-200"}`}>
+      {children}
+    </button>
+  );
+}
+function CtxItem({ icon, label, onClick, danger, disabled }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean; disabled?: boolean }) {
   return (
     <button
-      title={title}
       onClick={onClick}
-      className={`flex items-center gap-0.5 h-7 min-w-7 px-1.5 rounded text-xs transition ${
-        active
-          ? "bg-purple-600/30 text-purple-300"
-          : "text-gray-400 hover:bg-gray-700 hover:text-gray-200"
-      }`}
+      disabled={disabled}
+      className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-xs transition disabled:opacity-30 disabled:cursor-not-allowed ${danger ? "text-red-400 hover:bg-red-950/40" : "text-gray-300 hover:bg-gray-800"}`}
     >
-      {children}
+      {icon} {label}
     </button>
   );
 }
