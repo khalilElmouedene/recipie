@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
-    String, Text, DateTime, Integer, BigInteger, ForeignKey, Enum as SAEnum, UniqueConstraint, Boolean
+    String, Text, DateTime, Integer, BigInteger, ForeignKey, Enum as SAEnum, UniqueConstraint, Boolean, JSON
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -50,6 +50,30 @@ def _utcnow():
 
 def _new_uuid():
     return uuid.uuid4()
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    actor_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+
+    action: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    table_name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    entity_pk: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+
+    changed_fields: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    old_values: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    new_values: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    request_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    request_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class User(Base):

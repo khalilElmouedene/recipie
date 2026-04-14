@@ -13,6 +13,7 @@ from slowapi.errors import RateLimitExceeded
 limiter = Limiter(key_func=get_remote_address)
 
 from sqlalchemy import select
+from app.audit import clear_audit_context, register_audit_listeners, set_audit_request_context
 from app.config import settings
 from app.database import init_db, SessionLocal
 from app.services.prompts import DEFAULT_PROMPTS
@@ -100,6 +101,7 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+register_audit_listeners()
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -111,8 +113,22 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
         return response
 
+
+class AuditContextMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        clear_audit_context()
+        client_ip = request.client.host if request.client else None
+        set_audit_request_context(request.method, request.url.path, client_ip)
+        try:
+            response: Response = await call_next(request)
+            return response
+        finally:
+            clear_audit_context()
+
+
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(AuditContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -134,6 +150,7 @@ from app.routes.settings import router as settings_router
 from app.routes.pin_designer_templates import router as pin_designer_templates_router
 from app.routes.threads import router as threads_router
 from app.routes.spy_sheet import router as spy_sheet_router
+from app.routes.audit_logs import router as audit_logs_router
 from app.ws.logs import router as ws_router
 
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
@@ -152,4 +169,5 @@ app.include_router(settings_router)
 app.include_router(pin_designer_templates_router)
 app.include_router(threads_router)
 app.include_router(spy_sheet_router)
+app.include_router(audit_logs_router)
 app.include_router(ws_router)

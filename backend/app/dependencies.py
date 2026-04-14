@@ -9,6 +9,7 @@ from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .audit import set_audit_actor
 from .config import settings
 from .database import get_db
 from .db_models import User, UserRole, ProjectMember, ProjectMemberRole
@@ -29,6 +30,7 @@ async def _decode_token(token: str, db: AsyncSession) -> User:
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    set_audit_actor(user.id, user.email)
     return user
 
 

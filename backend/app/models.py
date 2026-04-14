@@ -426,6 +426,30 @@ class JobLogOut(BaseModel):
     created_at: datetime
 
 
+class AuditLogOut(BaseModel):
+    id: uuid.UUID
+    occurred_at: datetime
+    actor_user_id: uuid.UUID | None = None
+    actor_email: str | None = None
+    action: str
+    table_name: str
+    entity_pk: str | None = None
+    changed_fields: list[str] | None = None
+    old_values: dict | None = None
+    new_values: dict | None = None
+    request_method: str | None = None
+    request_path: str | None = None
+    ip_address: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class AuditLogListOut(BaseModel):
+    total: int
+    items: list[AuditLogOut]
+
+
 class DashboardStats(BaseModel):
     total_projects: int
     total_sites: int
