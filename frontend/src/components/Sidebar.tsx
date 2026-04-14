@@ -2,8 +2,8 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle } from "lucide-react";
-import { clearToken, getUserRole } from "@/lib/auth";
+import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle, ScrollText } from "lucide-react";
+import { clearToken, getUserEmail, getUserRole } from "@/lib/auth";
 import ThemeToggle from "@/components/ThemeToggle";
 
 const PinterestIcon = ({ size = 20 }: { size?: number }) => (
@@ -29,9 +29,14 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const role = getUserRole();
-  const allItems = role === "owner"
+  const email = (getUserEmail() || "").trim().toLowerCase();
+  const isAuditViewer = email === "khalil@gmail.com";
+  const baseItems = role === "owner"
     ? [...NAV, { href: "/users", label: "Users", icon: Users }, { href: "/settings", label: "Settings", icon: Settings }]
     : [...NAV, { href: "/settings", label: "Settings", icon: Settings }];
+  const allItems = isAuditViewer
+    ? [...baseItems, { href: "/logs", label: "Logs", icon: ScrollText }]
+    : baseItems;
 
   return (
     <aside

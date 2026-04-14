@@ -400,6 +400,29 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ data }) },
     ),
 
+  getAuditLogs: (params?: {
+    limit?: number;
+    offset?: number;
+    action?: string;
+    table_name?: string;
+    actor_user_id?: string;
+    entity_pk?: string;
+    from_at?: string;
+    to_at?: string;
+  }) => {
+    const qp = new URLSearchParams();
+    if (params?.limit !== undefined) qp.set("limit", String(params.limit));
+    if (params?.offset !== undefined) qp.set("offset", String(params.offset));
+    if (params?.action) qp.set("action", params.action);
+    if (params?.table_name) qp.set("table_name", params.table_name);
+    if (params?.actor_user_id) qp.set("actor_user_id", params.actor_user_id);
+    if (params?.entity_pk) qp.set("entity_pk", params.entity_pk);
+    if (params?.from_at) qp.set("from_at", params.from_at);
+    if (params?.to_at) qp.set("to_at", params.to_at);
+    const qs = qp.toString();
+    return request<AuditLogListOut>(`/api/audit-logs${qs ? `?${qs}` : ""}`);
+  },
+
   downloadSiteExcel: (siteId: string, domain: string) =>
     downloadFile(`/api/sites/${siteId}/export/excel`, `${domain.replace(/[^a-z0-9]/gi, "_")}.xlsx`),
 
@@ -746,6 +769,27 @@ export interface JobLogOut {
   id: number;
   message: string;
   created_at: string;
+}
+
+export interface AuditLogOut {
+  id: string;
+  occurred_at: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  action: string;
+  table_name: string;
+  entity_pk: string | null;
+  changed_fields: string[] | null;
+  old_values: Record<string, unknown> | null;
+  new_values: Record<string, unknown> | null;
+  request_method: string | null;
+  request_path: string | null;
+  ip_address: string | null;
+}
+
+export interface AuditLogListOut {
+  total: number;
+  items: AuditLogOut[];
 }
 
 export interface DashboardStats {

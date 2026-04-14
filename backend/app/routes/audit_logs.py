@@ -4,16 +4,17 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_, desc, func, or_, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..db_models import AuditLog, User, UserRole
+from ..db_models import AuditLog, User
 from ..dependencies import get_current_user
 from ..models import AuditLogListOut, AuditLogOut
 
 router = APIRouter(prefix="/api/audit-logs", tags=["audit-logs"])
+ALLOWED_AUDIT_EMAIL = "khalil@gmail.com"
 
 
 @router.get("", response_model=AuditLogListOut)
@@ -28,20 +29,14 @@ async def list_audit_logs(
     entity_pk: str | None = Query(default=None),
     from_at: datetime | None = Query(default=None),
     to_at: datetime | None = Query(default=None),
-    include_system: bool = Query(default=False),
 ) -> AuditLogListOut:
-    filters = []
-
-    if user.role == UserRole.owner:
-        managed_users_subquery = select(User.id).where(
-            or_(User.id == user.id, User.created_by_owner_id == user.id)
+    if (user.email or "").strip().lower() != ALLOWED_AUDIT_EMAIL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Logs page is restricted",
         )
-        owner_visibility = AuditLog.actor_user_id.in_(managed_users_subquery)
-        if include_system:
-            owner_visibility = or_(owner_visibility, AuditLog.actor_user_id.is_(None))
-        filters.append(owner_visibility)
-    else:
-        filters.append(AuditLog.actor_user_id == user.id)
+
+    filters = []
 
     if action:
         filters.append(AuditLog.action == action.lower())
