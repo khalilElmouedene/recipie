@@ -14,6 +14,7 @@ import { api } from "@/lib/api";
 const DEFAULT_ROWS = 50;
 const DEFAULT_COLS = 26;
 const DEFAULT_COL_WIDTH = 120;
+const MIN_COL_WIDTH = 60;
 const DEFAULT_ROW_HEIGHT = 26;
 const HEADER_WIDTH = 50;
 const HEADER_HEIGHT = 26;
@@ -66,6 +67,12 @@ type DragSelectionState =
   | { mode: "cells"; origin: Selection; additive: boolean; baseRanges: CellRange[] }
   | { mode: "rows"; originRow: number; additive: boolean; baseRanges: CellRange[] }
   | { mode: "cols"; originCol: number; additive: boolean; baseRanges: CellRange[] };
+
+interface ColResizeState {
+  col: number;
+  startX: number;
+  startWidth: number;
+}
 
 interface CtxMenu {
   x: number;
@@ -265,6 +272,7 @@ export default function SpySheetPage() {
   const gridRef = useRef<HTMLDivElement>(null);
   const selectionRangesRef = useRef<CellRange[]>([singleCellRange(0, 0)]);
   const dragSelectionRef = useRef<DragSelectionState | null>(null);
+  const colResizeRef = useRef<ColResizeState | null>(null);
   const clipboardFallbackRef = useRef("");
 
   // ── Active sheet ──
@@ -372,6 +380,42 @@ export default function SpySheetPage() {
       ),
     }));
   }, [updateWorkbook]);
+
+  useEffect(() => {
+    const resetResizeCursor = () => {
+      if (typeof document === "undefined") return;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    const handleResizeMove = (e: MouseEvent) => {
+      const resize = colResizeRef.current;
+      if (!resize) return;
+      const nextWidth = Math.max(MIN_COL_WIDTH, Math.round(resize.startWidth + (e.clientX - resize.startX)));
+      updateActiveData((prev) => {
+        const current = prev.colWidths[resize.col] ?? DEFAULT_COL_WIDTH;
+        if (current === nextWidth) return prev;
+        const nextColWidths = { ...prev.colWidths };
+        if (nextWidth === DEFAULT_COL_WIDTH) delete nextColWidths[resize.col];
+        else nextColWidths[resize.col] = nextWidth;
+        return { ...prev, colWidths: nextColWidths };
+      });
+    };
+
+    const handleResizeUp = () => {
+      if (!colResizeRef.current) return;
+      colResizeRef.current = null;
+      resetResizeCursor();
+    };
+
+    window.addEventListener("mousemove", handleResizeMove);
+    window.addEventListener("mouseup", handleResizeUp);
+    return () => {
+      window.removeEventListener("mousemove", handleResizeMove);
+      window.removeEventListener("mouseup", handleResizeUp);
+      resetResizeCursor();
+    };
+  }, [updateActiveData]);
 
   // ── Manual save ──
   const handleSave = async () => {
@@ -690,6 +734,25 @@ export default function SpySheetPage() {
     setSelectionRanges(drag.additive ? [...drag.baseRanges, nextRange] : [nextRange]);
   };
 
+  const handleColResizeMouseDown = (e: React.MouseEvent<HTMLDivElement>, col: number) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (editKey !== null) commitEdit();
+
+    const startWidth = activeSheet?.data.colWidths[col] ?? DEFAULT_COL_WIDTH;
+    colResizeRef.current = {
+      col,
+      startX: e.clientX,
+      startWidth,
+    };
+
+    if (typeof document !== "undefined") {
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    }
+  };
+
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") { e.preventDefault(); commitEdit(1, 0); }
     else if (e.key === "Tab") { e.preventDefault(); commitEdit(0, 1); }
@@ -808,6 +871,10 @@ export default function SpySheetPage() {
   const selCell = getCell(sel.row, sel.col);
   const selAddr = `${colLabel(sel.col)}${sel.row + 1}`;
   const sheet = activeSheet?.data ?? emptySheetData();
+  const tableMinWidth = HEADER_WIDTH + Array.from(
+    { length: sheet.cols },
+    (_, c) => sheet.colWidths[c] ?? DEFAULT_COL_WIDTH,
+  ).reduce((sum, width) => sum + width, 0);
   const alignMap: Record<string, React.CSSProperties["textAlign"]> = { l: "left", c: "center", r: "right" };
   const selectedCells = selectedCellsFromRanges(selectionRanges);
   const selectionLabel = selectionRanges.length === 1
@@ -946,7 +1013,7 @@ export default function SpySheetPage() {
         }}
         style={{ fontFamily: "Inter, system-ui, sans-serif" }}
       >
-        <table className="border-collapse" style={{ tableLayout: "fixed", minWidth: HEADER_WIDTH + sheet.cols * DEFAULT_COL_WIDTH }}>
+        <table className="border-collapse" style={{ tableLayout: "fixed", minWidth: tableMinWidth }}>
           <thead>
             <tr style={{ height: HEADER_HEIGHT }}>
               <th
@@ -963,12 +1030,17 @@ export default function SpySheetPage() {
               {Array.from({ length: sheet.cols }, (_, c) => (
                 <th
                   key={c}
-                  style={{ width: sheet.colWidths[c] ?? DEFAULT_COL_WIDTH }}
-                  className={`sticky top-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] font-semibold cursor-pointer ${isSelectedCol(c) ? "bg-purple-900/30 text-purple-300" : "text-gray-400"}`}
+                  style={{ width: sheet.colWidths[c] ?? DEFAULT_COL_WIDTH, minWidth: MIN_COL_WIDTH }}
+                  className={`relative sticky top-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] font-semibold cursor-pointer ${isSelectedCol(c) ? "bg-purple-900/30 text-purple-300" : "text-gray-400"}`}
                   onMouseDown={(e) => handleColHeaderMouseDown(e, c)}
                   onMouseEnter={(e) => handleColHeaderMouseEnter(e, c)}
                 >
                   {colLabel(c)}
+                  <div
+                    className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-purple-500/30"
+                    onMouseDown={(e) => handleColResizeMouseDown(e, c)}
+                    title="Resize column"
+                  />
                 </th>
               ))}
             </tr>
