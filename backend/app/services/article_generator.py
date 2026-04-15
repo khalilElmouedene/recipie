@@ -27,7 +27,7 @@ UPLOADS_DIR = Path("/app/uploads")
 # Midjourney: grid wait is configurable (owner Settings); these two are fixed.
 _MJ_DEFAULT_GRID_WAIT_SEC = 190
 _MJ_UPSCALE_GAP_SEC = 10
-_MJ_POST_UPSCALE_WAIT_SEC = 60
+_MJ_POST_UPSCALE_WAIT_SEC = 30
 
 
 def _mj_grid_wait_from_credentials(credentials: dict) -> int:

@@ -194,7 +194,7 @@ def generate_images(
     prompts: dict[str, str] | None = None,
     wait_time: int = 190,
     upscale_gap_seconds: int = 10,
-    post_upscale_wait_seconds: int = 60,
+    post_upscale_wait_seconds: int = 30,
     max_attempts: int | None = None,
     retry_delay_seconds: int = 15,
     log: Callable[[str], None] | None = None,
