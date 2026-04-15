@@ -311,7 +311,36 @@ def generate_for_recipe(
         full_recipe = openai_service.generate_full_recipe(recipe_title, openai_key, prompts=prompts, log=_log)
         result["generated_full_recipe"] = full_recipe
 
-        # 2. Generate article HTML
+        # 2. Midjourney images (required when Discord credentials are configured)
+        discord_auth = credentials.get("discord_auth", "").strip()
+        if discord_auth and image_url:
+            if _stop():
+                return result
+            _log("Waiting for Midjourney queue slot (one recipe at a time)...")
+            with _midjourney_lock:
+                if _stop():
+                    return result
+                _log("Midjourney slot acquired - generating images...")
+                gw = _mj_grid_wait_from_credentials(credentials)
+                img_urls = midjourney.generate_images(
+                    recipe_title,
+                    image_url,
+                    credentials,
+                    prompts=prompts,
+                    wait_time=gw,
+                    upscale_gap_seconds=_MJ_UPSCALE_GAP_SEC,
+                    post_upscale_wait_seconds=_MJ_POST_UPSCALE_WAIT_SEC,
+                    log=_log,
+                )
+                # Cache immediately - Discord CDN URLs expire after a few hours
+                cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
+                if not cached_urls:
+                    raise ValueError("Midjourney did not return any images")
+                result["generated_images"] = json.dumps(cached_urls)
+        else:
+            _log("Skipping Midjourney (no Discord credentials configured)")
+
+        # 3. Generate article HTML
         if _stop():
             return result
         _log("Generating article HTML...")
@@ -404,8 +433,8 @@ def generate_for_recipe(
                 _log(f"Pinterest pin tags generation failed (non-fatal): {e}")
 
         # 7. Midjourney images (only if Discord credentials exist)
-        discord_auth = credentials.get("discord_auth", "")
-        if discord_auth and image_url:
+        discord_auth = ""
+        if False:
             if _stop():
                 return result
             _log("Waiting for Midjourney queue slot (one recipe at a time)...")
@@ -431,7 +460,7 @@ def generate_for_recipe(
                 except Exception as e:
                     _log(f"Midjourney failed (non-fatal): {e}")
         else:
-            _log("Skipping Midjourney (no Discord credentials configured)")
+            pass
 
         _log(f"Content generation complete for: {recipe_title}")
         return result

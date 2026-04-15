@@ -9,7 +9,6 @@ import {
   Palette, PaintBucket, Loader2, Check, Copy, Trash2, Pencil,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import * as XLSX from "xlsx";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DEFAULT_ROWS = 50;
@@ -142,40 +141,99 @@ function parseStored(raw: string): Workbook {
   return emptyWorkbook();
 }
 
-function workbookToXlsx(wb: Workbook): ArrayBuffer {
-  const xlWb = XLSX.utils.book_new();
-  wb.sheets.forEach((tab) => {
-    const wsData: string[][] = [];
-    for (let r = 0; r < tab.data.rows; r++) {
-      const row: string[] = [];
-      for (let c = 0; c < tab.data.cols; c++) {
-        row.push(tab.data.cells[cellKey(r, c)]?.v ?? "");
-      }
-      wsData.push(row);
-    }
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    XLSX.utils.book_append_sheet(xlWb, ws, tab.name);
+function sheetDataToCsv(sheet: SheetData): string {
+  const keys = Object.keys(sheet.cells).filter((k) => (sheet.cells[k]?.v ?? "") !== "");
+  let maxRow = 0;
+  let maxCol = 0;
+  keys.forEach((k) => {
+    const [rStr, cStr] = k.split("_");
+    const r = Number(rStr);
+    const c = Number(cStr);
+    if (!Number.isNaN(r)) maxRow = Math.max(maxRow, r);
+    if (!Number.isNaN(c)) maxCol = Math.max(maxCol, c);
   });
-  return XLSX.write(xlWb, { type: "array", bookType: "xlsx" });
+
+  const rowCount = Math.max(1, maxRow + 1);
+  const colCount = Math.max(1, maxCol + 1);
+  const escape = (value: string) => `"${value.replace(/"/g, "\"\"")}"`;
+
+  const lines: string[] = [];
+  for (let r = 0; r < rowCount; r++) {
+    const rowValues: string[] = [];
+    for (let c = 0; c < colCount; c++) {
+      rowValues.push(sheet.cells[cellKey(r, c)]?.v ?? "");
+    }
+    lines.push(rowValues.map(escape).join(","));
+  }
+  return lines.join("\r\n");
 }
 
-function xlsxToWorkbook(buffer: ArrayBuffer): Workbook {
-  const xlWb = XLSX.read(buffer, { type: "array" });
-  const tabs: SheetTab[] = xlWb.SheetNames.map((name) => {
-    const ws = xlWb.Sheets[name];
-    const rows2d: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as string[][];
-    const data = emptySheetData();
-    data.rows = Math.max(DEFAULT_ROWS, rows2d.length);
-    data.cols = Math.max(DEFAULT_COLS, Math.max(...rows2d.map((r) => r.length), 0));
-    rows2d.forEach((row, r) => {
-      row.forEach((val, c) => {
-        if (val !== "" && val != null) data.cells[cellKey(r, c)] = { v: String(val) };
-      });
+function csvToRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  const source = text.replace(/^\uFEFF/, "");
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+
+    if (inQuotes) {
+      if (ch === "\"") {
+        if (source[i + 1] === "\"") {
+          current += "\"";
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inQuotes = true;
+      continue;
+    }
+    if (ch === ",") {
+      row.push(current);
+      current = "";
+      continue;
+    }
+    if (ch === "\n") {
+      row.push(current);
+      rows.push(row);
+      row = [];
+      current = "";
+      continue;
+    }
+    if (ch === "\r") continue;
+
+    current += ch;
+  }
+
+  row.push(current);
+  rows.push(row);
+
+  while (rows.length > 1 && rows[rows.length - 1].every((v) => v === "")) {
+    rows.pop();
+  }
+  return rows;
+}
+
+function rowsToSheetData(rows2d: string[][]): SheetData {
+  const safeRows = rows2d.length > 0 ? rows2d : [[""]];
+  const maxCols = Math.max(...safeRows.map((r) => r.length), 1);
+  const data = emptySheetData();
+  data.rows = Math.max(DEFAULT_ROWS, safeRows.length);
+  data.cols = Math.max(DEFAULT_COLS, maxCols);
+  safeRows.forEach((row, r) => {
+    row.forEach((val, c) => {
+      if (val !== "") data.cells[cellKey(r, c)] = { v: val };
     });
-    return { id: uid(), name, data };
   });
-  const first = tabs[0] ?? newTab("Sheet1");
-  return { sheets: tabs.length ? tabs : [first], activeId: first.id };
+  return data;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -714,22 +772,33 @@ export default function SpySheetPage() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const wb = xlsxToWorkbook(ev.target?.result as ArrayBuffer);
-      setWorkbook(wb);
-      scheduleAutoSave(wb);
+      const text = typeof ev.target?.result === "string" ? ev.target.result : "";
+      const rows = csvToRows(text);
+      const imported = rowsToSheetData(rows);
+      setWorkbook((prev) => {
+        const next: Workbook = {
+          ...prev,
+          sheets: prev.sheets.map((s) =>
+            s.id === prev.activeId ? { ...s, data: imported } : s
+          ),
+        };
+        scheduleAutoSave(next);
+        return next;
+      });
       setSingleSelection(0, 0);
+      setEditKey(null);
     };
-    reader.readAsArrayBuffer(file);
+    reader.readAsText(file);
     e.target.value = "";
   };
 
   const handleExport = () => {
-    const buf = workbookToXlsx(workbook);
-    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const csv = sheetDataToCsv(sheet);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `spy-sheet-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    a.download = `spy-sheet-${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -776,11 +845,11 @@ export default function SpySheetPage() {
             </span>
           )}
           <label className="flex cursor-pointer items-center gap-1.5 rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs font-medium text-gray-300 hover:bg-gray-700 transition">
-            <Upload size={13} /> Import Excel
-            <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} />
+            <Upload size={13} /> Import CSV
+            <input type="file" accept=".csv,text/csv" className="hidden" onChange={handleImport} />
           </label>
           <button onClick={handleExport} className="flex items-center gap-1.5 rounded-md border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs font-medium text-gray-300 hover:bg-gray-700 transition">
-            <Download size={13} /> Export Excel
+            <Download size={13} /> Export CSV
           </button>
           <button onClick={() => void handleSave()} disabled={saving} className="flex items-center gap-1.5 rounded-md bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-500 disabled:opacity-50 transition">
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}

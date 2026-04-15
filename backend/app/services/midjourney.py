@@ -195,6 +195,8 @@ def generate_images(
     wait_time: int = 190,
     upscale_gap_seconds: int = 10,
     post_upscale_wait_seconds: int = 60,
+    max_attempts: int | None = None,
+    retry_delay_seconds: int = 15,
     log: Callable[[str], None] | None = None,
 ) -> list[str]:
     """High-level function to generate 4 Midjourney images for a recipe.
@@ -206,8 +208,18 @@ def generate_images(
     tpl = get_prompt(prompts or {}, "midjourney_imagine")
     prompt = tpl.format(recipe_name=recipe_name, img_url=img_url, source_img=img_url)
 
+    retry_delay = max(1, min(300, int(retry_delay_seconds)))
+    post_wait = max(10, min(600, post_upscale_wait_seconds))
+    attempts_limit = max(1, int(max_attempts)) if max_attempts is not None else None
+    attempt = 0
     while True:
+        attempt += 1
         try:
+            if attempts_limit is None:
+                _log(f"Midjourney initial communication attempt {attempt}")
+            else:
+                _log(f"Midjourney initial communication attempt {attempt}/{attempts_limit}")
+
             mj = MidjourneyApi(
                 prompt=prompt,
                 application_id=credentials.get("discord_app_id", ""),
@@ -220,14 +232,39 @@ def generate_images(
                 upscale_gap_seconds=upscale_gap_seconds,
                 log=_log,
             )
+
+            send_resp = mj.send_message()
+            # Discord interactions should return 204 on success.
+            if send_resp.status_code != 204:
+                body = ""
+                try:
+                    body = (send_resp.text or "").strip()
+                except Exception:
+                    body = ""
+                if len(body) > 240:
+                    body = body[:240] + "...[truncated]"
+                raise ValueError(
+                    f"Midjourney prompt send failed (status {send_resp.status_code})"
+                    + (f": {body}" if body else "")
+                )
             break
         except Exception as e:
-            _log(f"Regenerate MJ client... {e}")
+            if attempts_limit is None:
+                _log(f"Midjourney initial communication failed (attempt {attempt}): {e}. Retrying in {retry_delay}s...")
+            else:
+                if attempt >= attempts_limit:
+                    raise ValueError(f"Midjourney initial communication failed after {attempts_limit} attempt(s): {e}")
+                _log(
+                    f"Midjourney initial communication failed "
+                    f"(attempt {attempt}/{attempts_limit}): {e}. Retrying in {retry_delay}s..."
+                )
+            time.sleep(retry_delay)
 
-    mj.send_message()
+    # From here onward, do not retry the full generation: only the first communication is retried.
     mj.choose_images()
-
-    post_wait = max(10, min(600, post_upscale_wait_seconds))
+    _log(f"Waiting {post_wait}s for upscaled images to appear...")
     time.sleep(post_wait)
-
-    return mj.download_image()
+    image_urls = mj.download_image()
+    if not image_urls:
+        raise ValueError("Midjourney returned no image URLs")
+    return image_urls
