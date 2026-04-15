@@ -705,10 +705,32 @@ export default function SpySheetPage() {
     setSelectionRanges(drag.additive ? [...drag.baseRanges, nextRange] : [nextRange]);
   };
 
+  const startColResize = useCallback((col: number, clientX: number) => {
+    const boundedCol = clampIndex(col, 0, sheetCols - 1);
+    const startWidth = activeSheet?.data.colWidths[boundedCol] ?? DEFAULT_COL_WIDTH;
+    colResizeRef.current = {
+      col: boundedCol,
+      startX: clientX,
+      startWidth,
+    };
+    if (typeof document !== "undefined") {
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    }
+  }, [activeSheet, sheetCols]);
+
   const handleColHeaderMouseDown = (e: React.MouseEvent<HTMLTableCellElement>, col: number) => {
     if (e.button !== 0) return;
     if (editKey !== null) commitEdit();
     gridRef.current?.focus();
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const isResizeIntent = rect.right - e.clientX <= 10;
+    if (isResizeIntent) {
+      startColResize(col, e.clientX);
+      e.preventDefault();
+      return;
+    }
 
     const boundedCol = clampIndex(col, 0, sheetCols - 1);
     const additive = e.ctrlKey || e.metaKey;
@@ -739,18 +761,7 @@ export default function SpySheetPage() {
     e.preventDefault();
     e.stopPropagation();
     if (editKey !== null) commitEdit();
-
-    const startWidth = activeSheet?.data.colWidths[col] ?? DEFAULT_COL_WIDTH;
-    colResizeRef.current = {
-      col,
-      startX: e.clientX,
-      startWidth,
-    };
-
-    if (typeof document !== "undefined") {
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-    }
+    startColResize(col, e.clientX);
   };
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
