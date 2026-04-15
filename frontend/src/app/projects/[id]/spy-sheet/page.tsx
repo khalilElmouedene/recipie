@@ -15,6 +15,7 @@ const DEFAULT_ROWS = 50;
 const DEFAULT_COLS = 26;
 const DEFAULT_COL_WIDTH = 120;
 const MIN_COL_WIDTH = 60;
+const COL_RESIZE_HITBOX = 10;
 const DEFAULT_ROW_HEIGHT = 26;
 const HEADER_WIDTH = 50;
 const HEADER_HEIGHT = 26;
@@ -668,6 +669,7 @@ export default function SpySheetPage() {
 
   const handleCellMouseEnter = (e: React.MouseEvent<HTMLTableCellElement>, row: number, col: number) => {
     if ((e.buttons & 1) !== 1) return;
+    if (colResizeRef.current) return;
     const drag = dragSelectionRef.current;
     if (!drag || drag.mode !== "cells") return;
     const cell = clampToSheet(row, col);
@@ -696,6 +698,7 @@ export default function SpySheetPage() {
 
   const handleRowHeaderMouseEnter = (e: React.MouseEvent<HTMLTableCellElement>, row: number) => {
     if ((e.buttons & 1) !== 1) return;
+    if (colResizeRef.current) return;
     const drag = dragSelectionRef.current;
     if (!drag || drag.mode !== "rows") return;
 
@@ -725,9 +728,15 @@ export default function SpySheetPage() {
     gridRef.current?.focus();
 
     const rect = e.currentTarget.getBoundingClientRect();
-    const isResizeIntent = rect.right - e.clientX <= 10;
-    if (isResizeIntent) {
+    const rightDist = rect.right - e.clientX;
+    const leftDist = e.clientX - rect.left;
+    if (rightDist <= COL_RESIZE_HITBOX) {
       startColResize(col, e.clientX);
+      e.preventDefault();
+      return;
+    }
+    if (leftDist <= COL_RESIZE_HITBOX && col > 0) {
+      startColResize(col - 1, e.clientX);
       e.preventDefault();
       return;
     }
@@ -747,6 +756,7 @@ export default function SpySheetPage() {
 
   const handleColHeaderMouseEnter = (e: React.MouseEvent<HTMLTableCellElement>, col: number) => {
     if ((e.buttons & 1) !== 1) return;
+    if (colResizeRef.current) return;
     const drag = dragSelectionRef.current;
     if (!drag || drag.mode !== "cols") return;
 
