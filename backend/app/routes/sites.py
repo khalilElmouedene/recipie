@@ -141,6 +141,7 @@ async def create_site(
         sheet_name=body.sheet_name,
         spreadsheet_id=body.spreadsheet_id,
         pinterest_url=body.pinterest_url or None,
+        image_mode=body.image_mode if body.image_mode in ("featured_only", "featured_and_top") else "featured_and_top",
     )
     db.add(site)
     await db.commit()
@@ -190,6 +191,8 @@ async def update_site(
         site.spreadsheet_id = body.spreadsheet_id
     if body.pinterest_url is not None:
         site.pinterest_url = body.pinterest_url or None
+    if body.image_mode is not None:
+        site.image_mode = body.image_mode if body.image_mode in ("featured_only", "featured_and_top") else "featured_and_top"
 
     await db.commit()
     row = await db.execute(select(Site).where(Site.id == site_id))

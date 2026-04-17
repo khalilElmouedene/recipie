@@ -102,7 +102,10 @@ export interface PinTemplate {
 
 // ─── Templates ───────────────────────────────────────────────────────────────
 
-export const TEMPLATES: PinTemplate[] = [
+export const TEMPLATES: PinTemplate[] = [];
+
+// (kept for import compatibility — all templates are now custom/project templates)
+const _UNUSED_BUILTIN_TEMPLATES_REMOVED: PinTemplate[] = [
   {
     id: "canva-brown-bars",
     name: "Canva Style: Brown Band",
@@ -787,7 +790,7 @@ export default function PinDesigner({
   const [canvasReady, setCanvasReady] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<PinTemplate | null>(null);
   const [customTemplates, setCustomTemplates] = useState<PinTemplate[]>([]);
-  const allTemplates: PinTemplate[] = [...TEMPLATES, ...customTemplates];
+  const allTemplates: PinTemplate[] = customTemplates;
   const [pinName, setPinName] = useState(templateName);
 
   // Pinterest
@@ -1017,8 +1020,8 @@ export default function PinDesigner({
           await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe");
         }
       }
-      // 2. WordPress batch — backend only includes recipes with status "generated" (see publish_batch_to_wordpress).
-      const res = await api.publishBatchToWordPress(projectId, { mode, ...opts });
+      // 2. WordPress batch — scoped to siteId when available so only this site's recipes are published.
+      const res = await api.publishBatchToWordPress(projectId, { mode, ...opts, ...(siteId ? { site_id: siteId } : {}) });
       const extra = res.errors?.length ? `\n${res.errors.slice(0, 4).join("\n")}` : "";
       alert(`WordPress batch finished.\nSucceeded: ${res.succeeded} / ${res.total}\nFailed: ${res.failed}${extra}`);
       if (res.succeeded > 0) setWpBatchDone(true);
@@ -3705,40 +3708,6 @@ export default function PinDesigner({
             {leftTab === "templates" && (
               <div className="space-y-3">
                 <div className="space-y-2">
-                  <p className="text-xs text-gray-400">Built-in templates</p>
-                  {TEMPLATES.map((t) => (
-                    <div
-                      key={t.id}
-                      className={`rounded-lg border-2 p-3 cursor-pointer transition ${selectedTemplate?.id === t.id ? "border-brand-500 bg-brand-500/10" : "border-gray-700 hover:border-gray-500"}`}
-                    >
-                      <div className="h-28 rounded bg-gray-800 mb-2 overflow-hidden flex items-center justify-center">
-                        {t.exampleImage ? (
-                          <img src={t.exampleImage} alt={t.name} className="h-full w-full object-contain object-top" />
-                        ) : (
-                          <TemplatePreview layout={t.previewLayout} />
-                        )}
-                      </div>
-                      <p className="text-sm font-medium text-white">{t.name}</p>
-                      <p className="text-[11px] text-gray-500 mb-2">{t.description}</p>
-                      <button
-                        onClick={() => {
-                          setSelectedTemplate(t);
-                          onTemplateSelected?.(t.id);
-                          if (frames && frames.length > 1) {
-                            frameJsonsRef.current = {};
-                            setFramePreviews({});
-                            generateAllFramePreviews(t);
-                          }
-                        }}
-                        className={`text-xs px-3 py-1 rounded ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
-                      >
-                        {selectedTemplate?.id === t.id ? "✓ Selected" : "Use Template"}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="pt-3 border-t border-gray-800 space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs text-gray-400">My templates</p>
                     <button
@@ -3751,7 +3720,7 @@ export default function PinDesigner({
                   </div>
 
                   {customTemplates.length === 0 ? (
-                    <p className="text-[11px] text-gray-500">No custom templates yet. Start from a built-in one, edit, then click Save.</p>
+                    <p className="text-[11px] text-gray-500">No templates yet. Design a layout and click Save to create your first template.</p>
                   ) : (
                     customTemplates.map((t) => (
                       <div

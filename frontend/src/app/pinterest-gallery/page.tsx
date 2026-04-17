@@ -14,6 +14,7 @@ import {
   ChevronDown,
   Loader2,
   Sheet,
+  Globe,
 } from "lucide-react";
 import { api, ProjectOut, SiteOut, RecipeOut } from "@/lib/api";
 import {
@@ -159,9 +160,23 @@ export default function PinterestGalleryPage() {
     return list;
   }, [allRecipes, selectedBoard, search]);
 
+  // Group filtered recipes: siteDomain → pin_board → recipes[]
+  const grouped = useMemo(() => {
+    const byDomain = new Map<string, Map<string, EnrichedRecipe[]>>();
+    for (const r of filtered) {
+      if (!byDomain.has(r.siteDomain)) byDomain.set(r.siteDomain, new Map());
+      const board = r.pin_board || "__none__";
+      const domainMap = byDomain.get(r.siteDomain)!;
+      if (!domainMap.has(board)) domainMap.set(board, []);
+      domainMap.get(board)!.push(r);
+    }
+    return byDomain;
+  }, [filtered]);
+
   const worksheetSourceRows = useMemo<PinterestWorksheetRecipe[]>(
     () => filtered.map((r) => ({
       siteId: r.siteId,
+      siteDomain: r.siteDomain,
       pinTitle: r.pin_title,
       recipeText: r.recipe_text || "",
       pinDesignImage: r.pin_design_image,
@@ -316,7 +331,7 @@ export default function PinterestGalleryPage() {
           <div className="mb-6 flex flex-wrap gap-3">
             <StatPill label="Total pins" value={allRecipes.length} color="brand" />
             <StatPill label="Boards" value={boards.length} color="purple" />
-            <StatPill label="Projects" value={projects.length} color="blue" />
+            <StatPill label="Websites" value={new Set(allRecipes.map((r) => r.siteDomain)).size} color="blue" />
             {selectedBoard !== "__all__" && (
               <StatPill label="Showing" value={filtered.length} color="pink" />
             )}
@@ -391,28 +406,51 @@ export default function PinterestGalleryPage() {
           <EmptyState message="No pins match your current filter." />
         )}
 
-        {/* ── Grid ── */}
+        {/* ── Grouped by website → board ── */}
         {!loading && !error && filtered.length > 0 && (
-          <>
-            {/* Board section heading when a board is selected */}
-            {selectedBoard !== "__all__" && (
-              <div className="mb-5 flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#E60023]/15">
-                  <LayoutGrid size={15} className="text-[#E60023]" />
-                </div>
-                <div>
-                  <h2 className="text-sm font-semibold text-white">{selectedBoard}</h2>
-                  <p className="text-xs text-gray-500">{filtered.length} pin{filtered.length !== 1 ? "s" : ""}</p>
-                </div>
-              </div>
-            )}
+          <div className="space-y-12">
+            {Array.from(grouped.entries()).map(([domain, boardMap]) => {
+              const siteTotal = Array.from(boardMap.values()).reduce((s, r) => s + r.length, 0);
+              const showBoardHeadings = boardMap.size > 1 || selectedBoard === "__all__";
+              return (
+                <section key={domain}>
+                  {/* Website header */}
+                  <div className="mb-6 flex items-center gap-3 pb-3 border-b border-gray-800">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-950/60 border border-blue-800/40 shrink-0">
+                      <Globe size={15} className="text-blue-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h2 className="text-sm font-semibold text-white truncate">{domain}</h2>
+                      <p className="text-xs text-gray-500">{siteTotal} pin{siteTotal !== 1 ? "s" : ""} · {boardMap.size} board{boardMap.size !== 1 ? "s" : ""}</p>
+                    </div>
+                  </div>
 
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-              {filtered.map((recipe) => (
-                <RecipeCard key={recipe.id} recipe={recipe} />
-              ))}
-            </div>
-          </>
+                  {/* Boards within this site */}
+                  <div className="space-y-8">
+                    {Array.from(boardMap.entries()).map(([board, recipes]) => (
+                      <div key={board}>
+                        {/* Board sub-heading (only shown when multiple boards or no filter) */}
+                        {showBoardHeadings && (
+                          <div className="mb-4 flex items-center gap-2">
+                            <LayoutGrid size={13} className="text-[#E60023] shrink-0" />
+                            <h3 className="text-xs font-semibold text-gray-300">
+                              {board === "__none__" ? "No board assigned" : board}
+                            </h3>
+                            <span className="text-[10px] text-gray-600 ml-1">{recipes.length}</span>
+                          </div>
+                        )}
+                        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                          {recipes.map((recipe) => (
+                            <RecipeCard key={recipe.id} recipe={recipe} />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
         )}
       </div>
 

@@ -592,6 +592,7 @@ class JobManager:
             "wp_url": site_obj.wp_url,
             "wp_username": wp_user,
             "wp_password": wp_pass,
+            "image_mode": getattr(site_obj, "image_mode", "featured_and_top") or "featured_and_top",
         }
 
     def stop_job(self, job_id: str) -> bool:

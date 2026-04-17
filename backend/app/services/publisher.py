@@ -135,8 +135,13 @@ def publish_recipe(
         # Upload any pin embed base64 images to WordPress (replaces data: URL with real WP media URL)
         upload_pin_embed_images(soup, wp, wp_title, log=_log)
 
-        # Inject image into the article using BeautifulSoup (before first <p>)
-        content = inject_images_into_html(soup, img1_url)
+        # Inject food photo at the top only when site is configured to show it.
+        # "featured_only" keeps the article body clean (pin image may already be embedded).
+        image_mode = site_config.get("image_mode", "featured_and_top")
+        if image_mode == "featured_and_top":
+            content = inject_images_into_html(soup, img1_url)
+        else:
+            content = str(soup)
 
         # Recipe card shortcode
         wp_recipe_id = None

@@ -164,6 +164,7 @@ class SiteCreate(BaseModel):
     sheet_name: str = ""
     spreadsheet_id: str = ""
     pinterest_url: str = ""
+    image_mode: str = "featured_and_top"
 
 
 class SiteUpdate(BaseModel):
@@ -173,6 +174,7 @@ class SiteUpdate(BaseModel):
     sheet_name: str | None = None
     spreadsheet_id: str | None = None
     pinterest_url: str | None = None
+    image_mode: str | None = None
 
 
 class WpUserOut(BaseModel):
@@ -188,6 +190,7 @@ class SiteOut(BaseModel):
     sheet_name: str
     spreadsheet_id: str
     pinterest_url: str = ""
+    image_mode: str = "featured_and_top"
     created_at: datetime
     recipe_count: int = 0
 
@@ -333,6 +336,7 @@ class PublishBatchRequest(BaseModel):
     mode: Literal["wordpress_scheduled", "manual_backdate"]
     first_publish_at: datetime | None = None  # base time for first post (wordpress_scheduled)
     interval_minutes: int | None = None  # override project interval
+    site_id: uuid.UUID | None = None  # if set, only publish recipes for this site
 
 
 class PublishBatchOut(BaseModel):

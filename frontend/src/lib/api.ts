@@ -594,6 +594,7 @@ export interface SiteOut {
   sheet_name: string;
   spreadsheet_id: string;
   pinterest_url: string;
+  image_mode: string;
   created_at: string;
   recipe_count: number;
 }
@@ -610,6 +611,7 @@ export interface SiteCreateData {
   sheet_name?: string;
   spreadsheet_id?: string;
   pinterest_url?: string;
+  image_mode?: string;
 }
 
 export interface RecipeOut {
@@ -693,6 +695,7 @@ export interface PublishBatchRequest {
   mode: "wordpress_scheduled" | "manual_backdate";
   first_publish_at?: string; // ISO datetime for first post (wordpress_scheduled mode)
   interval_minutes?: number; // override project interval
+  site_id?: string; // if set, only publish recipes for this site
 }
 
 export interface PublishBatchOut {

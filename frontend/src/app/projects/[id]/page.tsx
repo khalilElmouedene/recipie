@@ -173,12 +173,12 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
   const toast = useToast();
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
+  const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [loading, setLoading] = useState(false);
   const [publishingSiteId, setPublishingSiteId] = useState<string | null>(null);
   const [detailsSite, setDetailsSite] = useState<SiteOut | null>(null);
   const [editSite, setEditSite] = useState<SiteOut | null>(null);
-  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", pinterest_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
+  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [editing, setEditing] = useState(false);
 
   const load = () => api.getSites(projectId).then(setSites).catch(() => {});
@@ -198,7 +198,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
     setLoading(true);
     try {
       await api.createSite(projectId, { ...form, wp_users: validUsers });
-      setForm({ domain: "", wp_url: "", pinterest_url: "", wp_users: [emptyWpUser()] });
+      setForm({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", wp_users: [emptyWpUser()] });
       setShow(false);
       load();
     } catch {}
@@ -232,6 +232,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
       domain: s.domain,
       wp_url: s.wp_url,
       pinterest_url: s.pinterest_url || "",
+      image_mode: (s as any).image_mode || "featured_and_top",
       wp_users: wpUsers.length ? wpUsers : [emptyWpUser()],
     });
   };
@@ -250,6 +251,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
         domain: editForm.domain,
         wp_url: editForm.wp_url,
         pinterest_url: editForm.pinterest_url || "",
+        image_mode: editForm.image_mode,
         wp_users: validUsers.map((u) => ({ username: u.username, password: u.password })),
       };
       await api.updateSite(editSite.id, data);
@@ -289,6 +291,18 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
           <div className="col-span-2">
             <label className="block text-sm font-medium text-gray-300 mb-1">Pinterest Account URL <span className="text-gray-500 font-normal">(used in generated articles)</span></label>
             <input value={form.pinterest_url} onChange={(e) => setForm({ ...form, pinterest_url: e.target.value })} className="input-field" placeholder="https://www.pinterest.com/youraccount/" />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-sm font-medium text-gray-300 mb-1">Article Image Mode</label>
+            <select value={form.image_mode} onChange={(e) => setForm({ ...form, image_mode: e.target.value })} className="input-field">
+              <option value="featured_and_top">Featured image + top image in article</option>
+              <option value="featured_only">Featured image only (clean article body)</option>
+            </select>
+            <p className="text-xs text-gray-500 mt-1">
+              {form.image_mode === "featured_only"
+                ? "Only the WordPress featured image (thumbnail) will be set. The article body stays clean — ideal when using pin designer images."
+                : "The food photo is injected at the top of the article AND set as featured image."}
+            </p>
           </div>
           <div className="col-span-2">
             <label className="block text-sm font-medium text-gray-300 mb-1">WP Users (one randomly selected per publish)</label>
@@ -450,6 +464,13 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
                   className="input-field w-full"
                   placeholder="https://www.pinterest.com/youraccount/"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Article Image Mode</label>
+                <select value={editForm.image_mode} onChange={(e) => setEditForm({ ...editForm, image_mode: e.target.value })} className="input-field w-full">
+                  <option value="featured_and_top">Featured image + top image in article</option>
+                  <option value="featured_only">Featured image only (clean article body)</option>
+                </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-1">WP Users (blank password = keep current)</label>

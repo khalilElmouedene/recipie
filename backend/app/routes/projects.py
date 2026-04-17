@@ -470,12 +470,15 @@ async def publish_batch_to_wordpress(
     sched = sched_row.scalar_one_or_none()
     interval_minutes = max(1, body.interval_minutes if body.interval_minutes else (sched.interval_minutes if sched else 240))
 
-    pairs_result = await db.execute(
+    query = (
         select(Recipe, Site)
         .join(Site, Recipe.site_id == Site.id)
         .where(Site.project_id == project_id, Recipe.status == RecipeStatus.generated)
-        .order_by(Site.id, Recipe.created_at.asc())
     )
+    if body.site_id is not None:
+        query = query.where(Recipe.site_id == body.site_id)
+    query = query.order_by(Site.id, Recipe.created_at.asc())
+    pairs_result = await db.execute(query)
     pairs = pairs_result.all()
     if not pairs:
         raise HTTPException(
@@ -528,6 +531,7 @@ async def publish_batch_to_wordpress(
             "wp_username": wp_username,
             "wp_password": wp_password,
             "domain": site.domain if site.domain.startswith("http") else f"https://{site.domain}",
+            "image_mode": getattr(site, "image_mode", "featured_and_top") or "featured_and_top",
         }
         recipe_dict = {
             "id": str(recipe.id),

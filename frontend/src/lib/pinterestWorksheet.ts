@@ -1,5 +1,6 @@
 export interface PinterestWorksheetRecipe {
   siteId: string;
+  siteDomain?: string;
   pinTitle: string | null;
   recipeText: string;
   pinDesignImage: string | null;
@@ -54,20 +55,30 @@ export async function buildPinterestWorksheetRows(
 ): Promise<string[][]> {
   const startMs = new Date(startDate).getTime();
   const intervalMs = intervalMinutes * 60 * 1000;
-  const rows: string[][] = [];
 
-  for (let i = 0; i < recipes.length; i++) {
-    const recipe = recipes[i];
-    rows.push([
-      buildTitle(recipe),
-      await resolveMediaUrl(recipe),
-      recipe.pinBoard || "",
-      "",
-      recipe.pinDescription || "",
-      recipe.wpPermalink || "",
-      formatPublishDate(startMs + i * intervalMs),
-      recipe.pinTags || "",
-    ]);
+  // Group by siteId so each website gets its own independent publish schedule
+  // starting from startDate. Preserves insertion order for sites.
+  const groups = new Map<string, PinterestWorksheetRecipe[]>();
+  for (const r of recipes) {
+    if (!groups.has(r.siteId)) groups.set(r.siteId, []);
+    groups.get(r.siteId)!.push(r);
+  }
+
+  const rows: string[][] = [];
+  for (const group of groups.values()) {
+    for (let i = 0; i < group.length; i++) {
+      const recipe = group[i];
+      rows.push([
+        buildTitle(recipe),
+        await resolveMediaUrl(recipe),
+        recipe.pinBoard || "",
+        "",
+        recipe.pinDescription || "",
+        recipe.wpPermalink || "",
+        formatPublishDate(startMs + i * intervalMs),
+        recipe.pinTags || "",
+      ]);
+    }
   }
 
   return rows;

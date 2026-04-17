@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..db_models import PinDesignerTemplate, User
+from ..db_models import PinDesignerTemplate, Project, ProjectMember, User
 from ..dependencies import get_current_user
 from ..models import (
     PinDesignerTemplateCreate,
@@ -58,12 +59,33 @@ async def list_pin_designer_templates(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Resolve effective owner: members see their owner's templates
+    # Resolve effective owner: members see their owner's templates.
+    # Priority: 1) user is owner → own templates
+    #           2) user was created by an owner → that owner's templates
+    #           3) user is a project member → project owner's templates
     from ..db_models import UserRole
     if user.role == UserRole.owner:
         owner_id = user.id
     elif user.created_by_owner_id:
         owner_id = user.created_by_owner_id
+    elif project_id:
+        try:
+            proj_uuid = uuid.UUID(project_id)
+        except Exception:
+            return []
+        member_row = await db.execute(
+            select(ProjectMember).where(
+                ProjectMember.project_id == proj_uuid,
+                ProjectMember.user_id == user.id,
+            )
+        )
+        if not member_row.scalar_one_or_none():
+            return []
+        proj_row = await db.execute(select(Project).where(Project.id == proj_uuid))
+        proj = proj_row.scalar_one_or_none()
+        if not proj:
+            return []
+        owner_id = proj.owner_id
     else:
         return []
 

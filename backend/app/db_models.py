@@ -206,6 +206,9 @@ class Site(Base):
     wp_users_enc: Mapped[str] = mapped_column(Text, nullable=True)  # JSON: [{"username","password_enc"},...]
     sheet_name: Mapped[str] = mapped_column(String(200), default="")
     spreadsheet_id: Mapped[str] = mapped_column(String(200), default="")
+    # "featured_and_top" (default): inject food photo before first <p> + set as featured image.
+    # "featured_only": only set featured image thumbnail; article body stays clean.
+    image_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="featured_and_top")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     project: Mapped[Project] = relationship(back_populates="sites")
