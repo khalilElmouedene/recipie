@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.db_models import ProjectPublishSchedule, Recipe, RecipeStatus, Site
+from app.db_models import Job, JobType, ProjectPublishSchedule, Recipe, RecipeStatus, Site
 from app.services.publisher import publish_recipe
 from app.site_credentials import get_random_wp_credentials
 
@@ -30,9 +30,11 @@ async def run_publish_scheduler(stop_event: asyncio.Event) -> None:
                     recipe_row = await db.execute(
                         select(Recipe, Site)
                         .join(Site, Recipe.site_id == Site.id)
+                        .join(Job, Recipe.created_by_job_id == Job.id)
                         .where(
                             Site.project_id == s.project_id,
                             Recipe.status == RecipeStatus.generated,
+                            Job.job_type == JobType.articles_all_sites,
                         )
                         .order_by(Recipe.created_at.asc())
                         .limit(1)
