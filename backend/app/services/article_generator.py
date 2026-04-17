@@ -569,11 +569,18 @@ def process_recipes_from_db(
             pinterest_url=pinterest_url,
         )
 
+        if _stop():
+            _log("STOP REQUESTED — skipping recipe update, status already reverted")
+            return
+
         if on_recipe_done:
             on_recipe_done(recipe_id, generated)
 
         if idx < total - 1:
             _log("Waiting 5s before next recipe...")
-            time.sleep(5)
+            for _ in range(5):
+                if _stop():
+                    return
+                time.sleep(1)
 
     _log("\n=== ALL RECIPES PROCESSED ===")

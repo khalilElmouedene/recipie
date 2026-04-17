@@ -424,6 +424,8 @@ class JobManager:
                                 should_stop=rj.should_stop,
                                 pinterest_url=item.get("pinterest_url", ""),
                             )
+                            if rj.should_stop():
+                                break
                             if "error_message" not in generated and item["id"] in per_recipe_images:
                                 generated["generated_images"] = per_recipe_images[item["id"]]
                             _on_recipe_done(item["id"], generated)
@@ -851,6 +853,8 @@ class JobManager:
                                     should_stop=rj.should_stop,
                                     pinterest_url=item.get("pinterest_url", ""),
                                 )
+                                if rj.should_stop():
+                                    break
                                 if "error_message" not in generated and item["id"] in per_recipe_images:
                                     generated["generated_images"] = per_recipe_images[item["id"]]
                                 _on_recipe_done(item["id"], generated)
