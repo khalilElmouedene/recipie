@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete as sql_delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import hash_password, verify_password, create_access_token
@@ -18,7 +18,17 @@ from ..config import settings
 from ..database import get_db
 from ..db_models import User, UserRole, PasswordSetupToken
 from ..dependencies import get_current_user
-from ..models import RegisterRequest, LoginRequest, TokenResponse, UserOut, ProfileUpdate, SetupPasswordRequest
+from ..models import (
+    RegisterRequest,
+    LoginRequest,
+    ForgotPasswordRequest,
+    TokenResponse,
+    UserOut,
+    ProfileUpdate,
+    SetupPasswordRequest,
+    ResetPasswordRequest,
+)
+from ..services.email_service import send_password_reset_email
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
@@ -26,6 +36,8 @@ limiter = Limiter(key_func=get_remote_address)
 # ── Google OAuth state store ─────────────────────────────────────────────────
 _GOOGLE_STATES: dict[str, float] = {}
 _STATE_TTL = 600  # 10 minutes
+_RESET_TOKEN_TTL_MINUTES = 15
+_FORGOT_PASSWORD_DETAIL = "If the account exists, a reset link has been sent."
 
 
 def _issue_state() -> str:
@@ -42,6 +54,22 @@ def _consume_state(state: str) -> bool:
     now = time.monotonic()
     exp = _GOOGLE_STATES.pop(state, None)
     return exp is not None and now <= exp
+
+
+async def _get_valid_password_token(db: AsyncSession, raw_token: str) -> PasswordSetupToken:
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    result = await db.execute(
+        select(PasswordSetupToken).where(PasswordSetupToken.token_hash == token_hash)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid or expired link")
+    if record.used:
+        raise HTTPException(status_code=400, detail="Invalid or expired link")
+    now = datetime.now(timezone.utc)
+    if record.expires_at < now:
+        raise HTTPException(status_code=400, detail="Invalid or expired link")
+    return record
 
 
 # ── Pydantic models ──────────────────────────────────────────────────────────
@@ -92,6 +120,41 @@ async def login(request: Request, body: LoginRequest, db: Annotated[AsyncSession
     return TokenResponse(access_token=token)
 
 
+@router.post("/forgot-password")
+@limiter.limit("5/minute")
+async def forgot_password(
+    request: Request,
+    body: ForgotPasswordRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    email = body.email.strip()
+    if not email:
+        return {"detail": _FORGOT_PASSWORD_DETAIL}
+
+    result = await db.execute(select(User).where(func.lower(User.email) == email.lower()))
+    user = result.scalar_one_or_none()
+    if not user:
+        return {"detail": _FORGOT_PASSWORD_DETAIL}
+
+    await db.execute(
+        sql_delete(PasswordSetupToken).where(PasswordSetupToken.user_id == user.id)
+    )
+
+    raw_token = secrets.token_hex(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=_RESET_TOKEN_TTL_MINUTES)
+    db.add(PasswordSetupToken(user_id=user.id, token_hash=token_hash, expires_at=expires_at))
+    await db.commit()
+
+    reset_link = f"{settings.frontend_url}/reset-password?token={raw_token}"
+    try:
+        await send_password_reset_email(user.email, user.full_name, reset_link)
+    except Exception as exc:
+        print(f"[email] Failed to send password reset email: {exc}")
+
+    return {"detail": _FORGOT_PASSWORD_DETAIL}
+
+
 @router.get("/me", response_model=UserOut)
 async def me(current_user: Annotated[User, Depends(get_current_user)]):
     return UserOut.from_user(current_user)
@@ -126,18 +189,7 @@ async def setup_password(
     body: SetupPasswordRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
-    result = await db.execute(
-        select(PasswordSetupToken).where(PasswordSetupToken.token_hash == token_hash)
-    )
-    record = result.scalar_one_or_none()
-    if not record:
-        raise HTTPException(status_code=400, detail="Invalid or expired link")
-    if record.used:
-        raise HTTPException(status_code=400, detail="This link has already been used")
-    now = datetime.now(timezone.utc)
-    if record.expires_at < now:
-        raise HTTPException(status_code=400, detail="This link has expired")
+    record = await _get_valid_password_token(db, body.token)
 
     user_result = await db.execute(select(User).where(User.id == record.user_id))
     user = user_result.scalar_one_or_none()
@@ -146,10 +198,47 @@ async def setup_password(
 
     user.password_hash = hash_password(body.password)
     record.used = True
+    await db.execute(
+        update(PasswordSetupToken)
+        .where(
+            PasswordSetupToken.user_id == user.id,
+            PasswordSetupToken.id != record.id,
+            PasswordSetupToken.used.is_(False),
+        )
+        .values(used=True)
+    )
     await db.commit()
 
     token = create_access_token(str(user.id), user.role.value, user.email)
     return TokenResponse(access_token=token)
+
+
+@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute")
+async def reset_password(
+    request: Request,
+    body: ResetPasswordRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    record = await _get_valid_password_token(db, body.token)
+
+    user_result = await db.execute(select(User).where(User.id == record.user_id))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired link")
+
+    user.password_hash = hash_password(body.password)
+    record.used = True
+    await db.execute(
+        update(PasswordSetupToken)
+        .where(
+            PasswordSetupToken.user_id == user.id,
+            PasswordSetupToken.id != record.id,
+            PasswordSetupToken.used.is_(False),
+        )
+        .values(used=True)
+    )
+    await db.commit()
 
 
 # ── Google OAuth ─────────────────────────────────────────────────────────────

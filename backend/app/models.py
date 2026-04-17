@@ -34,6 +34,17 @@ class LoginRequest(BaseModel):
         return v
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_email(cls, v):
+        if isinstance(v, dict) and "email" in v and isinstance(v["email"], str):
+            v["email"] = v["email"].strip()
+        return v
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -511,3 +522,7 @@ class SetupPasswordRequest(BaseModel):
         if not re.search(r"[0-9]", v):
             raise ValueError("Password must contain at least one number")
         return v
+
+
+class ResetPasswordRequest(SetupPasswordRequest):
+    pass

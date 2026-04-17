@@ -6,7 +6,14 @@ import { isLoggedIn } from "@/lib/auth";
 import Sidebar from "./Sidebar";
 import { ToastProvider } from "@/contexts/ToastContext";
 
-const PUBLIC = ["/login", "/register", "/auth/google/callback", "/setup-password"];
+const PUBLIC = [
+  "/login",
+  "/register",
+  "/auth/google/callback",
+  "/setup-password",
+  "/forgot-password",
+  "/reset-password",
+];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
