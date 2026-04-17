@@ -15,8 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..crypto import encrypt, decrypt
 from ..database import get_db
-from ..db_models import User, UserCredential, Prompt, UserRole, CleanupConfig
-from ..dependencies import get_current_user, require_owner
+from ..db_models import User, UserCredential, Prompt, UserRole, CleanupConfig, Project
+from ..dependencies import get_current_user, require_owner, check_project_access
 from ..models import CredentialSet, CredentialOut, PromptOut, PromptsUpdate
 from ..services.prompts import DEFAULT_PROMPTS
 
@@ -113,12 +113,20 @@ async def set_user_credentials(
 
 @router.get("/prompts", response_model=list[PromptOut])
 async def list_prompts(
-    user: Annotated[User, Depends(require_owner)],
+    user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     project_id: uuid.UUID = Query(...),
 ):
+    # Read access is allowed to any project member/admin/owner.
+    await check_project_access(project_id, user, db)
+
+    project_row = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_row.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
     result = await db.execute(
-        select(Prompt).where(Prompt.owner_id == user.id, Prompt.project_id == project_id)
+        select(Prompt).where(Prompt.owner_id == project.owner_id, Prompt.project_id == project_id)
     )
     rows = result.scalars().all()
     out = {r.key: PromptOut(key=r.key, value=r.value, description=r.description or "") for r in rows}

@@ -241,11 +241,15 @@ export default function SiteDetailPage() {
         const boardNames = raw.split("\n").map((s: string) => s.trim()).filter(Boolean);
         if (boardNames.length > 0) {
           setBoards(boardNames.map((name: string) => ({ id: name, name })));
+          setPinterestNotConnected(false);
         } else {
           setPinterestNotConnected(true);
         }
       })
-      .catch(() => { setPinterestNotConnected(true); })
+      .catch(() => {
+        // Network/permission failures should not be shown as "no boards configured".
+        setPinterestNotConnected(false);
+      })
       .finally(() => setBoardsLoading(false));
   }, [detailTab, boards.length, boardsLoading, projectId]);
 
@@ -1318,7 +1322,7 @@ export default function SiteDetailPage() {
                     <div className="space-y-4">
                       {pinterestNotConnected && (
                         <div className="p-3 rounded-xl bg-amber-900/20 border border-amber-800 text-xs text-amber-300">
-                          No Pinterest boards configured. Go to <strong>Project Settings → Prompts</strong> and add your boards under <code>pinterest_boards_list</code> (one board per line).
+                          Pinterest boards are not configured for this project yet.
                         </div>
                       )}
                       {r.pin_design_image ? (
