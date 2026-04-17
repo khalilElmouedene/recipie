@@ -33,6 +33,7 @@ import {
 } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
+import { useToast } from "@/contexts/ToastContext";
 
 function thumbUrl(r: GeneratedJobRecipeOut): string | null {
   if (r.generated_images) {
@@ -64,6 +65,7 @@ export default function AllSitesGeneratePage() {
   const router = useRouter();
   const role = getUserRole();
   const canAdmin = role === "owner" || role === "admin";
+  const toast = useToast();
 
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [loading, setLoading] = useState(false);
@@ -207,11 +209,11 @@ export default function AllSitesGeneratePage() {
       .map((r) => ({ image_url: r.image_url.trim(), recipe_text: r.recipe_text.trim() }))
       .filter((r) => r.image_url && r.recipe_text);
     if (!valid.length) {
-      alert("Add at least one recipe with image URL and recipe text.");
+      toast.warning("Add at least one recipe with image URL and recipe text.");
       return;
     }
     if (sites.length === 0) {
-      alert("Add at least one site first.");
+      toast.warning("Add at least one site first.");
       return;
     }
     setLoading(true);
@@ -222,7 +224,7 @@ export default function AllSitesGeneratePage() {
       });
       router.push(`/jobs/${job.id}`);
     } catch (e: any) {
-      alert(e.message || "Failed to start all-sites generation job");
+      toast.error(e.message || "Failed to start all-sites generation job");
       setLoading(false);
     }
   };
@@ -237,7 +239,7 @@ export default function AllSitesGeneratePage() {
       });
       setSchedule(s);
     } catch (e: any) {
-      alert(e?.message || "Failed to save publish schedule");
+      toast.error(e?.message || "Failed to save publish schedule");
     } finally {
       setSavingSchedule(false);
     }
@@ -248,10 +250,10 @@ export default function AllSitesGeneratePage() {
     setDeletingPublished(true);
     try {
       const res = await api.runProjectImageCleanup(projectId, { delete_all_published: true });
-      alert(`Deleted: ${res.recipes_deleted} recipes, ${res.files_deleted} image files removed from server.`);
+      toast.success(`Deleted: ${res.recipes_deleted} recipes, ${res.files_deleted} image files removed from server.`);
       loadHistory();
     } catch (e: any) {
-      alert(e?.message || "Failed to delete published recipes.");
+      toast.error(e?.message || "Failed to delete published recipes.");
     } finally {
       setDeletingPublished(false);
     }
@@ -261,8 +263,8 @@ export default function AllSitesGeneratePage() {
     setBatchPublishing(mode);
     try {
       const res = await api.publishBatchToWordPress(projectId, { mode });
-      const extra = res.errors?.length ? `\n${res.errors.slice(0, 4).join("\n")}` : "";
-      alert(`WordPress batch finished.\nSucceeded: ${res.succeeded} / ${res.total}\nFailed: ${res.failed}${extra}`);
+      const extra = res.errors?.length ? ` (${res.errors.slice(0, 2).join("; ")})` : "";
+      toast.success(`WordPress batch finished. Succeeded: ${res.succeeded} / ${res.total}${res.failed > 0 ? ` — ${res.failed} failed${extra}` : ""}`);
       const jobs = await api.getProjectJobs(projectId);
       const filtered = jobs.filter((j) => j.job_type === "articles_all_sites");
       setHistory(filtered);
@@ -275,7 +277,7 @@ export default function AllSitesGeneratePage() {
       });
       setJobRecipeMap(m);
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Batch publish failed");
+      toast.error(e instanceof Error ? e.message : "Batch publish failed");
     } finally {
       setBatchPublishing(null);
     }
@@ -288,14 +290,14 @@ export default function AllSitesGeneratePage() {
       const wb = XLSX.read(buffer, { type: "array" });
       const firstSheet = wb.SheetNames[0];
       if (!firstSheet) {
-        alert("Excel file has no sheet.");
+        toast.warning("Excel file has no sheet.");
         return;
       }
 
       const ws = wb.Sheets[firstSheet];
       const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
       if (!rawRows.length) {
-        alert("No rows found in Excel.");
+        toast.warning("No rows found in Excel.");
         return;
       }
 
@@ -324,14 +326,14 @@ export default function AllSitesGeneratePage() {
         .filter((r) => r.image_url && r.recipe_text);
 
       if (!imported.length) {
-        alert('No valid rows found. Required columns: "image_url" and "recipe_text".');
+        toast.warning('No valid rows found. Required columns: "image_url" and "recipe_text".');
         return;
       }
 
       setRows(imported);
-      alert(`Imported ${imported.length} recipe input(s) from Excel.`);
+      toast.success(`Imported ${imported.length} recipe input(s) from Excel.`);
     } catch (e: any) {
-      alert(e?.message || "Failed to import Excel file");
+      toast.error(e?.message || "Failed to import Excel file");
     } finally {
       setImportingExcel(false);
       if (excelInputRef.current) excelInputRef.current.value = "";
@@ -365,7 +367,7 @@ export default function AllSitesGeneratePage() {
         return next;
       });
     } catch (e: any) {
-      alert(e?.message || "Failed to delete job");
+      toast.error(e?.message || "Failed to delete job");
     } finally {
       setDeletingJobId(null);
     }
@@ -389,7 +391,7 @@ export default function AllSitesGeneratePage() {
         [jobId]: (m[jobId] || []).filter((r) => r.id !== recipeId),
       }));
     } catch (e: any) {
-      alert(e?.message || "Failed to delete recipe");
+      toast.error(e?.message || "Failed to delete recipe");
     } finally {
       setDeletingRecipeId(null);
     }
@@ -405,15 +407,15 @@ export default function AllSitesGeneratePage() {
         detailsLoadedRef.current.add(recipeId);
       }
       if (!full.generated_article) {
-        alert("No article to publish.");
+        toast.warning("No article to publish. Generate content first.");
         return;
       }
       const data = await api.publishRecipeArticle(recipeId);
-      alert(`Published!\n${data.wp_permalink}`);
+      toast.success(`Published! ${data.wp_permalink}`);
       const updated = await api.getRecipe(recipeId);
       setRecipeFullById((m) => ({ ...m, [recipeId]: updated }));
     } catch (e: any) {
-      alert(e?.message || "Publish failed");
+      toast.error(e?.message || "Publish failed");
     } finally {
       setWpPublishingId(null);
     }

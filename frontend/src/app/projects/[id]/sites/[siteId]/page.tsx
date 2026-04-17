@@ -5,6 +5,7 @@ import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, Chevr
 import { api, getApiBaseUrl, SiteOut, RecipeOut, PinterestBoard, PinterestBulkResponse, PinTemplate, BulkGeneratePinsResponse, BulkPinItem, JobOut, getWsUrl } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
+import { useToast } from "@/contexts/ToastContext";
 
 const API_URL = getApiBaseUrl();
 
@@ -12,6 +13,7 @@ export default function SiteDetailPage() {
   const { id: projectId, siteId } = useParams<{ id: string; siteId: string }>();
   const router = useRouter();
   const role = getUserRole();
+  const toast = useToast();
 
   const [site, setSite] = useState<SiteOut | null>(null);
   const [recipes, setRecipes] = useState<RecipeOut[]>([]);
@@ -235,7 +237,9 @@ export default function SiteDetailPage() {
       setImageSourceMode("url");
       setImageUploadError("");
       loadRecipes();
-    } catch {}
+    } catch (err: any) {
+      toast.error(err.message || "Failed to add recipe");
+    }
     setAdding(false);
   };
 
@@ -245,8 +249,8 @@ export default function SiteDetailPage() {
     if (expandedId === recipeId) setExpandedId(null);
     try {
       await api.deleteRecipe(recipeId);
-    } catch {
-      // already removed from UI
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete recipe");
     }
     loadRecipes();
   };
@@ -346,9 +350,9 @@ export default function SiteDetailPage() {
         router.push(`/jobs/${latestArticleJob.id}`);
         return;
       }
-      alert("No generation logs found yet for this recipe.");
+      toast.info("No generation logs found yet for this recipe.");
     } catch (err: any) {
-      alert(err.message || "Failed to load job logs");
+      toast.error(err.message || "Failed to load job logs");
     }
   };
 
@@ -366,7 +370,7 @@ export default function SiteDetailPage() {
       );
       pollRecipeStatus(recipeId);
     } catch (err: any) {
-      alert(err.message || "Failed to start generation");
+      toast.error(err.message || "Failed to start generation");
     }
     setGeneratingId(null);
   };
@@ -378,7 +382,7 @@ export default function SiteDetailPage() {
       setActiveJob(job);
       setActiveJobLastLog("");
     } catch (err: any) {
-      alert(err.message || "Failed to start job");
+      toast.error(err.message || "Failed to start job");
     }
     setStarting(false);
   };
@@ -403,7 +407,7 @@ export default function SiteDetailPage() {
       setEditingTitleId(null);
       loadRecipes();
     } catch (err: any) {
-      alert(err.message || "Failed to update title");
+      toast.error(err.message || "Failed to update title");
     }
     setSavingTitle(false);
   };
@@ -419,7 +423,7 @@ export default function SiteDetailPage() {
       setNewImageUrl("");
       loadRecipes();
     } catch (err: any) {
-      alert(err.message || "Failed to update image");
+      toast.error(err.message || "Failed to update image");
     }
     setSavingImage(false);
   };
@@ -486,7 +490,7 @@ export default function SiteDetailPage() {
       });
       setBulkResult(res);
     } catch (err: any) {
-      alert(err.message || "Failed to generate bulk pins");
+      toast.error(err.message || "Failed to generate bulk pins");
     }
     setBulkGenerating(false);
   };
@@ -517,13 +521,13 @@ export default function SiteDetailPage() {
 
   const handlePublishArticleToWordPress = async (r: RecipeOut) => {
     if (!r.generated_article) {
-      alert("No article generated. Generate content first.");
+      toast.warning("No article generated. Generate content first.");
       return;
     }
     setWpPublishingId(r.id);
     try {
       const data = await api.publishRecipeArticle(r.id);
-      alert(`Published to WordPress!\n\nPost: ${data.wp_permalink}`);
+      toast.success(`Published to WordPress! Post: ${data.wp_permalink}`);
       loadRecipes();
     } catch (err: any) {
       // The request may have timed out (Cloudflare proxy timeout) while the backend
@@ -533,12 +537,12 @@ export default function SiteDetailPage() {
         const refreshed = await api.getRecipe(r.id);
         if (refreshed.wp_post_id) {
           loadRecipes();
-          alert(`Published to WordPress!\n\nPost: ${refreshed.wp_permalink || ""}`);
+          toast.success(`Published to WordPress! Post: ${refreshed.wp_permalink || ""}`);
           setWpPublishingId(null);
           return;
         }
       } catch { /* ignore */ }
-      alert(err.message || "Failed to publish to WordPress");
+      toast.error(err.message || "Failed to publish to WordPress");
     }
     setWpPublishingId(null);
   };
@@ -555,7 +559,7 @@ export default function SiteDetailPage() {
       });
       loadRecipes();
     } catch (err: any) {
-      alert(err.message || "Failed to save");
+      toast.error(err.message || "Failed to save");
     }
     setPinDesignSaving(false);
   };
@@ -572,7 +576,7 @@ export default function SiteDetailPage() {
       });
       setPinResult(result);
     } catch (err: any) {
-      alert(err.message || "Failed to create Pinterest pins");
+      toast.error(err.message || "Failed to create Pinterest pins");
     }
     setPinning(false);
   };

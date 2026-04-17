@@ -4,6 +4,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import { isLoggedIn } from "@/lib/auth";
 import Sidebar from "./Sidebar";
+import { ToastProvider } from "@/contexts/ToastContext";
 
 const PUBLIC = ["/login", "/register", "/auth/google/callback", "/setup-password"];
 
@@ -33,31 +34,33 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* Mobile backdrop */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-black/50 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
+    <ToastProvider>
+      <div className="flex h-screen overflow-hidden">
+        {/* Mobile backdrop */}
+        {sidebarOpen && (
+          <div
+            className="fixed inset-0 z-30 bg-black/50 md:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
 
-      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+        <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Mobile top bar */}
-        <div className="flex h-14 items-center border-b border-gray-800 bg-gray-900 px-4 md:hidden">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition"
-            aria-label="Open menu"
-          >
-            <Menu size={22} />
-          </button>
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {/* Mobile top bar */}
+          <div className="flex h-14 items-center border-b border-gray-800 bg-gray-900 px-4 md:hidden">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition"
+              aria-label="Open menu"
+            >
+              <Menu size={22} />
+            </button>
+          </div>
+
+          <main className="flex-1 overflow-y-auto p-4 md:p-8">{children}</main>
         </div>
-
-        <main className="flex-1 overflow-y-auto p-4 md:p-8">{children}</main>
       </div>
-    </div>
+    </ToastProvider>
   );
 }

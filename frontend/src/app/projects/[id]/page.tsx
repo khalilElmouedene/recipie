@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload, RotateCcw, AlertTriangle, Sheet } from "lucide-react";
 import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut } from "@/lib/api";
 import { getUserRole, getUserId } from "@/lib/auth";
+import { useToast } from "@/contexts/ToastContext";
 
 type Tab = "sites" | "members" | "jobs" | "settings";
 
@@ -123,6 +124,7 @@ const MAX_SITES_PER_PROJECT = 4;
 const emptyWpUser = () => ({ username: "", password: "" });
 
 function SitesTab({ projectId, canManage, router }: { projectId: string; canManage: boolean; router: ReturnType<typeof useRouter> }) {
+  const toast = useToast();
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
   const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
@@ -139,12 +141,12 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (sites.length >= MAX_SITES_PER_PROJECT) {
-      alert(`Un projet peut contenir au maximum ${MAX_SITES_PER_PROJECT} sites.`);
+      toast.warning(`A project can contain at most ${MAX_SITES_PER_PROJECT} sites.`);
       return;
     }
     const validUsers = form.wp_users.filter((u) => u.username.trim() && u.password);
     if (!validUsers.length) {
-      alert("Add at least one WP user with username and password.");
+      toast.warning("Add at least one WP user with username and password.");
       return;
     }
     setLoading(true);
@@ -163,7 +165,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
       const job = await api.startJob(projectId, { job_type: "publisher", site_id: siteId });
       router.push(`/jobs/${job.id}`);
     } catch (e: any) {
-      alert(e.message || "Failed to start publish job");
+      toast.error(e.message || "Failed to start publish job");
     } finally {
       setPublishingSiteId(null);
     }
@@ -193,7 +195,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
     if (!editSite) return;
     const validUsers = editForm.wp_users.filter((u) => u.username.trim());
     if (!validUsers.length) {
-      alert("Add at least one WP user.");
+      toast.warning("Add at least one WP user.");
       return;
     }
     setEditing(true);
@@ -208,7 +210,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
       setEditSite(null);
       load();
     } catch (err: any) {
-      alert(err.message || "Failed to update site");
+      toast.error(err.message || "Failed to update site");
     }
     setEditing(false);
   };
@@ -615,6 +617,7 @@ type BoardsInputMode = "text" | "excel";
 
 function SettingsTab({ projectId }: { projectId: string }) {
   const router = useRouter();
+  const toast = useToast();
   const [subTab, setSubTab] = useState<SettingsSubTab>("credentials");
 
   // Credentials
@@ -691,7 +694,7 @@ function SettingsTab({ projectId }: { projectId: string }) {
       const { boards } = await api.importBoardsExcel(file);
       setPromptValues((prev) => ({ ...prev, pinterest_boards_list: boards }));
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Import failed");
+      toast.error(err instanceof Error ? err.message : "Import failed");
     } finally {
       setImportingBoards(false);
       e.target.value = "";
