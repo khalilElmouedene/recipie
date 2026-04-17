@@ -3,11 +3,11 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, delete as sql_delete
+from sqlalchemy import select, delete as sql_delete, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..db_models import User, Job, JobLog, JobType, JobStatus, Project, Recipe, Site, ProjectMemberRole
+from ..db_models import User, Job, JobLog, JobType, JobStatus, Project, Recipe, RecipeStatus, Site, ProjectMemberRole
 from ..dependencies import get_current_user, check_project_access
 from ..models import JobStart, JobOut, JobLogOut, GeneratedJobRecipeOut
 from ..workers.job_manager import job_manager
@@ -178,6 +178,12 @@ async def stop_job(
     await check_project_access(job.project_id, user, db)
 
     job_manager.stop_job(str(job.id))
+    # Immediately revert any recipes still generating so the UI clears right away
+    await db.execute(
+        sql_update(Recipe)
+        .where(Recipe.created_by_job_id == job.id, Recipe.status == RecipeStatus.generating)
+        .values(status=RecipeStatus.pending)
+    )
     job.status = JobStatus.stopped
     await db.commit()
     row = await db.execute(select(Job).where(Job.id == job_id))

@@ -19,6 +19,7 @@ class MidjourneyApi:
         wait_time: int = 190,
         upscale_gap_seconds: int = 10,
         log: Callable[[str], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ):
         self.application_id = application_id
         self.guild_id = guild_id
@@ -32,6 +33,16 @@ class MidjourneyApi:
         self.message_id = ""
         self.custom_ids: list[str] = []
         self._log = log or print
+        self._should_stop = should_stop or (lambda: False)
+
+    def _interruptible_sleep(self, seconds: int) -> None:
+        """Sleep in 1-second chunks, raising ValueError immediately if stop is requested."""
+        elapsed = 0
+        while elapsed < seconds:
+            if self._should_stop():
+                raise ValueError("Generation stopped by user")
+            time.sleep(min(1, seconds - elapsed))
+            elapsed += 1
 
     def _headers(self) -> dict:
         return {
@@ -98,7 +109,7 @@ class MidjourneyApi:
 
     def get_message(self):
         self._log(f"Waiting {self.wait_time}s for Midjourney generation...")
-        time.sleep(self.wait_time)
+        self._interruptible_sleep(self.wait_time)
         try:
             # Only look at messages that appeared AFTER we sent our prompt
             response = requests.get(
@@ -153,7 +164,7 @@ class MidjourneyApi:
             response = requests.post(url, headers=self._headers(), json=data)
             if response.status_code != 204:
                 self._log(f"Failed to upscale button {custom_id}, status: {response.status_code}")
-            time.sleep(self.upscale_gap_seconds)
+            self._interruptible_sleep(self.upscale_gap_seconds)
         self._log("Upscale requests sent for all 4 images")
 
     def download_image(self) -> list[str]:
@@ -198,12 +209,14 @@ def generate_images(
     max_attempts: int | None = None,
     retry_delay_seconds: int = 15,
     log: Callable[[str], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> list[str]:
     """High-level function to generate 4 Midjourney images for a recipe.
     credentials dict must contain: discord_app_id, discord_guild, discord_channel,
     mj_version, mj_id, discord_auth
     """
     _log = log or print
+    _should_stop = should_stop or (lambda: False)
     from .prompts import get_prompt
     tpl = get_prompt(prompts or {}, "midjourney_imagine")
     prompt = tpl.format(recipe_name=recipe_name, img_url=img_url, source_img=img_url)
@@ -214,6 +227,8 @@ def generate_images(
     attempt = 0
     while True:
         attempt += 1
+        if _should_stop():
+            raise ValueError("Generation stopped by user")
         try:
             if attempts_limit is None:
                 _log(f"Midjourney initial communication attempt {attempt}")
@@ -231,6 +246,7 @@ def generate_images(
                 wait_time=wait_time,
                 upscale_gap_seconds=upscale_gap_seconds,
                 log=_log,
+                should_stop=_should_stop,
             )
 
             send_resp = mj.send_message()
@@ -258,12 +274,15 @@ def generate_images(
                     f"Midjourney initial communication failed "
                     f"(attempt {attempt}/{attempts_limit}): {e}. Retrying in {retry_delay}s..."
                 )
-            time.sleep(retry_delay)
+            for _ in range(retry_delay):
+                if _should_stop():
+                    raise ValueError("Generation stopped by user")
+                time.sleep(1)
 
     # From here onward, do not retry the full generation: only the first communication is retried.
     mj.choose_images()
     _log(f"Waiting {post_wait}s for upscaled images to appear...")
-    time.sleep(post_wait)
+    mj._interruptible_sleep(post_wait)
     image_urls = mj.download_image()
     if not image_urls:
         raise ValueError("Midjourney returned no image URLs")

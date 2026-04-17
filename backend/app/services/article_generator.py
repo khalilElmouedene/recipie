@@ -17,10 +17,18 @@ import requests
 from . import midjourney, openai_service
 from app.config import settings
 
-# Global lock — ensures only ONE Midjourney generation runs at a time across
-# all concurrent jobs. Prevents two recipes from polling the same Discord
-# channel simultaneously and stealing each other's results.
-_midjourney_lock = threading.Lock()
+# Per-channel locks — each Discord channel gets its own lock so different users
+# (with different channels) run Midjourney in parallel, while recipes on the
+# same channel are still serialized to avoid result cross-contamination.
+_midjourney_locks: dict[str, threading.Lock] = {}
+_midjourney_locks_mutex = threading.Lock()
+
+
+def _get_mj_lock(channel_id: str) -> threading.Lock:
+    with _midjourney_locks_mutex:
+        if channel_id not in _midjourney_locks:
+            _midjourney_locks[channel_id] = threading.Lock()
+        return _midjourney_locks[channel_id]
 
 UPLOADS_DIR = Path("/app/uploads")
 
@@ -316,8 +324,9 @@ def generate_for_recipe(
         if discord_auth and image_url:
             if _stop():
                 return result
+            channel_id = credentials.get("discord_channel", "")
             _log("Waiting for Midjourney queue slot (one recipe at a time)...")
-            with _midjourney_lock:
+            with _get_mj_lock(channel_id):
                 if _stop():
                     return result
                 _log("Midjourney slot acquired - generating images...")
@@ -331,6 +340,7 @@ def generate_for_recipe(
                     upscale_gap_seconds=_MJ_UPSCALE_GAP_SEC,
                     post_upscale_wait_seconds=_MJ_POST_UPSCALE_WAIT_SEC,
                     log=_log,
+                    should_stop=_stop,
                 )
                 # Cache immediately - Discord CDN URLs expire after a few hours
                 cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
@@ -488,8 +498,9 @@ def generate_images_only(
         return None
     if _stop():
         return None
+    channel_id = credentials.get("discord_channel", "")
     _log("Waiting for Midjourney queue slot (one recipe at a time)...")
-    with _midjourney_lock:
+    with _get_mj_lock(channel_id):
         if _stop():
             return None
         _log("Midjourney slot acquired — generating images...")
@@ -503,6 +514,7 @@ def generate_images_only(
             upscale_gap_seconds=_MJ_UPSCALE_GAP_SEC,
             post_upscale_wait_seconds=_MJ_POST_UPSCALE_WAIT_SEC,
             log=_log,
+            should_stop=_stop,
         )
         cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
         return json.dumps(cached_urls)
