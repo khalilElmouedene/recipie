@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload, RotateCcw, AlertTriangle, Sheet } from "lucide-react";
@@ -12,6 +12,7 @@ type Tab = "sites" | "members" | "jobs" | "settings";
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const toast = useToast();
   const globalRole = getUserRole();
   const currentUserId = getUserId();
   const [project, setProject] = useState<ProjectOut | null>(null);
@@ -19,15 +20,60 @@ export default function ProjectDetailPage() {
   const [tab, setTab] = useState<Tab>("sites");
   // project-level role of the current user ("admin" | "member" | null)
   const [projectRole, setProjectRole] = useState<string | null>(null);
+  const accessLossNotifiedRef = useRef(false);
 
-  useEffect(() => {
-    api.getProject(id)
-      .then(setProject)
-      .catch(() => {
+  const loadProject = useCallback(async (opts?: { allowAccessLossRedirect?: boolean }) => {
+    try {
+      const p = await api.getProject(id);
+      setProject(p);
+      setNotFound(false);
+      accessLossNotifiedRef.current = false;
+    } catch (err: any) {
+      const msg = String(err?.message || "").toLowerCase();
+      const accessLost =
+        msg.includes("no access to this project") ||
+        msg.includes("project not found");
+
+      if (opts?.allowAccessLossRedirect && accessLost) {
+        if (!accessLossNotifiedRef.current) {
+          toast.warning("Your access to this project was removed.");
+          accessLossNotifiedRef.current = true;
+        }
+        router.replace("/projects");
+        return;
+      }
+
+      if (!opts?.allowAccessLossRedirect) {
         setNotFound(true);
         router.replace("/");
-      });
-  }, [id, router]);
+      }
+    }
+  }, [id, router, toast]);
+
+  useEffect(() => {
+    loadProject({ allowAccessLossRedirect: false });
+  }, [loadProject]);
+
+  useEffect(() => {
+    const verifyAccess = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      loadProject({ allowAccessLossRedirect: true });
+    };
+
+    const t = setInterval(verifyAccess, 5000);
+    const onFocus = () => verifyAccess();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") verifyAccess();
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [loadProject]);
 
   useEffect(() => {
     if (globalRole === "owner") return; // owner already has full access

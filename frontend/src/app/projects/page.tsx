@@ -1,9 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Plus, FolderKanban, Globe, ChefHat, Copy, Trash2 } from "lucide-react";
 import { api, ProjectOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
+import { useToast } from "@/contexts/ToastContext";
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectOut[]>([]);
@@ -15,16 +16,69 @@ export default function ProjectsPage() {
   const [duplicating, setDuplicating] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const toast = useToast();
+  const syncedOnceRef = useRef(false);
+  const previousProjectsRef = useRef<Map<string, string>>(new Map());
 
-  const load = () => api.getProjects().then(setProjects).catch(() => {});
-  useEffect(() => { load(); }, []);
+  const load = useCallback(async (opts?: { announceMembershipChanges?: boolean }) => {
+    try {
+      const rows = await api.getProjects();
+      setProjects(rows);
+
+      const nextMap = new Map(rows.map((p) => [p.id, p.name]));
+      const prevMap = previousProjectsRef.current;
+
+      if (syncedOnceRef.current && opts?.announceMembershipChanges && role !== "owner") {
+        for (const [id, name] of nextMap.entries()) {
+          if (!prevMap.has(id)) {
+            toast.success(`You were added to project "${name}".`);
+          }
+        }
+        for (const [id, name] of prevMap.entries()) {
+          if (!nextMap.has(id)) {
+            toast.warning(`You were removed from project "${name}".`);
+          }
+        }
+      }
+
+      previousProjectsRef.current = nextMap;
+      syncedOnceRef.current = true;
+    } catch {
+      // Keep current UI state on transient API errors.
+    }
+  }, [role, toast]);
+
+  useEffect(() => {
+    load({ announceMembershipChanges: false });
+  }, [load]);
+
+  useEffect(() => {
+    const syncMembership = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      load({ announceMembershipChanges: true });
+    };
+
+    const t = setInterval(syncMembership, 5000);
+    const onFocus = () => syncMembership();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") syncMembership();
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [load]);
 
   const handleDuplicate = async (id: string, e: React.MouseEvent) => {
     e.preventDefault();
     setDuplicating(id);
     try {
       await api.duplicateProject(id);
-      load();
+      load({ announceMembershipChanges: false });
     } catch { }
     setDuplicating(null);
   };
@@ -35,7 +89,7 @@ export default function ProjectsPage() {
     try {
       await api.deleteProject(id);
       setDeleteConfirmId(null);
-      load();
+      load({ announceMembershipChanges: false });
     } catch { }
     setDeleting(null);
   };
@@ -46,7 +100,7 @@ export default function ProjectsPage() {
     try {
       await api.createProject(name, desc);
       setName(""); setDesc(""); setShowCreate(false);
-      load();
+      load({ announceMembershipChanges: false });
     } catch { }
     setLoading(false);
   };
