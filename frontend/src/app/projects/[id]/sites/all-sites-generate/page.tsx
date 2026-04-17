@@ -235,6 +235,16 @@ export default function AllSitesGeneratePage() {
       ws?.close();
     };
   }, [runningJob?.id, runningJob?.status, loadHistory]);
+
+  // Cross-user discovery: if no local running job is visible yet, keep checking
+  // so jobs started by another member appear without manual refresh.
+  useEffect(() => {
+    if (runningJob) return;
+    const t = setInterval(() => {
+      loadHistory();
+    }, 3000);
+    return () => clearInterval(t);
+  }, [runningJob?.id, runningJob?.status, loadHistory]);
   const hasAnyGeneratedRecipes = Object.values(jobRecipeMap).some((arr) =>
     arr.some((r) => r.status === "generated" || r.status === "published")
   );

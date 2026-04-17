@@ -8,6 +8,17 @@ import { sanitizeHtml } from "@/lib/sanitize";
 import { useToast } from "@/contexts/ToastContext";
 
 const API_URL = getApiBaseUrl();
+const DETAILED_PRESERVE_FIELDS: (keyof RecipeOut)[] = [
+  "generated_article",
+  "generated_json",
+  "generated_full_recipe",
+  "meta_description",
+  "pin_url",
+  "pin_board",
+  "pin_tags",
+  "seo_title",
+  "wp_tags",
+];
 
 export default function SiteDetailPage() {
   const { id: projectId, siteId } = useParams<{ id: string; siteId: string }>();
@@ -86,8 +97,41 @@ export default function SiteDetailPage() {
     () =>
       api.getRecipes(siteId, true)
         .then((rows) => {
-          setRecipes(rows);
-          detailsLoadedRef.current.clear();
+          const incomingIds = new Set(rows.map((r) => r.id));
+
+          setRecipes((prev) => {
+            const prevById = new Map(prev.map((r) => [r.id, r]));
+            return rows.map((row) => {
+              const previous = prevById.get(row.id);
+              if (!previous || !detailsLoadedRef.current.has(row.id)) return row;
+
+              const merged: RecipeOut = { ...previous, ...row };
+              for (const field of DETAILED_PRESERVE_FIELDS) {
+                const incomingVal = row[field];
+                const previousVal = previous[field];
+                if (incomingVal == null && previousVal != null) {
+                  (merged as any)[field] = previousVal;
+                }
+              }
+              return merged;
+            });
+          });
+
+          const keptDetailed = new Set<string>();
+          detailsLoadedRef.current.forEach((id) => {
+            if (incomingIds.has(id)) keptDetailed.add(id);
+          });
+          detailsLoadedRef.current = keptDetailed;
+
+          setRecipeJobMap((prev) => {
+            const next: Record<string, string> = {};
+            for (const [rid, jid] of Object.entries(prev)) {
+              if (incomingIds.has(rid)) next[rid] = jid;
+            }
+            return next;
+          });
+
+          setExpandedId((current) => (current && !incomingIds.has(current) ? null : current));
         })
         .catch(() => {}),
     [siteId]
@@ -157,6 +201,33 @@ export default function SiteDetailPage() {
     }).catch(() => router.replace("/"));
     loadRecipes();
   }, [projectId, siteId, router, loadRecipes]);
+
+  // Passive collaborative sync: keep recipe list fresh for add/delete/status changes
+  // made by other members, even when no generation job is currently active locally.
+  useEffect(() => {
+    const hasActiveJob = !!activeJob && (activeJob.status === "running" || activeJob.status === "pending");
+    if (hasActiveJob) return;
+
+    const syncNow = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      loadRecipes();
+    };
+
+    syncNow();
+    const t = setInterval(syncNow, 5000);
+    const onFocus = () => syncNow();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") syncNow();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [activeJob?.status, loadRecipes]);
 
   // Load boards from pinterest_boards_list prompt setting (already stored per-project, no OAuth needed)
   const [pinterestNotConnected, setPinterestNotConnected] = useState(false);
@@ -330,57 +401,58 @@ export default function SiteDetailPage() {
     return () => ws.close();
   }, [activeJob?.id, activeJob?.status]);
 
-  // Poll job status every 5s while running
+  // Poll active job status every 3s while pending/running.
   useEffect(() => {
-    if (!activeJob || activeJob.status !== "running") return;
+    if (!activeJob || (activeJob.status !== "running" && activeJob.status !== "pending")) return;
     const t = setInterval(() => {
-      api.getJob(activeJob.id).then(setActiveJob).catch(() => {});
-    }, 5000);
-    return () => clearInterval(t);
-  }, [activeJob?.id, activeJob?.status]);
-
-  // Real-time cross-user: when recipes are generating but the current user has no
-  // active job running (another user's job), find that job and subscribe to its WS.
-  // On completion message → reload recipes immediately (no polling lag).
-  const hasExternalGenerating =
-    recipes.some((r) => r.status === "generating") && activeJob?.status !== "running";
-  useEffect(() => {
-    if (!hasExternalGenerating) return;
-    let cancelled = false;
-    let ws: WebSocket | null = null;
-
-    api.getProjectJobs(projectId)
-      .then((jobs) => {
-        if (cancelled) return;
-        const running = jobs.find((j) => j.job_type === "articles" && j.status === "running");
-        if (!running) {
-          // Job already finished before we checked — reload to get final statuses
+      api.getJob(activeJob.id).then((j) => {
+        setActiveJob(j);
+        if (j.status !== "running" && j.status !== "pending") {
           loadRecipes();
-          return;
         }
-        ws = new WebSocket(getWsUrl(running.id));
-        ws.onmessage = (e) => {
-          if (!e.data || cancelled) return;
-          if (
-            e.data.includes("Job completed") ||
-            e.data.includes("Job stopped") ||
-            e.data.includes("Job failed")
-          ) {
-            setTimeout(() => { if (!cancelled) loadRecipes(); }, 600);
+      }).catch(() => {});
+    }, 3000);
+    return () => clearInterval(t);
+  }, [activeJob?.id, activeJob?.status, loadRecipes]);
+
+  // Cross-user real-time sync: discover active generation jobs started by other members.
+  // This runs even when the local recipe list is stale (still "pending"), then the WS/poll
+  // pipeline takes over and updates status/logs for everyone without page refresh.
+  useEffect(() => {
+    if (activeJob?.status === "running") return;
+    let cancelled = false;
+    const syncExternal = () =>
+      api.getProjectJobs(projectId)
+        .then((jobs) => {
+          if (cancelled) return;
+          const activeArticleJob = jobs.find(
+            (j) => j.job_type === "articles" && (j.status === "running" || j.status === "pending")
+          );
+          if (!activeArticleJob) return;
+          if (!activeJob || activeJob.id !== activeArticleJob.id) {
+            setActiveJobLastLog("");
           }
-        };
-        ws.onclose = () => {
-          // WS dropped — reload so we don't miss the final status
-          if (!cancelled) setTimeout(() => loadRecipes(), 600);
-        };
-      })
-      .catch(() => {});
+          setActiveJob((prev) => {
+            if (!prev) return activeArticleJob;
+            if (prev.id !== activeArticleJob.id) return activeArticleJob;
+            if (prev.status !== activeArticleJob.status) return activeArticleJob;
+            if (prev.current_row !== activeArticleJob.current_row) return activeArticleJob;
+            if (prev.total_rows !== activeArticleJob.total_rows) return activeArticleJob;
+            if (prev.error !== activeArticleJob.error) return activeArticleJob;
+            return prev;
+          });
+          loadRecipes();
+        })
+        .catch(() => {});
+
+    syncExternal();
+    const t = setInterval(syncExternal, 3000);
 
     return () => {
       cancelled = true;
-      ws?.close();
+      clearInterval(t);
     };
-  }, [hasExternalGenerating, projectId, loadRecipes]);
+  }, [activeJob?.id, activeJob?.status, projectId, loadRecipes]);
 
   const openRecipeLogs = async (recipeId: string) => {
     const knownJobId = recipeJobMap[recipeId];
@@ -388,10 +460,16 @@ export default function SiteDetailPage() {
       router.push(`/jobs/${knownJobId}`);
       return;
     }
+    if (activeJob && (activeJob.job_type === "articles" || activeJob.job_type === "articles_all_sites")) {
+      router.push(`/jobs/${activeJob.id}`);
+      return;
+    }
 
     try {
       const jobs = await api.getProjectJobs(projectId);
-      const latestArticleJob = jobs.find((j) => j.job_type === "articles");
+      const latestArticleJob =
+        jobs.find((j) => j.job_type === "articles" && (j.status === "running" || j.status === "pending")) ||
+        jobs.find((j) => j.job_type === "articles");
       if (latestArticleJob) {
         router.push(`/jobs/${latestArticleJob.id}`);
         return;
@@ -413,15 +491,24 @@ export default function SiteDetailPage() {
         recipe_id: recipeId,
       });
       setRecipeJobMap((prev) => ({ ...prev, [recipeId]: job.id }));
+      setActiveJob(job);
+      setActiveJobLastLog("");
+      if (job.status !== "running" && job.status !== "pending") {
+        if (job.error) toast.error(job.error);
+        await loadRecipes();
+        return;
+      }
       setRecipes((prev) =>
         prev.map((r) => (r.id === recipeId ? { ...r, status: "generating", error_message: null } : r))
       );
       pollRecipeStatus(recipeId);
     } catch (err: any) {
       toast.error(err.message || "Failed to start generation");
+      await loadRecipes();
+    } finally {
+      generatingIdsRef.current.delete(recipeId);
+      setGeneratingId(null);
     }
-    generatingIdsRef.current.delete(recipeId);
-    setGeneratingId(null);
   };
 
   const handleRunJob = async (type: "articles" | "publisher") => {
@@ -646,6 +733,10 @@ export default function SiteDetailPage() {
   const generatedCount = recipes.filter((r) => r.status === "generated").length;
   const publishedCount = recipes.filter((r) => r.status === "published").length;
   const failedCount = recipes.filter((r) => r.status === "failed").length;
+  const hasActiveGenerationJob =
+    !!activeJob &&
+    (activeJob.job_type === "articles" || activeJob.job_type === "articles_all_sites") &&
+    (activeJob.status === "running" || activeJob.status === "pending");
 
   if (!site) return null;
 
@@ -757,7 +848,12 @@ export default function SiteDetailPage() {
           >
             <LayoutGrid size={16} /> Pin Designer
           </button>
-          <button onClick={() => handleRunJob("articles")} disabled={starting || pendingCount === 0} className="btn-primary flex items-center gap-2">
+          <button
+            onClick={() => handleRunJob("articles")}
+            disabled={starting || pendingCount === 0 || hasActiveGenerationJob}
+            className="btn-primary flex items-center gap-2"
+            title={hasActiveGenerationJob ? "Generation is already in progress by another member." : undefined}
+          >
             <Play size={16} /> Generate ({pendingCount})
           </button>
           <button onClick={() => handleRunJob("publisher")} disabled={starting || generatedCount === 0} className="btn-secondary flex items-center gap-2">
@@ -947,9 +1043,15 @@ export default function SiteDetailPage() {
                 {(r.status === "pending" || r.status === "failed") && (
                   <button
                     onClick={(e) => { e.stopPropagation(); handleGenerateSingle(r.id); }}
-                    disabled={generatingId === r.id}
+                    disabled={generatingId === r.id || hasActiveGenerationJob}
                     className={r.status === "failed" ? "text-amber-400 hover:text-amber-300 p-1 disabled:opacity-50" : "text-brand-400 hover:text-brand-300 p-1 disabled:opacity-50"}
-                    title={r.status === "failed" ? "Retry generation" : "Generate content for this recipe"}
+                    title={
+                      hasActiveGenerationJob
+                        ? "Generation is already in progress by another member."
+                        : r.status === "failed"
+                          ? "Retry generation"
+                          : "Generate content for this recipe"
+                    }
                   >
                     {generatingId === r.id ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
                   </button>
