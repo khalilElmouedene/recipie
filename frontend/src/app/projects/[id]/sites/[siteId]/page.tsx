@@ -733,10 +733,6 @@ export default function SiteDetailPage() {
   const generatedCount = recipes.filter((r) => r.status === "generated").length;
   const publishedCount = recipes.filter((r) => r.status === "published").length;
   const failedCount = recipes.filter((r) => r.status === "failed").length;
-  const hasActiveGenerationJob =
-    !!activeJob &&
-    (activeJob.job_type === "articles" || activeJob.job_type === "articles_all_sites") &&
-    (activeJob.status === "running" || activeJob.status === "pending");
 
   if (!site) return null;
 
@@ -850,9 +846,8 @@ export default function SiteDetailPage() {
           </button>
           <button
             onClick={() => handleRunJob("articles")}
-            disabled={starting || pendingCount === 0 || hasActiveGenerationJob}
+            disabled={starting || pendingCount === 0}
             className="btn-primary flex items-center gap-2"
-            title={hasActiveGenerationJob ? "Generation is already in progress by another member." : undefined}
           >
             <Play size={16} /> Generate ({pendingCount})
           </button>
@@ -1043,15 +1038,9 @@ export default function SiteDetailPage() {
                 {(r.status === "pending" || r.status === "failed") && (
                   <button
                     onClick={(e) => { e.stopPropagation(); handleGenerateSingle(r.id); }}
-                    disabled={generatingId === r.id || hasActiveGenerationJob}
+                    disabled={generatingId === r.id}
                     className={r.status === "failed" ? "text-amber-400 hover:text-amber-300 p-1 disabled:opacity-50" : "text-brand-400 hover:text-brand-300 p-1 disabled:opacity-50"}
-                    title={
-                      hasActiveGenerationJob
-                        ? "Generation is already in progress by another member."
-                        : r.status === "failed"
-                          ? "Retry generation"
-                          : "Generate content for this recipe"
-                    }
+                    title={r.status === "failed" ? "Retry generation" : "Generate content for this recipe"}
                   >
                     {generatingId === r.id ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
                   </button>
