@@ -282,11 +282,57 @@ class JobManager:
 
             if db_job.job_type == JobType.articles:
                 recipe_ids = [r.id for r in recipes_raw]
+                # Atomic claim: only take recipes still in pending/failed.
                 await db.execute(
                     update(Recipe)
-                    .where(Recipe.id.in_(recipe_ids))
+                    .where(
+                        Recipe.id.in_(recipe_ids),
+                        Recipe.status.in_([RecipeStatus.pending, RecipeStatus.failed]),
+                    )
                     .values(status=RecipeStatus.generating, created_by_job_id=db_job.id, error_message=None)
                 )
+                # Rebuild from rows this job actually claimed instead of trusting rowcount.
+                claimed_rows = await db.execute(
+                    select(Recipe).where(
+                        Recipe.id.in_(recipe_ids),
+                        Recipe.created_by_job_id == db_job.id,
+                        Recipe.status == RecipeStatus.generating,
+                    )
+                )
+                claimed = claimed_rows.scalars().all()
+                if not claimed:
+                    db_job.status = JobStatus.failed
+                    db_job.error = (
+                        "No claimable pending recipes found. They may already be processing or completed."
+                    )
+                    db_job.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    return
+                if len(claimed) < len(recipe_ids):
+                    logger.warning(
+                        "Job %s claimed %d/%d recipes; continuing with claimed subset",
+                        job_id_str,
+                        len(claimed),
+                        len(recipe_ids),
+                    )
+                recipes_data = [
+                    {
+                        "id": str(r.id),
+                        "recipe_text": r.recipe_text,
+                        "pin_title": r.pin_title,
+                        "image_url": r.image_url,
+                        "generated_article": r.generated_article,
+                        "generated_json": r.generated_json,
+                        "focus_keyword": r.focus_keyword,
+                        "meta_description": r.meta_description,
+                        "category": r.category,
+                        "generated_images": r.generated_images,
+                        "seo_title": r.seo_title,
+                        "wp_tags": r.wp_tags,
+                        "pin_blog_link": r.pin_blog_link,
+                    }
+                    for r in claimed
+                ]
 
         rj = RunningJob(db_job.id)
         self._running[job_id_str] = rj

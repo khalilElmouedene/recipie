@@ -367,6 +367,12 @@ async def publish_recipe_article(
 
     await check_project_access(site_obj.project_id, user, db)
 
+    if recipe.status == RecipeStatus.generating:
+        raise HTTPException(
+            status_code=409,
+            detail="This recipe is currently being generated. Wait for generation to complete before publishing.",
+        )
+
     if not recipe.generated_article:
         raise HTTPException(status_code=400, detail="No article generated. Generate content first.")
 

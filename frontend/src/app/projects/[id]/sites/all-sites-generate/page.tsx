@@ -30,6 +30,7 @@ import {
   PublishScheduleOut,
   GeneratedJobRecipeOut,
   RecipeOut,
+  getWsUrl,
 } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -83,6 +84,7 @@ export default function AllSitesGeneratePage() {
   const [batchPublishing, setBatchPublishing] = useState<null | "wordpress_scheduled" | "manual_backdate">(null);
   const [importingExcel, setImportingExcel] = useState(false);
   const excelInputRef = useRef<HTMLInputElement>(null);
+  const runStartingRef = useRef(false); // idempotency: blocks re-entry before React re-renders
 
   const [jobRecipeMap, setJobRecipeMap] = useState<Record<string, GeneratedJobRecipeOut[]>>({});
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -194,6 +196,45 @@ export default function AllSitesGeneratePage() {
     .map((r) => ({ image_url: r.image_url.trim(), recipe_text: r.recipe_text.trim() }))
     .filter((r) => r.image_url && r.recipe_text).length;
   const hasRunningGeneration = history.some((j) => j.status === "running" || j.status === "pending");
+
+  // Real-time: while any job is running, subscribe to its WS and reload history
+  // on completion — instant status update instead of polling.
+  const runningJob = history.find((j) => j.status === "running" || j.status === "pending");
+  useEffect(() => {
+    if (!runningJob) return;
+    let cancelled = false;
+    let ws: WebSocket | null = null;
+
+    // Only open WS once the job is running (has a WS endpoint)
+    if (runningJob.status === "running") {
+      ws = new WebSocket(getWsUrl(runningJob.id));
+      ws.onmessage = (e) => {
+        if (!e.data || cancelled) return;
+        if (
+          e.data.includes("Job completed") ||
+          e.data.includes("Job stopped") ||
+          e.data.includes("Job failed")
+        ) {
+          setTimeout(() => { if (!cancelled) loadHistory(); }, 600);
+        }
+      };
+      ws.onclose = () => {
+        if (!cancelled) setTimeout(() => loadHistory(), 600);
+      };
+    } else {
+      // Job is pending (not started yet) — poll at 3s until it becomes running
+      const t = setInterval(() => {
+        if (cancelled) { clearInterval(t); return; }
+        loadHistory();
+      }, 3000);
+      return () => { cancelled = true; clearInterval(t); };
+    }
+
+    return () => {
+      cancelled = true;
+      ws?.close();
+    };
+  }, [runningJob?.id, runningJob?.status, loadHistory]);
   const hasAnyGeneratedRecipes = Object.values(jobRecipeMap).some((arr) =>
     arr.some((r) => r.status === "generated" || r.status === "published")
   );
@@ -205,6 +246,7 @@ export default function AllSitesGeneratePage() {
     hasAnyGeneratedRecipes;
 
   const handleRun = async () => {
+    if (runStartingRef.current) return;
     const valid = rows
       .map((r) => ({ image_url: r.image_url.trim(), recipe_text: r.recipe_text.trim() }))
       .filter((r) => r.image_url && r.recipe_text);
@@ -216,6 +258,7 @@ export default function AllSitesGeneratePage() {
       toast.warning("Add at least one site first.");
       return;
     }
+    runStartingRef.current = true;
     setLoading(true);
     try {
       const job = await api.startJob(projectId, {
@@ -226,6 +269,8 @@ export default function AllSitesGeneratePage() {
     } catch (e: any) {
       toast.error(e.message || "Failed to start all-sites generation job");
       setLoading(false);
+    } finally {
+      runStartingRef.current = false;
     }
   };
 

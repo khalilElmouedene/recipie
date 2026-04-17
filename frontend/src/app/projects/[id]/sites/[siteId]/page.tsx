@@ -78,6 +78,9 @@ export default function SiteDetailPage() {
   const [jobToast, setJobToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const detailsLoadedRef = useRef<Set<string>>(new Set());
   const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
+  // Idempotency refs: block re-entry between click and React re-render (same-frame double-clicks)
+  const jobStartingRef = useRef(false);
+  const generatingIdsRef = useRef<Set<string>>(new Set());
 
   const loadRecipes = useCallback(
     () =>
@@ -336,6 +339,49 @@ export default function SiteDetailPage() {
     return () => clearInterval(t);
   }, [activeJob?.id, activeJob?.status]);
 
+  // Real-time cross-user: when recipes are generating but the current user has no
+  // active job running (another user's job), find that job and subscribe to its WS.
+  // On completion message → reload recipes immediately (no polling lag).
+  const hasExternalGenerating =
+    recipes.some((r) => r.status === "generating") && activeJob?.status !== "running";
+  useEffect(() => {
+    if (!hasExternalGenerating) return;
+    let cancelled = false;
+    let ws: WebSocket | null = null;
+
+    api.getProjectJobs(projectId)
+      .then((jobs) => {
+        if (cancelled) return;
+        const running = jobs.find((j) => j.job_type === "articles" && j.status === "running");
+        if (!running) {
+          // Job already finished before we checked — reload to get final statuses
+          loadRecipes();
+          return;
+        }
+        ws = new WebSocket(getWsUrl(running.id));
+        ws.onmessage = (e) => {
+          if (!e.data || cancelled) return;
+          if (
+            e.data.includes("Job completed") ||
+            e.data.includes("Job stopped") ||
+            e.data.includes("Job failed")
+          ) {
+            setTimeout(() => { if (!cancelled) loadRecipes(); }, 600);
+          }
+        };
+        ws.onclose = () => {
+          // WS dropped — reload so we don't miss the final status
+          if (!cancelled) setTimeout(() => loadRecipes(), 600);
+        };
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      ws?.close();
+    };
+  }, [hasExternalGenerating, projectId, loadRecipes]);
+
   const openRecipeLogs = async (recipeId: string) => {
     const knownJobId = recipeJobMap[recipeId];
     if (knownJobId) {
@@ -357,6 +403,8 @@ export default function SiteDetailPage() {
   };
 
   const handleGenerateSingle = async (recipeId: string) => {
+    if (generatingIdsRef.current.has(recipeId)) return;
+    generatingIdsRef.current.add(recipeId);
     setGeneratingId(recipeId);
     try {
       const job = await api.startJob(projectId, {
@@ -372,10 +420,13 @@ export default function SiteDetailPage() {
     } catch (err: any) {
       toast.error(err.message || "Failed to start generation");
     }
+    generatingIdsRef.current.delete(recipeId);
     setGeneratingId(null);
   };
 
   const handleRunJob = async (type: "articles" | "publisher") => {
+    if (jobStartingRef.current) return;
+    jobStartingRef.current = true;
     setStarting(true);
     try {
       const job = await api.startJob(projectId, { job_type: type, site_id: siteId });
@@ -384,6 +435,7 @@ export default function SiteDetailPage() {
     } catch (err: any) {
       toast.error(err.message || "Failed to start job");
     }
+    jobStartingRef.current = false;
     setStarting(false);
   };
 
@@ -920,9 +972,9 @@ export default function SiteDetailPage() {
                 {r.generated_article && (
                   <button
                     onClick={(e) => { e.stopPropagation(); handlePublishArticleToWordPress(r); }}
-                    disabled={wpPublishingId === r.id || r.status === "published"}
+                    disabled={wpPublishingId === r.id || r.status === "published" || r.status === "generating"}
                     className="text-gray-500 hover:text-blue-400 p-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={r.status === "published" ? "Already published to WordPress" : "Publish article to WordPress"}
+                    title={r.status === "published" ? "Already published to WordPress" : r.status === "generating" ? "Generation in progress — wait for it to complete" : "Publish article to WordPress"}
                   >
                     {wpPublishingId === r.id ? <RefreshCw size={16} className="animate-spin" /> : <Globe size={16} />}
                   </button>
