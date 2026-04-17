@@ -59,14 +59,23 @@ async def websocket_logs(websocket: WebSocket, job_id: str):
         await websocket.close()
         return
 
+    # Subscribe before snapshotting logs so we don't miss messages between the two
     queue = rj.subscribe()
+    # Replay all logs produced before this client connected
+    for old_msg in list(rj._logs):
+        try:
+            await websocket.send_text(old_msg)
+        except Exception:
+            rj.unsubscribe(queue)
+            return
+
     try:
         while True:
             try:
                 msg = await asyncio.wait_for(queue.get(), timeout=30)
                 await websocket.send_text(msg)
             except asyncio.TimeoutError:
-                await websocket.send_text("")
+                await websocket.send_text("")  # keep-alive ping
             except WebSocketDisconnect:
                 break
     finally:

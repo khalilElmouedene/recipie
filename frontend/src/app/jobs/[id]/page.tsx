@@ -127,31 +127,49 @@ export default function JobDetailPage() {
 
   useEffect(() => {
     if (!job || job.status !== "running") return;
-    const ws = new WebSocket(getWsUrl(id));
 
-    ws.onmessage = (e) => {
-      if (!e.data) return;
-      setLogs((prev) => [...prev, e.data]);
-      if (
-        e.data.includes("Job completed successfully") ||
-        e.data.includes("Job stopped") ||
-        e.data.includes("Job failed")
-      ) {
-        setTimeout(() => api.getJob(id).then(setJob).catch(() => {}), 800);
-      }
-    };
+    let cancelled = false;
+    let currentWs: WebSocket | null = null;
 
-    ws.onclose = () => {
-      const poll = (attempts: number) => {
-        api.getJob(id).then((j) => {
-          setJob(j);
-          if (j.status === "running" && attempts > 0) setTimeout(() => poll(attempts - 1), 1500);
-        }).catch(() => {});
+    const connect = (isReconnect: boolean) => {
+      if (cancelled) return;
+      // On reconnect, clear stale logs — backend will replay the full history
+      if (isReconnect) setLogs([]);
+
+      const ws = new WebSocket(getWsUrl(id));
+      currentWs = ws;
+
+      ws.onmessage = (e) => {
+        if (!e.data) return;
+        setLogs((prev) => [...prev, e.data]);
+        if (
+          e.data.includes("Job completed successfully") ||
+          e.data.includes("Job stopped") ||
+          e.data.includes("Job failed")
+        ) {
+          setTimeout(() => api.getJob(id).then(setJob).catch(() => {}), 800);
+        }
       };
-      poll(3);
+
+      ws.onclose = () => {
+        if (cancelled) return;
+        api.getJob(id)
+          .then((j) => {
+            setJob(j);
+            if (j.status === "running") setTimeout(() => connect(true), 2000);
+          })
+          .catch(() => {
+            if (!cancelled) setTimeout(() => connect(true), 3000);
+          });
+      };
     };
 
-    return () => ws.close();
+    connect(false);
+
+    return () => {
+      cancelled = true;
+      currentWs?.close();
+    };
   }, [job?.status, id]);
 
   useEffect(() => {
