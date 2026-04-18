@@ -20,6 +20,8 @@ import { appendPinImageToArticleHtml } from "@/lib/pinArticleEmbed";
 import { getUserRole, getUserId } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import BatchPublishModal from "@/components/BatchPublishModal";
+import type { PublishBatchRequest } from "@/lib/api";
 import { useDesignerStore } from "@/store/useDesignerStore";
 import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 import {
@@ -843,6 +845,7 @@ export default function PinDesigner({
   const [savingToRecipe, setSavingToRecipe] = useState(false);
   const [wpBatchBusy, setWpBatchBusy] = useState<null | "wordpress_scheduled" | "manual_backdate">(null);
   const [wpBatchDone, setWpBatchDone] = useState(false);
+  const [wpBatchModalData, setWpBatchModalData] = useState<PublishBatchRequest | null>(null);
   const [showCsvModal, setShowCsvModal] = useState(false);
   const [csvStartDate, setCsvStartDate] = useState(() => {
     const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
@@ -1060,15 +1063,18 @@ export default function PinDesigner({
           await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe");
         }
       }
-      // 2. WordPress batch — scoped to siteId when available so only this site's recipes are published.
-      const res = await api.publishBatchToWordPress(projectId, { mode, ...opts, ...(siteId ? { site_id: siteId } : {}) });
-      toast.info(`Publishing ${res.total} recipes in background. Refresh in a few minutes.`);
-      if (res.total > 0) setWpBatchDone(true);
+      // 2. Open batch publish modal — scoped to siteId when available.
+      setWpBatchModalData({ mode, ...opts, ...(siteId ? { site_id: siteId } : {}) });
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Batch publish failed");
-    } finally {
+      toast.error(e instanceof Error ? e.message : "Failed to save pins before publishing");
       setWpBatchBusy(null);
     }
+  };
+
+  const handleWpBatchModalClose = (didPublish: boolean) => {
+    setWpBatchModalData(null);
+    setWpBatchBusy(null);
+    if (didPublish) setWpBatchDone(true);
   };
 
   // ── Mount ────────────────────────────────────────────────────────────────
@@ -3812,6 +3818,15 @@ export default function PinDesigner({
           </button>
         </div>
       </header>
+
+      {/* ── Batch Publish Modal ───────────────────────────────────────────── */}
+      {wpBatchModalData && projectId && (
+        <BatchPublishModal
+          projectId={projectId}
+          data={wpBatchModalData}
+          onClose={handleWpBatchModalClose}
+        />
+      )}
 
       {/* ── Save Template Modal ───────────────────────────────────────────── */}
       {showSaveTemplateModal && (

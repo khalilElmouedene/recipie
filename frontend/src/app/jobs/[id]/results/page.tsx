@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Save, CalendarClock, History, Trash2 } from "lucide-react";
-import { api, GeneratedJobRecipeOut, JobOut, PublishScheduleOut } from "@/lib/api";
+import { api, GeneratedJobRecipeOut, JobOut, PublishScheduleOut, PublishBatchRequest } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import BatchPublishModal from "@/components/BatchPublishModal";
 
 export default function JobResultsPage() {
   const { id } = useParams<{ id: string }>();
@@ -24,6 +25,7 @@ export default function JobResultsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [batchPublishing, setBatchPublishing] = useState<null | "wordpress_scheduled" | "manual_backdate">(null);
+  const [batchModalData, setBatchModalData] = useState<PublishBatchRequest | null>(null);
 
   useEffect(() => {
     api.getJob(id).then(setJob).catch(() => router.push("/"));
@@ -88,24 +90,30 @@ export default function JobResultsPage() {
   const hasGenerated = recipes.some((r) => r.status === "generated");
   const canBatch = canAdmin && !!job?.project_id && hasGenerated && !batchPublishing;
 
-  const runBatch = async (mode: "wordpress_scheduled" | "manual_backdate") => {
+  const runBatch = (mode: "wordpress_scheduled" | "manual_backdate") => {
     if (!job?.project_id) return;
     setBatchPublishing(mode);
-    setError(null);
-    try {
-      const res = await api.publishBatchToWordPress(job.project_id, { mode });
-      toast.info(`Publishing ${res.total} recipes in background. Refresh in a few minutes to see results.`);
+    setBatchModalData({ mode });
+  };
+
+  const handleBatchModalClose = async (didPublish: boolean) => {
+    setBatchModalData(null);
+    setBatchPublishing(null);
+    if (didPublish) {
       const list = await api.getJobGeneratedRecipes(id);
       setRecipes(list);
-    } catch (e: any) {
-      setError(e?.message || "Batch publish failed");
-    } finally {
-      setBatchPublishing(null);
     }
   };
 
   return (
     <div>
+      {batchModalData && job?.project_id && (
+        <BatchPublishModal
+          projectId={job.project_id}
+          data={batchModalData}
+          onClose={handleBatchModalClose}
+        />
+      )}
       <button onClick={() => router.push(`/jobs/${id}`)} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4">
         <ArrowLeft size={16} /> Back to Job
       </button>

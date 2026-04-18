@@ -36,6 +36,8 @@ import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import BatchPublishModal from "@/components/BatchPublishModal";
+import type { PublishBatchRequest } from "@/lib/api";
 
 function thumbUrl(r: GeneratedJobRecipeOut): string | null {
   if (r.generated_images) {
@@ -84,6 +86,7 @@ export default function AllSitesGeneratePage() {
   const [deletingPublished, setDeletingPublished] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [batchPublishing, setBatchPublishing] = useState<null | "wordpress_scheduled" | "manual_backdate">(null);
+  const [batchModalData, setBatchModalData] = useState<PublishBatchRequest | null>(null);
   const [importingExcel, setImportingExcel] = useState(false);
   const excelInputRef = useRef<HTMLInputElement>(null);
   const runStartingRef = useRef(false); // idempotency: blocks re-entry before React re-renders
@@ -316,11 +319,15 @@ export default function AllSitesGeneratePage() {
     }
   };
 
-  const runPublishBatch = async (mode: "wordpress_scheduled" | "manual_backdate") => {
+  const runPublishBatch = (mode: "wordpress_scheduled" | "manual_backdate") => {
     setBatchPublishing(mode);
-    try {
-      const res = await api.publishBatchToWordPress(projectId, { mode });
-      toast.info(`Publishing ${res.total} recipes in background. Refresh in a few minutes to see results.`);
+    setBatchModalData({ mode });
+  };
+
+  const handleBatchModalClose = async (didPublish: boolean) => {
+    setBatchModalData(null);
+    setBatchPublishing(null);
+    if (didPublish) {
       const jobs = await api.getProjectJobs(projectId);
       const filtered = jobs.filter((j) => j.job_type === "articles_all_sites");
       setHistory(filtered);
@@ -328,14 +335,8 @@ export default function AllSitesGeneratePage() {
         filtered.map((j) => api.getJobGeneratedRecipes(j.id).then((r) => [j.id, r] as const))
       );
       const m: Record<string, GeneratedJobRecipeOut[]> = {};
-      pairs.forEach(([jid, r]) => {
-        m[jid] = r;
-      });
+      pairs.forEach(([jid, r]) => { m[jid] = r; });
       setJobRecipeMap(m);
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Batch publish failed");
-    } finally {
-      setBatchPublishing(null);
     }
   };
 
@@ -495,6 +496,13 @@ export default function AllSitesGeneratePage() {
 
   return (
     <div>
+      {batchModalData && (
+        <BatchPublishModal
+          projectId={projectId}
+          data={batchModalData}
+          onClose={handleBatchModalClose}
+        />
+      )}
       <button
         onClick={() => router.push(`/projects/${projectId}`)}
         className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4"
