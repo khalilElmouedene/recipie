@@ -1194,6 +1194,15 @@ function TemplateDesignerInner() {
         });
       } else if (type === "image") {
         if (o.type !== "rect") continue;
+        console.log("[TD_EXTRACT] image zone raw", o.__id, {
+          oLeft: o.left, oTop: o.top,
+          oWidth: o.width, oHeight: o.height,
+          scaleX: o.scaleX, scaleY: o.scaleY,
+          originX: o.originX, originY: o.originY,
+          computedW: w, computedH: h,
+          computedX: x, computedY: y,
+          flipX: o.__flipX,
+        });
         results.push({
           id: o.__id,
           type: "image",

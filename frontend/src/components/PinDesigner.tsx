@@ -1898,6 +1898,10 @@ export default function PinDesigner({
     canvas.clear();
     canvas.backgroundColor = template.bgColor;
 
+    console.log("[LOAD_TMPL] template elements:", template.elements.map(el => ({
+      id: el.id, type: el.type, x: el.x, y: el.y, width: el.width, height: el.height, flipX: (el as any).flipX,
+    })));
+
     const { Rect, FabricText } = fabric;
     let imageIndex = 0;
 
