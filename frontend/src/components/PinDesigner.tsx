@@ -1208,6 +1208,7 @@ export default function PinDesigner({
           width,
           height,
           bgColor,
+          flipX: !!(o as any).flipX,
         });
       } else if (pinType === "text") {
         elements.push({
@@ -1718,6 +1719,24 @@ export default function PinDesigner({
       }
       // Reapply lock constraints (lost after loadFromJSON)
       applyLockState(o);
+
+      // Restore absolutePositioned on image clipPaths — Fabric's JSON round-trip
+      // may drop this flag, causing syncDesignerBorder to use the oversized image
+      // bounds instead of the zone bounds for the dashed border rect.
+      if (o.__pinType === "image" && o.clipPath) {
+        o.clipPath.absolutePositioned = true;
+        // Re-anchor the designer border to the clip zone dimensions
+        const border = objs.find((b: any) => b.__designerBorder && b.__forPinId === o.__pinId);
+        if (border && typeof o.clipPath.left === "number") {
+          border.set({
+            left: o.clipPath.left,
+            top: o.clipPath.top,
+            width: o.clipPath.width,
+            height: o.clipPath.height,
+          });
+          border.setCoords();
+        }
+      }
     });
   };
 
@@ -2348,6 +2367,7 @@ export default function PinDesigner({
           await Promise.all(fontFamilies.map(injectFontStylesheet));
         }
         await canvas.loadFromJSON(initialJson);
+        normalizeCanvasObjectMetadata();
         canvas.renderAll();
         updateLayers();
       } catch { /* ignore */ }
