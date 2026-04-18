@@ -677,16 +677,24 @@ export default function PinDesigner({
   const [fontLoading, setFontLoading] = useState(false);
   const fontsLoadedRef = useRef(false);
 
-  const injectFontStylesheet = useCallback((fontName: string) => {
+  const injectFontStylesheet = useCallback((fontName: string): Promise<void> => {
     const family = fontName.replace(/ /g, "+");
     const linkId = `gfont-${family}`;
-    if (!document.getElementById(linkId)) {
+    const waitForFont = () =>
+      document.fonts.load(`400 16px "${fontName}"`).then(() => {}).catch(() => {});
+    if (document.getElementById(linkId)) {
+      // Stylesheet already injected — just ensure the font bytes are ready
+      return waitForFont();
+    }
+    return new Promise<void>((resolve) => {
       const link = document.createElement("link");
       link.id = linkId;
       link.rel = "stylesheet";
       link.href = `https://fonts.googleapis.com/css2?family=${family}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
+      link.onload = () => waitForFont().then(resolve);
+      link.onerror = () => resolve();
       document.head.appendChild(link);
-    }
+    });
   }, []);
 
   // Load saved fonts from database on mount
@@ -1770,16 +1778,15 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
 
-    // Inject Google Font stylesheets for every font used in this template so
-    // members who don't have the font in their own list still see it correctly.
+    // Wait for every font used in this template to be fully downloaded before
+    // building canvas objects — prevents the first-load fallback-font flash.
     const templateFonts = Array.from(new Set(
       template.elements
         .filter((el) => el.type === "text" && (el as any).fontFamily)
         .map((el) => (el as any).fontFamily as string)
     ));
-    templateFonts.forEach(injectFontStylesheet);
     if (templateFonts.length > 0) {
-      try { await document.fonts.ready; } catch { /* ignore */ }
+      await Promise.all(templateFonts.map(injectFontStylesheet));
     }
 
     const imgs = imagesOverride ?? effectiveImages;
@@ -2295,21 +2302,23 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    // Inject fonts referenced in the saved JSON before restoring
-    try {
-      const jsonData = JSON.parse(initialJson);
-      const fontFamilies: string[] = Array.from(new Set(
-        (jsonData.objects || [])
-          .filter((o: any) => o.fontFamily)
-          .map((o: any) => o.fontFamily as string)
-      ));
-      fontFamilies.forEach(injectFontStylesheet);
-    } catch { /* ignore parse errors */ }
-
-    document.fonts.ready
-      .then(() => canvas.loadFromJSON(initialJson))
-      .then(() => { canvas.renderAll(); updateLayers(); })
-      .catch(() => {});
+    // Wait for all fonts in the saved JSON before restoring the canvas
+    ;(async () => {
+      try {
+        const jsonData = JSON.parse(initialJson);
+        const fontFamilies: string[] = Array.from(new Set(
+          (jsonData.objects || [])
+            .filter((o: any) => o.fontFamily)
+            .map((o: any) => o.fontFamily as string)
+        ));
+        if (fontFamilies.length > 0) {
+          await Promise.all(fontFamilies.map(injectFontStylesheet));
+        }
+        await canvas.loadFromJSON(initialJson);
+        canvas.renderAll();
+        updateLayers();
+      } catch { /* ignore */ }
+    })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasReady]);
 
