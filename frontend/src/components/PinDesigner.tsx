@@ -887,6 +887,7 @@ export default function PinDesigner({
 
     const savedJson = frameJsonsRef.current[newIdx];
     if (savedJson && savedJson !== "{}") {
+      console.log("[FRAME_JSON] loadFromJSON done, calling normalizeCanvasObjectMetadata");
       await canvas.loadFromJSON(savedJson);
       normalizeCanvasObjectMetadata();
       canvas.renderAll();
@@ -1723,18 +1724,37 @@ export default function PinDesigner({
       // Restore absolutePositioned on image clipPaths — Fabric's JSON round-trip
       // may drop this flag, causing syncDesignerBorder to use the oversized image
       // bounds instead of the zone bounds for the dashed border rect.
-      if (o.__pinType === "image" && o.clipPath) {
-        o.clipPath.absolutePositioned = true;
-        // Re-anchor the designer border to the clip zone dimensions
-        const border = objs.find((b: any) => b.__designerBorder && b.__forPinId === o.__pinId);
-        if (border && typeof o.clipPath.left === "number") {
-          border.set({
-            left: o.clipPath.left,
-            top: o.clipPath.top,
-            width: o.clipPath.width,
-            height: o.clipPath.height,
-          });
-          border.setCoords();
+      if (o.__pinType === "image") {
+        console.log("[NORM] image obj", o.__pinId, {
+          hasClipPath: !!o.clipPath,
+          clipAbsolutePositioned: o.clipPath?.absolutePositioned,
+          clipLeft: o.clipPath?.left,
+          clipTop: o.clipPath?.top,
+          clipWidth: o.clipPath?.width,
+          clipHeight: o.clipPath?.height,
+          objLeft: o.left,
+          objTop: o.top,
+          objScaleX: o.scaleX,
+          objScaleY: o.scaleY,
+        });
+        if (o.clipPath) {
+          o.clipPath.absolutePositioned = true;
+          // Re-anchor the designer border to the clip zone dimensions
+          const border = objs.find((b: any) => b.__designerBorder && b.__forPinId === o.__pinId);
+          console.log("[NORM] border found?", !!border, "forPinId=", o.__pinId);
+          if (border && typeof o.clipPath.left === "number") {
+            console.log("[NORM] setting border to clip zone", {
+              left: o.clipPath.left, top: o.clipPath.top,
+              width: o.clipPath.width, height: o.clipPath.height,
+            });
+            border.set({
+              left: o.clipPath.left,
+              top: o.clipPath.top,
+              width: o.clipPath.width,
+              height: o.clipPath.height,
+            });
+            border.setCoords();
+          }
         }
       }
     });
@@ -1791,6 +1811,13 @@ export default function PinDesigner({
     // For clipped image zones, keep the guide border anchored to the clip frame
     // (the zone), not to the oversized image bounds used for panning.
     const clip = obj.clipPath;
+    console.log("[SYNC_BORDER]", obj.__pinId, {
+      pinType: obj.__pinType,
+      hasClip: !!clip,
+      absolutePositioned: clip?.absolutePositioned,
+      clipLeft: clip?.left, clipTop: clip?.top,
+      clipWidth: clip?.width, clipHeight: clip?.height,
+    });
     if (
       obj.__pinType === "image" &&
       clip &&
@@ -1800,6 +1827,7 @@ export default function PinDesigner({
       typeof clip.width === "number" &&
       typeof clip.height === "number"
     ) {
+      console.log("[SYNC_BORDER] → using clipPath bounds", clip.left, clip.top, clip.width, clip.height);
       border.set({
         left: clip.left,
         top: clip.top,
@@ -1812,6 +1840,7 @@ export default function PinDesigner({
     }
 
     const br = obj.getBoundingRect(true);
+    console.log("[SYNC_BORDER] → FALLBACK getBoundingRect", br.left, br.top, br.width, br.height);
     border.set({ left: br.left, top: br.top, width: br.width, height: br.height });
     border.setCoords();
     canvas.bringObjectToFront(border);
@@ -1941,6 +1970,11 @@ export default function PinDesigner({
               fill: "",
             });
             (img as any).clipPath = clipRect;
+            console.log("[LOAD_TMPL] image added", el.id, {
+              zone: { x: el.x, y: el.y, w: el.width, h: el.height },
+              clipAbsolutePositioned: clipRect.absolutePositioned,
+              imgScale: scale,
+            });
 
             canvas.add(img);
             addDesignerBorder(fabric, canvas, el.x, el.y, el.width, el.height, el.id);
@@ -2366,6 +2400,7 @@ export default function PinDesigner({
         if (fontFamilies.length > 0) {
           await Promise.all(fontFamilies.map(injectFontStylesheet));
         }
+        console.log("[INIT_JSON] loadFromJSON done, calling normalizeCanvasObjectMetadata");
         await canvas.loadFromJSON(initialJson);
         normalizeCanvasObjectMetadata();
         canvas.renderAll();
