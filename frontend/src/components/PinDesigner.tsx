@@ -704,9 +704,27 @@ export default function PinDesigner({
   // Load user-created Pin Designer templates (filtered by project if available)
   useEffect(() => {
     api.getPinDesignerTemplates(projectId ?? undefined)
-      .then((t) => setCustomTemplates(t as PinTemplate[]))
+      .then((t) => {
+        setCustomTemplates(t as PinTemplate[]);
+        // Make all fonts used in loaded templates available in the font dropdown
+        // and inject their stylesheets — without saving to DB (session-only).
+        const templateFonts = Array.from(new Set(
+          t.flatMap((tmpl) =>
+            tmpl.elements
+              .filter((el) => el.type === "text" && (el as any).fontFamily)
+              .map((el) => (el as any).fontFamily as string)
+          )
+        ));
+        if (templateFonts.length > 0) {
+          templateFonts.forEach(injectFontStylesheet);
+          setCustomFonts((prev) => {
+            const extra = templateFonts.filter((f) => !prev.includes(f));
+            return extra.length > 0 ? [...prev, ...extra] : prev;
+          });
+        }
+      })
       .catch(() => {});
-  }, [projectId]);
+  }, [projectId, injectFontStylesheet]);
 
   const saveFontsToDb = useCallback((fonts: string[]) => {
     api.setCustomFonts(fonts).catch(() => {});
