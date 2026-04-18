@@ -1943,7 +1943,6 @@ export default function PinDesigner({
             (img as any).clipPath = clipRect;
 
             canvas.add(img);
-            addDesignerBorder(fabric, canvas, el.x, el.y, el.width, el.height, el.id);
             imageLoaded = true;
           } catch {
             // fall through to placeholder
