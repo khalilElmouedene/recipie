@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LayoutTemplate, Plus, Trash2, Pencil, Copy, FolderOpen, X, Check } from "lucide-react";
 import { api, PinDesignerTemplateOut, ProjectOut } from "@/lib/api";
+import { useToast } from "@/contexts/ToastContext";
+import { useConfirm } from "@/components/ConfirmModal";
 
 const CANVAS_SIZE_PRESETS = [
   { label: "Pinterest Pin",    w: 1000, h: 1500 },
@@ -18,12 +20,13 @@ function SizePickerModal({ onConfirm, onClose }: { onConfirm: (w: number, h: num
   const [selected, setSelected] = useState(0);
   const [customW, setCustomW] = useState("1000");
   const [customH, setCustomH] = useState("1500");
+  const [sizeError, setSizeError] = useState("");
   const isCustom = CANVAS_SIZE_PRESETS[selected].label === "Custom";
 
   function handleConfirm() {
     const w = isCustom ? parseInt(customW, 10) : CANVAS_SIZE_PRESETS[selected].w;
     const h = isCustom ? parseInt(customH, 10) : CANVAS_SIZE_PRESETS[selected].h;
-    if (!w || !h || w < 100 || h < 100) { alert("Please enter valid dimensions (min 100px)."); return; }
+    if (!w || !h || w < 100 || h < 100) { setSizeError("Please enter valid dimensions (min 100px)."); return; }
     onConfirm(w, h);
   }
 
@@ -74,6 +77,7 @@ function SizePickerModal({ onConfirm, onClose }: { onConfirm: (w: number, h: num
           </div>
         )}
 
+        {sizeError && <p className="text-red-400 text-xs mb-2">{sizeError}</p>}
         <div className="flex gap-2">
           <button onClick={onClose} className="flex-1 px-4 py-2 rounded-lg border border-gray-700 text-gray-400 hover:text-white text-sm transition">Cancel</button>
           <button onClick={handleConfirm} className="flex-1 btn-primary text-sm">Create Design</button>
@@ -85,11 +89,15 @@ function SizePickerModal({ onConfirm, onClose }: { onConfirm: (w: number, h: num
 
 export default function PinDesignerTemplatesPage() {
   const router = useRouter();
+  const toast = useToast();
+  const confirm = useConfirm();
 
   const [templates, setTemplates] = useState<PinDesignerTemplateOut[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [cloningId, setCloningId] = useState<string | null>(null);
+  const [cloneTarget, setCloneTarget] = useState<PinDesignerTemplateOut | null>(null);
+  const [cloneName, setCloneName] = useState("");
   const [showSizePicker, setShowSizePicker] = useState(false);
 
   // Assign to projects state
@@ -139,14 +147,14 @@ export default function PinDesignerTemplatesPage() {
       setTemplates((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
       setAssigningTemplate(null);
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to save assignment.");
+      toast.error(err instanceof Error ? err.message : "Failed to save assignment.");
     } finally {
       setAssignSaving(false);
     }
   };
 
   const handleDeleteTemplate = async (id: string) => {
-    if (!confirm("Delete this template? This cannot be undone.")) return;
+    if (!await confirm({ message: "Delete this template? This cannot be undone.", danger: true, confirmLabel: "Delete" })) return;
     setDeletingId(id);
     try {
       await api.deletePinDesignerTemplate(id);
@@ -158,7 +166,7 @@ export default function PinDesignerTemplatesPage() {
     }
   };
 
-  const handleCloneTemplate = async (tmpl: PinDesignerTemplateOut) => {
+  const openCloneModal = (tmpl: PinDesignerTemplateOut) => {
     const existingNames = new Set(templates.map((t) => t.name.trim().toLowerCase()));
     let suggestedName = `${tmpl.name} Copy`;
     let copyIndex = 2;
@@ -166,28 +174,29 @@ export default function PinDesignerTemplatesPage() {
       suggestedName = `${tmpl.name} Copy ${copyIndex}`;
       copyIndex += 1;
     }
+    setCloneTarget(tmpl);
+    setCloneName(suggestedName);
+  };
 
-    const nextName = prompt("Enter new name for cloned template:", suggestedName);
-    if (!nextName) return;
-    const cleanName = nextName.trim();
-    if (!cleanName) {
-      alert("Template name cannot be empty.");
-      return;
-    }
-
-    setCloningId(tmpl.id);
+  const handleCloneTemplate = async () => {
+    if (!cloneTarget) return;
+    const cleanName = cloneName.trim();
+    if (!cleanName) { toast.error("Template name cannot be empty."); return; }
+    setCloningId(cloneTarget.id);
+    setCloneTarget(null);
     try {
       const created = await api.createPinDesignerTemplate({
         name: cleanName,
-        description: tmpl.description,
-        bgColor: tmpl.bgColor,
-        canvasWidth: tmpl.canvasWidth,
-        canvasHeight: tmpl.canvasHeight,
-        elements: tmpl.elements,
+        description: cloneTarget.description,
+        bgColor: cloneTarget.bgColor,
+        canvasWidth: cloneTarget.canvasWidth,
+        canvasHeight: cloneTarget.canvasHeight,
+        elements: cloneTarget.elements,
       });
       setTemplates((prev) => [created, ...prev]);
+      toast.success("Template cloned.");
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to clone template.");
+      toast.error(err instanceof Error ? err.message : "Failed to clone template.");
     } finally {
       setCloningId(null);
     }
@@ -200,6 +209,26 @@ export default function PinDesignerTemplatesPage() {
           onConfirm={(w, h) => { setShowSizePicker(false); router.push(`/template-designer?w=${w}&h=${h}`); }}
           onClose={() => setShowSizePicker(false)}
         />
+      )}
+
+      {cloneTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+            <h3 className="text-white font-semibold text-base mb-3">Clone Template</h3>
+            <label className="text-xs text-gray-400 block mb-1">New name</label>
+            <input
+              autoFocus
+              className="input-field w-full mb-4 text-sm"
+              value={cloneName}
+              onChange={(e) => setCloneName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleCloneTemplate(); if (e.key === "Escape") setCloneTarget(null); }}
+            />
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setCloneTarget(null)} className="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm transition">Cancel</button>
+              <button onClick={handleCloneTemplate} className="btn-primary px-4 py-2 text-sm">Clone</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {assigningTemplate && (
@@ -363,7 +392,7 @@ export default function PinDesignerTemplatesPage() {
                     <FolderOpen size={13} />
                   </button>
                   <button
-                    onClick={() => handleCloneTemplate(tmpl)}
+                    onClick={() => openCloneModal(tmpl)}
                     disabled={cloningId === tmpl.id}
                     title="Clone"
                     className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-700 hover:text-white transition disabled:opacity-50"

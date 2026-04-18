@@ -5,6 +5,7 @@ import { Menu } from "lucide-react";
 import { isLoggedIn } from "@/lib/auth";
 import Sidebar from "./Sidebar";
 import { ToastProvider } from "@/contexts/ToastContext";
+import { ConfirmProvider } from "@/components/ConfirmModal";
 
 const PUBLIC = ["/login", "/register", "/auth/google/callback", "/setup-password"];
 
@@ -35,6 +36,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <ToastProvider>
+    <ConfirmProvider>
       <div className="flex h-screen overflow-hidden">
         {/* Mobile backdrop */}
         {sidebarOpen && (
@@ -61,6 +63,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <main className="flex-1 overflow-y-auto p-4 md:p-8">{children}</main>
         </div>
       </div>
+    </ConfirmProvider>
     </ToastProvider>
   );
 }

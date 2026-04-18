@@ -6,6 +6,7 @@ import { api, getApiBaseUrl, SiteOut, RecipeOut, PinterestBoard, PinterestBulkRe
 import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { useToast } from "@/contexts/ToastContext";
+import { useConfirm } from "@/components/ConfirmModal";
 
 const API_URL = getApiBaseUrl();
 const DETAILED_PRESERVE_FIELDS: (keyof RecipeOut)[] = [
@@ -25,6 +26,7 @@ export default function SiteDetailPage() {
   const router = useRouter();
   const role = getUserRole();
   const toast = useToast();
+  const confirm = useConfirm();
 
   const [site, setSite] = useState<SiteOut | null>(null);
   const [recipes, setRecipes] = useState<RecipeOut[]>([]);
@@ -322,7 +324,7 @@ export default function SiteDetailPage() {
   };
 
   const handleDelete = async (recipeId: string) => {
-    if (!confirm("Delete this recipe?")) return;
+    if (!await confirm({ message: "Delete this recipe?", danger: true, confirmLabel: "Delete" })) return;
     setRecipes((prev) => prev.filter((r) => r.id !== recipeId));
     if (expandedId === recipeId) setExpandedId(null);
     try {

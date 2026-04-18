@@ -5,11 +5,15 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Save, CalendarClock, History, Trash2 } from "lucide-react";
 import { api, GeneratedJobRecipeOut, JobOut, PublishScheduleOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
+import { useToast } from "@/contexts/ToastContext";
+import { useConfirm } from "@/components/ConfirmModal";
 
 export default function JobResultsPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const role = getUserRole();
+  const toast = useToast();
+  const confirm = useConfirm();
   const canAdmin = role === "owner" || role === "admin";
   const [job, setJob] = useState<JobOut | null>(null);
   const [recipes, setRecipes] = useState<GeneratedJobRecipeOut[]>([]);
@@ -67,11 +71,11 @@ export default function JobResultsPage() {
 
   const deletePublishedNow = async () => {
     if (!job?.project_id) return;
-    if (!confirm("Delete ALL published recipes and their images from server? This cannot be undone.")) return;
+    if (!await confirm({ message: "Delete ALL published recipes and their images from server? This cannot be undone.", danger: true, confirmLabel: "Delete All" })) return;
     setDeletingPublished(true);
     try {
       const res = await api.runProjectImageCleanup(job.project_id, { delete_all_published: true });
-      alert(`Deleted: ${res.recipes_deleted} recipes, ${res.files_deleted} image files removed from server.`);
+      toast.success(`Deleted: ${res.recipes_deleted} recipes, ${res.files_deleted} image files removed.`);
       const list = await api.getJobGeneratedRecipes(id);
       setRecipes(list);
     } catch (e: any) {
@@ -90,8 +94,7 @@ export default function JobResultsPage() {
     setError(null);
     try {
       const res = await api.publishBatchToWordPress(job.project_id, { mode });
-      const extra = res.errors?.length ? `\n${res.errors.slice(0, 4).join("\n")}` : "";
-      alert(`WordPress batch finished.\nSucceeded: ${res.succeeded} / ${res.total}\nFailed: ${res.failed}${extra}`);
+      toast.info(`Publishing ${res.total} recipes in background. Refresh in a few minutes to see results.`);
       const list = await api.getJobGeneratedRecipes(id);
       setRecipes(list);
     } catch (e: any) {

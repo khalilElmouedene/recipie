@@ -4,10 +4,14 @@ import { useRouter } from "next/navigation";
 import { Plus, Trash2, MailCheck, RefreshCw } from "lucide-react";
 import { api, UserOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
+import { useToast } from "@/contexts/ToastContext";
+import { useConfirm } from "@/components/ConfirmModal";
 
 export default function UsersPage() {
   const router = useRouter();
   const role = getUserRole();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [users, setUsers] = useState<UserOut[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ email: "", full_name: "", role: "member" });
@@ -50,12 +54,12 @@ export default function UsersPage() {
   };
 
   const handleDelete = async (userId: string) => {
-    if (!confirm("Delete this user?")) return;
+    if (!await confirm({ message: "Delete this user?", danger: true, confirmLabel: "Delete" })) return;
     try {
       await api.deleteUser(userId);
       load();
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
@@ -63,9 +67,9 @@ export default function UsersPage() {
     setResending(userId);
     try {
       await api.resendInvite(userId);
-      alert("Invitation email resent.");
+      toast.success("Invitation email resent.");
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message);
     }
     setResending(null);
   };

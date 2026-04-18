@@ -18,6 +18,8 @@ import {
 import { api, getApiBaseUrl } from "@/lib/api";
 import { appendPinImageToArticleHtml } from "@/lib/pinArticleEmbed";
 import { getUserRole, getUserId } from "@/lib/auth";
+import { useToast } from "@/contexts/ToastContext";
+import { useConfirm } from "@/components/ConfirmModal";
 import { useDesignerStore } from "@/store/useDesignerStore";
 import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 import {
@@ -814,6 +816,8 @@ export default function PinDesigner({
   } = useDesignerStore();
 
   // ── Local UI state ──────────────────────────────────────────────────────
+  const toast = useToast();
+  const confirm = useConfirm();
   const [mounted, setMounted] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
   const [imageEditModeId, setImageEditModeId] = useState<string | null>(null);
@@ -848,6 +852,9 @@ export default function PinDesigner({
   const [csvGenerating, setCsvGenerating] = useState(false);
   const [worksheetPreparing, setWorksheetPreparing] = useState(false);
   const [showWpScheduleModal, setShowWpScheduleModal] = useState(false);
+  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
+  const [saveTemplateName, setSaveTemplateName] = useState("");
+  const [saveTemplateDesc, setSaveTemplateDesc] = useState("");
   const [wpScheduleFirstAt, setWpScheduleFirstAt] = useState(() => {
     const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
     return d.toISOString().slice(0, 16);
@@ -1055,11 +1062,10 @@ export default function PinDesigner({
       }
       // 2. WordPress batch — scoped to siteId when available so only this site's recipes are published.
       const res = await api.publishBatchToWordPress(projectId, { mode, ...opts, ...(siteId ? { site_id: siteId } : {}) });
-      const extra = res.errors?.length ? `\n${res.errors.slice(0, 4).join("\n")}` : "";
-      alert(`WordPress batch finished.\nSucceeded: ${res.succeeded} / ${res.total}\nFailed: ${res.failed}${extra}`);
-      if (res.succeeded > 0) setWpBatchDone(true);
+      toast.info(`Publishing ${res.total} recipes in background. Refresh in a few minutes.`);
+      if (res.total > 0) setWpBatchDone(true);
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Batch publish failed");
+      toast.error(e instanceof Error ? e.message : "Batch publish failed");
     } finally {
       setWpBatchBusy(null);
     }
@@ -1157,10 +1163,10 @@ export default function PinDesigner({
         setShowPublishModal(false);
         setPinSuccessUrl(data.pin_url || null);
       } else {
-        alert(`Failed: ${data.error}`);
+        toast.error(`Failed: ${data.error}`);
       }
     } catch (err: any) {
-      alert(`Error: ${err.message}`);
+      toast.error(`Error: ${err.message}`);
     } finally {
       setPublishing(false);
     }
@@ -1279,23 +1285,29 @@ export default function PinDesigner({
     return typeof bg === "string" ? bg : "#ffffff";
   };
 
-  const handleSaveCurrentAsTemplate = async () => {
-    const name = window.prompt("Template name?");
-    if (!name?.trim()) return;
-    const description = window.prompt("Template description (optional)?") ?? "";
+  const handleSaveCurrentAsTemplate = () => {
+    setSaveTemplateName("");
+    setSaveTemplateDesc("");
+    setShowSaveTemplateModal(true);
+  };
+
+  const handleSaveCurrentAsTemplateSubmit = async () => {
+    const name = saveTemplateName.trim();
+    if (!name) return;
 
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
     const elements = extractTemplateElementsFromCanvas();
     if (!elements.length) {
-      alert("No supported elements found on the canvas. Add image/text/band/circle and try again.");
+      toast.warning("No supported elements found on the canvas. Add image/text/band/circle and try again.");
+      setShowSaveTemplateModal(false);
       return;
     }
 
     try {
       const created = await api.createPinDesignerTemplate({
-        name: name.trim(),
-        description: description.trim() ? description.trim() : null,
+        name,
+        description: saveTemplateDesc.trim() || null,
         bgColor: extractCanvasBgColor(),
         elements: elements as any,
       });
@@ -1304,20 +1316,21 @@ export default function PinDesigner({
       setCustomTemplates((prev) => [created as unknown as PinTemplate, ...prev]);
       setSelectedTemplate(created as unknown as PinTemplate);
       onTemplateSelected?.(created.id);
-      setPinName(name.trim());
+      setPinName(name);
+      setShowSaveTemplateModal(false);
     } catch (e: any) {
-      alert(e?.message || "Failed to save template");
+      toast.error(e?.message || "Failed to save template");
     }
   };
 
   const handleDeleteTemplate = async (templateId: string) => {
-    if (!confirm("Delete this template?")) return;
+    if (!await confirm({ message: "Delete this template?", danger: true, confirmLabel: "Delete" })) return;
     try {
       await api.deletePinDesignerTemplate(templateId);
       setCustomTemplates((prev) => prev.filter((t) => t.id !== templateId));
       if (selectedTemplate?.id === templateId) setSelectedTemplate(null);
     } catch (e: any) {
-      alert(e?.message || "Failed to delete template");
+      toast.error(e?.message || "Failed to delete template");
     }
   };
 
@@ -1418,7 +1431,7 @@ export default function PinDesigner({
     setShowCsvModal(false);
 
     } catch (e) {
-      alert(e instanceof Error ? e.message : "CSV generation failed");
+      toast.error(e instanceof Error ? e.message : "CSV generation failed");
     } finally {
       setCsvGenerating(false);
     }
@@ -1439,7 +1452,7 @@ export default function PinDesigner({
       sessionStorage.setItem(PINTEREST_WORKSHEET_INIT_KEY, JSON.stringify(snapshot));
       router.push("/pinterest-gallery/worksheet");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Worksheet initialization failed");
+      toast.error(e instanceof Error ? e.message : "Worksheet initialization failed");
     } finally {
       setWorksheetPreparing(false);
     }
@@ -1455,11 +1468,9 @@ export default function PinDesigner({
         pin_title: recipePinTitle || initialTitle,
         pin_description: recipePinDescription || initialTitle,
       });
-      alert(
-        "Design saved to recipe. The pin image was added near the end of the generated article HTML (before the recipe card when present). To hide it on the site, add CSS for .recipe-generator-pin-embed with data-pin-display optional."
-      );
+      toast.success("Design saved to recipe. The pin image was added near the end of the generated article HTML.");
     } catch (err: any) {
-      alert(`Failed to save: ${err.message}`);
+      toast.error(`Failed to save: ${err.message}`);
     } finally {
       setSavingToRecipe(false);
     }
@@ -3178,7 +3189,7 @@ export default function PinDesigner({
         updateLayers();
       })
       .catch(() => {
-        alert("Could not load image — the URL may have expired. Try uploading the image directly.");
+        toast.error("Could not load image — the URL may have expired. Try uploading the image directly.");
       });
   };
 
@@ -3801,6 +3812,39 @@ export default function PinDesigner({
           </button>
         </div>
       </header>
+
+      {/* ── Save Template Modal ───────────────────────────────────────────── */}
+      {showSaveTemplateModal && (
+        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center">
+          <div className="bg-gray-900 rounded-xl p-6 w-full max-w-sm space-y-4">
+            <h3 className="text-lg font-semibold text-white">Save as Template</h3>
+            <div>
+              <label className="block text-sm text-gray-300 mb-1">Template name *</label>
+              <input
+                autoFocus
+                className="input-field w-full"
+                value={saveTemplateName}
+                onChange={(e) => setSaveTemplateName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void handleSaveCurrentAsTemplateSubmit(); if (e.key === "Escape") setShowSaveTemplateModal(false); }}
+                placeholder="My template"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-300 mb-1">Description (optional)</label>
+              <input
+                className="input-field w-full"
+                value={saveTemplateDesc}
+                onChange={(e) => setSaveTemplateDesc(e.target.value)}
+                placeholder="Optional description"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button className="btn-secondary" onClick={() => setShowSaveTemplateModal(false)}>Cancel</button>
+              <button className="btn-primary" disabled={!saveTemplateName.trim()} onClick={() => void handleSaveCurrentAsTemplateSubmit()}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── WP Schedule Modal ─────────────────────────────────────────────── */}
       {showWpScheduleModal && (

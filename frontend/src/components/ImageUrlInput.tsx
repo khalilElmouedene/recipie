@@ -3,6 +3,7 @@
 import { useRef, useState, useEffect } from "react";
 import { Link, Upload, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { useToast } from "@/contexts/ToastContext";
 
 interface Props {
   value: string;
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export default function ImageUrlInput({ value, onChange, siteId, required, placeholder = "https://example.com/image.jpg" }: Props) {
+  const toast = useToast();
   const [mode, setMode] = useState<"url" | "upload">("url");
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -39,7 +41,7 @@ export default function ImageUrlInput({ value, onChange, siteId, required, place
       const { url } = await api.uploadRecipeImage(siteId, file);
       onChange(url);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Image upload failed");
+      toast.error(e instanceof Error ? e.message : "Image upload failed");
       setPreview(null);
     } finally {
       setUploading(false);

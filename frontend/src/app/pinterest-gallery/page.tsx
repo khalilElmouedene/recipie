@@ -15,6 +15,7 @@ import {
   Sheet,
 } from "lucide-react";
 import { api, ProjectOut, SiteOut, RecipeOut } from "@/lib/api";
+import { useToast } from "@/contexts/ToastContext";
 import {
   PINTEREST_WORKSHEET_HEADER,
   PINTEREST_WORKSHEET_INIT_KEY,
@@ -55,6 +56,7 @@ function formatDateTimeLocal(d: Date): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function PinterestGalleryPage() {
   const router = useRouter();
+  const toast = useToast();
   // Data
   const [projects, setProjects] = useState<ProjectOut[]>([]);
   const [allRecipes, setAllRecipes] = useState<EnrichedRecipe[]>([]);
@@ -241,7 +243,7 @@ export default function PinterestGalleryPage() {
       URL.revokeObjectURL(url);
       setShowCsvModal(false);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "CSV generation failed");
+      toast.error(e instanceof Error ? e.message : "CSV generation failed");
     } finally {
       setCsvGenerating(false);
     }
@@ -267,7 +269,7 @@ export default function PinterestGalleryPage() {
       sessionStorage.setItem(PINTEREST_WORKSHEET_INIT_KEY, JSON.stringify(snapshot));
       router.push("/pinterest-gallery/worksheet");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Worksheet initialization failed");
+      toast.error(e instanceof Error ? e.message : "Worksheet initialization failed");
     } finally {
       setWorksheetPreparing(false);
     }
@@ -287,7 +289,7 @@ export default function PinterestGalleryPage() {
       }
       setShowExcelModal(false);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Excel export failed");
+      toast.error(e instanceof Error ? e.message : "Excel export failed");
     } finally {
       setExcelDownloading(false);
     }

@@ -4,10 +4,14 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Save, Trash2, Play } from "lucide-react";
 import { api, PublishScheduleOut, ImageCleanupRunResult } from "@/lib/api";
+import { useToast } from "@/contexts/ToastContext";
+import { useConfirm } from "@/components/ConfirmModal";
 
 export default function ProjectImageCleanupPage() {
   const { id: projectId } = useParams<{ id: string }>();
   const router = useRouter();
+  const toast = useToast();
+  const confirm = useConfirm();
 
   const [schedule, setSchedule] = useState<PublishScheduleOut | null>(null);
   const [retentionDays, setRetentionDays] = useState(4);
@@ -63,7 +67,7 @@ export default function ProjectImageCleanupPage() {
   };
 
   const runDeleteAllPublishedNow = async () => {
-    if (!confirm("Delete generated images for ALL published recipes now? This cannot be undone.")) return;
+    if (!await confirm({ message: "Delete generated images for ALL published recipes now? This cannot be undone.", danger: true, confirmLabel: "Delete All" })) return;
     setRunningDeleteAllPublished(true);
     setError(null);
     try {

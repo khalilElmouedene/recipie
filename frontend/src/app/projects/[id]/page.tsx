@@ -6,6 +6,7 @@ import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info,
 import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut } from "@/lib/api";
 import { getUserRole, getUserId } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
+import { useConfirm } from "@/components/ConfirmModal";
 
 type Tab = "sites" | "members" | "jobs" | "settings";
 
@@ -13,6 +14,7 @@ export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const toast = useToast();
+  const confirm = useConfirm();
   const globalRole = getUserRole();
   const currentUserId = getUserId();
   const [project, setProject] = useState<ProjectOut | null>(null);
@@ -218,7 +220,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
   };
 
   const handleDelete = async (siteId: string) => {
-    if (!confirm("Delete this site and all its recipes?")) return;
+    if (!await confirm({ message: "Delete this site and all its recipes?", danger: true, confirmLabel: "Delete" })) return;
     await api.deleteSite(siteId);
     load();
   };
@@ -548,7 +550,7 @@ function MembersTab({ projectId, role }: { projectId: string; role: string | nul
   };
 
   const handleRemove = async (userId: string) => {
-    if (!confirm("Remove this member?")) return;
+    if (!await confirm({ message: "Remove this member?", danger: true, confirmLabel: "Remove" })) return;
     await api.removeMember(projectId, userId);
     load();
   };

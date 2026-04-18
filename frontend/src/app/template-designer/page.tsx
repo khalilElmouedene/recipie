@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { applyTextTransform } from "@/components/PinDesigner";
+import { useToast } from "@/contexts/ToastContext";
 
 const SELECTION_ACCENT = "#2563eb";
 
@@ -64,6 +65,7 @@ const SYSTEM_FONTS = [
 
 function TemplateDesignerInner() {
   const router = useRouter();
+  const toast = useToast();
   const searchParams = useSearchParams();
   const editingTemplateId = searchParams.get("templateId");
 
@@ -1260,7 +1262,7 @@ function TemplateDesignerInner() {
   async function handleSave() {
     const elements = extractElements();
     if (!elements.length) {
-      alert("Add at least one element (Text, Image Zone, or Band) before saving.");
+      toast.warning("Add at least one element (Text, Image Zone, or Band) before saving.");
       return;
     }
     setSaving(true);
@@ -1275,14 +1277,14 @@ function TemplateDesignerInner() {
       };
       if (editingTemplateId) {
         await api.updatePinDesignerTemplate(editingTemplateId, payload);
-        alert(`Template "${templateName.trim() || "My Template"}" updated.`);
+        toast.success(`Template "${templateName.trim() || "My Template"}" updated.`);
       } else {
         await api.createPinDesignerTemplate(payload);
-        alert(`Template "${templateName.trim() || "My Template"}" saved! You can now use it in the Pin Designer.`);
+        toast.success(`Template "${templateName.trim() || "My Template"}" saved! You can now use it in the Pin Designer.`);
       }
       router.back();
     } catch (e: any) {
-      alert(e?.message || "Failed to save template");
+      toast.error(e?.message || "Failed to save template");
     } finally {
       setSaving(false);
     }

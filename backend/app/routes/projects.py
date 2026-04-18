@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import Response
 from sqlalchemy import select, func, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +27,7 @@ from ..models import (
     ImageCleanupRunRequest, ImageCleanupRunResult,
 )
 from ..services.email_service import send_project_invite_email
+from ..database import SessionLocal
 from ..services.image_retention_scheduler import cleanup_project_generated_images
 from ..services.publisher import publish_recipe
 from ..site_credentials import get_random_wp_credentials
@@ -447,20 +448,49 @@ async def start_publish_schedule_now(
     )
 
 
+async def _run_publish_batch_bg(work: list[tuple[dict, dict, datetime]]) -> None:
+    """Background task: publish each recipe independently with its own DB session."""
+    async with SessionLocal() as db:
+        for recipe_dict, site_config, post_dt in work:
+            pub_fn = functools.partial(
+                publish_recipe,
+                recipe_dict,
+                site_config,
+                None,
+                post_date_gmt=post_dt,
+            )
+            try:
+                result = await asyncio.to_thread(pub_fn)
+            except Exception as exc:
+                result = {"error_message": str(exc)}
+
+            recipe_id = uuid.UUID(recipe_dict["id"])
+            row = await db.execute(select(Recipe).where(Recipe.id == recipe_id))
+            recipe = row.scalar_one_or_none()
+            if not recipe:
+                continue
+
+            if result.get("error_message"):
+                recipe.status = RecipeStatus.failed
+                recipe.error_message = str(result["error_message"])
+            else:
+                recipe.wp_post_id = result.get("wp_post_id")
+                recipe.wp_permalink = result.get("wp_permalink")
+                recipe.status = RecipeStatus.published
+                recipe.error_message = None
+            await db.commit()
+
+
 @router.post("/{project_id}/publish-batch", response_model=PublishBatchOut)
 async def publish_batch_to_wordpress(
     project_id: uuid.UUID,
     body: PublishBatchRequest,
+    background_tasks: BackgroundTasks,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Publish all `generated` recipes for this project to WordPress in one batch.
-
-    - wordpress_scheduled: per site, stagger future publish dates by `interval_minutes`
-      (article 1 at now+interval, article 2 at now+2*interval, …). Posts are created
-      as WordPress scheduled (status future).
-    - manual_backdate: publish immediately with status publish and a random `post_date_gmt`
-      within the last 6 months (per article).
+    """Queue all `generated` recipes for this project to publish to WordPress in the background.
+    Returns immediately with the count of recipes queued so the browser never times out.
     """
     await check_project_access(project_id, user, db, require_roles=[ProjectMemberRole.admin])
 
@@ -495,86 +525,68 @@ async def publish_batch_to_wordpress(
     if base_dt.tzinfo is None:
         base_dt = base_dt.replace(tzinfo=timezone.utc)
     interval = timedelta(minutes=interval_minutes)
-    work: list[tuple[Recipe, Site, datetime]] = []
+
+    # Build plain-dict work list (no ORM objects — they don't survive across sessions)
+    work: list[tuple[dict, dict, datetime]] = []
 
     if body.mode == "wordpress_scheduled":
         for _site_id, site_pairs in by_site.items():
             for i, (recipe, site) in enumerate(site_pairs):
                 post_dt = base_dt + interval * i
-                work.append((recipe, site, post_dt))
+                _append_work(work, recipe, site, post_dt)
     else:
         six_months_sec = int(timedelta(days=183).total_seconds())
         flat = [p for plist in by_site.values() for p in plist]
         for recipe, site in flat:
             off = random.randint(0, max(1, six_months_sec))
             post_dt = now - timedelta(seconds=off)
-            work.append((recipe, site, post_dt))
+            _append_work(work, recipe, site, post_dt)
 
-    succeeded = 0
-    failed = 0
-    errors: list[str] = []
-
-    for recipe, site, post_dt in work:
-        if not recipe.generated_article:
-            failed += 1
-            msg = f"Recipe {recipe.id}: missing generated article"
-            if len(errors) < 12:
-                errors.append(msg)
-            recipe.status = RecipeStatus.failed
-            recipe.error_message = msg
-            await db.commit()
-            continue
-
-        wp_username, wp_password = get_random_wp_credentials(site)
-        site_config = {
-            "wp_url": site.wp_url,
-            "wp_username": wp_username,
-            "wp_password": wp_password,
-            "domain": site.domain if site.domain.startswith("http") else f"https://{site.domain}",
-            "image_mode": getattr(site, "image_mode", "featured_and_top") or "featured_and_top",
-        }
-        recipe_dict = {
-            "id": str(recipe.id),
-            "recipe_text": recipe.recipe_text,
-            "pin_title": recipe.pin_title,
-            "generated_article": recipe.generated_article,
-            "generated_json": recipe.generated_json,
-            "focus_keyword": recipe.focus_keyword,
-            "meta_description": recipe.meta_description,
-            "category": recipe.category,
-            "image_url": recipe.image_url,
-            "generated_images": recipe.generated_images,
-        }
-        pub_fn = functools.partial(
-            publish_recipe,
-            recipe_dict,
-            site_config,
-            None,
-            post_date_gmt=post_dt,
-        )
-        result = await asyncio.to_thread(pub_fn)
-
-        if result.get("error_message"):
-            failed += 1
-            err = str(result["error_message"])
-            recipe.status = RecipeStatus.failed
-            recipe.error_message = err
-            if len(errors) < 12:
-                errors.append(f"Recipe {recipe.id}: {err[:200]}")
+    # Mark missing-article recipes as failed immediately
+    valid_work: list[tuple[dict, dict, datetime]] = []
+    for recipe_dict, site_config, post_dt in work:
+        if not recipe_dict.get("generated_article"):
+            row = await db.execute(select(Recipe).where(Recipe.id == uuid.UUID(recipe_dict["id"])))
+            r = row.scalar_one_or_none()
+            if r:
+                r.status = RecipeStatus.failed
+                r.error_message = "Missing generated article"
+                await db.commit()
         else:
-            succeeded += 1
-            recipe.wp_post_id = result.get("wp_post_id")
-            recipe.wp_permalink = result.get("wp_permalink")
-            recipe.status = RecipeStatus.published
-            recipe.error_message = None
-        await db.commit()
+            valid_work.append((recipe_dict, site_config, post_dt))
+
+    background_tasks.add_task(_run_publish_batch_bg, valid_work)
 
     return PublishBatchOut(
         total=len(work),
-        succeeded=succeeded,
-        failed=failed,
-        errors=errors,
+        succeeded=0,
+        failed=len(work) - len(valid_work),
+        errors=["Publishing started in background — refresh recipes in a few minutes to see results."] if valid_work else [],
     )
+
+
+def _append_work(work: list, recipe: "Recipe", site: "Site", post_dt: datetime) -> None:
+    wp_username, wp_password = get_random_wp_credentials(site)
+    site_config = {
+        "wp_url": site.wp_url,
+        "wp_username": wp_username,
+        "wp_password": wp_password,
+        "domain": site.domain if site.domain.startswith("http") else f"https://{site.domain}",
+        "image_mode": getattr(site, "image_mode", "featured_and_top") or "featured_and_top",
+    }
+    recipe_dict = {
+        "id": str(recipe.id),
+        "recipe_text": recipe.recipe_text,
+        "pin_title": recipe.pin_title,
+        "generated_article": recipe.generated_article,
+        "generated_json": recipe.generated_json,
+        "focus_keyword": recipe.focus_keyword,
+        "meta_description": recipe.meta_description,
+        "category": recipe.category,
+        "image_url": recipe.image_url,
+        "generated_images": recipe.generated_images,
+    }
+    work.append((recipe_dict, site_config, post_dt))
 
 
 @router.post("/{project_id}/image-cleanup/run", response_model=ImageCleanupRunResult)

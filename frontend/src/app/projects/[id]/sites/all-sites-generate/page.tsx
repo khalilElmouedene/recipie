@@ -35,6 +35,7 @@ import {
 import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { useToast } from "@/contexts/ToastContext";
+import { useConfirm } from "@/components/ConfirmModal";
 
 function thumbUrl(r: GeneratedJobRecipeOut): string | null {
   if (r.generated_images) {
@@ -67,6 +68,7 @@ export default function AllSitesGeneratePage() {
   const role = getUserRole();
   const canAdmin = role === "owner" || role === "admin";
   const toast = useToast();
+  const confirm = useConfirm();
 
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [loading, setLoading] = useState(false);
@@ -301,7 +303,7 @@ export default function AllSitesGeneratePage() {
   };
 
   const deletePublishedNow = async () => {
-    if (!confirm("Delete ALL published recipes and their images from server? This cannot be undone.")) return;
+    if (!await confirm({ message: "Delete ALL published recipes and their images from server? This cannot be undone.", danger: true, confirmLabel: "Delete All" })) return;
     setDeletingPublished(true);
     try {
       const res = await api.runProjectImageCleanup(projectId, { delete_all_published: true });
@@ -318,8 +320,7 @@ export default function AllSitesGeneratePage() {
     setBatchPublishing(mode);
     try {
       const res = await api.publishBatchToWordPress(projectId, { mode });
-      const extra = res.errors?.length ? ` (${res.errors.slice(0, 2).join("; ")})` : "";
-      toast.success(`WordPress batch finished. Succeeded: ${res.succeeded} / ${res.total}${res.failed > 0 ? ` — ${res.failed} failed${extra}` : ""}`);
+      toast.info(`Publishing ${res.total} recipes in background. Refresh in a few minutes to see results.`);
       const jobs = await api.getProjectJobs(projectId);
       const filtered = jobs.filter((j) => j.job_type === "articles_all_sites");
       setHistory(filtered);
@@ -411,7 +412,7 @@ export default function AllSitesGeneratePage() {
 
   const deleteJob = async (jobId: string) => {
     if (!canAdmin) return;
-    if (!confirm("Delete this run and all recipes created by it? This cannot be undone.")) return;
+    if (!await confirm({ message: "Delete this run and all its recipes? This cannot be undone.", danger: true, confirmLabel: "Delete Run" })) return;
     setDeletingJobId(jobId);
     try {
       await api.deleteJob(jobId);
@@ -430,7 +431,7 @@ export default function AllSitesGeneratePage() {
 
   const deleteRecipe = async (jobId: string, recipeId: string) => {
     if (!canAdmin) return;
-    if (!confirm("Delete this recipe?")) return;
+    if (!await confirm({ message: "Delete this recipe?", danger: true, confirmLabel: "Delete" })) return;
     setDeletingRecipeId(recipeId);
     try {
       await api.deleteRecipe(recipeId);
