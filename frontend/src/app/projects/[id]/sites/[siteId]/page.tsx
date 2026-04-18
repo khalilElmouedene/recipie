@@ -26,7 +26,7 @@ export default function SiteDetailPage() {
   const router = useRouter();
   const role = getUserRole();
   const toast = useToast();
-  const confirm = useConfirm();
+  const openConfirm = useConfirm();
 
   const [site, setSite] = useState<SiteOut | null>(null);
   const [recipes, setRecipes] = useState<RecipeOut[]>([]);
@@ -324,7 +324,7 @@ export default function SiteDetailPage() {
   };
 
   const handleDelete = async (recipeId: string) => {
-    if (!await confirm({ message: "Delete this recipe?", danger: true, confirmLabel: "Delete" })) return;
+    if (!await openConfirm({ message: "Delete this recipe?", danger: true, confirmLabel: "Delete" })) return;
     setRecipes((prev) => prev.filter((r) => r.id !== recipeId));
     if (expandedId === recipeId) setExpandedId(null);
     try {

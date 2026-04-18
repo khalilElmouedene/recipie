@@ -68,7 +68,7 @@ export default function AllSitesGeneratePage() {
   const role = getUserRole();
   const canAdmin = role === "owner" || role === "admin";
   const toast = useToast();
-  const confirm = useConfirm();
+  const openConfirm = useConfirm();
 
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [loading, setLoading] = useState(false);
@@ -303,7 +303,7 @@ export default function AllSitesGeneratePage() {
   };
 
   const deletePublishedNow = async () => {
-    if (!await confirm({ message: "Delete ALL published recipes and their images from server? This cannot be undone.", danger: true, confirmLabel: "Delete All" })) return;
+    if (!await openConfirm({ message: "Delete ALL published recipes and their images from server? This cannot be undone.", danger: true, confirmLabel: "Delete All" })) return;
     setDeletingPublished(true);
     try {
       const res = await api.runProjectImageCleanup(projectId, { delete_all_published: true });
@@ -412,7 +412,7 @@ export default function AllSitesGeneratePage() {
 
   const deleteJob = async (jobId: string) => {
     if (!canAdmin) return;
-    if (!await confirm({ message: "Delete this run and all its recipes? This cannot be undone.", danger: true, confirmLabel: "Delete Run" })) return;
+    if (!await openConfirm({ message: "Delete this run and all its recipes? This cannot be undone.", danger: true, confirmLabel: "Delete Run" })) return;
     setDeletingJobId(jobId);
     try {
       await api.deleteJob(jobId);
@@ -431,7 +431,7 @@ export default function AllSitesGeneratePage() {
 
   const deleteRecipe = async (jobId: string, recipeId: string) => {
     if (!canAdmin) return;
-    if (!await confirm({ message: "Delete this recipe?", danger: true, confirmLabel: "Delete" })) return;
+    if (!await openConfirm({ message: "Delete this recipe?", danger: true, confirmLabel: "Delete" })) return;
     setDeletingRecipeId(recipeId);
     try {
       await api.deleteRecipe(recipeId);

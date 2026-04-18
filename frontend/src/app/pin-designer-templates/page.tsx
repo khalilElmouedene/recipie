@@ -90,7 +90,8 @@ function SizePickerModal({ onConfirm, onClose }: { onConfirm: (w: number, h: num
 export default function PinDesignerTemplatesPage() {
   const router = useRouter();
   const toast = useToast();
-  const confirm = useConfirm();
+
+  const openConfirm = useConfirm();
 
   const [templates, setTemplates] = useState<PinDesignerTemplateOut[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
@@ -154,7 +155,7 @@ export default function PinDesignerTemplatesPage() {
   };
 
   const handleDeleteTemplate = async (id: string) => {
-    if (!await confirm({ message: "Delete this template? This cannot be undone.", danger: true, confirmLabel: "Delete" })) return;
+    if (!await openConfirm({ message: "Delete this template? This cannot be undone.", danger: true, confirmLabel: "Delete" })) return;
     setDeletingId(id);
     try {
       await api.deletePinDesignerTemplate(id);

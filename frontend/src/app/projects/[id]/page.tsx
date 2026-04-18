@@ -14,7 +14,7 @@ export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const toast = useToast();
-  const confirm = useConfirm();
+  const openConfirm = useConfirm();
   const globalRole = getUserRole();
   const currentUserId = getUserId();
   const [project, setProject] = useState<ProjectOut | null>(null);
@@ -220,7 +220,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
   };
 
   const handleDelete = async (siteId: string) => {
-    if (!await confirm({ message: "Delete this site and all its recipes?", danger: true, confirmLabel: "Delete" })) return;
+    if (!await openConfirm({ message: "Delete this site and all its recipes?", danger: true, confirmLabel: "Delete" })) return;
     await api.deleteSite(siteId);
     load();
   };
@@ -550,7 +550,7 @@ function MembersTab({ projectId, role }: { projectId: string; role: string | nul
   };
 
   const handleRemove = async (userId: string) => {
-    if (!await confirm({ message: "Remove this member?", danger: true, confirmLabel: "Remove" })) return;
+    if (!await openConfirm({ message: "Remove this member?", danger: true, confirmLabel: "Remove" })) return;
     await api.removeMember(projectId, userId);
     load();
   };

@@ -817,7 +817,7 @@ export default function PinDesigner({
 
   // ── Local UI state ──────────────────────────────────────────────────────
   const toast = useToast();
-  const confirm = useConfirm();
+  const openConfirm = useConfirm();
   const [mounted, setMounted] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
   const [imageEditModeId, setImageEditModeId] = useState<string | null>(null);
@@ -1324,7 +1324,7 @@ export default function PinDesigner({
   };
 
   const handleDeleteTemplate = async (templateId: string) => {
-    if (!await confirm({ message: "Delete this template?", danger: true, confirmLabel: "Delete" })) return;
+    if (!await openConfirm({ message: "Delete this template?", danger: true, confirmLabel: "Delete" })) return;
     try {
       await api.deletePinDesignerTemplate(templateId);
       setCustomTemplates((prev) => prev.filter((t) => t.id !== templateId));

@@ -13,7 +13,7 @@ export default function JobResultsPage() {
   const router = useRouter();
   const role = getUserRole();
   const toast = useToast();
-  const confirm = useConfirm();
+  const openConfirm = useConfirm();
   const canAdmin = role === "owner" || role === "admin";
   const [job, setJob] = useState<JobOut | null>(null);
   const [recipes, setRecipes] = useState<GeneratedJobRecipeOut[]>([]);
@@ -71,7 +71,7 @@ export default function JobResultsPage() {
 
   const deletePublishedNow = async () => {
     if (!job?.project_id) return;
-    if (!await confirm({ message: "Delete ALL published recipes and their images from server? This cannot be undone.", danger: true, confirmLabel: "Delete All" })) return;
+    if (!await openConfirm({ message: "Delete ALL published recipes and their images from server? This cannot be undone.", danger: true, confirmLabel: "Delete All" })) return;
     setDeletingPublished(true);
     try {
       const res = await api.runProjectImageCleanup(job.project_id, { delete_all_published: true });

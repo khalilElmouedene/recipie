@@ -11,7 +11,7 @@ export default function UsersPage() {
   const router = useRouter();
   const role = getUserRole();
   const toast = useToast();
-  const confirm = useConfirm();
+  const openConfirm = useConfirm();
   const [users, setUsers] = useState<UserOut[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ email: "", full_name: "", role: "member" });
@@ -54,7 +54,7 @@ export default function UsersPage() {
   };
 
   const handleDelete = async (userId: string) => {
-    if (!await confirm({ message: "Delete this user?", danger: true, confirmLabel: "Delete" })) return;
+    if (!await openConfirm({ message: "Delete this user?", danger: true, confirmLabel: "Delete" })) return;
     try {
       await api.deleteUser(userId);
       load();
