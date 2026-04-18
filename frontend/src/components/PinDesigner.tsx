@@ -792,6 +792,7 @@ export default function PinDesigner({
   const selectedIdRef = useRef<string | null>(null);
   const activeObjRef = useRef<any>(null);
   const transformSaveDoneRef = useRef(false);
+  const imageEditModeIdRef = useRef<string | null>(null);
   // When creating a new custom template, we don't want to re-apply it to the canvas,
   // otherwise we'd lose any "image pan within the frame" edits.
   const skipTemplateAutoApplyRef = useRef(false);
@@ -816,6 +817,7 @@ export default function PinDesigner({
   const [mounted, setMounted] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
   const [imageEditModeId, setImageEditModeId] = useState<string | null>(null);
+  const setEditMode = (id: string | null) => { imageEditModeIdRef.current = id; setImageEditModeId(id); };
   const [selectedTemplate, setSelectedTemplate] = useState<PinTemplate | null>(null);
   const [customTemplates, setCustomTemplates] = useState<PinTemplate[]>([]);
   const allTemplates: PinTemplate[] = customTemplates;
@@ -2249,7 +2251,7 @@ export default function PinDesigner({
               o.set({ selectable: false, evented: false, hasControls: false, hasBorders: false });
             }
           });
-          setImageEditModeId(null);
+          setEditMode(null);
           selectedIdRef.current = null;
           activeObjRef.current = null;
           setSelectedId(null);
@@ -2281,7 +2283,7 @@ export default function PinDesigner({
               cornerSize: 12, cornerColor: "#6366f1", borderColor: "#6366f1",
             });
             canvas.setActiveObject(img);
-            setImageEditModeId(target.__pinId ?? null);
+            setEditMode(target.__pinId ?? null);
             syncSelectionFromObject(img);
             canvas.renderAll();
           } else if (target.__pinType === "image") {
@@ -2293,12 +2295,23 @@ export default function PinDesigner({
           }
         });
 
-        // ── mouse:down — init delta tracking for imageFrame movement ─────
+        // ── mouse:down — delta tracking + exit image edit mode on outside click
         canvas.on("mouse:down", (e: any) => {
           const obj = e.target as any;
           if (obj?.__pinType === "imageFrame") {
             obj.__prevMoveLeft = obj.left;
             obj.__prevMoveTop  = obj.top;
+          }
+          // Exit image edit mode when clicking outside the active imageContent
+          const editId = imageEditModeIdRef.current;
+          if (editId && obj?.__pinId !== editId) {
+            canvas.getObjects().forEach((o: any) => {
+              if (o.__pinType === "imageFrame") o.set({ selectable: true, evented: true });
+              else if (o.__pinType === "imageContent") o.set({ selectable: false, evented: false, hasControls: false, hasBorders: false });
+            });
+            canvas.discardActiveObject();
+            canvas.renderAll();
+            setEditMode(null);
           }
         });
 
@@ -2577,7 +2590,7 @@ export default function PinDesigner({
           });
           canvas.discardActiveObject();
           canvas.renderAll();
-          setImageEditModeId(null);
+          setEditMode(null);
         }
         return;
       }
