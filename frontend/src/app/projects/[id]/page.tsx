@@ -14,7 +14,6 @@ export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const toast = useToast();
-  const openConfirm = useConfirm();
   const globalRole = getUserRole();
   const currentUserId = getUserId();
   const [project, setProject] = useState<ProjectOut | null>(null);
@@ -173,6 +172,7 @@ const emptyWpUser = () => ({ username: "", password: "" });
 
 function SitesTab({ projectId, canManage, router }: { projectId: string; canManage: boolean; router: ReturnType<typeof useRouter> }) {
   const toast = useToast();
+  const openConfirm = useConfirm();
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
   const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
@@ -531,6 +531,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
 }
 
 function MembersTab({ projectId, role }: { projectId: string; role: string | null }) {
+  const openConfirm = useConfirm();
   const [members, setMembers] = useState<MemberOut[]>([]);
   const [users, setUsers] = useState<UserOut[]>([]);
   const [selUser, setSelUser] = useState("");
