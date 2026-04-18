@@ -2617,6 +2617,28 @@ export default function PinDesigner({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedId]);
 
+  // Exit image edit mode when clicking outside the canvas wrapper
+  useEffect(() => {
+    if (!imageEditModeId) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      const wrapper = canvasWrapperRef.current;
+      if (wrapper && !wrapper.contains(e.target as Node)) {
+        const canvas = fabricCanvasRef.current;
+        if (canvas) {
+          canvas.getObjects().forEach((o: any) => {
+            if (o.__pinType === "imageFrame") o.set({ selectable: true, evented: true });
+            else if (o.__pinType === "imageContent") o.set({ selectable: false, evented: false, hasControls: false, hasBorders: false });
+          });
+          canvas.discardActiveObject();
+          canvas.renderAll();
+        }
+        setEditMode(null);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick, true);
+    return () => document.removeEventListener("mousedown", handleOutsideClick, true);
+  }, [imageEditModeId]);
+
   // ── Actions ───────────────────────────────────────────────────────────────
 
   const deleteSelectedElement = () => {
@@ -3561,8 +3583,6 @@ export default function PinDesigner({
               <button onClick={() => zoomImageInFrame("out")} title="Zoom out" className="p-1 rounded hover:bg-gray-700 text-gray-300">
                 <ZoomOut size={14} />
               </button>
-              <div className="w-px h-4 bg-gray-700 mx-0.5" />
-              <span className="text-[10px] text-gray-400 italic px-1">ESC to exit</span>
               <div className="w-px h-4 bg-gray-700 mx-0.5" />
             </>
           )}
@@ -4684,7 +4704,7 @@ export default function PinDesigner({
                   ) : (
                     <div>
                       <label className="text-xs font-semibold text-gray-400 uppercase block mb-1">Edit Image</label>
-                      <p className="text-[10px] text-gray-500 mb-3">Drag to reposition. Use zoom to scale. Press ESC or click outside to exit.</p>
+                      <p className="text-[10px] text-gray-500 mb-3">Drag to reposition. Use zoom to scale. Click outside to exit.</p>
                       <div className="flex gap-2">
                         <button onClick={() => zoomImageInFrame("in")} className="flex-1 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-xs text-gray-300 flex items-center justify-center gap-1">
                           <ZoomIn size={12} /> Zoom In

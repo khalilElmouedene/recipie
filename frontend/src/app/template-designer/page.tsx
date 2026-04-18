@@ -1581,6 +1581,21 @@ function TemplateDesignerInner() {
 
             <div className="w-px h-4 bg-gray-700 mx-0.5" />
 
+            {(() => {
+              const isLocked = layers.find((l) => l.id === selectedLayerId)?.locked ?? false;
+              return (
+                <button
+                  onClick={() => selectedLayerId && toggleLockDesigner(selectedLayerId)}
+                  title={isLocked ? "Unlock layer" : "Lock layer"}
+                  className={`p-1 rounded transition ${isLocked ? "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30" : "hover:bg-gray-700 text-gray-300"}`}
+                >
+                  {isLocked ? <Lock size={14} /> : <Unlock size={14} />}
+                </button>
+              );
+            })()}
+
+            <div className="w-px h-4 bg-gray-700 mx-0.5" />
+
             <button
               onClick={deleteSelected}
               title="Delete"
