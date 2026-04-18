@@ -2638,6 +2638,8 @@ export default function PinDesigner({
   useEffect(() => {
     if (!imageEditModeId) return;
     const handleOutsideClick = (e: MouseEvent) => {
+      // Don't exit when clicking the floating toolbar or properties panel
+      if ((e.target as HTMLElement)?.closest?.('[data-pin-ui]')) return;
       const wrapper = canvasWrapperRef.current;
       if (wrapper && !wrapper.contains(e.target as Node)) {
         const canvas = fabricCanvasRef.current;
@@ -3475,6 +3477,7 @@ export default function PinDesigner({
             pointerEvents: "auto",
           }}
           className="flex items-center gap-0.5 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 shadow-2xl"
+          data-pin-ui
           onMouseDown={(e) => e.stopPropagation()}
         >
           {/* Layer order */}
@@ -4427,7 +4430,7 @@ export default function PinDesigner({
         </main>
 
         {/* ── Right Panel (Properties) ────────────────────────────────────── */}
-        <aside className={[
+        <aside data-pin-ui className={[
           "w-72 border-l border-gray-800 p-4 overflow-y-auto flex-shrink-0 bg-gray-950",
           rightPanelOpen
             ? "fixed inset-y-0 right-0 z-[60] flex flex-col"
