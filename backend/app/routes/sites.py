@@ -98,6 +98,7 @@ async def _site_out(site: Site, db: AsyncSession) -> dict:
         "sheet_name": site.sheet_name or "",
         "spreadsheet_id": site.spreadsheet_id or "",
         "pinterest_url": site.pinterest_url or "",
+        "image_mode": site.image_mode or "featured_and_top",
         "created_at": site.created_at,
         "recipe_count": recipe_count,
     }
