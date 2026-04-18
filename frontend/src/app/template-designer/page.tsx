@@ -430,6 +430,7 @@ function TemplateDesignerInner() {
         if (isEditing) return;
         const obj = canvas.getActiveObject() as any;
         if (!obj) return;
+        if (obj.__pinLocked) return;
         e.preventDefault();
         const [dx, dy] = arrowKeys[e.key];
         const step = e.shiftKey ? 10 : 1;

@@ -2564,7 +2564,9 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     const obj = getSelectedObject();
     if (!canvas || !obj) return;
-    if (obj.__pinLocked) return;
+    // Re-read lock state directly from canvas object to avoid stale refs
+    const canvasObj = canvas.getObjects().find((o: any) => o.__pinId === obj.__pinId) as any;
+    if (canvasObj?.__pinLocked) return;
     saveUndoState();
     obj.set("left", (obj.left ?? 0) + dx);
     obj.set("top", (obj.top ?? 0) + dy);
