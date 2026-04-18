@@ -1190,6 +1190,16 @@ export default function PinDesigner({
         let height = typeof o.height === "number" ? o.height * (o.scaleY ?? 1) : 0;
         let bgColor: string | undefined = typeof o.fill === "string" ? o.fill : undefined;
 
+        console.log("[EXTRACT] image before clip", pinId, {
+          rawLeft: o.left, rawTop: o.top,
+          rawWidth: o.width, rawHeight: o.height,
+          scaleX: o.scaleX, scaleY: o.scaleY,
+          hasClipPath: !!o.clipPath,
+          clipAbsPos: o.clipPath?.absolutePositioned,
+          clipLeft: o.clipPath?.left, clipTop: o.clipPath?.top,
+          clipWidth: o.clipPath?.width, clipHeight: o.clipPath?.height,
+        });
+
         if (o.clipPath && typeof o.clipPath.left === "number" && typeof o.clipPath.top === "number") {
           const clip = o.clipPath;
           x = clip.left ?? x;
@@ -1199,6 +1209,8 @@ export default function PinDesigner({
           // Clip rect fill is usually empty; keep placeholder bg.
           bgColor = bgColor || "#e0e0e0";
         }
+
+        console.log("[EXTRACT] image saved as", pinId, { x, y, width, height });
 
         elements.push({
           id: String(pinId),
