@@ -1752,6 +1752,18 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
 
+    // Inject Google Font stylesheets for every font used in this template so
+    // members who don't have the font in their own list still see it correctly.
+    const templateFonts = Array.from(new Set(
+      template.elements
+        .filter((el) => el.type === "text" && (el as any).fontFamily)
+        .map((el) => (el as any).fontFamily as string)
+    ));
+    templateFonts.forEach(injectFontStylesheet);
+    if (templateFonts.length > 0) {
+      try { await document.fonts.ready; } catch { /* ignore */ }
+    }
+
     const imgs = imagesOverride ?? effectiveImages;
     const ttl = titleOverride ?? effectiveTitle;
     const siteWebsite = websiteOverride ?? website;
@@ -2264,7 +2276,20 @@ export default function PinDesigner({
     if (!canvasReady || !initialJson) return;
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    canvas.loadFromJSON(initialJson)
+
+    // Inject fonts referenced in the saved JSON before restoring
+    try {
+      const jsonData = JSON.parse(initialJson);
+      const fontFamilies: string[] = Array.from(new Set(
+        (jsonData.objects || [])
+          .filter((o: any) => o.fontFamily)
+          .map((o: any) => o.fontFamily as string)
+      ));
+      fontFamilies.forEach(injectFontStylesheet);
+    } catch { /* ignore parse errors */ }
+
+    document.fonts.ready
+      .then(() => canvas.loadFromJSON(initialJson))
       .then(() => { canvas.renderAll(); updateLayers(); })
       .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
