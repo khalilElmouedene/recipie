@@ -1766,6 +1766,29 @@ export default function PinDesigner({
     if (!obj.__pinId) return;
     const border = canvas.getObjects().find((o: any) => o.__designerBorder && o.__forPinId === obj.__pinId);
     if (!border) return;
+
+    // For clipped image zones, keep the guide border anchored to the clip frame
+    // (the zone), not to the oversized image bounds used for panning.
+    const clip = obj.clipPath;
+    if (
+      obj.__pinType === "image" &&
+      clip &&
+      clip.absolutePositioned &&
+      typeof clip.left === "number" &&
+      typeof clip.top === "number" &&
+      typeof clip.width === "number" &&
+      typeof clip.height === "number"
+    ) {
+      border.set({
+        left: clip.left,
+        top: clip.top,
+        width: clip.width,
+        height: clip.height,
+      });
+      border.setCoords();
+      return;
+    }
+
     const br = obj.getBoundingRect(true);
     border.set({ left: br.left, top: br.top, width: br.width, height: br.height });
     border.setCoords();
