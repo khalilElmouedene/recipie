@@ -1702,7 +1702,9 @@ export default function PinDesigner({
   const toggleLock = (id: string) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    const obj = canvas.getObjects().find((o: any) => o.__pinId === id) as any;
+    // Prefer imageFrame over imageContent when both share the same __pinId
+    const obj = (canvas.getObjects().find((o: any) => o.__pinId === id && o.__pinType !== "imageContent")
+      ?? canvas.getObjects().find((o: any) => o.__pinId === id)) as any;
     if (!obj) return;
     obj.__pinLocked = !obj.__pinLocked;
     applyLockState(obj);
@@ -2576,8 +2578,9 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     const obj = getSelectedObject();
     if (!canvas || !obj) return;
-    // Re-read lock state directly from canvas object to avoid stale refs
-    const canvasObj = canvas.getObjects().find((o: any) => o.__pinId === obj.__pinId) as any;
+    // Re-read lock state from the frame/primary object (not imageContent which shares __pinId)
+    const canvasObj = (canvas.getObjects().find((o: any) => o.__pinId === obj.__pinId && o.__pinType !== "imageContent")
+      ?? canvas.getObjects().find((o: any) => o.__pinId === obj.__pinId)) as any;
     if (canvasObj?.__pinLocked) return;
     saveUndoState();
     obj.set("left", (obj.left ?? 0) + dx);
