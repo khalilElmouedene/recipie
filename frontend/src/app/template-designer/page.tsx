@@ -451,9 +451,7 @@ function TemplateDesignerInner() {
     if (!canvas || !fabric) return;
 
     try {
-      const all = await api.getPinDesignerTemplates();
-      const tmpl = all.find((t) => t.id === editingTemplateId);
-      if (!tmpl) return;
+      const tmpl = await api.getPinDesignerTemplate(editingTemplateId);
 
       setTemplateName(tmpl.name);
       setBgColor(tmpl.bgColor || "#ffffff");

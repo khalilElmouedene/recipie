@@ -4,7 +4,7 @@ import json
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,6 +55,7 @@ def _template_out(t: PinDesignerTemplate) -> PinDesignerTemplateOut:
 
 @router.get("/api/pin-designer-templates", response_model=list[PinDesignerTemplateOut])
 async def list_pin_designer_templates(
+    response: Response,
     project_id: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -62,6 +63,9 @@ async def list_pin_designer_templates(
     # Templates are private by default — only visible to their creator.
     # When project_id is supplied, also include templates from other project
     # members/owners that have been explicitly assigned to that project.
+
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
 
     if project_id:
         try:
@@ -118,6 +122,33 @@ async def list_pin_designer_templates(
         .order_by(PinDesignerTemplate.created_at.desc())
     )
     return [_template_out(t) for t in rows.scalars().all()]
+
+
+@router.get("/api/pin-designer-templates/{template_id}", response_model=PinDesignerTemplateOut)
+async def get_pin_designer_template(
+    template_id: str,
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        tid = uuid.UUID(template_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid template id")
+
+    row = await db.execute(
+        select(PinDesignerTemplate).where(
+            PinDesignerTemplate.id == tid,
+            PinDesignerTemplate.owner_id == user.id,
+        )
+    )
+    tmpl = row.scalar_one_or_none()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return _template_out(tmpl)
 
 
 @router.post(

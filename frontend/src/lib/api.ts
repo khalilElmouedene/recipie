@@ -359,7 +359,15 @@ export const api = {
   getPinTemplates: () => request<PinTemplate[]>("/api/pin-templates"),
 
   // ── Pin Designer Templates (user-created layouts) ──────────────────────
-  getPinDesignerTemplates: (projectId?: string) => request<PinDesignerTemplateOut[]>(`/api/pin-designer-templates${projectId ? `?project_id=${projectId}` : ""}`),
+  getPinDesignerTemplates: (projectId?: string) =>
+    request<PinDesignerTemplateOut[]>(
+      `/api/pin-designer-templates${projectId ? `?project_id=${projectId}` : ""}`,
+      { cache: "no-store" }
+    ),
+  getPinDesignerTemplate: (templateId: string) =>
+    request<PinDesignerTemplateOut>(`/api/pin-designer-templates/${templateId}`, {
+      cache: "no-store",
+    }),
   assignTemplateToProjects: (templateId: string, projectIds: string[] | null) =>
     request<PinDesignerTemplateOut>(`/api/pin-designer-templates/${templateId}`, {
       method: "PUT",
