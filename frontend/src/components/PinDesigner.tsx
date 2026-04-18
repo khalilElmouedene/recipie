@@ -1688,11 +1688,8 @@ export default function PinDesigner({
 
   const applyLockState = (obj: any) => {
     const locked = !!obj.__pinLocked;
-    // imageContent is always non-selectable regardless of lock state
     if (obj.__pinType === "imageContent") return;
     obj.set({
-      selectable: !locked,
-      evented: !locked,
       lockMovementX: locked,
       lockMovementY: locked,
       lockRotation: locked,
@@ -1709,14 +1706,6 @@ export default function PinDesigner({
     if (!obj) return;
     obj.__pinLocked = !obj.__pinLocked;
     applyLockState(obj);
-    // If we just locked the currently selected object, deselect it immediately
-    if (obj.__pinLocked && canvas.getActiveObject() === obj) {
-      canvas.discardActiveObject();
-      setSelectedId(null);
-      setToolbarPos(null);
-      selectedIdRef.current = null;
-      activeObjRef.current = null;
-    }
     canvas.renderAll();
     updateLayers();
     saveUndoState();
@@ -2314,6 +2303,11 @@ export default function PinDesigner({
             obj.__prevMoveLeft = obj.left;
             obj.__prevMoveTop  = obj.top;
           }
+          // Store position for locked objects so we can snap back on drag attempt
+          if (obj?.__pinLocked) {
+            obj.__lockedLeft = obj.left;
+            obj.__lockedTop  = obj.top;
+          }
           // Exit image edit mode when clicking outside the active imageContent
           const editId = imageEditModeIdRef.current;
           if (editId && obj?.__pinId !== editId) {
@@ -2329,11 +2323,17 @@ export default function PinDesigner({
 
         // ── Transform events (undo + toolbar) ────────────────────────────
         canvas.on("object:moving", (e: any) => {
+          const obj = e.target as any;
+          // Block mouse movement for locked objects
+          if (obj?.__pinLocked) {
+            obj.left = obj.__lockedLeft ?? obj.left;
+            obj.top  = obj.__lockedTop  ?? obj.top;
+            return;
+          }
           if (!transformSaveDoneRef.current) {
             transformSaveDoneRef.current = true;
             saveUndoState();
           }
-          const obj = e.target as any;
 
           if (obj.__pinType === "imageFrame") {
             // Move imageContent and its clipPath alongside the frame using delta tracking
