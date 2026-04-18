@@ -63,7 +63,7 @@ export default function PinterestGalleryPage() {
 
   // Filters
   const [search, setSearch] = useState("");
-  const [selectedWebsite, setSelectedWebsite] = useState<string>("__all__");
+  const [selectedWebsite, setSelectedWebsite] = useState<string>("");
   const [selectedBoard, setSelectedBoard] = useState<string>("__all__");
 
   // CSV modal
@@ -146,8 +146,18 @@ export default function PinterestGalleryPage() {
     return Array.from(new Set(allRecipes.map((r) => r.siteDomain))).sort();
   }, [allRecipes]);
 
+  useEffect(() => {
+    if (websites.length === 0) {
+      if (selectedWebsite !== "") setSelectedWebsite("");
+      return;
+    }
+    if (!selectedWebsite || !websites.includes(selectedWebsite)) {
+      setSelectedWebsite(websites[0]);
+    }
+  }, [websites, selectedWebsite]);
+
   const websiteScopedRecipes = useMemo(() => {
-    if (selectedWebsite === "__all__") return allRecipes;
+    if (!selectedWebsite) return [];
     return allRecipes.filter((r) => r.siteDomain === selectedWebsite);
   }, [allRecipes, selectedWebsite]);
 
@@ -314,14 +324,6 @@ export default function PinterestGalleryPage() {
                 <span className="hidden sm:inline">{worksheetPreparing ? "Preparing..." : "Sheet"}</span>
               </button>
               <button
-                onClick={() => setShowExcelModal(true)}
-                className="flex items-center gap-2 rounded-lg border border-green-700/60 bg-green-950/40 px-3 py-2 text-xs font-medium text-green-400 transition hover:bg-green-900/50 hover:text-green-300 disabled:opacity-40"
-                disabled={projects.length === 0}
-              >
-                <FileSpreadsheet size={14} />
-                <span className="hidden sm:inline">Export Excel</span>
-              </button>
-              <button
                 onClick={() => setShowCsvModal(true)}
                 className="flex items-center gap-2 rounded-lg border border-[#E60023]/40 bg-[#E60023]/10 px-3 py-2 text-xs font-medium text-[#E60023] transition hover:bg-[#E60023]/20 disabled:opacity-40"
                 disabled={filtered.length === 0}
@@ -352,12 +354,6 @@ export default function PinterestGalleryPage() {
           <div className="mb-6 space-y-4">
             {/* Website selector */}
             <div className="flex flex-wrap gap-2">
-              <WebsitePill
-                label="All websites"
-                count={allRecipes.length}
-                active={selectedWebsite === "__all__"}
-                onClick={() => setSelectedWebsite("__all__")}
-              />
               {websites.map((site) => (
                 <WebsitePill
                   key={site}
@@ -374,7 +370,7 @@ export default function PinterestGalleryPage() {
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
               <input
                 type="text"
-                placeholder={selectedWebsite === "__all__" ? "Search pins…" : `Search pins in ${selectedWebsite}…`}
+                placeholder={selectedWebsite ? `Search pins in ${selectedWebsite}…` : "Search pins…"}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full rounded-lg border border-gray-800 bg-gray-900 pl-9 pr-9 py-2 text-sm text-gray-200 placeholder-gray-500 outline-none focus:border-brand-500 transition"
