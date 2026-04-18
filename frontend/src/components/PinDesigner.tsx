@@ -1758,6 +1758,8 @@ export default function PinDesigner({
     (border as any).__designerBorder = true;
     if (forPinId) (border as any).__forPinId = forPinId;
     canvas.add(border);
+    // Keep guide overlays above content layers so zone boundaries remain visible.
+    canvas.bringObjectToFront(border);
     return border;
   };
 
@@ -1786,12 +1788,14 @@ export default function PinDesigner({
         height: clip.height,
       });
       border.setCoords();
+      canvas.bringObjectToFront(border);
       return;
     }
 
     const br = obj.getBoundingRect(true);
     border.set({ left: br.left, top: br.top, width: br.width, height: br.height });
     border.setCoords();
+    canvas.bringObjectToFront(border);
   };
 
   // ── Template loading ──────────────────────────────────────────────────────
@@ -2118,6 +2122,12 @@ export default function PinDesigner({
         }
       }
     }
+
+    // Ensure helper overlays stay visible above bands/images/text.
+    canvas
+      .getObjects()
+      .filter((o: any) => o.__designerBorder || o.__isLabel)
+      .forEach((o: any) => canvas.bringObjectToFront(o));
 
     canvas.renderAll();
     updateLayers();
