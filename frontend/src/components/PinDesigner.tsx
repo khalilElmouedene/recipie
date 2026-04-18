@@ -1688,7 +1688,11 @@ export default function PinDesigner({
 
   const applyLockState = (obj: any) => {
     const locked = !!obj.__pinLocked;
+    // imageContent is always non-selectable regardless of lock state
+    if (obj.__pinType === "imageContent") return;
     obj.set({
+      selectable: !locked,
+      evented: !locked,
       lockMovementX: locked,
       lockMovementY: locked,
       lockRotation: locked,
@@ -1705,6 +1709,14 @@ export default function PinDesigner({
     if (!obj) return;
     obj.__pinLocked = !obj.__pinLocked;
     applyLockState(obj);
+    // If we just locked the currently selected object, deselect it immediately
+    if (obj.__pinLocked && canvas.getActiveObject() === obj) {
+      canvas.discardActiveObject();
+      setSelectedId(null);
+      setToolbarPos(null);
+      selectedIdRef.current = null;
+      activeObjRef.current = null;
+    }
     canvas.renderAll();
     updateLayers();
     saveUndoState();
