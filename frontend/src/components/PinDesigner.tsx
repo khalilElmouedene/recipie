@@ -815,6 +815,7 @@ export default function PinDesigner({
   // ── Local UI state ──────────────────────────────────────────────────────
   const [mounted, setMounted] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
+  const [imageEditModeId, setImageEditModeId] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<PinTemplate | null>(null);
   const [customTemplates, setCustomTemplates] = useState<PinTemplate[]>([]);
   const allTemplates: PinTemplate[] = customTemplates;
@@ -869,7 +870,7 @@ export default function PinDesigner({
 
     // Save current frame JSON
     frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
-      canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId"])
+      canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId", "__flipX"])
     );
 
     // Generate preview of current frame before switching
@@ -968,7 +969,7 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (canvas) {
       frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
-        canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId"])
+        canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId", "__flipX"])
       );
     }
     setSavingAll(true);
@@ -1181,8 +1182,12 @@ export default function PinDesigner({
       const pinType = o.__pinType;
       const label: string = o.__pinLabel || pinId;
 
+      // Skip internal image content objects — their zone is captured via imageFrame
+      if (pinType === "imageContent") continue;
+
       // Only persist element types supported by the template loader.
       if (pinType === "image") {
+        // Old-style placeholder rect (no image loaded)
         let x = typeof o.left === "number" ? o.left : 0;
         let y = typeof o.top === "number" ? o.top : 0;
         let width = typeof o.width === "number" ? o.width * (o.scaleX ?? 1) : 0;
@@ -1195,20 +1200,22 @@ export default function PinDesigner({
           y = clip.top ?? y;
           width = typeof clip.width === "number" ? clip.width : width;
           height = typeof clip.height === "number" ? clip.height : height;
-          // Clip rect fill is usually empty; keep placeholder bg.
           bgColor = bgColor || "#e0e0e0";
         }
 
+        elements.push({ id: String(pinId), type: "image", label, x, y, width, height, bgColor, flipX: !!(o as any).flipX });
+      } else if (pinType === "imageFrame") {
+        // New-style: frame rect position IS the zone bounds
         elements.push({
           id: String(pinId),
           type: "image",
           label,
-          x,
-          y,
-          width,
-          height,
-          bgColor,
-          flipX: !!(o as any).flipX,
+          x: typeof o.left === "number" ? o.left : 0,
+          y: typeof o.top === "number" ? o.top : 0,
+          width: typeof o.width === "number" ? o.width * (o.scaleX ?? 1) : 0,
+          height: typeof o.height === "number" ? o.height * (o.scaleY ?? 1) : 0,
+          bgColor: "#e0e0e0",
+          flipX: !!(o as any).__flipX,
         });
       } else if (pinType === "text") {
         elements.push({
@@ -1506,7 +1513,7 @@ export default function PinDesigner({
       const fill = typeof obj.fill === "string" ? obj.fill : "#ffffff";
       const parsed = rgbaToHex(fill);
       setBandProps({ bandFill: parsed.hex, bandOpacity: parsed.alpha });
-    } else if (obj.__pinType === "image") {
+    } else if (obj.__pinType === "image" || obj.__pinType === "imageFrame" || obj.__pinType === "imageContent") {
       setImageProps({
         left: Math.round(obj.left ?? 0),
         top: Math.round(obj.top ?? 0),
@@ -1668,7 +1675,12 @@ export default function PinDesigner({
   const updateLayers = () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
-    const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel && !o.__designerBorder);
+    const objs = canvas.getObjects().filter((o: any) =>
+      o.__pinId &&
+      !o.__isLabel &&
+      !o.__designerBorder &&
+      o.__pinType !== "imageContent" // internal — represented by its imageFrame
+    );
     setLayers(objs.map((o: any) => ({ id: o.__pinId, label: o.__pinLabel || o.__pinId, type: o.__pinType, locked: !!o.__pinLocked })));
   };
 
@@ -1705,7 +1717,7 @@ export default function PinDesigner({
       if (o.__isLabel || o.__designerBorder) return;
       if (!o.__pinType) {
         if (o.type === "textbox") o.__pinType = "text";
-        else if (o.type === "image") o.__pinType = "image";
+        else if (o.type === "image") o.__pinType = "imageContent";
         else if (o.type === "circle") o.__pinType = "shape";
         else if (o.type === "rect") o.__pinType = "band";
       }
@@ -1713,6 +1725,8 @@ export default function PinDesigner({
       if (!o.__pinLabel) {
         if (o.__pinType === "text") o.__pinLabel = "Text";
         else if (o.__pinType === "image") o.__pinLabel = "Image";
+        else if (o.__pinType === "imageFrame") o.__pinLabel = "Image";
+        else if (o.__pinType === "imageContent") o.__pinLabel = "Image";
         else if (o.__pinType === "band") o.__pinLabel = "Band";
         else if (o.__pinType === "shape") o.__pinLabel = "Shape";
         else o.__pinLabel = o.__pinId;
@@ -1720,22 +1734,24 @@ export default function PinDesigner({
       // Reapply lock constraints (lost after loadFromJSON)
       applyLockState(o);
 
-      // Restore absolutePositioned on image clipPaths — Fabric's JSON round-trip
-      // may drop this flag, causing syncDesignerBorder to use the oversized image
-      // bounds instead of the zone bounds for the dashed border rect.
-      if (o.__pinType === "image" && o.clipPath) {
+      // Restore absolutePositioned + ensure non-selectable for imageContent objects
+      if (o.__pinType === "imageContent" && o.clipPath) {
         o.clipPath.absolutePositioned = true;
-        // Re-anchor the designer border to the clip zone dimensions
-        const border = objs.find((b: any) => b.__designerBorder && b.__forPinId === o.__pinId);
-        if (border && typeof o.clipPath.left === "number") {
-          border.set({
-            left: o.clipPath.left,
-            top: o.clipPath.top,
-            width: o.clipPath.width,
-            height: o.clipPath.height,
-          });
-          border.setCoords();
-        }
+        o.selectable = false;
+        o.evented = false;
+        o.hasControls = false;
+        o.hasBorders = false;
+      }
+    });
+
+    // Re-link imageFrame ↔ imageContent pairs (links are lost across JSON round-trips)
+    const frameObjs = objs.filter((o: any) => o.__pinType === "imageFrame");
+    const contentObjs = objs.filter((o: any) => o.__pinType === "imageContent");
+    frameObjs.forEach((frame: any) => {
+      const content = contentObjs.find((c: any) => c.__pinId === frame.__pinId);
+      if (content) {
+        frame.__linkedImg = content;
+        content.__frameRect = frame;
       }
     });
   };
@@ -1917,21 +1933,18 @@ export default function PinDesigner({
               scaleX: scale,
               scaleY: scale,
               flipX: shouldFlip,
-              selectable: true,
-              hasControls: true,
-              hasBorders: true,
-              cornerSize: 12,
-              cornerColor: "#6366f1",
-              borderColor: "#6366f1",
+              selectable: false,
+              evented: false,
+              hasControls: false,
+              hasBorders: false,
             });
 
             (img as any).__pinId = el.id;
             (img as any).__pinLabel = el.label;
-            (img as any).__pinType = "image";
+            (img as any).__pinType = "imageContent";
             (img as any).__pinLocked = !!(el as any).locked;
-            applyLockState(img);
 
-            // Clip the image to its zone so it never visually overlaps adjacent elements
+            // Clip image to zone bounds
             const clipRect = new fabric.Rect({
               left: el.x,
               top: el.y,
@@ -1942,7 +1955,37 @@ export default function PinDesigner({
             });
             (img as any).clipPath = clipRect;
 
-            canvas.add(img);
+            // Transparent interactive frame rect on top — this is what the user clicks/moves
+            const frameRect = new Rect({
+              left: el.x,
+              top: el.y,
+              width: el.width,
+              height: el.height,
+              fill: "transparent",
+              stroke: "#666",
+              strokeWidth: 1,
+              strokeDashArray: [8, 5],
+              strokeUniform: true,
+              originX: "left",
+              originY: "top",
+              selectable: true,
+              evented: true,
+              hasControls: false,
+              hasBorders: true,
+              borderColor: "#6366f1",
+              objectCaching: false,
+            });
+            (frameRect as any).__pinId = el.id;
+            (frameRect as any).__pinLabel = el.label || "Image";
+            (frameRect as any).__pinType = "imageFrame";
+            (frameRect as any).__pinLocked = !!(el as any).locked;
+            (frameRect as any).__flipX = shouldFlip;
+            (frameRect as any).__linkedImg = img;
+            (img as any).__frameRect = frameRect;
+            applyLockState(frameRect);
+
+            canvas.add(img);       // content behind
+            canvas.add(frameRect); // frame on top — intercepts clicks
             imageLoaded = true;
           } catch {
             // fall through to placeholder
@@ -2198,11 +2241,21 @@ export default function PinDesigner({
 
         canvas.on("selection:cleared", () => {
           if (isRestoringRef.current) return;
+          // Exit image edit mode: re-enable all imageFrame rects, lock all imageContent
+          canvas.getObjects().forEach((o: any) => {
+            if (o.__pinType === "imageFrame") {
+              o.set({ selectable: true, evented: true, opacity: 1 });
+            } else if (o.__pinType === "imageContent") {
+              o.set({ selectable: false, evented: false, hasControls: false, hasBorders: false });
+            }
+          });
+          setImageEditModeId(null);
           selectedIdRef.current = null;
           activeObjRef.current = null;
           setSelectedId(null);
           setTextProps({ editText: "" });
           setToolbarPos(null);
+          canvas.renderAll();
         });
 
         // ── Text events ───────────────────────────────────────────────────
@@ -2217,12 +2270,35 @@ export default function PinDesigner({
           if (target.__pinType === "text") {
             target.enterEditing();
             target.selectAll();
+          } else if (target.__pinType === "imageFrame") {
+            // Enter image edit mode: pass-through the frame, activate the content image
+            const img = target.__linkedImg as any;
+            if (!img) return;
+            target.set({ selectable: false, evented: false });
+            img.set({
+              selectable: true, evented: true,
+              hasControls: true, hasBorders: true,
+              cornerSize: 12, cornerColor: "#6366f1", borderColor: "#6366f1",
+            });
+            canvas.setActiveObject(img);
+            setImageEditModeId(target.__pinId ?? null);
+            syncSelectionFromObject(img);
+            canvas.renderAll();
           } else if (target.__pinType === "image") {
             canvas.setActiveObject(target);
             canvas.bringObjectToFront(target);
             target.set({ hasControls: true, hasBorders: true, cornerSize: 12, cornerColor: "#6366f1", borderColor: "#6366f1" });
             syncSelectionFromObject(target);
             canvas.renderAll();
+          }
+        });
+
+        // ── mouse:down — init delta tracking for imageFrame movement ─────
+        canvas.on("mouse:down", (e: any) => {
+          const obj = e.target as any;
+          if (obj?.__pinType === "imageFrame") {
+            obj.__prevMoveLeft = obj.left;
+            obj.__prevMoveTop  = obj.top;
           }
         });
 
@@ -2233,10 +2309,26 @@ export default function PinDesigner({
             saveUndoState();
           }
           const obj = e.target as any;
-          // Canva-like frame behavior: image is locked inside its clip zone.
-          // The clip zone (frame) stays fixed; the image pans within it.
-          // Constrain image so it always fully covers the frame (no empty corners).
-          if (obj?.clipPath && obj.clipPath.absolutePositioned) {
+
+          if (obj.__pinType === "imageFrame") {
+            // Move imageContent and its clipPath alongside the frame using delta tracking
+            const img = obj.__linkedImg as any;
+            if (img) {
+              const dx = obj.left - (obj.__prevMoveLeft ?? obj.left);
+              const dy = obj.top  - (obj.__prevMoveTop  ?? obj.top);
+              img.set({ left: (img.left ?? 0) + dx, top: (img.top ?? 0) + dy });
+              if (img.clipPath) {
+                img.clipPath.set({
+                  left: (img.clipPath.left ?? 0) + dx,
+                  top:  (img.clipPath.top  ?? 0) + dy,
+                });
+              }
+              img.setCoords();
+            }
+            obj.__prevMoveLeft = obj.left;
+            obj.__prevMoveTop  = obj.top;
+          } else if (obj?.clipPath && obj.clipPath.absolutePositioned) {
+            // imageContent in edit mode: pan within its clip zone
             const clip = obj.clipPath;
             const imgW = (obj.width || 1) * (obj.scaleX || 1);
             const imgH = (obj.height || 1) * (obj.scaleY || 1);
@@ -2244,7 +2336,6 @@ export default function PinDesigner({
             const clipTop    = clip.top  ?? 0;
             const clipRight  = clipLeft + (clip.width  || 0);
             const clipBottom = clipTop  + (clip.height || 0);
-            // With originX/Y "center": image center must stay in range that keeps image covering clip
             const minLeft = clipRight  - imgW / 2;
             const maxLeft = clipLeft   + imgW / 2;
             const minTop  = clipBottom - imgH / 2;
@@ -2252,6 +2343,7 @@ export default function PinDesigner({
             obj.left = Math.max(minLeft, Math.min(maxLeft, obj.left));
             obj.top  = Math.max(minTop,  Math.min(maxTop,  obj.top));
           }
+
           syncDesignerBorder(canvas, obj);
           recalcToolbarPos(obj);
         });
@@ -2300,6 +2392,36 @@ export default function PinDesigner({
 
           if (obj.__pinType === "text") {
             canvas.bringObjectToFront(obj);
+          } else if (obj.__pinType === "imageFrame") {
+            // After move/transform, sync clipPath rect to match new frame bounds
+            const img = obj.__linkedImg as any;
+            if (img?.clipPath) {
+              img.clipPath.set({
+                left:   obj.left   ?? 0,
+                top:    obj.top    ?? 0,
+                width:  (obj.width  ?? 0) * (obj.scaleX ?? 1),
+                height: (obj.height ?? 0) * (obj.scaleY ?? 1),
+              });
+              img.clipPath.setCoords();
+              // Re-enforce cover constraint after frame resize
+              const clip = img.clipPath;
+              const imgW = (img.width || 1) * (img.scaleX || 1);
+              const imgH = (img.height || 1) * (img.scaleY || 1);
+              const clipLeft   = clip.left ?? 0;
+              const clipTop    = clip.top  ?? 0;
+              const clipRight  = clipLeft + (clip.width  || 0);
+              const clipBottom = clipTop  + (clip.height || 0);
+              img.left = Math.max(clipRight - imgW / 2, Math.min(clipLeft + imgW / 2, img.left ?? 0));
+              img.top  = Math.max(clipBottom - imgH / 2, Math.min(clipTop + imgH / 2, img.top  ?? 0));
+              img.setCoords();
+            }
+            setImageProps({
+              left: Math.round(obj.left ?? 0),
+              top: Math.round(obj.top ?? 0),
+              width: Math.round((obj.width ?? 0) * (obj.scaleX ?? 1)),
+              height: Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)),
+              angle: Math.round(obj.angle ?? 0),
+            });
           } else if (obj.__pinType === "image") {
             setImageProps({
               left: Math.round(obj.left ?? 0),
@@ -2388,7 +2510,7 @@ export default function PinDesigner({
       getJson: () => {
         const canvas = fabricCanvasRef.current;
         if (!canvas) return "{}";
-        return JSON.stringify(canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId"]));
+        return JSON.stringify(canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId", "__flipX"]));
       },
       exportPng: getExportDataUrl,
     });
@@ -2446,6 +2568,19 @@ export default function PinDesigner({
         active?.tagName === "TEXTAREA" ||
         active?.getAttribute("contenteditable") === "true";
 
+      if (e.key === "Escape") {
+        const canvas = fabricCanvasRef.current;
+        if (canvas) {
+          canvas.getObjects().forEach((o: any) => {
+            if (o.__pinType === "imageFrame") o.set({ selectable: true, evented: true });
+            else if (o.__pinType === "imageContent") o.set({ selectable: false, evented: false, hasControls: false, hasBorders: false });
+          });
+          canvas.discardActiveObject();
+          canvas.renderAll();
+          setImageEditModeId(null);
+        }
+        return;
+      }
       if (e.key === "z" && (e.ctrlKey || e.metaKey) && !isInput) {
         e.preventDefault();
         performUndo();
@@ -2633,7 +2768,7 @@ export default function PinDesigner({
         fc.renderAll();
 
         refs[i] = JSON.stringify(
-          fc.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__designerBorder", "__forPinId"])
+          fc.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__designerBorder", "__forPinId", "__flipX"])
         );
 
         fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
@@ -2898,29 +3033,28 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     const target = getSelectedObject();
     if (!fabric || !canvas || !imageUrl.trim() || !target) return;
-    if (target.__pinType !== "image") return;
+    const isFrame = target.__pinType === "imageFrame";
+    const isOldPlaceholder = target.__pinType === "image";
+    if (!isFrame && !isOldPlaceholder) return;
     saveUndoState();
 
-    // Get zone bounds from existing object
-    const br = target.getBoundingRect?.();
-    const zoneLeft = br ? br.left : (target.left ?? 0);
-    const zoneTop = br ? br.top : (target.top ?? 0);
-    const zoneW = br ? br.width : (target.width ?? 400) * (target.scaleX ?? 1);
-    const zoneH = br ? br.height : (target.height ?? 400) * (target.scaleY ?? 1);
+    // Zone bounds
+    const zoneLeft = target.left ?? 0;
+    const zoneTop = target.top ?? 0;
+    const zoneW = (target.width ?? 400) * (target.scaleX ?? 1);
+    const zoneH = (target.height ?? 400) * (target.scaleY ?? 1);
+    const pid = target.__pinId;
 
     fabric.FabricImage.fromURL(proxyUrl(imageUrl.trim()), { crossOrigin: "anonymous" })
       .then((img: any) => {
         if (!img || !img.width) throw new Error("Empty image");
 
-        const imgW = img.width || 1;
-        const imgH = img.height || 1;
-        // Cover fit + small overflow margin to enable left/right and up/down panning.
         const panMarginPx = Math.max(24, Math.min(zoneW, zoneH) * 0.06);
         const scale = Math.max(
-          zoneW / imgW,
-          zoneH / imgH,
-          (zoneW + panMarginPx) / imgW,
-          (zoneH + panMarginPx) / imgH
+          zoneW / (img.width || 1),
+          zoneH / (img.height || 1),
+          (zoneW + panMarginPx) / (img.width || 1),
+          (zoneH + panMarginPx) / (img.height || 1)
         );
         img.set({
           left: zoneLeft + zoneW / 2,
@@ -2929,46 +3063,97 @@ export default function PinDesigner({
           originY: "center",
           scaleX: scale,
           scaleY: scale,
-          hasControls: true,
-          hasBorders: true,
-          cornerSize: 12,
-          cornerColor: "#6366f1",
-          borderColor: "#6366f1",
+          selectable: false,
+          evented: false,
+          hasControls: false,
+          hasBorders: false,
         });
-
-        const pid = target.__pinId;
         img.__pinId = pid;
         img.__pinLabel = target.__pinLabel;
-        img.__pinType = "image";
+        img.__pinType = "imageContent";
 
-        // Inherit the clip zone from the replaced object, or build a new one from its bounds
-        const existingClip = target.clipPath;
-        if (existingClip && (existingClip as any).absolutePositioned) {
-          img.clipPath = existingClip;
+        const clipRect = new fabric.Rect({
+          left: zoneLeft,
+          top: zoneTop,
+          width: zoneW,
+          height: zoneH,
+          absolutePositioned: true,
+          fill: "",
+        });
+        img.clipPath = clipRect;
+
+        if (isFrame) {
+          // Replace linked imageContent (if any), keep frame
+          const oldContent = target.__linkedImg;
+          if (oldContent) canvas.remove(oldContent);
+          target.__linkedImg = img;
+          img.__frameRect = target;
+          // Insert img below the frame rect
+          const frameIdx = canvas.getObjects().indexOf(target);
+          canvas.add(img);
+          canvas.bringObjectToFront(target); // keep frame on top
+          canvas.setActiveObject(target);
+          syncSelectionFromObject(target);
         } else {
-          img.clipPath = new fabric.Rect({
-            left: zoneLeft,
-            top: zoneTop,
-            width: zoneW,
-            height: zoneH,
-            absolutePositioned: true,
-            fill: "",
+          // Old-style placeholder: replace rect with frame+content
+          const label = canvas.getObjects().find((o: any) => o.__forId === pid);
+          if (label) canvas.remove(label);
+          // Create frame rect to wrap the new image
+          const frameRect = new fabric.Rect({
+            left: zoneLeft, top: zoneTop, width: zoneW, height: zoneH,
+            fill: "transparent", stroke: "#666", strokeWidth: 1, strokeDashArray: [8, 5],
+            strokeUniform: true, originX: "left", originY: "top",
+            selectable: !target.__pinLocked, evented: !target.__pinLocked,
+            hasControls: false, hasBorders: true, borderColor: "#6366f1", objectCaching: false,
           });
+          frameRect.__pinId = pid;
+          frameRect.__pinLabel = target.__pinLabel;
+          frameRect.__pinType = "imageFrame";
+          frameRect.__pinLocked = target.__pinLocked;
+          frameRect.__flipX = !!(target as any).__flipX;
+          frameRect.__linkedImg = img;
+          img.__frameRect = frameRect;
+          canvas.remove(target);
+          canvas.add(img);
+          canvas.add(frameRect);
+          canvas.setActiveObject(frameRect);
+          syncSelectionFromObject(frameRect);
         }
 
-        canvas.remove(target);
-        const label = canvas.getObjects().find((o: any) => o.__forId === pid);
-        if (label) canvas.remove(label);
-        canvas.add(img);
-        canvas.setActiveObject(img);
         canvas.renderAll();
         updateLayers();
-        syncSelectionFromObject(img);
       })
       .catch(() => {
-        console.warn("Could not load image:", imageUrl);
         alert("Could not load image — the URL may have expired. Try uploading the image directly.");
       });
+  };
+
+  const zoomImageInFrame = (direction: "in" | "out") => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !imageEditModeId) return;
+    const img = canvas.getObjects().find((o: any) =>
+      o.__pinType === "imageContent" && o.__pinId === imageEditModeId
+    ) as any;
+    if (!img?.clipPath) return;
+    saveUndoState();
+    const factor = direction === "in" ? 1.15 : 1 / 1.15;
+    const clip = img.clipPath;
+    const zoneW = clip.width ?? 1;
+    const zoneH = clip.height ?? 1;
+    const imgNatW = img.width || 1;
+    const imgNatH = img.height || 1;
+    const minScale = Math.max(zoneW / imgNatW, zoneH / imgNatH);
+    const newScale = Math.max(img.scaleX * factor, minScale);
+    img.set({ scaleX: newScale, scaleY: newScale });
+    // Re-clamp position
+    const finalImgW = imgNatW * newScale;
+    const finalImgH = imgNatH * newScale;
+    const clipLeft = clip.left ?? 0;
+    const clipTop = clip.top ?? 0;
+    img.left = Math.max(clipLeft + (clip.width ?? 0) - finalImgW / 2, Math.min(clipLeft + finalImgW / 2, img.left));
+    img.top  = Math.max(clipTop  + (clip.height ?? 0) - finalImgH / 2, Math.min(clipTop  + finalImgH / 2, img.top));
+    img.setCoords();
+    canvas.renderAll();
   };
 
   const addFlipImageZone = () => {
@@ -3112,6 +3297,20 @@ export default function PinDesigner({
             syncSelectionFromObject(img);
           });
       };
+      reader.readAsDataURL(file);
+    };
+    input.click();
+  };
+
+  const handleReplaceFrameImage = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => { if (reader.result) applyImage(reader.result as string); };
       reader.readAsDataURL(file);
     };
     input.click();
@@ -3324,6 +3523,33 @@ export default function PinDesigner({
               >
                 Replace
               </button>
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
+            </>
+          )}
+
+          {/* imageFrame — zone selected (single click) */}
+          {selectedType === "imageFrame" && !imageEditModeId && (
+            <>
+              <button onClick={handleReplaceFrameImage} className="p-1 rounded hover:bg-gray-700 text-gray-300 text-[11px] font-medium px-2" title="Replace image">
+                Replace
+              </button>
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
+              <span className="text-[10px] text-gray-400 italic px-1">Double-click to reposition</span>
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
+            </>
+          )}
+
+          {/* imageFrame — image edit mode (double-click, imageContent is active) */}
+          {imageEditModeId && (
+            <>
+              <button onClick={() => zoomImageInFrame("in")} title="Zoom in" className="p-1 rounded hover:bg-gray-700 text-gray-300">
+                <ZoomIn size={14} />
+              </button>
+              <button onClick={() => zoomImageInFrame("out")} title="Zoom out" className="p-1 rounded hover:bg-gray-700 text-gray-300">
+                <ZoomOut size={14} />
+              </button>
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
+              <span className="text-[10px] text-gray-400 italic px-1">ESC to exit</span>
               <div className="w-px h-4 bg-gray-700 mx-0.5" />
             </>
           )}
@@ -4174,7 +4400,7 @@ export default function PinDesigner({
                 <div>
                   <p className="text-sm font-medium text-white">{selectedElement.label}</p>
                   <p className="text-xs text-gray-500">
-                    {selectedType === "image" ? "Image slot" : selectedType === "band" ? "Color band" : selectedType === "frame" ? "Border frame" : selectedType === "shape" ? "Shape" : "Text element"}
+                    {selectedType === "image" ? "Image slot" : selectedType === "imageFrame" ? "Image zone" : selectedType === "band" ? "Color band" : selectedType === "frame" ? "Border frame" : selectedType === "shape" ? "Shape" : "Text element"}
                   </p>
                 </div>
                 <button onClick={deleteSelectedElement} className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition" title="Delete (Del)">
@@ -4399,6 +4625,63 @@ export default function PinDesigner({
                       />
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* ── Image Frame Properties ───────────────────────────────── */}
+              {selectedType === "imageFrame" && (
+                <div className="space-y-4">
+                  {!imageEditModeId ? (
+                    <>
+                      <div>
+                        <label className="text-xs font-semibold text-gray-400 uppercase block mb-1">Image Zone</label>
+                        <p className="text-[10px] text-gray-500">Single-click to move the zone. Double-click to reposition the image inside.</p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-400 block mb-2">Choose Image</label>
+                        {effectiveImages.length > 0 ? (
+                          <div className="grid grid-cols-2 gap-2">
+                            {effectiveImages.map((url, i) => (
+                              <button
+                                key={i}
+                                onClick={() => applyImage(url)}
+                                className="rounded-lg overflow-hidden border-2 border-gray-700 hover:border-brand-500 transition relative group"
+                              >
+                                <img src={proxyUrl(url)} alt={`Image ${i + 1}`} className="w-full h-20 object-cover" crossOrigin="anonymous"
+                                  onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = "none"; const ph = img.nextElementSibling as HTMLElement | null; if (ph) ph.style.display = "flex"; }}
+                                />
+                                <div style={{ display: "none" }} className="w-full h-20 bg-gray-700 items-center justify-center text-gray-400 text-[10px]">
+                                  {i === 0 ? "Original" : `Variant ${i}`}
+                                </div>
+                                <span className="absolute bottom-0 left-0 right-0 text-[9px] text-center bg-black/50 text-white py-0.5 opacity-0 group-hover:opacity-100 transition">
+                                  {i === 0 ? "Original" : `Variant ${i}`}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-500 mb-2">No recipe images available</p>
+                        )}
+                        <div className="mt-3">
+                          <label className="text-xs text-gray-400 block mb-1">Or paste URL:</label>
+                          <input className="input-field text-sm w-full" placeholder="https://..." onKeyDown={(e) => { if (e.key === "Enter") applyImage((e.target as HTMLInputElement).value); }} />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div>
+                      <label className="text-xs font-semibold text-gray-400 uppercase block mb-1">Edit Image</label>
+                      <p className="text-[10px] text-gray-500 mb-3">Drag to reposition. Use zoom to scale. Press ESC or click outside to exit.</p>
+                      <div className="flex gap-2">
+                        <button onClick={() => zoomImageInFrame("in")} className="flex-1 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-xs text-gray-300 flex items-center justify-center gap-1">
+                          <ZoomIn size={12} /> Zoom In
+                        </button>
+                        <button onClick={() => zoomImageInFrame("out")} className="flex-1 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-xs text-gray-300 flex items-center justify-center gap-1">
+                          <ZoomOut size={12} /> Zoom Out
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
