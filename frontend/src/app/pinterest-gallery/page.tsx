@@ -6,7 +6,6 @@ import {
   Download,
   ExternalLink,
   Tag,
-  LayoutGrid,
   FileSpreadsheet,
   FileText,
   Search,
@@ -14,7 +13,6 @@ import {
   ChevronDown,
   Loader2,
   Sheet,
-  Globe,
 } from "lucide-react";
 import { api, ProjectOut, SiteOut, RecipeOut } from "@/lib/api";
 import {
@@ -65,6 +63,7 @@ export default function PinterestGalleryPage() {
 
   // Filters
   const [search, setSearch] = useState("");
+  const [selectedWebsite, setSelectedWebsite] = useState<string>("__all__");
   const [selectedBoard, setSelectedBoard] = useState<string>("__all__");
 
   // CSV modal
@@ -137,14 +136,35 @@ export default function PinterestGalleryPage() {
   }, [projects, excelProjectId]);
 
   // ── Derived data ──
-  const boards = useMemo(() => {
+  const allBoards = useMemo(() => {
     const set = new Set<string>();
     allRecipes.forEach((r) => { if (r.pin_board) set.add(r.pin_board); });
     return Array.from(set).sort();
   }, [allRecipes]);
 
+  const websites = useMemo(() => {
+    return Array.from(new Set(allRecipes.map((r) => r.siteDomain))).sort();
+  }, [allRecipes]);
+
+  const websiteScopedRecipes = useMemo(() => {
+    if (selectedWebsite === "__all__") return allRecipes;
+    return allRecipes.filter((r) => r.siteDomain === selectedWebsite);
+  }, [allRecipes, selectedWebsite]);
+
+  const boards = useMemo(() => {
+    const set = new Set<string>();
+    websiteScopedRecipes.forEach((r) => { if (r.pin_board) set.add(r.pin_board); });
+    return Array.from(set).sort();
+  }, [websiteScopedRecipes]);
+
+  useEffect(() => {
+    if (selectedBoard !== "__all__" && !boards.includes(selectedBoard)) {
+      setSelectedBoard("__all__");
+    }
+  }, [boards, selectedBoard]);
+
   const filtered = useMemo(() => {
-    let list = allRecipes;
+    let list = websiteScopedRecipes;
     if (selectedBoard !== "__all__") {
       list = list.filter((r) => r.pin_board === selectedBoard);
     }
@@ -157,21 +177,10 @@ export default function PinterestGalleryPage() {
           (r.pin_tags || "").toLowerCase().includes(q)
       );
     }
-    return list;
-  }, [allRecipes, selectedBoard, search]);
-
-  // Group filtered recipes: siteDomain → pin_board → recipes[]
-  const grouped = useMemo(() => {
-    const byDomain = new Map<string, Map<string, EnrichedRecipe[]>>();
-    for (const r of filtered) {
-      if (!byDomain.has(r.siteDomain)) byDomain.set(r.siteDomain, new Map());
-      const board = r.pin_board || "__none__";
-      const domainMap = byDomain.get(r.siteDomain)!;
-      if (!domainMap.has(board)) domainMap.set(board, []);
-      domainMap.get(board)!.push(r);
-    }
-    return byDomain;
-  }, [filtered]);
+    return list
+      .slice()
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [websiteScopedRecipes, selectedBoard, search]);
 
   const worksheetSourceRows = useMemo<PinterestWorksheetRecipe[]>(
     () => filtered.map((r) => ({
@@ -330,7 +339,7 @@ export default function PinterestGalleryPage() {
         {!loading && !error && (
           <div className="mb-6 flex flex-wrap gap-3">
             <StatPill label="Total pins" value={allRecipes.length} color="brand" />
-            <StatPill label="Boards" value={boards.length} color="purple" />
+            <StatPill label="Boards" value={allBoards.length} color="purple" />
             <StatPill label="Websites" value={new Set(allRecipes.map((r) => r.siteDomain)).size} color="blue" />
             {selectedBoard !== "__all__" && (
               <StatPill label="Showing" value={filtered.length} color="pink" />
@@ -338,15 +347,34 @@ export default function PinterestGalleryPage() {
           </div>
         )}
 
-        {/* ── Search + Board filter ── */}
+        {/* ── Website → Search → Boards ── */}
         {!loading && !error && allRecipes.length > 0 && (
-          <div className="mb-6 space-y-3">
+          <div className="mb-6 space-y-4">
+            {/* Website selector */}
+            <div className="flex flex-wrap gap-2">
+              <WebsitePill
+                label="All websites"
+                count={allRecipes.length}
+                active={selectedWebsite === "__all__"}
+                onClick={() => setSelectedWebsite("__all__")}
+              />
+              {websites.map((site) => (
+                <WebsitePill
+                  key={site}
+                  label={site}
+                  count={allRecipes.filter((r) => r.siteDomain === site).length}
+                  active={selectedWebsite === site}
+                  onClick={() => setSelectedWebsite(site)}
+                />
+              ))}
+            </div>
+
             {/* Search */}
             <div className="relative max-w-sm">
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
               <input
                 type="text"
-                placeholder="Search pins…"
+                placeholder={selectedWebsite === "__all__" ? "Search pins…" : `Search pins in ${selectedWebsite}…`}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full rounded-lg border border-gray-800 bg-gray-900 pl-9 pr-9 py-2 text-sm text-gray-200 placeholder-gray-500 outline-none focus:border-brand-500 transition"
@@ -365,7 +393,7 @@ export default function PinterestGalleryPage() {
             <div className="flex flex-wrap gap-2">
               <BoardPill
                 label="All boards"
-                count={allRecipes.length}
+                count={websiteScopedRecipes.length}
                 active={selectedBoard === "__all__"}
                 onClick={() => setSelectedBoard("__all__")}
               />
@@ -373,7 +401,7 @@ export default function PinterestGalleryPage() {
                 <BoardPill
                   key={b}
                   label={b}
-                  count={allRecipes.filter((r) => r.pin_board === b).length}
+                  count={websiteScopedRecipes.filter((r) => r.pin_board === b).length}
                   active={selectedBoard === b}
                   onClick={() => setSelectedBoard(b)}
                 />
@@ -406,50 +434,12 @@ export default function PinterestGalleryPage() {
           <EmptyState message="No pins match your current filter." />
         )}
 
-        {/* ── Grouped by website → board ── */}
+        {/* ── Pins grid ── */}
         {!loading && !error && filtered.length > 0 && (
-          <div className="space-y-12">
-            {Array.from(grouped.entries()).map(([domain, boardMap]) => {
-              const siteTotal = Array.from(boardMap.values()).reduce((s, r) => s + r.length, 0);
-              const showBoardHeadings = boardMap.size > 1 || selectedBoard === "__all__";
-              return (
-                <section key={domain}>
-                  {/* Website header */}
-                  <div className="mb-6 flex items-center gap-3 pb-3 border-b border-gray-800">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-950/60 border border-blue-800/40 shrink-0">
-                      <Globe size={15} className="text-blue-400" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h2 className="text-sm font-semibold text-white truncate">{domain}</h2>
-                      <p className="text-xs text-gray-500">{siteTotal} pin{siteTotal !== 1 ? "s" : ""} · {boardMap.size} board{boardMap.size !== 1 ? "s" : ""}</p>
-                    </div>
-                  </div>
-
-                  {/* Boards within this site */}
-                  <div className="space-y-8">
-                    {Array.from(boardMap.entries()).map(([board, recipes]) => (
-                      <div key={board}>
-                        {/* Board sub-heading (only shown when multiple boards or no filter) */}
-                        {showBoardHeadings && (
-                          <div className="mb-4 flex items-center gap-2">
-                            <LayoutGrid size={13} className="text-[#E60023] shrink-0" />
-                            <h3 className="text-xs font-semibold text-gray-300">
-                              {board === "__none__" ? "No board assigned" : board}
-                            </h3>
-                            <span className="text-[10px] text-gray-600 ml-1">{recipes.length}</span>
-                          </div>
-                        )}
-                        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-                          {recipes.map((recipe) => (
-                            <RecipeCard key={recipe.id} recipe={recipe} />
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              );
-            })}
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {filtered.map((recipe) => (
+              <RecipeCard key={recipe.id} recipe={recipe} />
+            ))}
           </div>
         )}
       </div>
@@ -602,6 +592,25 @@ function StatPill({ label, value, color }: { label: string; value: number; color
       <span className="font-bold text-sm">{value}</span>
       <span className="text-gray-400">{label}</span>
     </div>
+  );
+}
+
+function WebsitePill({ label, count, active, onClick }: { label: string; count: number; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+        active
+          ? "border-blue-500/70 bg-blue-500/15 text-blue-300"
+          : "border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-700 hover:text-gray-200"
+      }`}
+      title={label}
+    >
+      <span className="truncate">{label}</span>
+      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${active ? "bg-blue-500/25 text-blue-200" : "bg-gray-800 text-gray-500"}`}>
+        {count}
+      </span>
+    </button>
   );
 }
 
