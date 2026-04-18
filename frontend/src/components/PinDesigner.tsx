@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { api, getApiBaseUrl } from "@/lib/api";
 import { appendPinImageToArticleHtml } from "@/lib/pinArticleEmbed";
-import { getUserRole } from "@/lib/auth";
+import { getUserRole, getUserId } from "@/lib/auth";
 import { useDesignerStore } from "@/store/useDesignerStore";
 import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 import {
@@ -88,6 +88,7 @@ interface TemplateElement {
 
 export interface PinTemplate {
   id: string;
+  owner_id?: string;
   name: string;
   description: string;
   previewLayout:
@@ -791,6 +792,9 @@ export default function PinDesigner({
   const [selectedTemplate, setSelectedTemplate] = useState<PinTemplate | null>(null);
   const [customTemplates, setCustomTemplates] = useState<PinTemplate[]>([]);
   const allTemplates: PinTemplate[] = customTemplates;
+  const currentUserId = getUserId();
+  const myTemplates = customTemplates.filter((t) => t.owner_id === currentUserId);
+  const sharedTemplates = customTemplates.filter((t) => t.owner_id !== currentUserId);
   const [pinName, setPinName] = useState(templateName);
 
   // Pinterest
@@ -3706,7 +3710,8 @@ export default function PinDesigner({
 
             {/* Templates Tab */}
             {leftTab === "templates" && (
-              <div className="space-y-3">
+              <div className="space-y-4">
+                {/* ── My Templates ── */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs text-gray-400">My templates</p>
@@ -3719,10 +3724,10 @@ export default function PinDesigner({
                     </button>
                   </div>
 
-                  {customTemplates.length === 0 ? (
+                  {myTemplates.length === 0 ? (
                     <p className="text-[11px] text-gray-500">No templates yet. Design a layout and click Save to create your first template.</p>
                   ) : (
-                    customTemplates.map((t) => (
+                    myTemplates.map((t) => (
                       <div
                         key={t.id}
                         className={`rounded-lg border-2 p-3 cursor-pointer transition ${selectedTemplate?.id === t.id ? "border-brand-500 bg-brand-500/10" : "border-gray-700 hover:border-gray-500"}`}
@@ -3758,6 +3763,35 @@ export default function PinDesigner({
                     ))
                   )}
                 </div>
+
+                {/* ── Shared in Project ── */}
+                {sharedTemplates.length > 0 && (
+                  <div className="pt-3 border-t border-gray-800 space-y-2">
+                    <p className="text-xs text-gray-400">Shared in project</p>
+                    {sharedTemplates.map((t) => (
+                      <div
+                        key={t.id}
+                        className={`rounded-lg border-2 p-3 cursor-pointer transition ${selectedTemplate?.id === t.id ? "border-brand-500 bg-brand-500/10" : "border-gray-700 hover:border-gray-500"}`}
+                      >
+                        <p className="text-sm font-medium text-white truncate">{t.name}</p>
+                        <button
+                          onClick={() => {
+                            setSelectedTemplate(t);
+                            onTemplateSelected?.(t.id);
+                            if (frames && frames.length > 1) {
+                              frameJsonsRef.current = {};
+                              setFramePreviews({});
+                              generateAllFramePreviews(t);
+                            }
+                          }}
+                          className={`text-xs px-3 py-1 rounded mt-2 ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
+                        >
+                          {selectedTemplate?.id === t.id ? "✓ Selected" : "Use Template"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

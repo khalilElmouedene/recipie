@@ -59,50 +59,65 @@ async def list_pin_designer_templates(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Resolve effective owner: members see their owner's templates.
-    # Priority: 1) user is owner → own templates
-    #           2) user was created by an owner → that owner's templates
-    #           3) user is a project member → project owner's templates
-    from ..db_models import UserRole
-    if user.role == UserRole.owner:
-        owner_id = user.id
-    elif user.created_by_owner_id:
-        owner_id = user.created_by_owner_id
-    elif project_id:
+    # Templates are private by default — only visible to their creator.
+    # When project_id is supplied, also include templates from other project
+    # members/owners that have been explicitly assigned to that project.
+
+    if project_id:
         try:
             proj_uuid = uuid.UUID(project_id)
         except Exception:
             return []
-        member_row = await db.execute(
-            select(ProjectMember).where(
-                ProjectMember.project_id == proj_uuid,
-                ProjectMember.user_id == user.id,
-            )
-        )
-        if not member_row.scalar_one_or_none():
-            return []
+
+        # Verify caller is a member or owner of the project
         proj_row = await db.execute(select(Project).where(Project.id == proj_uuid))
         proj = proj_row.scalar_one_or_none()
         if not proj:
             return []
-        owner_id = proj.owner_id
-    else:
-        return []
 
+        if proj.owner_id != user.id:
+            member_row = await db.execute(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == proj_uuid,
+                    ProjectMember.user_id == user.id,
+                )
+            )
+            if not member_row.scalar_one_or_none():
+                return []
+
+        # Caller's own templates (always visible regardless of assignment)
+        own_q = await db.execute(
+            select(PinDesignerTemplate)
+            .where(PinDesignerTemplate.owner_id == user.id)
+            .order_by(PinDesignerTemplate.created_at.desc())
+        )
+        own_templates = own_q.scalars().all()
+
+        # Other users' templates assigned to this project (JSON contains project_id)
+        shared_q = await db.execute(
+            select(PinDesignerTemplate)
+            .where(
+                PinDesignerTemplate.owner_id != user.id,
+                PinDesignerTemplate.project_ids.contains(project_id),
+            )
+            .order_by(PinDesignerTemplate.created_at.desc())
+        )
+        shared_candidates = shared_q.scalars().all()
+
+        out: list[PinDesignerTemplateOut] = [_template_out(t) for t in own_templates]
+        for t in shared_candidates:
+            pids = _parse_project_ids(t.project_ids)
+            if pids and project_id in pids:
+                out.append(_template_out(t))
+        return out
+
+    # No project_id: return only the caller's own templates
     rows = await db.execute(
         select(PinDesignerTemplate)
-        .where(PinDesignerTemplate.owner_id == owner_id)
+        .where(PinDesignerTemplate.owner_id == user.id)
         .order_by(PinDesignerTemplate.created_at.desc())
     )
-    templates = rows.scalars().all()
-    out: list[PinDesignerTemplateOut] = []
-    for t in templates:
-        pids = _parse_project_ids(t.project_ids)
-        # Filter: if project_id given, only include global (null) or assigned templates
-        if project_id and pids is not None and project_id not in pids:
-            continue
-        out.append(_template_out(t))
-    return out
+    return [_template_out(t) for t in rows.scalars().all()]
 
 
 @router.post(
