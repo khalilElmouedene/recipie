@@ -741,6 +741,7 @@ export interface PublishBatchRequest {
   first_publish_at?: string; // ISO datetime for first post (wordpress_scheduled mode)
   interval_minutes?: number; // override project interval
   site_id?: string; // if set, only publish recipes for this site
+  recipe_id?: string; // if set, publish only this single recipe
 }
 
 export interface PublishBatchOut {

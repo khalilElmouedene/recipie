@@ -340,6 +340,7 @@ class PublishBatchRequest(BaseModel):
     first_publish_at: datetime | None = None  # base time for first post (wordpress_scheduled)
     interval_minutes: int | None = None  # override project interval
     site_id: uuid.UUID | None = None  # if set, only publish recipes for this site
+    recipe_id: uuid.UUID | None = None  # if set, publish only this single recipe
 
 
 class PublishBatchOut(BaseModel):

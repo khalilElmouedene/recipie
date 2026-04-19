@@ -473,6 +473,8 @@ async def publish_batch_to_wordpress(
     )
     if body.site_id is not None:
         query = query.where(Recipe.site_id == body.site_id)
+    if body.recipe_id is not None:
+        query = query.where(Recipe.id == body.recipe_id)
     query = query.order_by(Site.id, Recipe.created_at.asc())
     pairs_result = await db.execute(query)
     pairs = pairs_result.all()

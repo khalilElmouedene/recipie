@@ -1162,8 +1162,14 @@ export default function PinDesigner({
           await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe");
         }
       }
-      // 2. Open batch publish modal — scoped to siteId when available.
-      setWpBatchModalData({ mode, ...opts, ...(siteId ? { site_id: siteId } : {}) });
+      // 2. Open batch publish modal.
+      // In single-recipe mode, scope to only that recipe so we don't publish others.
+      setWpBatchModalData({
+        mode,
+        ...opts,
+        ...(siteId ? { site_id: siteId } : {}),
+        ...(!frames?.length && recipeId ? { recipe_id: recipeId } : {}),
+      });
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Failed to save pins before publishing");
       setWpBatchBusy(null);
