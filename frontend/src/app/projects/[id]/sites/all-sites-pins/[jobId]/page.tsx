@@ -5,6 +5,10 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ImageIcon } from "lucide-react";
 import { api, GeneratedJobRecipeOut } from "@/lib/api";
 
+function isRecipePublished(recipe: GeneratedJobRecipeOut): boolean {
+  return recipe.status === "published" || Boolean(recipe.wp_permalink);
+}
+
 export default function AllSitesJobPinsPage() {
   const params = useParams<{ id: string; jobId: string }>();
   const router = useRouter();
@@ -28,8 +32,18 @@ export default function AllSitesJobPinsPage() {
       }
       m.get(key)!.items.push(r);
     }
-    return Array.from(m.values()).sort((a, b) => a.domain.localeCompare(b.domain));
+    return Array.from(m.values())
+      .map((group) => ({
+        ...group,
+        publishedCount: group.items.filter(isRecipePublished).length,
+      }))
+      .sort((a, b) => a.domain.localeCompare(b.domain));
   }, [recipes]);
+
+  const fullyPublishedSites = bySite.filter(
+    (g) => g.items.length > 0 && g.publishedCount === g.items.length
+  ).length;
+  const publishedRecipes = bySite.reduce((sum, g) => sum + g.publishedCount, 0);
 
   if (loading) {
     return <div className="text-gray-400 p-6">Loading…</div>;
@@ -52,6 +66,11 @@ export default function AllSitesJobPinsPage() {
         <p className="text-sm text-gray-400 mt-1">
           Open the designer per website to create pins for every recipe generated in this job ({recipes.length} recipes).
         </p>
+        {recipes.length > 0 && (
+          <p className="text-xs text-gray-500 mt-1">
+            Published so far: {publishedRecipes}/{recipes.length} recipes • {fullyPublishedSites}/{bySite.length} website(s) complete.
+          </p>
+        )}
       </div>
 
       {bySite.length === 0 ? (
@@ -64,6 +83,15 @@ export default function AllSitesJobPinsPage() {
                 {g.domain}
               </h2>
               <p className="text-xs text-gray-500 mt-1">{g.items.length} recipe(s)</p>
+              {g.publishedCount === g.items.length && g.items.length > 0 ? (
+                <p className="text-xs text-emerald-400 mt-1">All recipes published</p>
+              ) : g.publishedCount > 0 ? (
+                <p className="text-xs text-amber-300 mt-1">
+                  {g.publishedCount}/{g.items.length} published
+                </p>
+              ) : (
+                <p className="text-xs text-gray-500 mt-1">Not published yet</p>
+              )}
               <button
                 onClick={() =>
                   router.push(`/projects/${projectId}/sites/${g.siteId}/designer?job=${jobId}`)

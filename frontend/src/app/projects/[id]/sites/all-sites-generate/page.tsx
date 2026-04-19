@@ -670,6 +670,21 @@ export default function AllSitesGeneratePage() {
           <div className="space-y-8">
             {history.map((j) => {
               const recipes = jobRecipeMap[j.id] || [];
+              const recipesBySite = Array.from(
+                recipes.reduce((acc, row) => {
+                  const key = (row.site_domain || "").trim().toLowerCase() || row.site_id || "unknown-site";
+                  if (!acc.has(key)) {
+                    acc.set(key, {
+                      siteId: row.site_id,
+                      domain: row.site_domain || "Unknown website",
+                      items: [] as GeneratedJobRecipeOut[],
+                    });
+                  }
+                  acc.get(key)!.items.push(row);
+                  return acc;
+                }, new Map<string, { siteId: string; domain: string; items: GeneratedJobRecipeOut[] }>())
+                  .values()
+              ).sort((a, b) => a.domain.localeCompare(b.domain));
               return (
                 <div key={j.id} className="border border-gray-800 rounded-xl overflow-hidden">
                   <div className="bg-gray-800/50 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
@@ -725,7 +740,15 @@ export default function AllSitesGeneratePage() {
                     {recipes.length === 0 ? (
                       <p className="text-xs text-gray-600 py-2">No recipes linked.</p>
                     ) : (
-                      recipes.map((row) => {
+                      recipesBySite.map((siteGroup) => (
+                        <div key={`${j.id}-${siteGroup.siteId || siteGroup.domain}`} className="space-y-2">
+                          <div className="px-2 pt-1">
+                            <div className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900/40 px-2.5 py-1">
+                              <span className="text-xs font-medium text-gray-200">{siteGroup.domain}</span>
+                              <span className="text-[11px] text-gray-500">{siteGroup.items.length} recipe(s)</span>
+                            </div>
+                          </div>
+                          {siteGroup.items.map((row) => {
                         const thumb = thumbUrl(row);
                         const title = row.recipe_text?.split("\n")[0]?.trim() || "Recipe";
                         const r = recipeFullById[row.id];
@@ -949,7 +972,9 @@ export default function AllSitesGeneratePage() {
                             )}
                           </div>
                         );
-                      })
+                          })}
+                        </div>
+                      ))
                     )}
                   </div>
                   )}
