@@ -3909,7 +3909,9 @@ export default function PinDesigner({
                 onClick={() => setShowWpScheduleModal(true)}
                 disabled={!!wpBatchBusy}
                 className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-brand-700/60 text-brand-300"
-                title="Configure and push all generated recipes as WordPress Scheduled posts"
+                title={!frames?.length && recipeId
+                  ? "Schedule this recipe as a WordPress future post"
+                  : "Configure and schedule all generated recipes as WordPress future posts"}
               >
                 <CalendarClock size={14} />
                 <span className="hidden lg:inline">
@@ -3921,7 +3923,9 @@ export default function PinDesigner({
                 onClick={() => void runWordPressBatchFromDesigner("manual_backdate")}
                 disabled={!!wpBatchBusy}
                 className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-orange-800/50 text-orange-200"
-                title="Publish all generated recipes now with random dates in the past 6 months"
+                title={!frames?.length && recipeId
+                  ? "Publish this recipe now with a random backdate in the past 6 months"
+                  : "Publish all generated recipes now with random backdates in the past 6 months"}
               >
                 <History size={14} />
                 <span className="hidden lg:inline">
@@ -4009,18 +4013,28 @@ export default function PinDesigner({
       {showWpScheduleModal && (
         <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center">
           <div className="bg-gray-900 rounded-xl p-6 w-full max-w-sm">
-            <h3 className="text-lg font-semibold text-white mb-4">WordPress Schedule Settings</h3>
+            <h3 className="text-lg font-semibold text-white mb-1">WordPress Schedule Settings</h3>
+            <p className="text-xs text-gray-400 mb-4">
+              {!frames?.length && recipeId
+                ? "This recipe will be scheduled as a future WordPress post at the time below."
+                : "All generated recipes will be scheduled as future WordPress posts, staggered by the interval."}
+            </p>
             <div className="space-y-4">
               <div>
-                <label className="text-xs text-gray-400 block mb-1">First post publish date &amp; time</label>
+                <label className="text-xs text-gray-400 block mb-1">
+                  {!frames?.length && recipeId ? "Publish date & time" : "First post publish date & time"}
+                </label>
                 <input
                   type="datetime-local"
                   value={wpScheduleFirstAt}
                   onChange={(e) => setWpScheduleFirstAt(e.target.value)}
                   className="input-field w-full"
                 />
-                <p className="text-xs text-gray-500 mt-1">Article 1 will publish at this time. Each next article adds the interval below.</p>
+                {!(!frames?.length && recipeId) && (
+                  <p className="text-xs text-gray-500 mt-1">Article 1 publishes at this time. Each next article adds the interval below.</p>
+                )}
               </div>
+              {!(!frames?.length && recipeId) && (
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Interval between posts (minutes)</label>
                 <input
@@ -4032,6 +4046,7 @@ export default function PinDesigner({
                   className="input-field w-full"
                 />
               </div>
+              )}
               <div className="flex gap-2 pt-2">
                 <button
                   className="btn-primary flex-1"
