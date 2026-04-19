@@ -1,7 +1,7 @@
 """add embed_pin_in_article to sites
 
 Revision ID: add_site_embed_pin_in_article
-Revises: add_site_image_mode
+Revises: merge_heads
 Branch_labels: None
 depends_on: None
 """
@@ -10,7 +10,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "add_site_embed_pin_in_article"
-down_revision = "add_site_image_mode"
+down_revision = "merge_heads"
 branch_labels = None
 depends_on = None
 
