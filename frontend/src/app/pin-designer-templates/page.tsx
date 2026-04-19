@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LayoutTemplate, Plus, Trash2, Pencil, Copy, FolderOpen, X, Check } from "lucide-react";
+import { useRef } from "react";
+import { LayoutTemplate, Plus, Trash2, Pencil, Copy, FolderOpen, X, Check, Download, Upload } from "lucide-react";
 import { api, PinDesignerTemplateOut, ProjectOut } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
@@ -203,6 +204,65 @@ export default function PinDesignerTemplatesPage() {
     }
   };
 
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+
+  const handleExportTemplate = (tmpl: PinDesignerTemplateOut) => {
+    const exportData = {
+      version: "1",
+      name: tmpl.name,
+      description: tmpl.description,
+      bgColor: tmpl.bgColor,
+      canvasWidth: tmpl.canvasWidth,
+      canvasHeight: tmpl.canvasHeight,
+      elements: tmpl.elements,
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${tmpl.name.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_template.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportFile = async (file: File) => {
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+
+      if (!data.elements || !Array.isArray(data.elements)) {
+        toast.error("Invalid template file — missing elements array.");
+        return;
+      }
+
+      const existingNames = new Set(templates.map((t) => t.name.trim().toLowerCase()));
+      let importName = (data.name || "Imported Template").trim();
+      if (existingNames.has(importName.toLowerCase())) {
+        let idx = 2;
+        while (existingNames.has(`${importName} ${idx}`.toLowerCase())) idx++;
+        importName = `${importName} ${idx}`;
+      }
+
+      const created = await api.createPinDesignerTemplate({
+        name: importName,
+        description: data.description ?? null,
+        bgColor: data.bgColor || "#ffffff",
+        canvasWidth: data.canvasWidth || 1000,
+        canvasHeight: data.canvasHeight || 1500,
+        elements: data.elements,
+      });
+      setTemplates((prev) => [created, ...prev]);
+      toast.success(`Template "${created.name}" imported successfully.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to import template — invalid JSON file.");
+    } finally {
+      setImporting(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
+
   return (
     <div>
       {showSizePicker && (
@@ -331,9 +391,26 @@ export default function PinDesignerTemplatesPage() {
           </p>
         </div>
 
-        <button onClick={() => setShowSizePicker(true)} className="btn-primary flex items-center gap-2">
-          <Plus size={16} /> Create Template
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleImportFile(f); }}
+          />
+          <button
+            onClick={() => importInputRef.current?.click()}
+            disabled={importing}
+            className="btn-secondary flex items-center gap-2"
+            title="Import a template from a .json file"
+          >
+            <Upload size={15} /> {importing ? "Importing…" : "Import"}
+          </button>
+          <button onClick={() => setShowSizePicker(true)} className="btn-primary flex items-center gap-2">
+            <Plus size={16} /> Create Template
+          </button>
+        </div>
       </div>
 
       {templatesLoading && <div className="text-center py-16 text-gray-400 text-sm">Loading templates...</div>}
@@ -399,6 +476,13 @@ export default function PinDesignerTemplatesPage() {
                     className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-700 hover:text-white transition disabled:opacity-50"
                   >
                     <Copy size={13} />
+                  </button>
+                  <button
+                    onClick={() => handleExportTemplate(tmpl)}
+                    title="Export as JSON (share with others)"
+                    className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-700 hover:text-white transition"
+                  >
+                    <Download size={13} />
                   </button>
                   <button
                     onClick={() => handleDeleteTemplate(tmpl.id)}
