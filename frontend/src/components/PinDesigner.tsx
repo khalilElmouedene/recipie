@@ -312,6 +312,39 @@ export function applyTextTransform(text: string, transform: string): string {
   return text;
 }
 
+async function ensureGoogleFontLoaded(fontName: string): Promise<void> {
+  if (typeof document === "undefined") return;
+  const trimmed = fontName.trim();
+  if (!trimmed) return;
+
+  const familyParam = encodeURIComponent(trimmed).replace(/%20/g, "+");
+  const linkId = `gfont-${familyParam}`;
+  const waitForFont = () => {
+    if (!document.fonts?.load) return Promise.resolve();
+    return Promise.all([
+      document.fonts.load(`400 16px "${trimmed}"`),
+      document.fonts.load(`700 16px "${trimmed}"`),
+    ]).then(() => {}).catch(() => {});
+  };
+
+  if (document.getElementById(linkId)) {
+    await waitForFont();
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const link = document.createElement("link");
+    link.id = linkId;
+    link.rel = "stylesheet";
+    link.href = `https://fonts.googleapis.com/css2?family=${familyParam}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
+    link.onload = () => {
+      void waitForFont().then(resolve);
+    };
+    link.onerror = () => resolve();
+    document.head.appendChild(link);
+  });
+}
+
 // ─── Standalone template renderer (used for batch Save All) ──────────────────
 
 function _applyTemplateLock(obj: any, locked: boolean | undefined) {
@@ -330,6 +363,18 @@ export async function buildTemplateOnCanvas(
   website: string = "",
   overrides?: BulkOverrides,
 ): Promise<void> {
+  const templateFonts = Array.from(
+    new Set(
+      (template.elements || [])
+        .filter((el) => el.type === "text" && typeof (el as any).fontFamily === "string")
+        .map((el) => String((el as any).fontFamily).trim())
+        .filter(Boolean)
+    )
+  );
+  if (templateFonts.length > 0) {
+    await Promise.all(templateFonts.map(ensureGoogleFontLoaded));
+  }
+
   const isCustomTemplateId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     String(template.id || "")
   );
@@ -775,10 +820,17 @@ export default function PinDesigner({
   const fontsLoadedRef = useRef(false);
 
   const injectFontStylesheet = useCallback((fontName: string): Promise<void> => {
-    const family = fontName.replace(/ /g, "+");
-    const linkId = `gfont-${family}`;
-    const waitForFont = () =>
-      document.fonts.load(`400 16px "${fontName}"`).then(() => {}).catch(() => {});
+    const trimmed = fontName.trim();
+    if (!trimmed) return Promise.resolve();
+    const familyParam = encodeURIComponent(trimmed).replace(/%20/g, "+");
+    const linkId = `gfont-${familyParam}`;
+    const waitForFont = () => {
+      if (!document.fonts?.load) return Promise.resolve();
+      return Promise.all([
+        document.fonts.load(`400 16px "${trimmed}"`),
+        document.fonts.load(`700 16px "${trimmed}"`),
+      ]).then(() => {}).catch(() => {});
+    };
     if (document.getElementById(linkId)) {
       // Stylesheet already injected — just ensure the font bytes are ready
       return waitForFont();
@@ -787,7 +839,7 @@ export default function PinDesigner({
       const link = document.createElement("link");
       link.id = linkId;
       link.rel = "stylesheet";
-      link.href = `https://fonts.googleapis.com/css2?family=${family}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
+      link.href = `https://fonts.googleapis.com/css2?family=${familyParam}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
       link.onload = () => waitForFont().then(resolve);
       link.onerror = () => resolve();
       document.head.appendChild(link);
@@ -840,10 +892,9 @@ export default function PinDesigner({
     if (!trimmed) return;
     setFontLoading(true);
     try {
-      injectFontStylesheet(trimmed);
-      await document.fonts.load(`16px "${trimmed}"`);
+      await injectFontStylesheet(trimmed);
       await new Promise((r) => setTimeout(r, 300));
-      await document.fonts.ready;
+      if (document.fonts?.ready) await document.fonts.ready;
       setCustomFonts((prev) => {
         const next = prev.includes(trimmed) ? prev : [...prev, trimmed];
         saveFontsToDb(next);

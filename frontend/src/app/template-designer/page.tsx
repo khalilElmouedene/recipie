@@ -138,17 +138,32 @@ function TemplateDesignerInner() {
     setMounted(true);
   }, []);
 
-  const injectFontStylesheet = useCallback((fontName: string) => {
-    const family = fontName.trim().replace(/ /g, "+");
-    if (!family) return;
-    const linkId = `gfont-${family}`;
-    if (!document.getElementById(linkId)) {
+  const injectFontStylesheet = useCallback((fontName: string): Promise<void> => {
+    const trimmed = fontName.trim();
+    if (!trimmed) return Promise.resolve();
+    const familyParam = encodeURIComponent(trimmed).replace(/%20/g, "+");
+    const linkId = `gfont-${familyParam}`;
+    const waitForFont = () => {
+      if (!document.fonts?.load) return Promise.resolve();
+      return Promise.all([
+        document.fonts.load(`400 16px "${trimmed}"`),
+        document.fonts.load(`700 16px "${trimmed}"`),
+      ]).then(() => {}).catch(() => {});
+    };
+
+    if (document.getElementById(linkId)) {
+      return waitForFont();
+    }
+
+    return new Promise<void>((resolve) => {
       const link = document.createElement("link");
       link.id = linkId;
       link.rel = "stylesheet";
-      link.href = `https://fonts.googleapis.com/css2?family=${family}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
+      link.href = `https://fonts.googleapis.com/css2?family=${familyParam}:wght@100;200;300;400;500;600;700;800;900&display=swap`;
+      link.onload = () => waitForFont().then(resolve);
+      link.onerror = () => resolve();
       document.head.appendChild(link);
-    }
+    });
   }, []);
 
   const saveFontsToDb = useCallback((fonts: string[]) => {
@@ -160,9 +175,8 @@ function TemplateDesignerInner() {
     if (!trimmed) return;
     setFontLoading(true);
     try {
-      injectFontStylesheet(trimmed);
-      await document.fonts.load(`16px "${trimmed}"`);
-      await document.fonts.ready;
+      await injectFontStylesheet(trimmed);
+      if (document.fonts?.ready) await document.fonts.ready;
       setCustomFonts((prev) => {
         const next = prev.includes(trimmed) ? prev : [...prev, trimmed];
         saveFontsToDb(next);
@@ -184,11 +198,11 @@ function TemplateDesignerInner() {
   }, [injectFontStylesheet, saveFontsToDb]);
 
   useEffect(() => {
-    Promise.all(TEMPLATE_FONTS.map((f) => document.fonts.load(`16px "${f}"`))).catch(() => {});
+    Promise.all(TEMPLATE_FONTS.map((f) => injectFontStylesheet(f))).catch(() => {});
     api.getCustomFonts()
       .then((fonts) => {
         setCustomFonts(fonts);
-        fonts.forEach(injectFontStylesheet);
+        void Promise.all(fonts.map(injectFontStylesheet));
       })
       .catch(() => {});
   }, [injectFontStylesheet]);
@@ -459,6 +473,22 @@ function TemplateDesignerInner() {
     const fabric = fabricLibRef.current;
     if (!canvas || !fabric) return;
 
+    const templateFonts = Array.from(
+      new Set(
+        (tmpl.elements || [])
+          .filter((el) => el?.type === "text" && typeof el?.fontFamily === "string")
+          .map((el) => String(el.fontFamily).trim())
+          .filter(Boolean)
+      )
+    );
+    if (templateFonts.length > 0) {
+      await Promise.all(templateFonts.map(injectFontStylesheet));
+      setCustomFonts((prev) => {
+        const extra = templateFonts.filter((f) => !prev.includes(f));
+        return extra.length > 0 ? [...prev, ...extra] : prev;
+      });
+    }
+
     const nextName = (tmpl.name || "My Template").trim() || "My Template";
     const nextBg = tmpl.bgColor || "#ffffff";
     setTemplateName(nextName);
@@ -608,7 +638,7 @@ function TemplateDesignerInner() {
     undoHistoryRef.current = [];
     saveUndoState();
     syncLayers();
-  }, [applySelectionVisuals, canvasH, canvasW, saveUndoState]);
+  }, [applySelectionVisuals, canvasH, canvasW, saveUndoState, injectFontStylesheet]);
 
   const loadExistingTemplate = useCallback(async () => {
     if (!editingTemplateId || editingLoaded || manualTemplateLoadedRef.current) return;
