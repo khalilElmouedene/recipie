@@ -2573,6 +2573,15 @@ export default function PinDesigner({
     }
   }, [selectedTemplate, canvasReady, initialJson]);
 
+  // Generate previews for other frames when frames arrive AFTER the template effect already ran
+  // (frames are loaded async from props, so they may not be available during the effect above)
+  useEffect(() => {
+    if (canvasReady && selectedTemplate && frames && frames.length > 1 && !initialJson) {
+      generateAllFramePreviews(selectedTemplate);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frames?.length]);
+
   // ── Ctrl+wheel zoom ───────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -2839,7 +2848,7 @@ export default function PinDesigner({
         fc.renderAll();
 
         refs[i] = JSON.stringify(
-          fc.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__designerBorder", "__forPinId", "__flipX"])
+          fc.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId", "__flipX"])
         );
 
         fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
@@ -3524,22 +3533,22 @@ export default function PinDesigner({
                 B
               </button>
               <button
-                onClick={() => updateTextProperty("textAlign", "left")}
-                title="Align left"
+                onClick={() => updateTextProperty("textAlign", "left", true)}
+                title="Align left (all pages)"
                 className={`p-1 rounded ${textProps.textAlign === "left" ? "bg-brand-500 text-white" : "text-gray-300 hover:bg-gray-700"}`}
               >
                 <AlignLeft size={13} />
               </button>
               <button
-                onClick={() => updateTextProperty("textAlign", "center")}
-                title="Align center"
+                onClick={() => updateTextProperty("textAlign", "center", true)}
+                title="Align center (all pages)"
                 className={`p-1 rounded ${textProps.textAlign === "center" ? "bg-brand-500 text-white" : "text-gray-300 hover:bg-gray-700"}`}
               >
                 <AlignCenter size={13} />
               </button>
               <button
-                onClick={() => updateTextProperty("textAlign", "right")}
-                title="Align right"
+                onClick={() => updateTextProperty("textAlign", "right", true)}
+                title="Align right (all pages)"
                 className={`p-1 rounded ${textProps.textAlign === "right" ? "bg-brand-500 text-white" : "text-gray-300 hover:bg-gray-700"}`}
               >
                 <AlignRight size={13} />
@@ -4633,7 +4642,7 @@ export default function PinDesigner({
                       {(["left", "center", "right"] as const).map((a) => (
                         <button
                           key={a}
-                          onClick={() => updateTextProperty("textAlign", a)}
+                          onClick={() => updateTextProperty("textAlign", a, true)}
                           className={`flex-1 py-1.5 rounded text-xs font-medium transition ${textProps.textAlign === a ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
                         >
                           {a.charAt(0).toUpperCase() + a.slice(1)}
