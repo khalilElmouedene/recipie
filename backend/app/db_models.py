@@ -209,6 +209,8 @@ class Site(Base):
     # "featured_and_top" (default): inject food photo before first <p> + set as featured image.
     # "featured_only": only set featured image thumbnail; article body stays clean.
     image_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="featured_and_top")
+    # When True, the pin designer image is embedded in the article HTML on save.
+    embed_pin_in_article: Mapped[bool] = mapped_column(default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     project: Mapped[Project] = relationship(back_populates="sites")

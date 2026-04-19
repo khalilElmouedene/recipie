@@ -638,6 +638,7 @@ export interface SiteOut {
   spreadsheet_id: string;
   pinterest_url: string;
   image_mode: string;
+  embed_pin_in_article: boolean;
   created_at: string;
   recipe_count: number;
 }
@@ -655,6 +656,7 @@ export interface SiteCreateData {
   spreadsheet_id?: string;
   pinterest_url?: string;
   image_mode?: string;
+  embed_pin_in_article?: boolean;
 }
 
 export interface RecipeOut {

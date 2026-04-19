@@ -42,6 +42,7 @@ export default function PinDesignerPage() {
   const [frames, setFrames] = useState<FrameInfo[]>([]);
   const [singleRecipe, setSingleRecipe] = useState<RecipeOut | null>(null);
   const [siteDomain, setSiteDomain] = useState("");
+  const [embedPinInArticle, setEmbedPinInArticle] = useState(false);
   const [loading, setLoading] = useState(true);
   const [canManage, setCanManage] = useState(false);
 
@@ -50,7 +51,10 @@ export default function PinDesignerPage() {
 
     api.getSites(params.id).then((sites) => {
       const found = sites.find((s) => s.id === params.siteId);
-      if (found) setSiteDomain(found.domain || "");
+      if (found) {
+        setSiteDomain(found.domain || "");
+        setEmbedPinInArticle(found.embed_pin_in_article ?? false);
+      }
     }).catch(() => {});
 
     const globalRole = getUserRole();
@@ -123,6 +127,7 @@ export default function PinDesignerPage() {
         projectId={params.id}
         siteId={params.siteId}
         website={siteDomain}
+        embedPinInArticle={embedPinInArticle}
         canManage={canManage}
         onClose={() =>
           router.push(
@@ -143,6 +148,7 @@ export default function PinDesignerPage() {
       projectId={params.id}
       siteId={params.siteId}
       website={siteDomain}
+      embedPinInArticle={embedPinInArticle}
       canManage={canManage}
       onClose={() => router.push(designerBack)}
     />

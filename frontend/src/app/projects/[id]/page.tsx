@@ -175,12 +175,12 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
   const openConfirm = useConfirm();
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
+  const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [loading, setLoading] = useState(false);
   const [publishingSiteId, setPublishingSiteId] = useState<string | null>(null);
   const [detailsSite, setDetailsSite] = useState<SiteOut | null>(null);
   const [editSite, setEditSite] = useState<SiteOut | null>(null);
-  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", wp_users: [emptyWpUser()] as { username: string; password: string }[] });
+  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [editing, setEditing] = useState(false);
 
   const load = () => api.getSites(projectId).then(setSites).catch(() => {});
@@ -200,7 +200,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
     setLoading(true);
     try {
       await api.createSite(projectId, { ...form, wp_users: validUsers });
-      setForm({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", wp_users: [emptyWpUser()] });
+      setForm({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, wp_users: [emptyWpUser()] });
       setShow(false);
       load();
     } catch {}
@@ -234,7 +234,8 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
       domain: s.domain,
       wp_url: s.wp_url,
       pinterest_url: s.pinterest_url || "",
-      image_mode: (s as any).image_mode || "featured_and_top",
+      image_mode: s.image_mode || "featured_and_top",
+      embed_pin_in_article: s.embed_pin_in_article ?? false,
       wp_users: wpUsers.length ? wpUsers : [emptyWpUser()],
     });
   };
@@ -254,6 +255,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
         wp_url: editForm.wp_url,
         pinterest_url: editForm.pinterest_url || "",
         image_mode: editForm.image_mode,
+        embed_pin_in_article: editForm.embed_pin_in_article,
         wp_users: validUsers.map((u) => ({ username: u.username, password: u.password })),
       };
       await api.updateSite(editSite.id, data);
@@ -305,6 +307,19 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
                 ? "Only the WordPress featured image (thumbnail) will be set. The article body stays clean — ideal when using pin designer images."
                 : "The food photo is injected at the top of the article AND set as featured image."}
             </p>
+          </div>
+          <div className="col-span-2">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="relative">
+                <input type="checkbox" className="sr-only" checked={form.embed_pin_in_article} onChange={(e) => setForm({ ...form, embed_pin_in_article: e.target.checked })} />
+                <div className={`w-10 h-5 rounded-full transition-colors ${form.embed_pin_in_article ? "bg-brand-500" : "bg-gray-600"}`} />
+                <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.embed_pin_in_article ? "translate-x-5" : ""}`} />
+              </div>
+              <div>
+                <span className="text-sm font-medium text-gray-300">Embed pin image in article</span>
+                <p className="text-xs text-gray-500">When enabled, the Pin Designer image is automatically inserted into the article body before publishing.</p>
+              </div>
+            </label>
           </div>
           <div className="col-span-2">
             <label className="block text-sm font-medium text-gray-300 mb-1">WP Users (one randomly selected per publish)</label>
@@ -473,6 +488,19 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
                   <option value="featured_and_top">Featured image + top image in article</option>
                   <option value="featured_only">Featured image only (clean article body)</option>
                 </select>
+              </div>
+              <div>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <div className="relative">
+                    <input type="checkbox" className="sr-only" checked={editForm.embed_pin_in_article} onChange={(e) => setEditForm({ ...editForm, embed_pin_in_article: e.target.checked })} />
+                    <div className={`w-10 h-5 rounded-full transition-colors ${editForm.embed_pin_in_article ? "bg-brand-500" : "bg-gray-600"}`} />
+                    <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${editForm.embed_pin_in_article ? "translate-x-5" : ""}`} />
+                  </div>
+                  <div>
+                    <span className="text-sm font-medium text-gray-300">Embed pin image in article</span>
+                    <p className="text-xs text-gray-500">When enabled, the Pin Designer image is automatically inserted into the article body before publishing.</p>
+                  </div>
+                </label>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-1">WP Users (blank password = keep current)</label>

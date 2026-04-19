@@ -734,6 +734,8 @@ export interface PinDesignerProps {
   website?: string;
   /** Override access level — pass true for project admins who have global role "member" */
   canManage?: boolean;
+  /** When true, the pin image is embedded in the article HTML on save (configured per site) */
+  embedPinInArticle?: boolean;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -756,6 +758,7 @@ export default function PinDesigner({
   frames,
   website = "",
   canManage,
+  embedPinInArticle = false,
 }: PinDesignerProps) {
   // ── Multi-frame state ────────────────────────────────────────────────────
   const router = useRouter();
@@ -1050,19 +1053,25 @@ export default function PinDesigner({
       titleAlt: string,
       extra?: { pin_title?: string; pin_description?: string }
     ) => {
-      const full = await api.getRecipe(rid);
-      const nextArticle = appendPinImageToArticleHtml(full.generated_article ?? "", dataUrl, {
-        alt: titleAlt,
-      });
-      await api.updateRecipe(rid, {
+      const updates: Record<string, unknown> = {
         pin_design_image: dataUrl,
         pin_template_id: selectedTemplate?.id,
-        generated_article: nextArticle,
         ...(extra?.pin_title !== undefined ? { pin_title: extra.pin_title } : {}),
         ...(extra?.pin_description !== undefined ? { pin_description: extra.pin_description } : {}),
-      });
+      };
+
+      if (embedPinInArticle) {
+        const full = await api.getRecipe(rid);
+        updates.generated_article = appendPinImageToArticleHtml(
+          full.generated_article ?? "",
+          dataUrl,
+          { alt: titleAlt }
+        );
+      }
+
+      await api.updateRecipe(rid, updates);
     },
-    [selectedTemplate?.id]
+    [selectedTemplate?.id, embedPinInArticle]
   );
 
   // Shared: render every frame, save pin image to recipe (embed in article), optionally download

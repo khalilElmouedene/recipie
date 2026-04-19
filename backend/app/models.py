@@ -165,6 +165,7 @@ class SiteCreate(BaseModel):
     spreadsheet_id: str = ""
     pinterest_url: str = ""
     image_mode: str = "featured_and_top"
+    embed_pin_in_article: bool = False
 
 
 class SiteUpdate(BaseModel):
@@ -175,6 +176,7 @@ class SiteUpdate(BaseModel):
     spreadsheet_id: str | None = None
     pinterest_url: str | None = None
     image_mode: str | None = None
+    embed_pin_in_article: bool | None = None
 
 
 class WpUserOut(BaseModel):
@@ -191,6 +193,7 @@ class SiteOut(BaseModel):
     spreadsheet_id: str
     pinterest_url: str = ""
     image_mode: str = "featured_and_top"
+    embed_pin_in_article: bool = False
     created_at: datetime
     recipe_count: int = 0
 
