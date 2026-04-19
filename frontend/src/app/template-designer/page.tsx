@@ -124,7 +124,10 @@ function TemplateDesignerInner() {
 
   // Saving
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [editingLoaded, setEditingLoaded] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const manualTemplateLoadedRef = useRef(false);
   const undoHistoryRef = useRef<string[]>([]);
   const isRestoringRef = useRef(false);
   const transformSaveDoneRef = useRef(false);
@@ -447,162 +450,177 @@ function TemplateDesignerInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [performUndo]);
 
-  const loadExistingTemplate = useCallback(async () => {
-    if (!editingTemplateId || editingLoaded) return;
+  const applyTemplateToCanvas = useCallback(async (tmpl: {
+    name?: string | null;
+    bgColor?: string | null;
+    elements?: any[];
+  }) => {
     const canvas = fabricRef.current;
     const fabric = fabricLibRef.current;
     if (!canvas || !fabric) return;
 
+    const nextName = (tmpl.name || "My Template").trim() || "My Template";
+    const nextBg = tmpl.bgColor || "#ffffff";
+    setTemplateName(nextName);
+    setBgColor(nextBg);
+    setSelType(null);
+
+    canvas.discardActiveObject();
+    canvas.clear();
+    canvas.set("backgroundColor", nextBg);
+
+    for (const el of tmpl.elements || []) {
+      if (el.type === "text") {
+        const rawText = el.defaultText || "Text";
+        const tt = (el as any).textTransform ?? "none";
+        const boundVar = (el as any).textVariable ?? "";
+        const tb = new fabric.Textbox(applyTextTransform(rawText, tt), {
+          left: el.x ?? canvasW / 2,
+          top: el.y ?? canvasH / 2,
+          width: el.width || 800,
+          fontSize: el.fontSize || 48,
+          fontFamily: el.fontFamily || "Arial",
+          fontWeight: el.fontWeight || "normal",
+          fontStyle: el.fontStyle || "normal",
+          fill: el.fill || "#333333",
+          textAlign: (el.textAlign as any) || "center",
+          originX: "center",
+          originY: "center",
+          editable: boundVar === "",
+        });
+        (tb as any).__id = el.id || uid("text");
+        (tb as any).__ttype = "text";
+        (tb as any).__textVariable = boundVar;
+        (tb as any).__textTransform = tt;
+        (tb as any).__rawText = rawText;
+        (tb as any).__pinLocked = !!(el as any).locked;
+        applyLockStateDesigner(tb);
+        applySelectionVisuals(tb);
+        canvas.add(tb);
+      } else if (el.type === "image") {
+        const isFlip = (el as any).flipX === true;
+        const rect = new fabric.Rect({
+          left: el.x ?? 100,
+          top: el.y ?? 100,
+          width: el.width || 400,
+          height: el.height || 300,
+          fill: isFlip ? "#b3d9ff" : (el.bgColor || "#e8e8e8"),
+          stroke: isFlip ? "#4a90d9" : "#aaaaaa",
+          strokeWidth: 3,
+          strokeUniform: true,
+          strokeDashArray: [10, 6],
+          originX: "left",
+          originY: "top",
+        });
+        (rect as any).__id = el.id || uid("image");
+        (rect as any).__flipX = isFlip;
+        (rect as any).__ttype = "image";
+        (rect as any).__pinLocked = !!(el as any).locked;
+        applyLockStateDesigner(rect);
+        applySelectionVisuals(rect);
+        canvas.add(rect);
+      } else if (el.type === "band") {
+        const rect = new fabric.Rect({
+          left: el.x ?? 0,
+          top: el.y ?? 0,
+          width: el.width || canvasW,
+          height: el.height || 120,
+          fill: el.bgColor || "#4a90d9",
+          originX: "left",
+          originY: "top",
+        });
+        (rect as any).__id = el.id || uid("band");
+        (rect as any).__ttype = "band";
+        (rect as any).__pinLocked = !!(el as any).locked;
+        applyLockStateDesigner(rect);
+        applySelectionVisuals(rect);
+        canvas.add(rect);
+      } else if (el.type === "asset" && el.imageUrl) {
+        try {
+          // Manually load + decode the image so it's fully ready before Fabric renders it.
+          // FabricImage.fromURL resolves before the browser finishes decoding pixel data,
+          // which causes blank images on first render.
+          const htmlImg = new Image();
+          await new Promise<void>((resolve, reject) => {
+            htmlImg.onload = () => resolve();
+            htmlImg.onerror = () => reject(new Error("Image load error"));
+            htmlImg.src = el.imageUrl!;
+          });
+          // decode() waits until the browser has fully decoded the image pixels
+          if (typeof htmlImg.decode === "function") {
+            await htmlImg.decode().catch(() => {});
+          }
+          const naturalW = htmlImg.naturalWidth || htmlImg.width || 1;
+          const naturalH = htmlImg.naturalHeight || htmlImg.height || 1;
+          const img = new fabric.FabricImage(htmlImg);
+          img.set({
+            left: el.x ?? 0,
+            top: el.y ?? 0,
+            originX: "left",
+            originY: "top",
+            scaleX: el.width / naturalW,
+            scaleY: el.height / naturalH,
+            flipX: el.flipX ?? false,
+            flipY: el.flipY ?? false,
+          });
+          (img as any).__id = el.id || uid("img");
+          (img as any).__ttype = "asset";
+          (img as any).__pinLocked = !!(el as any).locked;
+          applyLockStateDesigner(img);
+          applySelectionVisuals(img);
+          canvas.add(img);
+        } catch {
+          // Ignore broken image assets in template imports.
+        }
+      } else if (el.type === "frame") {
+        const strokeStyle = (el.strokeStyle as string) ?? "solid";
+        let dashArray: number[] | null = null;
+        if (strokeStyle === "dashed") dashArray = [20, 10];
+        else if (strokeStyle === "dotted") dashArray = [4, 8];
+        const rect = new fabric.Rect({
+          left: el.x ?? 0,
+          top: el.y ?? 0,
+          width: el.width || 900,
+          height: el.height || 1400,
+          fill: "rgba(0,0,0,0)",
+          stroke: el.fill ?? "#333333",
+          strokeWidth: el.strokeWidth ?? 4,
+          strokeUniform: true,
+          strokeDashArray: dashArray,
+          rx: el.radius ?? 0,
+          ry: el.radius ?? 0,
+          originX: "left",
+          originY: "top",
+        });
+        (rect as any).__id = el.id || uid("frame");
+        (rect as any).__ttype = "frame";
+        (rect as any).__strokeStyle = strokeStyle;
+        (rect as any).__pinLocked = !!(el as any).locked;
+        applyLockStateDesigner(rect);
+        applySelectionVisuals(rect);
+        canvas.add(rect);
+      }
+    }
+
+    canvas.renderAll();
+    // Schedule a second render on next frame in case any image decode finishes late
+    requestAnimationFrame(() => { fabricRef.current?.renderAll(); });
+    undoHistoryRef.current = [];
+    saveUndoState();
+    syncLayers();
+  }, [applySelectionVisuals, canvasH, canvasW, saveUndoState]);
+
+  const loadExistingTemplate = useCallback(async () => {
+    if (!editingTemplateId || editingLoaded || manualTemplateLoadedRef.current) return;
     try {
       const tmpl = await api.getPinDesignerTemplate(editingTemplateId);
-
-      setTemplateName(tmpl.name);
-      setBgColor(tmpl.bgColor || "#ffffff");
-
-      canvas.clear();
-      canvas.set("backgroundColor", tmpl.bgColor || "#ffffff");
-
-      for (const el of tmpl.elements || []) {
-        if (el.type === "text") {
-          const rawText = el.defaultText || "Text";
-          const tt = (el as any).textTransform ?? "none";
-          const boundVar = (el as any).textVariable ?? "";
-          const tb = new fabric.Textbox(applyTextTransform(rawText, tt), {
-            left: el.x ?? canvasW / 2,
-            top: el.y ?? canvasH / 2,
-            width: el.width || 800,
-            fontSize: el.fontSize || 48,
-            fontFamily: el.fontFamily || "Arial",
-            fontWeight: el.fontWeight || "normal",
-            fontStyle: el.fontStyle || "normal",
-            fill: el.fill || "#333333",
-            textAlign: (el.textAlign as any) || "center",
-            originX: "center",
-            originY: "center",
-            editable: boundVar === "",
-          });
-          (tb as any).__id = el.id || uid("text");
-          (tb as any).__ttype = "text";
-          (tb as any).__textVariable = boundVar;
-          (tb as any).__textTransform = tt;
-          (tb as any).__rawText = rawText;
-          (tb as any).__pinLocked = !!(el as any).locked;
-          applyLockStateDesigner(tb);
-          applySelectionVisuals(tb);
-          canvas.add(tb);
-        } else if (el.type === "image") {
-          const isFlip = (el as any).flipX === true;
-          const rect = new fabric.Rect({
-            left: el.x ?? 100,
-            top: el.y ?? 100,
-            width: el.width || 400,
-            height: el.height || 300,
-            fill: isFlip ? "#b3d9ff" : (el.bgColor || "#e8e8e8"),
-            stroke: isFlip ? "#4a90d9" : "#aaaaaa",
-            strokeWidth: 3,
-            strokeUniform: true,
-            strokeDashArray: [10, 6],
-            originX: "left",
-            originY: "top",
-          });
-          (rect as any).__id = el.id || uid("image");
-          (rect as any).__flipX = isFlip;
-          (rect as any).__ttype = "image";
-          (rect as any).__pinLocked = !!(el as any).locked;
-          applyLockStateDesigner(rect);
-          applySelectionVisuals(rect);
-          canvas.add(rect);
-        } else if (el.type === "band") {
-          const rect = new fabric.Rect({
-            left: el.x ?? 0,
-            top: el.y ?? 0,
-            width: el.width || canvasW,
-            height: el.height || 120,
-            fill: el.bgColor || "#4a90d9",
-            originX: "left",
-            originY: "top",
-          });
-          (rect as any).__id = el.id || uid("band");
-          (rect as any).__ttype = "band";
-          (rect as any).__pinLocked = !!(el as any).locked;
-          applyLockStateDesigner(rect);
-          applySelectionVisuals(rect);
-          canvas.add(rect);
-        } else if (el.type === "asset" && el.imageUrl) {
-          try {
-            // Manually load + decode the image so it's fully ready before Fabric renders it.
-            // FabricImage.fromURL resolves before the browser finishes decoding pixel data,
-            // which causes blank images on first render.
-            const htmlImg = new Image();
-            await new Promise<void>((resolve, reject) => {
-              htmlImg.onload = () => resolve();
-              htmlImg.onerror = () => reject(new Error("Image load error"));
-              htmlImg.src = el.imageUrl!;
-            });
-            // decode() waits until the browser has fully decoded the image pixels
-            if (typeof htmlImg.decode === "function") {
-              await htmlImg.decode().catch(() => {});
-            }
-            const naturalW = htmlImg.naturalWidth || htmlImg.width || 1;
-            const naturalH = htmlImg.naturalHeight || htmlImg.height || 1;
-            const img = new fabric.FabricImage(htmlImg);
-            img.set({
-              left: el.x ?? 0,
-              top: el.y ?? 0,
-              originX: "left",
-              originY: "top",
-              scaleX: el.width / naturalW,
-              scaleY: el.height / naturalH,
-              flipX: el.flipX ?? false,
-              flipY: el.flipY ?? false,
-            });
-            (img as any).__id = el.id || uid("img");
-            (img as any).__ttype = "asset";
-            (img as any).__pinLocked = !!(el as any).locked;
-            applyLockStateDesigner(img);
-            applySelectionVisuals(img);
-            canvas.add(img);
-          } catch { /* ignore broken image */ }
-        } else if (el.type === "frame") {
-          const strokeStyle = (el.strokeStyle as string) ?? "solid";
-          let dashArray: number[] | null = null;
-          if (strokeStyle === "dashed") dashArray = [20, 10];
-          else if (strokeStyle === "dotted") dashArray = [4, 8];
-          const rect = new fabric.Rect({
-            left: el.x ?? 0,
-            top: el.y ?? 0,
-            width: el.width || 900,
-            height: el.height || 1400,
-            fill: "rgba(0,0,0,0)",
-            stroke: el.fill ?? "#333333",
-            strokeWidth: el.strokeWidth ?? 4,
-            strokeUniform: true,
-            strokeDashArray: dashArray,
-            rx: el.radius ?? 0,
-            ry: el.radius ?? 0,
-            originX: "left",
-            originY: "top",
-          });
-          (rect as any).__id = el.id || uid("frame");
-          (rect as any).__ttype = "frame";
-          (rect as any).__strokeStyle = strokeStyle;
-          (rect as any).__pinLocked = !!(el as any).locked;
-          applyLockStateDesigner(rect);
-          applySelectionVisuals(rect);
-          canvas.add(rect);
-        }
-      }
-
-      canvas.renderAll();
-      // Schedule a second render on next frame in case any image decode finishes late
-      requestAnimationFrame(() => { fabricRef.current?.renderAll(); });
-      undoHistoryRef.current = [];
-      saveUndoState();
+      if (manualTemplateLoadedRef.current) return;
+      await applyTemplateToCanvas(tmpl);
       setEditingLoaded(true);
     } catch {
       // ignore
     }
-  }, [editingTemplateId, editingLoaded, saveUndoState, applySelectionVisuals]);
+  }, [editingTemplateId, editingLoaded, applyTemplateToCanvas]);
 
   useEffect(() => {
     if (!canvasReady) return;
@@ -1315,6 +1333,53 @@ function TemplateDesignerInner() {
     toast.success("Template exported as JSON.");
   }
 
+  async function handleImportTemplateFile(file: File) {
+    setImporting(true);
+    try {
+      const raw = await file.text();
+      const data = JSON.parse(raw);
+
+      if (!data || !Array.isArray(data.elements)) {
+        toast.error("Invalid template file - missing elements array.");
+        return;
+      }
+
+      manualTemplateLoadedRef.current = true;
+      const importedName =
+        typeof data.name === "string" && data.name.trim()
+          ? data.name.trim()
+          : "Imported Template";
+
+      await applyTemplateToCanvas({
+        name: importedName,
+        bgColor: typeof data.bgColor === "string" ? data.bgColor : "#ffffff",
+        elements: data.elements,
+      });
+      setEditingLoaded(true);
+
+      const importedW = Number(data.canvasWidth);
+      const importedH = Number(data.canvasHeight);
+      if (
+        Number.isFinite(importedW) &&
+        importedW > 0 &&
+        Number.isFinite(importedH) &&
+        importedH > 0 &&
+        (Math.round(importedW) !== canvasW || Math.round(importedH) !== canvasH)
+      ) {
+        toast.info(
+          `Imported file size is ${Math.round(importedW)}x${Math.round(importedH)}. Current canvas is ${canvasW}x${canvasH}.`
+        );
+      }
+
+      toast.success(`Template "${importedName}" imported.`);
+    } catch {
+      toast.error("Failed to import template - invalid JSON file.");
+    } finally {
+      setImporting(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }
+
   const zoomPct = zoom / 100;
   const allFonts = Array.from(
     new Set([
@@ -1345,7 +1410,25 @@ function TemplateDesignerInner() {
           className="ml-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 max-w-xs w-full"
           placeholder="Template Name"
         />
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".json,application/json"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void handleImportTemplateFile(file);
+          }}
+        />
         <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={() => importInputRef.current?.click()}
+            disabled={importing}
+            title="Import template JSON"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-700 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition disabled:opacity-50"
+          >
+            <Upload size={14} /> {importing ? "Importing..." : "Import JSON"}
+          </button>
           <button
             onClick={handleExport}
             title="Export as JSON"
