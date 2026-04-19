@@ -1291,13 +1291,28 @@ function TemplateDesignerInner() {
   }
 
   function handleExport() {
-    const canvas = fabricRef.current;
-    if (!canvas) return;
-    const dataUrl = canvas.toDataURL({ format: "png", multiplier: 1 });
+    const elements = extractElements();
+    if (!elements.length) {
+      toast.warning("Add at least one element before exporting.");
+      return;
+    }
+    const exportData = {
+      version: "1",
+      name: templateName.trim() || "My Template",
+      description: null,
+      bgColor,
+      canvasWidth: canvasW,
+      canvasHeight: canvasH,
+      elements,
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = dataUrl;
-    a.download = `${templateName.replace(/[^a-z0-9]/gi, "_")}.png`;
+    a.href = url;
+    a.download = `${(templateName.trim() || "template").replace(/[^a-z0-9]/gi, "_").toLowerCase()}_template.json`;
     a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Template exported as JSON.");
   }
 
   const zoomPct = zoom / 100;
@@ -1333,9 +1348,10 @@ function TemplateDesignerInner() {
         <div className="ml-auto flex items-center gap-2 flex-shrink-0">
           <button
             onClick={handleExport}
+            title="Export as JSON"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-700 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition"
           >
-            <Download size={14} /> Export
+            <Download size={14} /> Export JSON
           </button>
           <button
             onClick={handleSave}

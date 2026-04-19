@@ -402,7 +402,29 @@ export async function buildTemplateOnCanvas(
   }
 
   for (const el of template.elements) {
-    if (el.type === "image") {
+    if (el.type === "asset" && (el as any).imageUrl) {
+      try {
+        const resolved = await resolveImageUrl(String((el as any).imageUrl));
+        const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
+        img.set({
+          left: el.x ?? 0,
+          top: el.y ?? 0,
+          originX: "left",
+          originY: "top",
+          scaleX: el.width / (img.width || 1),
+          scaleY: el.height / (img.height || 1),
+          flipX: (el as any).flipX ?? false,
+          flipY: (el as any).flipY ?? false,
+        });
+        (img as any).__pinId = el.id;
+        (img as any).__pinType = "image";
+        (img as any).__pinLabel = el.label || "Image";
+        _applyTemplateLock(img, el.locked);
+        canvas.add(img);
+      } catch {
+        // Ignore broken assets during off-screen rendering.
+      }
+    } else if (el.type === "image") {
       const legacyAssetId = String(el.id || "");
       if (legacyAssetId.startsWith("bg_") || legacyAssetId.startsWith("img_")) {
         continue;
@@ -493,6 +515,33 @@ export async function buildTemplateOnCanvas(
       (tb as any).__rawText = text;
       _applyTemplateLock(tb, el.locked);
       canvas.add(tb);
+    } else if (el.type === "frame") {
+      const strokeStyle = (el.strokeStyle as string) ?? ((el as any).__strokeStyle as string) ?? "solid";
+      let dashArray: number[] | null = null;
+      if (strokeStyle === "dashed") dashArray = [20, 10];
+      else if (strokeStyle === "dotted") dashArray = [4, 8];
+
+      const frame = new fabric.Rect({
+        left: el.x,
+        top: el.y,
+        width: el.width,
+        height: el.height,
+        fill: "transparent",
+        stroke: el.fill ?? "#333333",
+        strokeWidth: el.strokeWidth ?? 4,
+        strokeUniform: true,
+        strokeDashArray: dashArray,
+        rx: el.radius ?? 0,
+        ry: el.radius ?? 0,
+        originX: "left",
+        originY: "top",
+      });
+      (frame as any).__pinId = el.id;
+      (frame as any).__pinLabel = el.label || "Frame";
+      (frame as any).__pinType = "frame";
+      (frame as any).__strokeStyle = strokeStyle;
+      _applyTemplateLock(frame, el.locked);
+      canvas.add(frame);
     }
   }
 
