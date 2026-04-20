@@ -445,22 +445,15 @@ export async function buildTemplateOnCanvas(
         try {
           const resolved = await resolveImageUrl(imageUrl);
           const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
-          // Cover-fit to this zone's own bbox so a single image shared across
-          // multiple slots doesn't get scaled against the combined canvas height.
-          const scale = Math.max(el.width / (img.width || 1), el.height / (img.height || 1));
           img.set({
-            left: el.x + el.width / 2,
-            top: el.y + el.height / 2,
-            originX: "center",
-            originY: "center",
-            scaleX: scale,
-            scaleY: scale,
+            left: el.x,
+            top: el.y,
+            originX: "left",
+            originY: "top",
+            scaleX: el.width / (img.width || 1),
+            scaleY: el.height / (img.height || 1),
           });
           (img as any).__pinId = el.id; (img as any).__pinType = "image";
-          _applyTemplateLock(img, el.locked);
-          // Clip to this individual zone's rectangle.
-          const clipRect = new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, absolutePositioned: true, fill: "" });
-          (img as any).clipPath = clipRect;
           canvas.add(img);
         } catch {
           const rect = new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: el.bgColor || "#e0e0e0" });
