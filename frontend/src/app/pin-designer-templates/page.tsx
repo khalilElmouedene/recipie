@@ -50,7 +50,7 @@ function SizePickerModal({ onConfirm, onClose }: { onConfirm: (w: number, h: num
             >
               <p className="text-xs font-medium">{p.label}</p>
               {p.label !== "Custom" && (
-                <p className="text-[10px] text-gray-500 mt-0.5">{p.w} × {p.h}</p>
+                <p className="text-[10px] text-gray-500 mt-0.5">{p.w} x {p.h}</p>
               )}
             </button>
           ))}
@@ -66,7 +66,7 @@ function SizePickerModal({ onConfirm, onClose }: { onConfirm: (w: number, h: num
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
               />
             </div>
-            <span className="text-gray-600 mt-4">×</span>
+            <span className="text-gray-600 mt-4">x</span>
             <div className="flex-1">
               <label className="text-[10px] text-gray-500 block mb-1">Height (px)</label>
               <input
@@ -87,7 +87,6 @@ function SizePickerModal({ onConfirm, onClose }: { onConfirm: (w: number, h: num
     </div>
   );
 }
-
 export default function PinDesignerTemplatesPage() {
   const router = useRouter();
   const toast = useToast();
@@ -233,7 +232,7 @@ export default function PinDesignerTemplatesPage() {
       const data = JSON.parse(text);
 
       if (!data.elements || !Array.isArray(data.elements)) {
-        toast.error("Invalid template file — missing elements array.");
+        toast.error("Invalid template file - missing elements array.");
         return;
       }
 
@@ -256,7 +255,7 @@ export default function PinDesignerTemplatesPage() {
       setTemplates((prev) => [created, ...prev]);
       toast.success(`Template "${created.name}" imported successfully.`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to import template — invalid JSON file.");
+      toast.error(e instanceof Error ? e.message : "Failed to import template - invalid JSON file.");
     } finally {
       setImporting(false);
       if (importInputRef.current) importInputRef.current.value = "";
@@ -383,7 +382,7 @@ export default function PinDesignerTemplatesPage() {
         <p className="text-sm text-gray-400 mt-1">Manage your own templates and edit them anytime.</p>
       </div>
 
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="font-semibold text-white">My Templates</h2>
           <p className="text-xs text-gray-400 mt-0.5">
@@ -391,7 +390,7 @@ export default function PinDesignerTemplatesPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           <input
             ref={importInputRef}
             type="file"
@@ -402,12 +401,12 @@ export default function PinDesignerTemplatesPage() {
           <button
             onClick={() => importInputRef.current?.click()}
             disabled={importing}
-            className="btn-secondary flex items-center gap-2"
+            className="btn-secondary flex items-center justify-center gap-2"
             title="Import a template from a .json file"
           >
-            <Upload size={15} /> {importing ? "Importing…" : "Import"}
+            <Upload size={15} /> {importing ? "Importing..." : "Import"}
           </button>
-          <button onClick={() => setShowSizePicker(true)} className="btn-primary flex items-center gap-2">
+          <button onClick={() => setShowSizePicker(true)} className="btn-primary flex items-center justify-center gap-2">
             <Plus size={16} /> Create Template
           </button>
         </div>
@@ -431,10 +430,10 @@ export default function PinDesignerTemplatesPage() {
       )}
 
       {!templatesLoading && templates.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
           <button
             onClick={() => setShowSizePicker(true)}
-            className="h-20 rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-500 hover:bg-gray-900/40 transition-all flex flex-col items-center justify-center gap-1.5 text-gray-500 hover:text-white group"
+            className="min-h-[132px] rounded-xl border-2 border-dashed border-gray-700 hover:border-brand-500 hover:bg-gray-900/40 transition-all flex flex-col items-center justify-center gap-1.5 text-gray-500 hover:text-white group p-4"
           >
             <div className="w-10 h-10 rounded-xl border-2 border-dashed border-current flex items-center justify-center group-hover:border-brand-400">
               <Plus size={22} />
@@ -445,12 +444,14 @@ export default function PinDesignerTemplatesPage() {
           {templates.map((tmpl) => (
             <div
               key={tmpl.id}
-              className="h-20 rounded-xl border border-gray-700 bg-gray-900/70 hover:border-gray-500 transition p-3 flex flex-col justify-between"
+              className="min-h-[132px] rounded-xl border border-gray-700 bg-gray-900/70 hover:border-gray-500 transition p-4 flex flex-col gap-3"
             >
-              <p className="text-sm font-medium text-white truncate leading-tight">{tmpl.name}</p>
-              <div className="flex items-center justify-between">
-                <p className="text-[11px] text-gray-500">{tmpl.canvasWidth} × {tmpl.canvasHeight}</p>
-                <div className="flex items-center gap-1">
+              <p className="text-sm font-medium text-white leading-snug break-words min-h-10" title={tmpl.name}>
+                {tmpl.name}
+              </p>
+              <div className="mt-auto flex flex-col gap-2">
+                <p className="text-[11px] text-gray-500">{tmpl.canvasWidth} x {tmpl.canvasHeight}</p>
+                <div className="flex flex-wrap items-center gap-1">
                   <button
                     onClick={() => router.push(`/template-designer?templateId=${tmpl.id}&w=${tmpl.canvasWidth}&h=${tmpl.canvasHeight}`)}
                     title="Edit"
@@ -501,3 +502,4 @@ export default function PinDesignerTemplatesPage() {
     </div>
   );
 }
+
