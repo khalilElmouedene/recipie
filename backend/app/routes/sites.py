@@ -387,7 +387,7 @@ async def get_last_publish_date(
     user: Annotated[User, Depends(get_current_user)] = None,
     db: Annotated[AsyncSession, Depends(get_db)] = None,
 ):
-    """Return the GMT date of the most recently published WordPress post for this site."""
+    """Return the GMT date of the latest post (published or scheduled) on this WordPress site."""
     result = await db.execute(select(Site).where(Site.id == site_id))
     site = result.scalar_one_or_none()
     if not site:
@@ -396,13 +396,18 @@ async def get_last_publish_date(
 
     wp_username, wp_password = get_random_wp_credentials(site)
     base = site.wp_url.replace("xmlrpc.php", "").rstrip("/")
-    url = f"{base}/wp-json/wp/v2/posts?orderby=date&order=desc&per_page=1&status=publish"
+    auth = (wp_username, wp_password)
+    latest_date: str | None = None
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(url, auth=(wp_username, wp_password))
-        posts = r.json() if r.status_code == 200 else []
-        if isinstance(posts, list) and posts:
-            return {"last_publish_date": posts[0].get("date_gmt")}
+            for status in ("future", "publish"):
+                url = f"{base}/wp-json/wp/v2/posts?orderby=date&order=desc&per_page=1&status={status}"
+                r = await client.get(url, auth=auth)
+                posts = r.json() if r.status_code == 200 else []
+                if isinstance(posts, list) and posts:
+                    date_gmt = posts[0].get("date_gmt")
+                    if date_gmt and (latest_date is None or date_gmt > latest_date):
+                        latest_date = date_gmt
     except Exception:
         pass
-    return {"last_publish_date": None}
+    return {"last_publish_date": latest_date}
