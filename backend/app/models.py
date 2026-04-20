@@ -183,6 +183,27 @@ class WpUserOut(BaseModel):
     username: str
 
 
+class PinterestRecipeOut(BaseModel):
+    """Enriched recipe row returned by the project pinterest-recipes endpoint."""
+    id: str
+    site_id: str
+    site_domain: str
+    recipe_text: str
+    generated_images: str | None = None
+    image_url: str | None = None
+    pin_design_image: str | None = None
+    pin_title: str | None = None
+    pin_description: str | None = None
+    pin_board: str | None = None
+    pin_tags: str | None = None
+    pin_url: str | None = None
+    wp_permalink: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class SiteOut(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID

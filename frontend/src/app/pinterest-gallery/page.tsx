@@ -1,20 +1,20 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useMemo, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Download,
   ExternalLink,
   Tag,
-  FileSpreadsheet,
   FileText,
   Search,
   X,
-  ChevronDown,
   Loader2,
   Sheet,
+  ArrowLeft,
+  FolderOpen,
 } from "lucide-react";
-import { api, ProjectOut, SiteOut, RecipeOut } from "@/lib/api";
+import { api, ProjectOut, PinterestRecipeOut } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
 import {
   PINTEREST_WORKSHEET_HEADER,
@@ -25,16 +25,8 @@ import {
   rowsToCsv,
 } from "@/lib/pinterestWorksheet";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-interface EnrichedRecipe extends RecipeOut {
-  projectId: string;
-  projectName: string;
-  siteId: string;
-  siteDomain: string;
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function getDisplayImage(recipe: EnrichedRecipe): string | null {
+function getDisplayImage(recipe: PinterestRecipeOut): string | null {
   if (recipe.pin_design_image && !recipe.pin_design_image.startsWith("data:")) {
     return recipe.pin_design_image;
   }
@@ -53,15 +45,25 @@ function formatDateTimeLocal(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
-export default function PinterestGalleryPage() {
+// ─── Inner component (needs useSearchParams) ──────────────────────────────────
+function PinterestGalleryInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const toast = useToast();
-  // Data
+
+  const projectIdParam = searchParams.get("project_id");
+
+  // Project list (for selector screen)
   const [projects, setProjects] = useState<ProjectOut[]>([]);
-  const [allRecipes, setAllRecipes] = useState<EnrichedRecipe[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [projectsLoading, setProjectsLoading] = useState(true);
+
+  // Selected project
+  const [selectedProject, setSelectedProject] = useState<ProjectOut | null>(null);
+
+  // Recipes for selected project
+  const [allRecipes, setAllRecipes] = useState<PinterestRecipeOut[]>([]);
+  const [recipesLoading, setRecipesLoading] = useState(false);
+  const [recipesError, setRecipesError] = useState<string | null>(null);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -75,93 +77,50 @@ export default function PinterestGalleryPage() {
   const [csvGenerating, setCsvGenerating] = useState(false);
   const [worksheetPreparing, setWorksheetPreparing] = useState(false);
 
-  // Excel modal
-  const [showExcelModal, setShowExcelModal] = useState(false);
-  const [excelProjectId, setExcelProjectId] = useState("");
-  const [excelSiteId, setExcelSiteId] = useState("__project__");
-  const [excelDownloading, setExcelDownloading] = useState(false);
-  const [sitesByProject, setSitesByProject] = useState<Record<string, SiteOut[]>>({});
-
-  // ── Fetch all published recipes across all projects/sites ──
+  // ── Load project list once ──
   useEffect(() => {
-    setLoading(true);
-    setError(null);
-
     api.getProjects()
-      .then(async (projs) => {
-        setProjects(projs);
-        if (projs.length === 0) { setLoading(false); return; }
-
-        const sitesMap: Record<string, SiteOut[]> = {};
-        const enriched: EnrichedRecipe[] = [];
-
-        await Promise.all(
-          projs.map(async (proj) => {
-            let sites: SiteOut[] = [];
-            try { sites = await api.getSites(proj.id); } catch {}
-            sitesMap[proj.id] = sites;
-
-            await Promise.all(
-              sites.map(async (site) => {
-                let recipes: RecipeOut[] = [];
-                try { recipes = await api.getRecipes(site.id, false); } catch {}
-                const published = recipes.filter((r) => r.status === "published");
-                published.forEach((r) => {
-                  enriched.push({
-                    ...r,
-                    projectId: proj.id,
-                    projectName: proj.name,
-                    siteId: site.id,
-                    siteDomain: site.domain,
-                  });
-                });
-              })
-            );
-          })
-        );
-
-        setSitesByProject(sitesMap);
-        setAllRecipes(enriched);
-        setLoading(false);
-      })
-      .catch((e) => {
-        setError(e?.message || "Failed to load recipes");
-        setLoading(false);
-      });
+      .then(setProjects)
+      .catch(() => {})
+      .finally(() => setProjectsLoading(false));
   }, []);
 
-  // Set default excel project when projects load
+  // ── Auto-select project from URL param ──
   useEffect(() => {
-    if (projects.length > 0 && !excelProjectId) {
-      setExcelProjectId(projects[0].id);
-    }
-  }, [projects, excelProjectId]);
+    if (!projectIdParam || projects.length === 0) return;
+    const found = projects.find((p) => p.id === projectIdParam);
+    if (found) setSelectedProject(found);
+  }, [projectIdParam, projects]);
+
+  // ── Fetch recipes when project selected (ONE call) ──
+  useEffect(() => {
+    if (!selectedProject) { setAllRecipes([]); return; }
+    setRecipesLoading(true);
+    setRecipesError(null);
+    setSearch("");
+    setSelectedWebsite("");
+    setSelectedBoard("__all__");
+    api.getProjectPinterestRecipes(selectedProject.id)
+      .then(setAllRecipes)
+      .catch((e) => setRecipesError(e?.message || "Failed to load recipes"))
+      .finally(() => setRecipesLoading(false));
+  }, [selectedProject]);
 
   // ── Derived data ──
-  const allBoards = useMemo(() => {
-    const set = new Set<string>();
-    allRecipes.forEach((r) => { if (r.pin_board) set.add(r.pin_board); });
-    return Array.from(set).sort();
-  }, [allRecipes]);
-
-  const websites = useMemo(() => {
-    return Array.from(new Set(allRecipes.map((r) => r.siteDomain))).sort();
-  }, [allRecipes]);
+  const websites = useMemo(() =>
+    Array.from(new Set(allRecipes.map((r) => r.site_domain))).sort(),
+    [allRecipes]
+  );
 
   useEffect(() => {
-    if (websites.length === 0) {
-      if (selectedWebsite !== "") setSelectedWebsite("");
-      return;
-    }
-    if (!selectedWebsite || !websites.includes(selectedWebsite)) {
-      setSelectedWebsite(websites[0]);
-    }
+    if (websites.length === 0) { if (selectedWebsite !== "") setSelectedWebsite(""); return; }
+    if (!selectedWebsite || !websites.includes(selectedWebsite)) setSelectedWebsite(websites[0]);
   }, [websites, selectedWebsite]);
 
-  const websiteScopedRecipes = useMemo(() => {
-    if (!selectedWebsite) return [];
-    return allRecipes.filter((r) => r.siteDomain === selectedWebsite);
-  }, [allRecipes, selectedWebsite]);
+  const websiteScopedRecipes = useMemo(() =>
+    selectedWebsite ? allRecipes.filter((r) => r.site_domain === selectedWebsite) : [],
+    [allRecipes, selectedWebsite]
+  );
 
   const boards = useMemo(() => {
     const set = new Set<string>();
@@ -170,16 +129,12 @@ export default function PinterestGalleryPage() {
   }, [websiteScopedRecipes]);
 
   useEffect(() => {
-    if (selectedBoard !== "__all__" && !boards.includes(selectedBoard)) {
-      setSelectedBoard("__all__");
-    }
+    if (selectedBoard !== "__all__" && !boards.includes(selectedBoard)) setSelectedBoard("__all__");
   }, [boards, selectedBoard]);
 
   const filtered = useMemo(() => {
     let list = websiteScopedRecipes;
-    if (selectedBoard !== "__all__") {
-      list = list.filter((r) => r.pin_board === selectedBoard);
-    }
+    if (selectedBoard !== "__all__") list = list.filter((r) => r.pin_board === selectedBoard);
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(
@@ -189,15 +144,13 @@ export default function PinterestGalleryPage() {
           (r.pin_tags || "").toLowerCase().includes(q)
       );
     }
-    return list
-      .slice()
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return list.slice().sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [websiteScopedRecipes, selectedBoard, search]);
 
   const worksheetSourceRows = useMemo<PinterestWorksheetRecipe[]>(
     () => filtered.map((r) => ({
-      siteId: r.siteId,
-      siteDomain: r.siteDomain,
+      siteId: r.site_id,
+      siteDomain: r.site_domain,
       pinTitle: r.pin_title,
       recipeText: r.recipe_text || "",
       pinDesignImage: r.pin_design_image,
@@ -210,13 +163,10 @@ export default function PinterestGalleryPage() {
   );
 
   const resolveWorksheetMediaUrl = async (recipe: PinterestWorksheetRecipe): Promise<string> => {
-    if (recipe.pinDesignImage?.startsWith("data:") && recipe.siteId) {
-      try { return await api.uploadPinImageToServer(recipe.siteId, recipe.pinDesignImage); } catch {}
-      return "";
-    }
-    if (recipe.pinDesignImage && !recipe.pinDesignImage.startsWith("data:")) {
-      return recipe.pinDesignImage;
-    }
+    if (!recipe.pinDesignImage) return "";
+    if (!recipe.pinDesignImage.startsWith("data:")) return recipe.pinDesignImage;
+    if (!recipe.siteId) return "";
+    try { return await api.uploadPinImageToServer(recipe.siteId, recipe.pinDesignImage); } catch {}
     return "";
   };
 
@@ -225,12 +175,7 @@ export default function PinterestGalleryPage() {
     if (filtered.length === 0) return;
     setCsvGenerating(true);
     try {
-      const rows = await buildPinterestWorksheetRows(
-        worksheetSourceRows,
-        csvStartDate,
-        csvInterval,
-        resolveWorksheetMediaUrl,
-      );
+      const rows = await buildPinterestWorksheetRows(worksheetSourceRows, csvStartDate, csvInterval, resolveWorksheetMediaUrl);
       const csv = rowsToCsv(PINTEREST_WORKSHEET_HEADER, rows);
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
@@ -253,12 +198,7 @@ export default function PinterestGalleryPage() {
     if (worksheetSourceRows.length === 0) return;
     setWorksheetPreparing(true);
     try {
-      const rows = await buildPinterestWorksheetRows(
-        worksheetSourceRows,
-        csvStartDate,
-        csvInterval,
-        resolveWorksheetMediaUrl,
-      );
+      const rows = await buildPinterestWorksheetRows(worksheetSourceRows, csvStartDate, csvInterval, resolveWorksheetMediaUrl);
       const snapshot: PinterestWorksheetSnapshot = {
         header: PINTEREST_WORKSHEET_HEADER,
         rows,
@@ -275,47 +215,96 @@ export default function PinterestGalleryPage() {
     }
   };
 
-  // ── Excel export ──
-  const downloadExcel = async () => {
-    if (!excelProjectId) return;
-    setExcelDownloading(true);
-    try {
-      if (excelSiteId === "__project__") {
-        const proj = projects.find((p) => p.id === excelProjectId);
-        await api.downloadProjectExcel(excelProjectId, proj?.name || "project");
-      } else {
-        const site = (sitesByProject[excelProjectId] || []).find((s) => s.id === excelSiteId);
-        await api.downloadSiteExcel(excelSiteId, site?.domain || "site");
-      }
-      setShowExcelModal(false);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Excel export failed");
-    } finally {
-      setExcelDownloading(false);
-    }
-  };
+  // ── Project selector screen ──────────────────────────────────────────────
+  if (!selectedProject) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white">
+        <div className="mx-auto max-w-screen-lg px-4 sm:px-6 py-10">
+          {/* Header */}
+          <div className="flex items-center gap-4 mb-8">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#E60023]/15 shrink-0">
+              <svg viewBox="0 0 24 24" className="h-6 w-6 fill-[#E60023]" aria-hidden>
+                <path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 0 1 .083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0z" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-white">Pinterest Gallery</h1>
+              <p className="text-sm text-gray-400">Select a project to view its published pins</p>
+            </div>
+          </div>
 
+          {projectsLoading ? (
+            <div className="flex items-center justify-center py-24">
+              <Loader2 size={32} className="animate-spin text-[#E60023]" />
+            </div>
+          ) : projects.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 gap-3">
+              <FolderOpen size={40} className="text-gray-700" />
+              <p className="text-sm text-gray-500">No projects found.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => {
+                    setSelectedProject(p);
+                    router.replace(`/pinterest-gallery?project_id=${p.id}`);
+                  }}
+                  className="group flex flex-col items-start gap-2 rounded-2xl border border-gray-800 bg-gray-900 p-5 text-left transition hover:border-[#E60023]/40 hover:bg-gray-800"
+                >
+                  <div className="flex items-center gap-3 w-full">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#E60023]/10 group-hover:bg-[#E60023]/20 transition">
+                      <svg viewBox="0 0 24 24" className="h-5 w-5 fill-[#E60023]/70" aria-hidden>
+                        <path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 0 1 .083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0z" />
+                      </svg>
+                    </div>
+                    <span className="font-semibold text-white truncate">{p.name}</span>
+                  </div>
+                  <div className="flex gap-3 text-xs text-gray-500">
+                    <span>{p.site_count} site{p.site_count !== 1 ? "s" : ""}</span>
+                    <span>{p.recipe_count} recipe{p.recipe_count !== 1 ? "s" : ""}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Gallery screen ───────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-950 text-white">
-      {/* ── Header ── */}
+      {/* ── Sticky header ── */}
       <div className="sticky top-0 z-30 border-b border-gray-800 bg-gray-950/95 backdrop-blur-sm">
         <div className="mx-auto max-w-screen-2xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between gap-4">
-            {/* Title */}
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#E60023]/15">
-                <svg viewBox="0 0 24 24" className="h-5 w-5 fill-[#E60023]" aria-hidden>
-                  <path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 0 1 .083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0z" />
-                </svg>
-              </div>
-              <div>
-                <h1 className="text-base font-semibold text-white leading-tight">Pinterest</h1>
-                <p className="text-xs text-gray-500 leading-tight">Published pins gallery</p>
+            {/* Back + title */}
+            <div className="flex items-center gap-3 min-w-0">
+              <button
+                onClick={() => {
+                  setSelectedProject(null);
+                  router.replace("/pinterest-gallery");
+                }}
+                className="shrink-0 flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 transition"
+              >
+                <ArrowLeft size={14} /> Projects
+              </button>
+              <span className="text-gray-700">/</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#E60023]/15">
+                  <svg viewBox="0 0 24 24" className="h-4 w-4 fill-[#E60023]" aria-hidden>
+                    <path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 0 1 .083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0z" />
+                  </svg>
+                </div>
+                <span className="font-semibold text-white truncate">{selectedProject.name}</span>
               </div>
             </div>
 
             {/* Actions */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={() => void openWorksheet()}
                 className="flex items-center gap-2 rounded-lg border border-blue-700/60 bg-blue-950/40 px-3 py-2 text-xs font-medium text-blue-300 transition hover:bg-blue-900/50 hover:text-blue-200 disabled:opacity-40"
@@ -340,34 +329,29 @@ export default function PinterestGalleryPage() {
 
       <div className="mx-auto max-w-screen-2xl px-4 sm:px-6 lg:px-8 py-6">
         {/* ── Stats bar ── */}
-        {!loading && !error && (
+        {!recipesLoading && !recipesError && (
           <div className="mb-6 flex flex-wrap gap-3">
             <StatPill label="Total pins" value={allRecipes.length} color="brand" />
-            <StatPill label="Boards" value={allBoards.length} color="purple" />
-            <StatPill label="Websites" value={new Set(allRecipes.map((r) => r.siteDomain)).size} color="blue" />
-            {selectedBoard !== "__all__" && (
-              <StatPill label="Showing" value={filtered.length} color="pink" />
-            )}
+            <StatPill label="Boards" value={boards.length} color="purple" />
+            <StatPill label="Websites" value={websites.length} color="blue" />
+            {selectedBoard !== "__all__" && <StatPill label="Showing" value={filtered.length} color="pink" />}
           </div>
         )}
 
-        {/* ── Website → Search → Boards ── */}
-        {!loading && !error && allRecipes.length > 0 && (
+        {/* ── Filters ── */}
+        {!recipesLoading && !recipesError && allRecipes.length > 0 && (
           <div className="mb-6 space-y-4">
-            {/* Website selector */}
             <div className="flex flex-wrap gap-2">
               {websites.map((site) => (
                 <WebsitePill
                   key={site}
                   label={site}
-                  count={allRecipes.filter((r) => r.siteDomain === site).length}
+                  count={allRecipes.filter((r) => r.site_domain === site).length}
                   active={selectedWebsite === site}
                   onClick={() => setSelectedWebsite(site)}
                 />
               ))}
             </div>
-
-            {/* Search */}
             <div className="relative max-w-sm">
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
               <input
@@ -378,62 +362,43 @@ export default function PinterestGalleryPage() {
                 className="w-full rounded-lg border border-gray-800 bg-gray-900 pl-9 pr-9 py-2 text-sm text-gray-200 placeholder-gray-500 outline-none focus:border-brand-500 transition"
               />
               {search && (
-                <button
-                  onClick={() => setSearch("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
-                >
+                <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
                   <X size={13} />
                 </button>
               )}
             </div>
-
-            {/* Board pills */}
             <div className="flex flex-wrap gap-2">
-              <BoardPill
-                label="All boards"
-                count={websiteScopedRecipes.length}
-                active={selectedBoard === "__all__"}
-                onClick={() => setSelectedBoard("__all__")}
-              />
+              <BoardPill label="All boards" count={websiteScopedRecipes.length} active={selectedBoard === "__all__"} onClick={() => setSelectedBoard("__all__")} />
               {boards.map((b) => (
-                <BoardPill
-                  key={b}
-                  label={b}
-                  count={websiteScopedRecipes.filter((r) => r.pin_board === b).length}
-                  active={selectedBoard === b}
-                  onClick={() => setSelectedBoard(b)}
-                />
+                <BoardPill key={b} label={b} count={websiteScopedRecipes.filter((r) => r.pin_board === b).length} active={selectedBoard === b} onClick={() => setSelectedBoard(b)} />
               ))}
             </div>
           </div>
         )}
 
         {/* ── States ── */}
-        {loading && (
+        {recipesLoading && (
           <div className="flex flex-col items-center justify-center py-32 gap-4">
             <Loader2 size={36} className="animate-spin text-[#E60023]" />
             <p className="text-sm text-gray-400">Loading published pins…</p>
           </div>
         )}
-
-        {!loading && error && (
+        {!recipesLoading && recipesError && (
           <div className="flex items-center justify-center py-24">
             <div className="rounded-xl border border-red-800/50 bg-red-950/30 px-8 py-6 text-center">
-              <p className="text-sm text-red-400">{error}</p>
+              <p className="text-sm text-red-400">{recipesError}</p>
             </div>
           </div>
         )}
-
-        {!loading && !error && allRecipes.length === 0 && (
-          <EmptyState message="No published pins yet. Publish recipes to WordPress first." />
+        {!recipesLoading && !recipesError && allRecipes.length === 0 && (
+          <EmptyState message="No published pins yet for this project. Publish recipes to WordPress first." />
         )}
-
-        {!loading && !error && allRecipes.length > 0 && filtered.length === 0 && (
+        {!recipesLoading && !recipesError && allRecipes.length > 0 && filtered.length === 0 && (
           <EmptyState message="No pins match your current filter." />
         )}
 
         {/* ── Pins grid ── */}
-        {!loading && !error && filtered.length > 0 && (
+        {!recipesLoading && !recipesError && filtered.length > 0 && (
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {filtered.map((recipe) => (
               <RecipeCard key={recipe.id} recipe={recipe} />
@@ -454,27 +419,14 @@ export default function PinterestGalleryPage() {
               <p className="text-xs text-gray-400">Configure scheduling for the {filtered.length} visible pins.</p>
             </div>
           </div>
-
           <div className="space-y-4">
             <div>
               <label className="mb-1.5 block text-xs font-medium text-gray-400">First pin publish date &amp; time</label>
-              <input
-                type="datetime-local"
-                value={csvStartDate}
-                onChange={(e) => setCsvStartDate(e.target.value)}
-                className="input-field w-full"
-              />
+              <input type="datetime-local" value={csvStartDate} onChange={(e) => setCsvStartDate(e.target.value)} className="input-field w-full" />
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-medium text-gray-400">Interval between pins (minutes)</label>
-              <input
-                type="number"
-                min={1}
-                max={10080}
-                value={csvInterval}
-                onChange={(e) => setCsvInterval(Number(e.target.value) || 300)}
-                className="input-field w-full"
-              />
+              <input type="number" min={1} max={10080} value={csvInterval} onChange={(e) => setCsvInterval(Number(e.target.value) || 300)} className="input-field w-full" />
             </div>
             {csvGenerating && (
               <div className="flex items-center gap-2 rounded-lg border border-blue-800/40 bg-blue-950/30 px-3 py-2">
@@ -483,96 +435,28 @@ export default function PinterestGalleryPage() {
               </div>
             )}
             <div className="flex gap-2 pt-1">
-              <button
-                className="btn-primary flex flex-1 items-center justify-center gap-2 disabled:opacity-50"
-                disabled={csvGenerating}
-                onClick={() => void downloadCsv()}
-              >
+              <button className="btn-primary flex flex-1 items-center justify-center gap-2 disabled:opacity-50" disabled={csvGenerating} onClick={() => void downloadCsv()}>
                 <Download size={14} /> {csvGenerating ? "Uploading…" : "Download CSV"}
               </button>
-              <button
-                className="btn-secondary flex-1"
-                disabled={csvGenerating}
-                onClick={() => setShowCsvModal(false)}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* ── Excel Modal ── */}
-      {showExcelModal && (
-        <Modal onClose={() => !excelDownloading && setShowExcelModal(false)}>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-green-900/40 shrink-0">
-              <FileSpreadsheet size={18} className="text-green-400" />
-            </div>
-            <div>
-              <h3 className="text-base font-semibold text-white">Export Excel</h3>
-              <p className="text-xs text-gray-400">Choose scope and download in V1 format.</p>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            {/* Project selector */}
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-gray-400">Project</label>
-              <div className="relative">
-                <select
-                  value={excelProjectId}
-                  onChange={(e) => { setExcelProjectId(e.target.value); setExcelSiteId("__project__"); }}
-                  className="input-field w-full appearance-none pr-8"
-                >
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-                <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-              </div>
-            </div>
-
-            {/* Site selector */}
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-gray-400">Scope</label>
-              <div className="relative">
-                <select
-                  value={excelSiteId}
-                  onChange={(e) => setExcelSiteId(e.target.value)}
-                  className="input-field w-full appearance-none pr-8"
-                >
-                  <option value="__project__">Entire project (all sites)</option>
-                  {(sitesByProject[excelProjectId] || []).map((s) => (
-                    <option key={s.id} value={s.id}>{s.domain}</option>
-                  ))}
-                </select>
-                <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-1">
-              <button
-                className="btn-primary flex flex-1 items-center justify-center gap-2 disabled:opacity-50"
-                disabled={excelDownloading || !excelProjectId}
-                onClick={() => void downloadExcel()}
-              >
-                {excelDownloading
-                  ? <><Loader2 size={14} className="animate-spin" /> Downloading…</>
-                  : <><Download size={14} /> Download Excel</>}
-              </button>
-              <button
-                className="btn-secondary flex-1"
-                disabled={excelDownloading}
-                onClick={() => setShowExcelModal(false)}
-              >
-                Cancel
-              </button>
+              <button className="btn-secondary flex-1" disabled={csvGenerating} onClick={() => setShowCsvModal(false)}>Cancel</button>
             </div>
           </div>
         </Modal>
       )}
     </div>
+  );
+}
+
+// ─── Page (wraps inner in Suspense for useSearchParams) ───────────────────────
+export default function PinterestGalleryPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <Loader2 size={32} className="animate-spin text-[#E60023]" />
+      </div>
+    }>
+      <PinterestGalleryInner />
+    </Suspense>
   );
 }
 
@@ -598,9 +482,7 @@ function WebsitePill({ label, count, active, onClick }: { label: string; count: 
     <button
       onClick={onClick}
       className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-        active
-          ? "border-blue-500/70 bg-blue-500/15 text-blue-300"
-          : "border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-700 hover:text-gray-200"
+        active ? "border-blue-500/70 bg-blue-500/15 text-blue-300" : "border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-700 hover:text-gray-200"
       }`}
       title={label}
     >
@@ -617,9 +499,7 @@ function BoardPill({ label, count, active, onClick }: { label: string; count: nu
     <button
       onClick={onClick}
       className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-        active
-          ? "border-[#E60023]/60 bg-[#E60023]/15 text-[#E60023]"
-          : "border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-700 hover:text-gray-200"
+        active ? "border-[#E60023]/60 bg-[#E60023]/15 text-[#E60023]" : "border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-700 hover:text-gray-200"
       }`}
     >
       {label}
@@ -630,7 +510,7 @@ function BoardPill({ label, count, active, onClick }: { label: string; count: nu
   );
 }
 
-function RecipeCard({ recipe }: { recipe: EnrichedRecipe }) {
+function RecipeCard({ recipe }: { recipe: PinterestRecipeOut }) {
   const img = getDisplayImage(recipe);
   const title = recipe.pin_title || recipe.recipe_text?.split("\n")[0]?.trim() || "Untitled";
   const tags = recipe.pin_tags
@@ -639,16 +519,10 @@ function RecipeCard({ recipe }: { recipe: EnrichedRecipe }) {
 
   return (
     <article className="group flex flex-col overflow-hidden rounded-2xl border border-gray-800 bg-gray-900 transition hover:border-gray-700 hover:shadow-xl hover:shadow-black/40">
-      {/* Image */}
       <div className="relative aspect-[2/3] overflow-hidden bg-gray-800">
         {img ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={img}
-            alt={title}
-            className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
-            loading="lazy"
-          />
+          <img src={img} alt={title} className="h-full w-full object-cover transition duration-300 group-hover:scale-105" loading="lazy" />
         ) : (
           <div className="flex h-full items-center justify-center">
             <svg viewBox="0 0 24 24" className="h-12 w-12 fill-gray-700" aria-hidden>
@@ -656,8 +530,6 @@ function RecipeCard({ recipe }: { recipe: EnrichedRecipe }) {
             </svg>
           </div>
         )}
-
-        {/* Board badge */}
         {recipe.pin_board && (
           <div className="absolute bottom-2 left-2 right-2">
             <span className="inline-block max-w-full truncate rounded-full bg-black/70 px-2.5 py-0.5 text-[10px] font-medium text-gray-200 backdrop-blur-sm">
@@ -666,44 +538,24 @@ function RecipeCard({ recipe }: { recipe: EnrichedRecipe }) {
           </div>
         )}
       </div>
-
-      {/* Content */}
       <div className="flex flex-1 flex-col gap-2 p-3.5">
-        {/* Title */}
         <h3 className="line-clamp-2 text-sm font-semibold text-white leading-snug">{title}</h3>
-
-        {/* Description */}
         {recipe.pin_description && (
           <p className="line-clamp-3 text-xs text-gray-400 leading-relaxed">{recipe.pin_description}</p>
         )}
-
-        {/* Tags */}
         {tags.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-auto pt-1">
             {tags.map((tag) => (
-              <span
-                key={tag}
-                className="inline-flex items-center gap-1 rounded-full bg-gray-800 px-2 py-0.5 text-[10px] text-gray-400"
-              >
-                <Tag size={9} />
-                {tag}
+              <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-gray-800 px-2 py-0.5 text-[10px] text-gray-400">
+                <Tag size={9} />{tag}
               </span>
             ))}
           </div>
         )}
-
-        {/* Footer */}
         <div className="mt-auto flex items-center justify-between border-t border-gray-800 pt-2.5">
-          <span className="text-[10px] text-gray-600 truncate max-w-[120px]" title={recipe.siteDomain}>
-            {recipe.siteDomain}
-          </span>
+          <span className="text-[10px] text-gray-600 truncate max-w-[120px]" title={recipe.site_domain}>{recipe.site_domain}</span>
           {recipe.wp_permalink ? (
-            <a
-              href={recipe.wp_permalink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded-md bg-gray-800 px-2 py-1 text-[10px] font-medium text-gray-300 transition hover:bg-gray-700 hover:text-white"
-            >
+            <a href={recipe.wp_permalink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-md bg-gray-800 px-2 py-1 text-[10px] font-medium text-gray-300 transition hover:bg-gray-700 hover:text-white">
               View article <ExternalLink size={9} />
             </a>
           ) : (
@@ -717,10 +569,7 @@ function RecipeCard({ recipe }: { recipe: EnrichedRecipe }) {
 
 function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-sm rounded-2xl border border-gray-800 bg-gray-900 p-6 shadow-2xl">
         {children}
       </div>

@@ -121,6 +121,9 @@ export const api = {
   // ── Projects ───────────────────────────────────────────
   getProjects: () => request<ProjectOut[]>("/api/projects"),
 
+  getProjectPinterestRecipes: (projectId: string) =>
+    request<PinterestRecipeOut[]>(`/api/projects/${projectId}/pinterest-recipes`),
+
   createProject: (name: string, description: string) =>
     request<ProjectOut>("/api/projects", { method: "POST", body: JSON.stringify({ name, description }) }),
 
@@ -626,6 +629,23 @@ export interface MidjourneyTimersOut {
 
 export interface WpUserOut {
   username: string;
+}
+
+export interface PinterestRecipeOut {
+  id: string;
+  site_id: string;
+  site_domain: string;
+  recipe_text: string;
+  generated_images: string | null;
+  image_url: string | null;
+  pin_design_image: string | null;
+  pin_title: string | null;
+  pin_description: string | null;
+  pin_board: string | null;
+  pin_tags: string | null;
+  pin_url: string | null;
+  wp_permalink: string | null;
+  created_at: string;
 }
 
 export interface SiteOut {

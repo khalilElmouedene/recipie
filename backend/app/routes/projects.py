@@ -27,6 +27,7 @@ from ..models import (
     PublishScheduleOut, PublishScheduleUpdate,
     PublishBatchRequest, PublishBatchOut,
     ImageCleanupRunRequest, ImageCleanupRunResult,
+    PinterestRecipeOut,
 )
 from ..services.email_service import send_project_invite_email
 from ..database import SessionLocal
@@ -276,6 +277,46 @@ async def export_project_excel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/{project_id}/pinterest-recipes", response_model=list[PinterestRecipeOut])
+async def get_project_pinterest_recipes(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return all published recipes for a project in one query, enriched with site_domain.
+    Replaces the N+1 getProjects→getSites→getRecipes waterfall on the Pinterest gallery page."""
+    await check_project_access(project_id, user, db)
+    result = await db.execute(
+        select(Recipe, Site)
+        .join(Site, Recipe.site_id == Site.id)
+        .where(
+            Site.project_id == project_id,
+            Recipe.status == RecipeStatus.published,
+        )
+        .order_by(Site.id, Recipe.created_at.asc())
+    )
+    rows = result.all()
+    return [
+        PinterestRecipeOut(
+            id=str(recipe.id),
+            site_id=str(recipe.site_id),
+            site_domain=site.domain,
+            recipe_text=recipe.recipe_text or "",
+            generated_images=recipe.generated_images,
+            image_url=recipe.image_url,
+            pin_design_image=recipe.pin_design_image,
+            pin_title=recipe.pin_title,
+            pin_description=recipe.pin_description,
+            pin_board=recipe.pin_board,
+            pin_tags=recipe.pin_tags,
+            pin_url=recipe.pin_url,
+            wp_permalink=recipe.wp_permalink,
+            created_at=recipe.created_at,
+        )
+        for recipe, site in rows
+    ]
 
 
 @router.post("/{project_id}/duplicate", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
