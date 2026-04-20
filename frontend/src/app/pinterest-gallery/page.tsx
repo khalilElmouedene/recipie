@@ -276,6 +276,16 @@ function PinterestGalleryInner() {
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 px-1">Projects</p>
                       </div>
                       <div className="max-h-64 overflow-y-auto py-1">
+                        {selectedProjectId && (
+                          <button
+                            type="button"
+                            onClick={() => { handleProjectChange(""); setDropdownOpen(false); }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-gray-400 hover:bg-gray-800 hover:text-white transition rounded-lg mx-0.5 my-0.5 border-b border-gray-800 mb-1"
+                          >
+                            <X size={13} className="shrink-0" />
+                            <span>Clear selection</span>
+                          </button>
+                        )}
                         {projects.length === 0 ? (
                           <p className="px-3 py-2 text-sm text-gray-500">No projects found</p>
                         ) : (
