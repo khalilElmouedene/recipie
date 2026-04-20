@@ -4,7 +4,7 @@ import io
 import json
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 import openpyxl
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -414,3 +414,67 @@ async def set_fonts(
     user.custom_fonts = json.dumps(unique)
     await db.commit()
     return unique
+
+
+class ReusablePinElement(BaseModel):
+    id: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=160)
+    kind: str = Field(min_length=1, max_length=40)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+
+
+class ReusablePinElementsUpdate(BaseModel):
+    elements: list[ReusablePinElement]
+
+
+@router.get("/pin-elements", response_model=list[ReusablePinElement])
+async def get_pin_elements(
+    user: Annotated[User, Depends(get_current_user)],
+):
+    if not user.custom_pin_elements:
+        return []
+    try:
+        parsed = json.loads(user.custom_pin_elements)
+        if not isinstance(parsed, list):
+            return []
+        out: list[ReusablePinElement] = []
+        for item in parsed:
+            try:
+                out.append(ReusablePinElement.model_validate(item))
+            except Exception:
+                continue
+        return out
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+@router.put("/pin-elements", response_model=list[ReusablePinElement])
+async def set_pin_elements(
+    body: ReusablePinElementsUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    # Keep insertion order while removing duplicate ids; cap to avoid unbounded growth.
+    seen: set[str] = set()
+    cleaned: list[ReusablePinElement] = []
+    for item in body.elements:
+        element_id = item.id.strip()
+        if not element_id or element_id in seen:
+            continue
+        seen.add(element_id)
+        cleaned.append(
+            ReusablePinElement(
+                id=element_id,
+                name=item.name.strip()[:160] or "Element",
+                kind=item.kind.strip()[:40] or "unknown",
+                payload=item.payload or {},
+                created_at=item.created_at,
+            )
+        )
+        if len(cleaned) >= 300:
+            break
+
+    user.custom_pin_elements = json.dumps([item.model_dump() for item in cleaned])
+    await db.commit()
+    return cleaned

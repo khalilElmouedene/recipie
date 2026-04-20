@@ -247,6 +247,13 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ fonts }),
     }),
+  getPinReusableElements: () =>
+    request<PinReusableElementOut[]>(`/api/settings/pin-elements`, { cache: "no-store" }),
+  setPinReusableElements: (elements: PinReusableElementOut[]) =>
+    request<PinReusableElementOut[]>(`/api/settings/pin-elements`, {
+      method: "PUT",
+      body: JSON.stringify({ elements }),
+    }),
 
   getMidjourneyTimers: () => request<MidjourneyTimersOut>("/api/settings/midjourney-timers"),
   setMidjourneyGridWait: (data: { grid_wait_seconds: number }) =>
@@ -840,6 +847,14 @@ export interface PinDesignerTemplateCreate {
   canvasHeight?: number;
   project_ids?: string[] | null;
   elements: PinDesignerTemplateElement[];
+}
+
+export interface PinReusableElementOut {
+  id: string;
+  name: string;
+  kind: string;
+  payload: Record<string, unknown>;
+  created_at?: string | null;
 }
 
 export interface JobLogOut {

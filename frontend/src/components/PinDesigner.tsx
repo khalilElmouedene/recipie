@@ -15,7 +15,7 @@ import {
   Lock, Unlock,
   ExternalLink,
 } from "lucide-react";
-import { api, getApiBaseUrl } from "@/lib/api";
+import { api, getApiBaseUrl, type PinReusableElementOut } from "@/lib/api";
 import { appendPinImageToArticleHtml } from "@/lib/pinArticleEmbed";
 import { getUserRole, getUserId } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
@@ -128,6 +128,14 @@ export interface PinTemplate {
   canvasWidth?: number;
   canvasHeight?: number;
 }
+
+type ReusableElementKind =
+  | "text"
+  | "band"
+  | "frame"
+  | "imageZone"
+  | "shape"
+  | "asset";
 
 // ─── Templates ───────────────────────────────────────────────────────────────
 
@@ -818,6 +826,9 @@ export default function PinDesigner({
   const [fontInput, setFontInput] = useState("");
   const [fontLoading, setFontLoading] = useState(false);
   const fontsLoadedRef = useRef(false);
+  const [reusableElements, setReusableElements] = useState<PinReusableElementOut[]>([]);
+  const [reusableBusyId, setReusableBusyId] = useState<string | null>(null);
+  const reusableLoadedRef = useRef(false);
 
   const injectFontStylesheet = useCallback((fontName: string): Promise<void> => {
     const trimmed = fontName.trim();
@@ -857,6 +868,14 @@ export default function PinDesigner({
       })
       .catch(() => {});
   }, [injectFontStylesheet]);
+
+  useEffect(() => {
+    if (reusableLoadedRef.current) return;
+    reusableLoadedRef.current = true;
+    api.getPinReusableElements()
+      .then((items) => setReusableElements(items))
+      .catch(() => {});
+  }, []);
 
   // Load user-created Pin Designer templates (filtered by project if available)
   useEffect(() => {
@@ -3450,6 +3469,429 @@ export default function PinDesigner({
     input.click();
   };
 
+  const num = (value: unknown, fallback: number): number =>
+    typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+  const str = (value: unknown, fallback = ""): string =>
+    typeof value === "string" ? value : fallback;
+
+  const serializeReusableFromObject = (inputObj: any): {
+    kind: ReusableElementKind;
+    payload: Record<string, unknown>;
+    suggestedName: string;
+  } | null => {
+    let obj = inputObj;
+    if (obj?.__pinType === "imageContent" && obj?.__frameRect) obj = obj.__frameRect;
+    if (!obj || obj.__isLabel || obj.__designerBorder) return null;
+
+    const base = {
+      left: num(obj.left, PIN_W / 2),
+      top: num(obj.top, PIN_H / 2),
+      originX: str(obj.originX, "center"),
+      originY: str(obj.originY, "center"),
+      angle: num(obj.angle, 0),
+      scaleX: num(obj.scaleX, 1),
+      scaleY: num(obj.scaleY, 1),
+      locked: !!obj.__pinLocked,
+      label: str(obj.__pinLabel, "Element"),
+    };
+
+    if (obj.__pinType === "text") {
+      return {
+        kind: "text",
+        suggestedName: str(obj.__pinLabel, "Text"),
+        payload: {
+          ...base,
+          text: str(obj.__rawText ?? obj.text, "Text"),
+          textTransform: str(obj.__textTransform, "none"),
+          width: num(obj.width, 800),
+          fontFamily: str(obj.fontFamily, "Arial"),
+          fontSize: num(obj.fontSize, 36),
+          fontWeight: str(obj.fontWeight, "normal"),
+          fontStyle: str(obj.fontStyle, "normal"),
+          fill: str(obj.fill, "#333333"),
+          textAlign: str(obj.textAlign, "center"),
+        },
+      };
+    }
+
+    if (obj.__pinType === "band") {
+      const isCircle = obj.type === "circle";
+      if (isCircle) {
+        return {
+          kind: "shape",
+          suggestedName: str(obj.__pinLabel, "Circle"),
+          payload: {
+            ...base,
+            shapeType: "circle",
+            radius: num(obj.radius, 120),
+            fill: str(obj.fill, "#6366f1"),
+            strokeColor: str(obj.stroke, "#333333"),
+            strokeWidth: num(obj.strokeWidth, 0),
+            opacity: num(obj.opacity, 1),
+          },
+        };
+      }
+      return {
+        kind: "band",
+        suggestedName: str(obj.__pinLabel, "Band"),
+        payload: {
+          ...base,
+          width: num(obj.width, 1000),
+          height: num(obj.height, 150),
+          fill: str(obj.fill, "#1565c0"),
+        },
+      };
+    }
+
+    if (obj.__pinType === "frame") {
+      return {
+        kind: "frame",
+        suggestedName: str(obj.__pinLabel, "Frame"),
+        payload: {
+          ...base,
+          width: num(obj.width, 800),
+          height: num(obj.height, 120),
+          stroke: str(obj.stroke, "#333333"),
+          strokeWidth: num(obj.strokeWidth, 4),
+          strokeStyle: str(obj.__strokeStyle, "solid"),
+          rx: num(obj.rx, 0),
+          ry: num(obj.ry, 0),
+        },
+      };
+    }
+
+    if (obj.__pinType === "shape") {
+      return {
+        kind: "shape",
+        suggestedName: str(obj.__pinLabel, "Shape"),
+        payload: {
+          ...base,
+          shapeType: str(obj.__shapeType, "rect"),
+          fill: str(obj.fill, "#6366f1"),
+          strokeColor: str(obj.stroke, "#333333"),
+          strokeWidth: num(obj.strokeWidth, 0),
+          opacity: num(obj.opacity, 1),
+          rx: num(obj.rx, 0),
+          ry: num(obj.ry, 0),
+          width: num(obj.width, 0),
+          height: num(obj.height, 0),
+        },
+      };
+    }
+
+    if (obj.__pinType === "imageFrame" || (obj.__pinType === "image" && obj.type === "rect")) {
+      return {
+        kind: "imageZone",
+        suggestedName: str(obj.__pinLabel, obj.__flipX ? "Flip Image Zone" : "Image Zone"),
+        payload: {
+          ...base,
+          width: num(obj.width, 1000),
+          height: num(obj.height, 300),
+          fill: str(obj.fill, obj.__flipX ? "#b3d9ff" : "#e0e0e0"),
+          stroke: str(obj.stroke, obj.__flipX ? "#4a90d9" : "#cccccc"),
+          flipX: !!obj.__flipX,
+        },
+      };
+    }
+
+    if (obj.__pinType === "image" && obj.type === "image") {
+      const src = typeof obj.getSrc === "function" ? obj.getSrc() : "";
+      if (!src) return null;
+      return {
+        kind: "asset",
+        suggestedName: str(obj.__pinLabel, "Image"),
+        payload: {
+          ...base,
+          imageUrl: src,
+          width: num(obj.width, 300),
+          height: num(obj.height, 300),
+          flipX: !!obj.flipX,
+          flipY: !!obj.flipY,
+        },
+      };
+    }
+
+    return null;
+  };
+
+  const handleSaveSelectedReusable = async () => {
+    const selected = getSelectedObject();
+    if (!selected) {
+      toast.warning("Select an element first.");
+      return;
+    }
+    const serialized = serializeReusableFromObject(selected);
+    if (!serialized) {
+      toast.warning("This element type cannot be saved yet.");
+      return;
+    }
+
+    const suggested = serialized.suggestedName || "Reusable Element";
+    const nameInput = window.prompt("Reusable element name", suggested);
+    if (nameInput === null) return;
+    const cleanName = nameInput.trim();
+    if (!cleanName) {
+      toast.warning("Element name cannot be empty.");
+      return;
+    }
+
+    const elementId = `el_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const next: PinReusableElementOut[] = [
+      {
+        id: elementId,
+        name: cleanName,
+        kind: serialized.kind,
+        payload: serialized.payload,
+        created_at: new Date().toISOString(),
+      },
+      ...reusableElements,
+    ];
+
+    setReusableBusyId(elementId);
+    try {
+      const saved = await api.setPinReusableElements(next);
+      setReusableElements(saved);
+      toast.success(`Saved "${cleanName}" to reusable elements.`);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to save reusable element.");
+    } finally {
+      setReusableBusyId(null);
+    }
+  };
+
+  const applyPlacementFromPayload = (obj: any, payload: Record<string, unknown>) => {
+    const originX = str(payload.originX, obj.originX ?? "center");
+    const originY = str(payload.originY, obj.originY ?? "center");
+    obj.set({
+      left: num(payload.left, obj.left ?? PIN_W / 2),
+      top: num(payload.top, obj.top ?? PIN_H / 2),
+      originX,
+      originY,
+      angle: num(payload.angle, obj.angle ?? 0),
+      scaleX: num(payload.scaleX, obj.scaleX ?? 1),
+      scaleY: num(payload.scaleY, obj.scaleY ?? 1),
+    });
+    obj.__pinLocked = !!payload.locked;
+    applyLockState(obj);
+    obj.setCoords();
+  };
+
+  const applyImageZoneLabelPosition = (canvas: any, zoneObj: any) => {
+    const label = canvas.getObjects().find((o: any) => o.__isLabel && o.__forId === zoneObj.__pinId);
+    if (!label) return;
+    const width = (zoneObj.width ?? 0) * (zoneObj.scaleX ?? 1);
+    const height = (zoneObj.height ?? 0) * (zoneObj.scaleY ?? 1);
+    label.set({
+      left: num(zoneObj.left, 0) + width / 2,
+      top: num(zoneObj.top, 0) + height / 2,
+      text: str(zoneObj.__pinLabel, "Image Zone"),
+      fill: zoneObj.__flipX ? "#4a90d9" : "#999999",
+    });
+    label.setCoords();
+  };
+
+  const insertReusableElement = async (item: PinReusableElementOut) => {
+    const fabric = fabricLibRef.current;
+    const canvas = fabricCanvasRef.current;
+    if (!fabric || !canvas) return;
+
+    const payload = item.payload || {};
+    const newId = `re_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const kind = str(item.kind) as ReusableElementKind;
+    if (!["text", "band", "frame", "imageZone", "shape", "asset"].includes(kind)) {
+      toast.error("Unsupported reusable element type.");
+      return;
+    }
+
+    setReusableBusyId(item.id);
+    try {
+      if (kind === "text") {
+        saveUndoState();
+        const rawText = str(payload.text, "Text");
+        const tt = str(payload.textTransform, "none");
+        const textObj = new fabric.Textbox(applyTextTransform(rawText, tt), {
+          left: num(payload.left, PIN_W / 2),
+          top: num(payload.top, PIN_H / 2),
+          width: num(payload.width, 800),
+          fontFamily: str(payload.fontFamily, "Arial"),
+          fontSize: num(payload.fontSize, 36),
+          fontWeight: str(payload.fontWeight, "normal"),
+          fontStyle: str(payload.fontStyle, "normal"),
+          fill: str(payload.fill, "#333333"),
+          textAlign: str(payload.textAlign, "center"),
+          originX: str(payload.originX, "center") as any,
+          originY: str(payload.originY, "center") as any,
+          editable: true,
+        });
+        (textObj as any).__pinId = newId;
+        (textObj as any).__pinLabel = str(payload.label, "Text");
+        (textObj as any).__pinType = "text";
+        (textObj as any).__textTransform = tt;
+        (textObj as any).__rawText = rawText;
+        applyPlacementFromPayload(textObj, payload);
+        canvas.add(textObj);
+        canvas.setActiveObject(textObj);
+        syncSelectionFromObject(textObj);
+      } else if (kind === "band") {
+        saveUndoState();
+        const band = new fabric.Rect({
+          left: num(payload.left, 0),
+          top: num(payload.top, PIN_H / 2 - 75),
+          width: num(payload.width, PIN_W),
+          height: num(payload.height, 150),
+          fill: str(payload.fill, "#1565c0"),
+          originX: str(payload.originX, "left") as any,
+          originY: str(payload.originY, "top") as any,
+          selectable: true,
+          strokeWidth: 0,
+        });
+        (band as any).__pinId = newId;
+        (band as any).__pinLabel = str(payload.label, "Color Band");
+        (band as any).__pinType = "band";
+        applyPlacementFromPayload(band, payload);
+        canvas.add(band);
+        canvas.setActiveObject(band);
+        syncSelectionFromObject(band);
+      } else if (kind === "frame") {
+        saveUndoState();
+        const strokeStyle = str(payload.strokeStyle, "solid");
+        const frame = new fabric.Rect({
+          left: num(payload.left, PIN_W / 2),
+          top: num(payload.top, PIN_H / 2),
+          width: num(payload.width, 800),
+          height: num(payload.height, 120),
+          fill: "transparent",
+          stroke: str(payload.stroke, "#333333"),
+          strokeWidth: num(payload.strokeWidth, 4),
+          rx: num(payload.rx, 0),
+          ry: num(payload.ry, 0),
+          originX: str(payload.originX, "center") as any,
+          originY: str(payload.originY, "center") as any,
+          selectable: true,
+        });
+        if (strokeStyle === "dashed") frame.set("strokeDashArray", [15, 10]);
+        else if (strokeStyle === "dotted") frame.set("strokeDashArray", [4, 6]);
+        (frame as any).__pinId = newId;
+        (frame as any).__pinLabel = str(payload.label, "Frame");
+        (frame as any).__pinType = "frame";
+        (frame as any).__strokeStyle = strokeStyle;
+        applyPlacementFromPayload(frame, payload);
+        canvas.add(frame);
+        canvas.setActiveObject(frame);
+        syncSelectionFromObject(frame);
+      } else if (kind === "imageZone") {
+        saveUndoState();
+        const flip = !!payload.flipX;
+        const rect = new fabric.Rect({
+          left: num(payload.left, 0),
+          top: num(payload.top, 0),
+          width: num(payload.width, PIN_W),
+          height: num(payload.height, 280),
+          fill: str(payload.fill, flip ? "#b3d9ff" : "#e0e0e0"),
+          selectable: true,
+          strokeWidth: 2,
+          stroke: str(payload.stroke, flip ? "#4a90d9" : "#cccccc"),
+          originX: str(payload.originX, "left") as any,
+          originY: str(payload.originY, "top") as any,
+        });
+        (rect as any).__pinId = newId;
+        (rect as any).__pinLabel = str(payload.label, flip ? "Flip Image Zone" : "Image Zone");
+        (rect as any).__pinType = "image";
+        (rect as any).__flipX = flip;
+        applyPlacementFromPayload(rect, payload);
+        canvas.add(rect);
+        const label = new fabric.FabricText(flip ? "⇄ Flip Image Zone" : "Image Zone", {
+          left: num(rect.left, 0) + ((rect.width ?? 0) * (rect.scaleX ?? 1)) / 2,
+          top: num(rect.top, 0) + ((rect.height ?? 0) * (rect.scaleY ?? 1)) / 2,
+          fontSize: 24,
+          fontFamily: "Arial",
+          fill: flip ? "#4a90d9" : "#999999",
+          originX: "center",
+          originY: "center",
+          selectable: false,
+          evented: false,
+        });
+        (label as any).__isLabel = true;
+        (label as any).__forId = newId;
+        canvas.add(label);
+        applyImageZoneLabelPosition(canvas, rect);
+        canvas.setActiveObject(rect);
+        syncSelectionFromObject(rect);
+      } else if (kind === "shape") {
+        const shapeType = str(payload.shapeType, "rect");
+        addShape(shapeType);
+        const shape = getSelectedObject();
+        if (shape && shape.__pinType === "shape") {
+          saveUndoState();
+          if (shapeType === "rect-rounded" && shape.type === "rect") {
+            shape.set({
+              rx: num(payload.rx, 40),
+              ry: num(payload.ry, 40),
+            });
+          }
+          shape.set({
+            fill: str(payload.fill, "#6366f1"),
+            stroke: str(payload.strokeColor, shape.stroke ?? "#333333"),
+            strokeWidth: num(payload.strokeWidth, shape.strokeWidth ?? 0),
+            opacity: num(payload.opacity, shape.opacity ?? 1),
+          });
+          applyPlacementFromPayload(shape, payload);
+          syncSelectionFromObject(shape);
+        }
+      } else if (kind === "asset") {
+        const imageUrl = str(payload.imageUrl).trim();
+        if (!imageUrl) {
+          toast.warning("This reusable image has no source URL.");
+          return;
+        }
+        saveUndoState();
+        const img = await fabric.FabricImage.fromURL(proxyUrl(imageUrl), { crossOrigin: "anonymous" });
+        img.set({
+          left: num(payload.left, PIN_W / 2),
+          top: num(payload.top, PIN_H / 2),
+          originX: str(payload.originX, "center") as any,
+          originY: str(payload.originY, "center") as any,
+          scaleX: num(payload.scaleX, 1),
+          scaleY: num(payload.scaleY, 1),
+          angle: num(payload.angle, 0),
+          flipX: !!payload.flipX,
+          flipY: !!payload.flipY,
+        });
+        (img as any).__pinId = newId;
+        (img as any).__pinLabel = str(payload.label, "Image");
+        (img as any).__pinType = "image";
+        applyPlacementFromPayload(img, payload);
+        canvas.add(img);
+        canvas.setActiveObject(img);
+        syncSelectionFromObject(img);
+      }
+
+      canvas.renderAll();
+      updateLayers();
+      toast.success(`Added "${item.name}".`);
+    } catch (e: any) {
+      toast.error(e?.message || `Failed to add "${item.name}".`);
+    } finally {
+      setReusableBusyId(null);
+    }
+  };
+
+  const handleDeleteReusableElement = async (elementId: string) => {
+    if (!await openConfirm({ message: "Delete this reusable element?", danger: true, confirmLabel: "Delete" })) return;
+    const next = reusableElements.filter((it) => it.id !== elementId);
+    setReusableBusyId(elementId);
+    try {
+      const saved = await api.setPinReusableElements(next);
+      setReusableElements(saved);
+      toast.success("Reusable element deleted.");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to delete reusable element.");
+    } finally {
+      setReusableBusyId(null);
+    }
+  };
+
   const updateImageTransform = (prop: "left" | "top" | "width" | "height" | "angle", value: number) => {
     const canvas = fabricCanvasRef.current;
     const obj = getSelectedObject();
@@ -4178,6 +4620,59 @@ export default function PinDesigner({
                       </button>
                     ))}
                   </div>
+                </div>
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-gray-400 uppercase">Reusable Elements</p>
+                    <button
+                      onClick={() => void handleSaveSelectedReusable()}
+                      disabled={!selectedId || !!reusableBusyId}
+                      className="px-2 py-1 rounded border border-gray-700 text-[11px] text-gray-300 hover:bg-gray-800 disabled:opacity-50"
+                      title="Save selected element to your reusable library"
+                    >
+                      Save selected
+                    </button>
+                  </div>
+                  {reusableElements.length === 0 ? (
+                    <p className="text-[11px] text-gray-500">
+                      No reusable elements yet. Select an element on canvas, then click Save selected.
+                    </p>
+                  ) : (
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {reusableElements.map((item) => (
+                        <div key={item.id} className="rounded-lg border border-gray-800 bg-gray-900/60 p-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate text-xs text-white font-medium" title={item.name}>
+                                {item.name}
+                              </p>
+                              <p className="text-[10px] text-gray-500 uppercase">
+                                {item.kind}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => void insertReusableElement(item)}
+                                disabled={!!reusableBusyId}
+                                className="px-2 py-1 rounded border border-gray-700 text-[10px] text-gray-300 hover:bg-gray-800 disabled:opacity-50"
+                                title="Insert into canvas"
+                              >
+                                Add
+                              </button>
+                              <button
+                                onClick={() => void handleDeleteReusableElement(item.id)}
+                                disabled={!!reusableBusyId}
+                                className="p-1 rounded border border-gray-700 text-gray-400 hover:text-red-300 hover:border-red-800 hover:bg-red-900/20 disabled:opacity-50"
+                                title="Delete reusable element"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Canvas Size</p>
