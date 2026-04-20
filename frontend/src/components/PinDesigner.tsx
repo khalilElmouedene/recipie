@@ -1104,8 +1104,21 @@ export default function PinDesigner({
       titleAlt: string,
       extra?: { pin_title?: string; pin_description?: string }
     ) => {
+      // Always upload the pin image to the server to obtain a stable public URL.
+      // This URL is stored as pin_design_image so the Pinterest CSV/worksheet can
+      // use it directly without needing to upload on demand at CSV generation time.
+      let hostedImageUrl: string = dataUrl;
+      if (siteId && dataUrl.startsWith("data:")) {
+        try {
+          hostedImageUrl = await api.uploadPinImageToServer(siteId, dataUrl);
+        } catch {
+          // Upload failed — fall back to base64; CSV will upload on demand.
+          hostedImageUrl = dataUrl;
+        }
+      }
+
       const updates: Record<string, unknown> = {
-        pin_design_image: dataUrl,
+        pin_design_image: hostedImageUrl,
         pin_template_id: selectedTemplate?.id,
         ...(extra?.pin_title !== undefined ? { pin_title: extra.pin_title } : {}),
         ...(extra?.pin_description !== undefined ? { pin_description: extra.pin_description } : {}),
@@ -1113,6 +1126,7 @@ export default function PinDesigner({
 
       if (embedPinInArticle) {
         const full = await api.getRecipe(rid);
+        // Embed the original dataUrl in the article (backend will upload it to WP on publish).
         updates.generated_article = appendPinImageToArticleHtml(
           full.generated_article ?? "",
           dataUrl,
@@ -1122,7 +1136,7 @@ export default function PinDesigner({
 
       await api.updateRecipe(rid, updates);
     },
-    [selectedTemplate?.id, embedPinInArticle]
+    [selectedTemplate?.id, embedPinInArticle, siteId]
   );
 
   // Shared: render every frame, save pin image to recipe (embed in article), optionally download
@@ -1557,14 +1571,16 @@ export default function PinDesigner({
 
     const resolveMediaUrl = async (recipe: PinterestWorksheetRecipe): Promise<string> => {
       const pinDesignImage = recipe.pinDesignImage;
-      if (pinDesignImage?.startsWith("data:") && recipe.siteId) {
-        try {
-          return await api.uploadPinImageToServer(recipe.siteId, pinDesignImage);
-        } catch {
-          return "";
-        }
+      if (!pinDesignImage) return "";
+      // Already a hosted public URL — use it directly.
+      if (!pinDesignImage.startsWith("data:")) return pinDesignImage;
+      // Base64 fallback: upload on demand (happens when upload failed at save time).
+      if (!recipe.siteId) return "";
+      try {
+        return await api.uploadPinImageToServer(recipe.siteId, pinDesignImage);
+      } catch {
+        return "";
       }
-      return "";
     };
 
     return buildPinterestWorksheetRows(
@@ -1630,7 +1646,9 @@ export default function PinDesigner({
         pin_title: recipePinTitle || initialTitle,
         pin_description: recipePinDescription || initialTitle,
       });
-      toast.success("Design saved to recipe. The pin image was added near the end of the generated article HTML.");
+      toast.success(embedPinInArticle
+        ? "Design saved. Pin image embedded in the article and hosted URL saved."
+        : "Design saved. Pin image hosted URL saved for Pinterest CSV.");
     } catch (err: any) {
       toast.error(`Failed to save: ${err.message}`);
     } finally {
