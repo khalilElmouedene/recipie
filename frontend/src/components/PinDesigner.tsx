@@ -27,7 +27,6 @@ import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
-const MIN_IMAGE_SCALE = 0.05;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -55,26 +54,8 @@ function rgbaToHex(rgba: string): { hex: string; alpha: number } {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-function getContainScale(boundsW: number, boundsH: number, imgW: number, imgH: number): number {
-  return Math.min(boundsW / Math.max(imgW, 1), boundsH / Math.max(imgH, 1));
-}
-
-function clampCenterToClip(center: number, clipStart: number, clipSize: number, objectSize: number): number {
-  const half = objectSize / 2;
-  const min = objectSize <= clipSize ? clipStart + half : clipStart + clipSize - half;
-  const max = objectSize <= clipSize ? clipStart + clipSize - half : clipStart + half;
-  return Math.max(min, Math.min(max, center));
-}
-
-function clampImageWithinClip(img: any, clip: any) {
-  const imgW = (img.width || 1) * (img.scaleX || 1);
-  const imgH = (img.height || 1) * (img.scaleY || 1);
-  const clipLeft = clip.left ?? 0;
-  const clipTop = clip.top ?? 0;
-  const clipW = clip.width || 0;
-  const clipH = clip.height || 0;
-  img.left = clampCenterToClip(img.left ?? clipLeft + clipW / 2, clipLeft, clipW, imgW);
-  img.top = clampCenterToClip(img.top ?? clipTop + clipH / 2, clipTop, clipH, imgH);
+function getCoverScale(boundsW: number, boundsH: number, imgW: number, imgH: number): number {
+  return Math.max(boundsW / Math.max(imgW, 1), boundsH / Math.max(imgH, 1));
 }
 
 function buildImageZoneGroupBounds(elements: TemplateElement[], imageCount: number) {
@@ -498,7 +479,7 @@ export async function buildTemplateOnCanvas(
           const resolved = await resolveImageUrl(imageUrl);
           const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
           const bbox = imageGroupBounds.get(assignedIdx) ?? { left: el.x, top: el.y, width: el.width, height: el.height };
-          const scale = getContainScale(bbox.width, bbox.height, img.width || 1, img.height || 1);
+          const scale = getCoverScale(bbox.width, bbox.height, img.width || 1, img.height || 1);
           img.set({
             left: bbox.left + bbox.width / 2,
             top: bbox.top + bbox.height / 2,
@@ -2027,7 +2008,7 @@ export default function PinDesigner({
             const bboxH = bbox.height;
             const imgW = img.width || 1;
             const imgH = img.height || 1;
-            const scale = getContainScale(bboxW, bboxH, imgW, imgH);
+            const scale = getCoverScale(bboxW, bboxH, imgW, imgH);
             const shouldFlip = (el as any).flipX === true;
             img.set({
               left: bbox.left + bboxW / 2,
@@ -2456,7 +2437,18 @@ export default function PinDesigner({
           } else if (obj?.clipPath && obj.clipPath.absolutePositioned) {
             // imageContent in edit mode: pan within its clip zone
             const clip = obj.clipPath;
-            clampImageWithinClip(obj, clip);
+            const imgW = (obj.width || 1) * (obj.scaleX || 1);
+            const imgH = (obj.height || 1) * (obj.scaleY || 1);
+            const clipLeft   = clip.left ?? 0;
+            const clipTop    = clip.top  ?? 0;
+            const clipRight  = clipLeft + (clip.width  || 0);
+            const clipBottom = clipTop  + (clip.height || 0);
+            const minLeft = clipRight  - imgW / 2;
+            const maxLeft = clipLeft   + imgW / 2;
+            const minTop  = clipBottom - imgH / 2;
+            const maxTop  = clipTop    + imgH / 2;
+            obj.left = Math.max(minLeft, Math.min(maxLeft, obj.left));
+            obj.top  = Math.max(minTop,  Math.min(maxTop,  obj.top));
           }
 
           syncDesignerBorder(canvas, obj);
@@ -2487,9 +2479,21 @@ export default function PinDesigner({
           transformSaveDoneRef.current = false;
           const obj = e.target as any;
           if (!obj) return;
-          // After scaling, keep the image positioned cleanly inside its clip zone.
+          // After scaling, re-enforce frame constraints so image still covers its clip zone
           if (obj?.clipPath && obj.clipPath.absolutePositioned) {
-            clampImageWithinClip(obj, obj.clipPath);
+            const clip = obj.clipPath;
+            const imgW = (obj.width || 1) * (obj.scaleX || 1);
+            const imgH = (obj.height || 1) * (obj.scaleY || 1);
+            const clipLeft   = clip.left ?? 0;
+            const clipTop    = clip.top  ?? 0;
+            const clipRight  = clipLeft + (clip.width  || 0);
+            const clipBottom = clipTop  + (clip.height || 0);
+            const minLeft = clipRight  - imgW / 2;
+            const maxLeft = clipLeft   + imgW / 2;
+            const minTop  = clipBottom - imgH / 2;
+            const maxTop  = clipTop    + imgH / 2;
+            obj.left = Math.max(minLeft, Math.min(maxLeft, obj.left));
+            obj.top  = Math.max(minTop,  Math.min(maxTop,  obj.top));
             obj.setCoords();
           }
 
@@ -2506,7 +2510,16 @@ export default function PinDesigner({
                 height: (obj.height ?? 0) * (obj.scaleY ?? 1),
               });
               img.clipPath.setCoords();
-              clampImageWithinClip(img, img.clipPath);
+              // Re-enforce cover constraint after frame resize
+              const clip = img.clipPath;
+              const imgW = (img.width || 1) * (img.scaleX || 1);
+              const imgH = (img.height || 1) * (img.scaleY || 1);
+              const clipLeft   = clip.left ?? 0;
+              const clipTop    = clip.top  ?? 0;
+              const clipRight  = clipLeft + (clip.width  || 0);
+              const clipBottom = clipTop  + (clip.height || 0);
+              img.left = Math.max(clipRight - imgW / 2, Math.min(clipLeft + imgW / 2, img.left ?? 0));
+              img.top  = Math.max(clipBottom - imgH / 2, Math.min(clipTop + imgH / 2, img.top  ?? 0));
               img.setCoords();
             }
             setImageProps({
@@ -3179,7 +3192,7 @@ export default function PinDesigner({
       .then((img: any) => {
         if (!img || !img.width) throw new Error("Empty image");
 
-        const scale = getContainScale(zoneW, zoneH, img.width || 1, img.height || 1);
+        const scale = getCoverScale(zoneW, zoneH, img.width || 1, img.height || 1);
         img.set({
           left: zoneLeft + zoneW / 2,
           top: zoneTop + zoneH / 2,
@@ -3262,9 +3275,20 @@ export default function PinDesigner({
     saveUndoState();
     const factor = direction === "in" ? 1.15 : 1 / 1.15;
     const clip = img.clipPath;
-    const newScale = Math.max((img.scaleX || 1) * factor, MIN_IMAGE_SCALE);
+    const zoneW = clip.width ?? 1;
+    const zoneH = clip.height ?? 1;
+    const imgNatW = img.width || 1;
+    const imgNatH = img.height || 1;
+    const minScale = getCoverScale(zoneW, zoneH, imgNatW, imgNatH);
+    const newScale = Math.max(img.scaleX * factor, minScale);
     img.set({ scaleX: newScale, scaleY: newScale });
-    clampImageWithinClip(img, clip);
+    // Re-clamp position
+    const finalImgW = imgNatW * newScale;
+    const finalImgH = imgNatH * newScale;
+    const clipLeft = clip.left ?? 0;
+    const clipTop = clip.top ?? 0;
+    img.left = Math.max(clipLeft + (clip.width ?? 0) - finalImgW / 2, Math.min(clipLeft + finalImgW / 2, img.left));
+    img.top  = Math.max(clipTop  + (clip.height ?? 0) - finalImgH / 2, Math.min(clipTop  + finalImgH / 2, img.top));
     img.setCoords();
     canvas.renderAll();
   };
@@ -3461,18 +3485,22 @@ export default function PinDesigner({
     const newScaleX = (obj.scaleX ?? 1) * factor;
     const newScaleY = (obj.scaleY ?? 1) * factor;
 
-    // If image has a clip zone, keep scaling positive and the image inside the zone.
+    // If image has a clip zone, enforce minimum scale so it always covers the zone
     if (obj.clipPath && obj.clipPath.absolutePositioned) {
-      obj.set({
-        scaleX: Math.max(newScaleX, MIN_IMAGE_SCALE),
-        scaleY: Math.max(newScaleY, MIN_IMAGE_SCALE),
-      });
-      clampImageWithinClip(obj, obj.clipPath);
+      const clip = obj.clipPath;
+      const minScale = getCoverScale(clip.width || 0, clip.height || 0, obj.width || 1, obj.height || 1);
+      obj.set({ scaleX: Math.max(minScale, newScaleX), scaleY: Math.max(minScale, newScaleY) });
+      // Re-clamp position so image still covers the frame
+      const imgW = (obj.width || 1) * (obj.scaleX || 1);
+      const imgH = (obj.height || 1) * (obj.scaleY || 1);
+      const clipLeft   = clip.left ?? 0;
+      const clipTop    = clip.top  ?? 0;
+      const clipRight  = clipLeft + (clip.width  || 0);
+      const clipBottom = clipTop  + (clip.height || 0);
+      obj.left = Math.max(clipRight - imgW / 2, Math.min(clipLeft + imgW / 2, obj.left ?? 0));
+      obj.top  = Math.max(clipBottom - imgH / 2, Math.min(clipTop  + imgH / 2, obj.top  ?? 0));
     } else {
-      obj.set({
-        scaleX: Math.max(newScaleX, MIN_IMAGE_SCALE),
-        scaleY: Math.max(newScaleY, MIN_IMAGE_SCALE),
-      });
+      obj.set({ scaleX: newScaleX, scaleY: newScaleY });
     }
 
     obj.setCoords();
