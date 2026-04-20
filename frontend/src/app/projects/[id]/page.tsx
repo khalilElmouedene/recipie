@@ -134,7 +134,7 @@ export default function ProjectDetailPage() {
             <Sheet size={16} /> Spy Sheet
           </button>
           <button
-            onClick={() => router.push(`/pinterest-gallery?project_id=${id}`)}
+            onClick={() => router.push(`/pinterest-gallery?project_id=${id}&from_project=1`)}
             className="btn-secondary flex items-center justify-center gap-2 w-full sm:w-auto"
             style={{ borderColor: "rgba(230,0,35,0.5)", color: "#E60023" }}
             title="Open Pinterest gallery filtered to this project"

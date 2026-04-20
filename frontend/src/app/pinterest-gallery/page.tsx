@@ -11,8 +11,7 @@ import {
   X,
   Loader2,
   Sheet,
-  ArrowLeft,
-  FolderOpen,
+  ChevronDown,
 } from "lucide-react";
 import { api, ProjectOut, PinterestRecipeOut } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
@@ -52,25 +51,20 @@ function PinterestGalleryInner() {
   const toast = useToast();
 
   const projectIdParam = searchParams.get("project_id");
+  const fromProjectDetails = searchParams.get("from_project") === "1";
 
-  // Project list (for selector screen)
   const [projects, setProjects] = useState<ProjectOut[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
 
-  // Selected project
-  const [selectedProject, setSelectedProject] = useState<ProjectOut | null>(null);
-
-  // Recipes for selected project
   const [allRecipes, setAllRecipes] = useState<PinterestRecipeOut[]>([]);
   const [recipesLoading, setRecipesLoading] = useState(false);
   const [recipesError, setRecipesError] = useState<string | null>(null);
 
-  // Filters
   const [search, setSearch] = useState("");
   const [selectedWebsite, setSelectedWebsite] = useState<string>("");
   const [selectedBoard, setSelectedBoard] = useState<string>("__all__");
 
-  // CSV modal
   const [showCsvModal, setShowCsvModal] = useState(false);
   const [csvStartDate, setCsvStartDate] = useState(() => formatDateTimeLocal(new Date()));
   const [csvInterval, setCsvInterval] = useState(300);
@@ -80,31 +74,33 @@ function PinterestGalleryInner() {
   // ── Load project list once ──
   useEffect(() => {
     api.getProjects()
-      .then(setProjects)
+      .then((projs) => {
+        setProjects(projs);
+        const initId = projectIdParam || "";
+        setSelectedProjectId(initId);
+      })
       .catch(() => {})
       .finally(() => setProjectsLoading(false));
-  }, []);
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Auto-select project from URL param ──
+  // ── Fetch recipes when project changes ──
   useEffect(() => {
-    if (!projectIdParam || projects.length === 0) return;
-    const found = projects.find((p) => p.id === projectIdParam);
-    if (found) setSelectedProject(found);
-  }, [projectIdParam, projects]);
-
-  // ── Fetch recipes when project selected (ONE call) ──
-  useEffect(() => {
-    if (!selectedProject) { setAllRecipes([]); return; }
+    if (!selectedProjectId) { setAllRecipes([]); return; }
     setRecipesLoading(true);
     setRecipesError(null);
     setSearch("");
     setSelectedWebsite("");
     setSelectedBoard("__all__");
-    api.getProjectPinterestRecipes(selectedProject.id)
+    api.getProjectPinterestRecipes(selectedProjectId)
       .then(setAllRecipes)
       .catch((e) => setRecipesError(e?.message || "Failed to load recipes"))
       .finally(() => setRecipesLoading(false));
-  }, [selectedProject]);
+  }, [selectedProjectId]);
+
+  const handleProjectChange = (id: string) => {
+    setSelectedProjectId(id);
+    router.replace(id ? `/pinterest-gallery?project_id=${id}` : "/pinterest-gallery");
+  };
 
   // ── Derived data ──
   const websites = useMemo(() =>
@@ -170,7 +166,6 @@ function PinterestGalleryInner() {
     return "";
   };
 
-  // ── CSV export ──
   const downloadCsv = async () => {
     if (filtered.length === 0) return;
     setCsvGenerating(true);
@@ -215,92 +210,58 @@ function PinterestGalleryInner() {
     }
   };
 
-  // ── Project selector screen ──────────────────────────────────────────────
-  if (!selectedProject) {
-    return (
-      <div className="min-h-screen bg-gray-950 text-white">
-        <div className="mx-auto max-w-screen-lg px-4 sm:px-6 py-10">
-          {/* Header */}
-          <div className="flex items-center gap-4 mb-8">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#E60023]/15 shrink-0">
-              <svg viewBox="0 0 24 24" className="h-6 w-6 fill-[#E60023]" aria-hidden>
-                <path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 0 1 .083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0z" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-white">Pinterest Gallery</h1>
-              <p className="text-sm text-gray-400">Select a project to view its published pins</p>
-            </div>
-          </div>
+  const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const hideProjectSelector = fromProjectDetails && Boolean(projectIdParam);
+  const allBoards = useMemo(() => {
+    const set = new Set<string>();
+    allRecipes.forEach((r) => { if (r.pin_board) set.add(r.pin_board); });
+    return Array.from(set);
+  }, [allRecipes]);
 
-          {projectsLoading ? (
-            <div className="flex items-center justify-center py-24">
-              <Loader2 size={32} className="animate-spin text-[#E60023]" />
-            </div>
-          ) : projects.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-24 gap-3">
-              <FolderOpen size={40} className="text-gray-700" />
-              <p className="text-sm text-gray-500">No projects found.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {projects.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => {
-                    setSelectedProject(p);
-                    router.replace(`/pinterest-gallery?project_id=${p.id}`);
-                  }}
-                  className="group flex flex-col items-start gap-2 rounded-2xl border border-gray-800 bg-gray-900 p-5 text-left transition hover:border-[#E60023]/40 hover:bg-gray-800"
-                >
-                  <div className="flex items-center gap-3 w-full">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#E60023]/10 group-hover:bg-[#E60023]/20 transition">
-                      <svg viewBox="0 0 24 24" className="h-5 w-5 fill-[#E60023]/70" aria-hidden>
-                        <path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 0 1 .083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0z" />
-                      </svg>
-                    </div>
-                    <span className="font-semibold text-white truncate">{p.name}</span>
-                  </div>
-                  <div className="flex gap-3 text-xs text-gray-500">
-                    <span>{p.site_count} site{p.site_count !== 1 ? "s" : ""}</span>
-                    <span>{p.recipe_count} recipe{p.recipe_count !== 1 ? "s" : ""}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ── Gallery screen ───────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-950 text-white">
       {/* ── Sticky header ── */}
       <div className="sticky top-0 z-30 border-b border-gray-800 bg-gray-950/95 backdrop-blur-sm">
         <div className="mx-auto max-w-screen-2xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between gap-4">
-            {/* Back + title */}
+            {/* Title + project selector */}
             <div className="flex items-center gap-3 min-w-0">
-              <button
-                onClick={() => {
-                  setSelectedProject(null);
-                  router.replace("/pinterest-gallery");
-                }}
-                className="shrink-0 flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 transition"
-              >
-                <ArrowLeft size={14} /> Projects
-              </button>
-              <span className="text-gray-700">/</span>
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#E60023]/15">
-                  <svg viewBox="0 0 24 24" className="h-4 w-4 fill-[#E60023]" aria-hidden>
-                    <path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 0 1 .083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0z" />
-                  </svg>
-                </div>
-                <span className="font-semibold text-white truncate">{selectedProject.name}</span>
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#E60023]/15">
+                <svg viewBox="0 0 24 24" className="h-5 w-5 fill-[#E60023]" aria-hidden>
+                  <path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738a.36.36 0 0 1 .083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0z" />
+                </svg>
               </div>
+              <div className="hidden sm:block">
+                <p className="text-xs text-gray-500 leading-tight">Pinterest Gallery</p>
+              </div>
+              {!hideProjectSelector ? (
+                <div className="relative">
+                  <select
+                    value={selectedProjectId}
+                    onChange={(e) => handleProjectChange(e.target.value)}
+                    disabled={projectsLoading}
+                    className="appearance-none rounded-lg border border-gray-700 bg-gray-900 pl-3 pr-8 py-1.5 text-sm text-white outline-none focus:border-brand-500 transition cursor-pointer disabled:opacity-50 max-w-[200px] sm:max-w-xs"
+                  >
+                    {projectsLoading ? (
+                      <option>Loading…</option>
+                    ) : projects.length === 0 ? (
+                      <option value="">No projects</option>
+                    ) : (
+                      <>
+                        <option value="">Select project…</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </>
+                    )}
+                  </select>
+                  <ChevronDown size={13} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                </div>
+              ) : (
+                <div className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-1.5 text-sm text-gray-200 max-w-[260px] truncate" title={selectedProject?.name || projectIdParam || "Project"}>
+                  {selectedProject?.name || "Project"}
+                </div>
+              )}
             </div>
 
             {/* Actions */}
@@ -329,10 +290,10 @@ function PinterestGalleryInner() {
 
       <div className="mx-auto max-w-screen-2xl px-4 sm:px-6 lg:px-8 py-6">
         {/* ── Stats bar ── */}
-        {!recipesLoading && !recipesError && (
+        {!recipesLoading && !recipesError && selectedProjectId && (
           <div className="mb-6 flex flex-wrap gap-3">
             <StatPill label="Total pins" value={allRecipes.length} color="brand" />
-            <StatPill label="Boards" value={boards.length} color="purple" />
+            <StatPill label="Boards" value={allBoards.length} color="purple" />
             <StatPill label="Websites" value={websites.length} color="blue" />
             {selectedBoard !== "__all__" && <StatPill label="Showing" value={filtered.length} color="pink" />}
           </div>
@@ -377,7 +338,12 @@ function PinterestGalleryInner() {
         )}
 
         {/* ── States ── */}
-        {recipesLoading && (
+        {!selectedProjectId && !projectsLoading && (
+          <div className="flex items-center justify-center py-24">
+            <p className="text-sm text-gray-500">Select a project above to view its pins.</p>
+          </div>
+        )}
+        {(recipesLoading || (projectsLoading && !selectedProjectId)) && (
           <div className="flex flex-col items-center justify-center py-32 gap-4">
             <Loader2 size={36} className="animate-spin text-[#E60023]" />
             <p className="text-sm text-gray-400">Loading published pins…</p>
@@ -390,8 +356,8 @@ function PinterestGalleryInner() {
             </div>
           </div>
         )}
-        {!recipesLoading && !recipesError && allRecipes.length === 0 && (
-          <EmptyState message="No published pins yet for this project. Publish recipes to WordPress first." />
+        {!recipesLoading && !recipesError && selectedProjectId && allRecipes.length === 0 && (
+          <EmptyState message={`No published pins yet for "${selectedProject?.name}". Publish recipes to WordPress first.`} />
         )}
         {!recipesLoading && !recipesError && allRecipes.length > 0 && filtered.length === 0 && (
           <EmptyState message="No pins match your current filter." />
@@ -447,7 +413,7 @@ function PinterestGalleryInner() {
   );
 }
 
-// ─── Page (wraps inner in Suspense for useSearchParams) ───────────────────────
+// ─── Page wrapper (Suspense required for useSearchParams) ─────────────────────
 export default function PinterestGalleryPage() {
   return (
     <Suspense fallback={
