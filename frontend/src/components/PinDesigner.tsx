@@ -409,34 +409,6 @@ export async function buildTemplateOnCanvas(
   const oBandColor = overrides?.bandColor;
   const oWebsite = overrides?.websiteText;
 
-  // Pre-scan image zones to group zones that share the same imageIndex.
-  // This allows multiple zones mapped to the same image to behave as a single
-  // continuous photo (cover-fit the combined bbox, clip each zone separately).
-  type ImageZoneInfo = { el: typeof template.elements[0]; zoneIndex: number };
-  const imageZoneGroups = new Map<number, ImageZoneInfo[]>();
-  {
-    let idx = 0;
-    for (const el of template.elements) {
-      if (el.type !== "image") continue;
-      const legacyId = String(el.id || "");
-      if (legacyId.startsWith("bg_") || legacyId.startsWith("img_")) continue;
-      const assignedIdx = idx % Math.max(images.length, 1);
-      const group = imageZoneGroups.get(assignedIdx) ?? [];
-      group.push({ el, zoneIndex: idx });
-      imageZoneGroups.set(assignedIdx, group);
-      idx++;
-    }
-  }
-
-  // Compute combined bounding box for each image group.
-  const groupBBox = new Map<number, { left: number; top: number; width: number; height: number }>();
-  for (const [assignedIdx, zones] of imageZoneGroups) {
-    const x1 = Math.min(...zones.map((z) => z.el.x));
-    const y1 = Math.min(...zones.map((z) => z.el.y));
-    const x2 = Math.max(...zones.map((z) => z.el.x + z.el.width));
-    const y2 = Math.max(...zones.map((z) => z.el.y + z.el.height));
-    groupBBox.set(assignedIdx, { left: x1, top: y1, width: x2 - x1, height: y2 - y1 });
-  }
 
   for (const el of template.elements) {
     if (el.type === "asset" && (el as any).imageUrl) {
@@ -472,14 +444,13 @@ export async function buildTemplateOnCanvas(
       if (imageUrl) {
         try {
           const resolved = await resolveImageUrl(imageUrl);
-          // Load image (or reuse cached dimensions to build a fresh FabricImage clone).
           const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
-          const bbox = groupBBox.get(assignedIdx) ?? { left: el.x, top: el.y, width: el.width, height: el.height };
-          // Cover-fit to the combined bounding box of all zones sharing this image.
-          const scale = Math.max(bbox.width / (img.width || 1), bbox.height / (img.height || 1));
+          // Cover-fit to this zone's own bbox so a single image shared across
+          // multiple slots doesn't get scaled against the combined canvas height.
+          const scale = Math.max(el.width / (img.width || 1), el.height / (img.height || 1));
           img.set({
-            left: bbox.left + bbox.width / 2,
-            top: bbox.top + bbox.height / 2,
+            left: el.x + el.width / 2,
+            top: el.y + el.height / 2,
             originX: "center",
             originY: "center",
             scaleX: scale,
