@@ -4393,15 +4393,27 @@ export default function PinDesigner({
                     <span className="text-xs text-gray-500 animate-pulse">Fetching last post date…</span>
                   )}
                 </div>
-                <input
-                  type="datetime-local"
-                  value={wpScheduleFirstAt}
-                  onChange={(e) => setWpScheduleFirstAt(e.target.value)}
-                  className="input-field w-full"
-                />
+                <div className="relative">
+                  <input
+                    type="datetime-local"
+                    value={wpScheduleFirstAt}
+                    onChange={(e) => setWpScheduleFirstAt(e.target.value)}
+                    disabled={lastPublishDateLoading}
+                    className={`input-field w-full ${lastPublishDateLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                  />
+                  {lastPublishDateLoading && (
+                    <div className="absolute inset-0 flex items-center justify-center rounded bg-gray-800/60">
+                      <svg className="animate-spin h-4 w-4 text-brand-400" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      <span className="ml-2 text-xs text-gray-300">Loading last post date…</span>
+                    </div>
+                  )}
+                </div>
                 <p className="text-xs text-gray-500 mt-1">
                   {lastPublishDateLoading
-                    ? "Loading last published post date from WordPress…"
+                    ? ""
                     : "Pre-filled from your last published WordPress post. Adjust as needed."}
                 </p>
                 {!(!frames?.length && recipeId) && (
@@ -4424,7 +4436,7 @@ export default function PinDesigner({
               <div className="flex gap-2 pt-2">
                 <button
                   className="btn-primary flex-1"
-                  disabled={!!wpBatchBusy}
+                  disabled={!!wpBatchBusy || lastPublishDateLoading}
                   onClick={async () => {
                     setShowWpScheduleModal(false);
                     await runWordPressBatchFromDesigner("wordpress_scheduled", {
