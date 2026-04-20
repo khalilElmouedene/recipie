@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, Suspense } from "react";
+import { useEffect, useRef, useState, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Download,
@@ -66,6 +66,18 @@ function PinterestGalleryInner() {
   const [selectedWebsite, setSelectedWebsite] = useState<string>("");
   const [selectedBoard, setSelectedBoard] = useState<string>("__all__");
 
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setDropdownOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [dropdownOpen]);
+
   const [showCsvModal, setShowCsvModal] = useState(false);
   const [csvStartDate, setCsvStartDate] = useState(() => formatDateTimeLocal(new Date()));
   const [csvInterval, setCsvInterval] = useState(300);
@@ -86,16 +98,19 @@ function PinterestGalleryInner() {
 
   // ── Fetch recipes when project / site changes ──
   useEffect(() => {
-    if (!selectedProjectId) { setAllRecipes([]); return; }
+    if (!selectedProjectId) { setAllRecipes([]); setRecipesLoading(false); return; }
+    const controller = new AbortController();
+    setAllRecipes([]);
     setRecipesLoading(true);
     setRecipesError(null);
     setSearch("");
     setSelectedWebsite("");
     setSelectedBoard("__all__");
-    api.getProjectPinterestRecipes(selectedProjectId, siteIdParam ?? undefined)
-      .then(setAllRecipes)
-      .catch((e) => setRecipesError(e?.message || "Failed to load recipes"))
-      .finally(() => setRecipesLoading(false));
+    api.getProjectPinterestRecipes(selectedProjectId, siteIdParam ?? undefined, controller.signal)
+      .then((data) => { if (!controller.signal.aborted) setAllRecipes(data); })
+      .catch((e) => { if (e?.name !== "AbortError") setRecipesError(e?.message || "Failed to load recipes"); })
+      .finally(() => { if (!controller.signal.aborted) setRecipesLoading(false); });
+    return () => { controller.abort(); };
   }, [selectedProjectId, siteIdParam]);
 
   const handleProjectChange = (id: string) => {
@@ -235,31 +250,60 @@ function PinterestGalleryInner() {
                 <p className="text-xs text-gray-500 leading-tight">Pinterest Gallery</p>
               </div>
               {!hideProjectSelector ? (
-                <div className="relative">
-                  <select
-                    value={selectedProjectId}
-                    onChange={(e) => handleProjectChange(e.target.value)}
+                <div className="relative" ref={dropdownRef}>
+                  <button
+                    type="button"
                     disabled={projectsLoading}
-                    className="appearance-none rounded-lg border border-gray-700 bg-gray-900 pl-3 pr-8 py-1.5 text-sm text-white outline-none focus:border-brand-500 transition cursor-pointer disabled:opacity-50 max-w-[200px] sm:max-w-xs"
+                    onClick={() => setDropdownOpen((v) => !v)}
+                    className="flex items-center gap-2 rounded-xl border border-gray-700 bg-gray-900 pl-3.5 pr-3 py-2 text-sm text-white outline-none transition hover:border-gray-500 hover:bg-gray-800 focus:border-[#E60023]/60 disabled:opacity-50 disabled:cursor-not-allowed min-w-[160px] max-w-[240px]"
                   >
                     {projectsLoading ? (
-                      <option>Loading…</option>
-                    ) : projects.length === 0 ? (
-                      <option value="">No projects</option>
+                      <><Loader2 size={13} className="animate-spin text-gray-400 shrink-0" /><span className="text-gray-400">Loading…</span></>
                     ) : (
                       <>
-                        <option value="">Select project…</option>
-                        {projects.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
+                        <span className="truncate flex-1 text-left">
+                          {selectedProject ? selectedProject.name : <span className="text-gray-400">Select project…</span>}
+                        </span>
+                        {recipesLoading && <Loader2 size={13} className="animate-spin text-[#E60023] shrink-0" />}
                       </>
                     )}
-                  </select>
-                  <ChevronDown size={13} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <ChevronDown size={13} className={`shrink-0 text-gray-400 transition-transform duration-200 ${dropdownOpen ? "rotate-180" : ""}`} />
+                  </button>
+
+                  {dropdownOpen && !projectsLoading && (
+                    <div className="absolute left-0 top-full mt-2 z-50 w-64 rounded-xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/60 overflow-hidden">
+                      <div className="px-2 py-1.5 border-b border-gray-800">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 px-1">Projects</p>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto py-1">
+                        {projects.length === 0 ? (
+                          <p className="px-3 py-2 text-sm text-gray-500">No projects found</p>
+                        ) : (
+                          projects.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => { handleProjectChange(p.id); setDropdownOpen(false); }}
+                              className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition rounded-lg mx-0.5 my-0.5 ${
+                                selectedProjectId === p.id
+                                  ? "bg-[#E60023]/15 text-white"
+                                  : "text-gray-300 hover:bg-gray-800 hover:text-white"
+                              }`}
+                            >
+                              <span className={`h-2 w-2 rounded-full shrink-0 ${selectedProjectId === p.id ? "bg-[#E60023]" : "bg-gray-600"}`} />
+                              <span className="truncate">{p.name}</span>
+                              {selectedProjectId === p.id && <span className="ml-auto text-[#E60023]">✓</span>}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
-                <div className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-1.5 text-sm text-gray-200 max-w-[260px] truncate" title={selectedProject?.name || projectIdParam || "Project"}>
-                  {selectedProject?.name || "Project"}
+                <div className="flex items-center gap-2 rounded-xl border border-gray-700 bg-gray-900 px-3.5 py-2 text-sm text-gray-200 max-w-[260px]" title={selectedProject?.name || projectIdParam || "Project"}>
+                  <span className="h-2 w-2 rounded-full bg-[#E60023] shrink-0" />
+                  <span className="truncate">{selectedProject?.name || "Project"}</span>
                 </div>
               )}
             </div>
