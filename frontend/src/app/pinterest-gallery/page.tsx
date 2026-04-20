@@ -84,7 +84,7 @@ function PinterestGalleryInner() {
       .finally(() => setProjectsLoading(false));
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Fetch recipes when project changes ──
+  // ── Fetch recipes when project / site changes ──
   useEffect(() => {
     if (!selectedProjectId) { setAllRecipes([]); return; }
     setRecipesLoading(true);
@@ -92,11 +92,11 @@ function PinterestGalleryInner() {
     setSearch("");
     setSelectedWebsite("");
     setSelectedBoard("__all__");
-    api.getProjectPinterestRecipes(selectedProjectId)
+    api.getProjectPinterestRecipes(selectedProjectId, siteIdParam ?? undefined)
       .then(setAllRecipes)
       .catch((e) => setRecipesError(e?.message || "Failed to load recipes"))
       .finally(() => setRecipesLoading(false));
-  }, [selectedProjectId]);
+  }, [selectedProjectId, siteIdParam]);
 
   const handleProjectChange = (id: string) => {
     setSelectedProjectId(id);
@@ -110,19 +110,12 @@ function PinterestGalleryInner() {
   );
 
   useEffect(() => {
+    if (siteIdParam) return;
     if (websites.length === 0) { if (selectedWebsite !== "") setSelectedWebsite(""); return; }
-    if (selectedWebsite && websites.includes(selectedWebsite)) return;
-    if (siteIdParam) {
-      const match = allRecipes.find((r) => r.site_id === siteIdParam)?.site_domain;
-      if (match && websites.includes(match)) { setSelectedWebsite(match); return; }
-    }
-    setSelectedWebsite(websites[0]);
-  }, [websites, selectedWebsite, siteIdParam, allRecipes]);
+    if (!selectedWebsite || !websites.includes(selectedWebsite)) setSelectedWebsite(websites[0]);
+  }, [websites, selectedWebsite, siteIdParam]);
 
-  const websiteScopedRecipes = useMemo(() =>
-    selectedWebsite ? allRecipes.filter((r) => r.site_domain === selectedWebsite) : [],
-    [allRecipes, selectedWebsite]
-  );
+  const websiteScopedRecipes = siteIdParam ? allRecipes : (selectedWebsite ? allRecipes.filter((r) => r.site_domain === selectedWebsite) : []);
 
   const boards = useMemo(() => {
     const set = new Set<string>();
@@ -217,7 +210,8 @@ function PinterestGalleryInner() {
   };
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
-  const hideProjectSelector = fromProjectDetails && Boolean(projectIdParam);
+  const fromPinDesigner = Boolean(siteIdParam);
+  const hideProjectSelector = (fromProjectDetails && Boolean(projectIdParam)) || fromPinDesigner;
   const allBoards = useMemo(() => {
     const set = new Set<string>();
     allRecipes.forEach((r) => { if (r.pin_board) set.add(r.pin_board); });
@@ -298,9 +292,9 @@ function PinterestGalleryInner() {
         {/* ── Stats bar ── */}
         {!recipesLoading && !recipesError && selectedProjectId && (
           <div className="mb-6 flex flex-wrap gap-3">
-            <StatPill label="Total pins" value={allRecipes.length} color="brand" />
+            <StatPill label="Total pins" value={fromPinDesigner ? websiteScopedRecipes.length : allRecipes.length} color="brand" />
             <StatPill label="Boards" value={allBoards.length} color="purple" />
-            <StatPill label="Websites" value={websites.length} color="blue" />
+            {!fromPinDesigner && <StatPill label="Websites" value={websites.length} color="blue" />}
             {selectedBoard !== "__all__" && <StatPill label="Showing" value={filtered.length} color="pink" />}
           </div>
         )}
@@ -308,17 +302,19 @@ function PinterestGalleryInner() {
         {/* ── Filters ── */}
         {!recipesLoading && !recipesError && allRecipes.length > 0 && (
           <div className="mb-6 space-y-4">
-            <div className="flex flex-wrap gap-2">
-              {websites.map((site) => (
-                <WebsitePill
-                  key={site}
-                  label={site}
-                  count={allRecipes.filter((r) => r.site_domain === site).length}
-                  active={selectedWebsite === site}
-                  onClick={() => setSelectedWebsite(site)}
-                />
-              ))}
-            </div>
+            {!fromPinDesigner && (
+              <div className="flex flex-wrap gap-2">
+                {websites.map((site) => (
+                  <WebsitePill
+                    key={site}
+                    label={site}
+                    count={allRecipes.filter((r) => r.site_domain === site).length}
+                    active={selectedWebsite === site}
+                    onClick={() => setSelectedWebsite(site)}
+                  />
+                ))}
+              </div>
+            )}
             <div className="relative max-w-sm">
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
               <input

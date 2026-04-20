@@ -121,8 +121,8 @@ export const api = {
   // ── Projects ───────────────────────────────────────────
   getProjects: () => request<ProjectOut[]>("/api/projects"),
 
-  getProjectPinterestRecipes: (projectId: string) =>
-    request<PinterestRecipeOut[]>(`/api/projects/${projectId}/pinterest-recipes`),
+  getProjectPinterestRecipes: (projectId: string, siteId?: string) =>
+    request<PinterestRecipeOut[]>(`/api/projects/${projectId}/pinterest-recipes${siteId ? `?site_id=${siteId}` : ""}`),
 
   createProject: (name: string, description: string) =>
     request<ProjectOut>("/api/projects", { method: "POST", body: JSON.stringify({ name, description }) }),

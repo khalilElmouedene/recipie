@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import json as _json
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from starlette.responses import StreamingResponse
 from sqlalchemy import select, func, delete as sql_delete
@@ -284,17 +284,20 @@ async def get_project_pinterest_recipes(
     project_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    site_id: uuid.UUID | None = Query(default=None),
 ):
-    """Return all published recipes for a project in one query, enriched with site_domain.
-    Replaces the N+1 getProjects→getSites→getRecipes waterfall on the Pinterest gallery page."""
+    """Return generated/published recipes for a project, optionally filtered to a single site."""
     await check_project_access(project_id, user, db)
+    conditions = [
+        Site.project_id == project_id,
+        Recipe.status.in_([RecipeStatus.generated, RecipeStatus.published]),
+    ]
+    if site_id is not None:
+        conditions.append(Recipe.site_id == site_id)
     result = await db.execute(
         select(Recipe, Site)
         .join(Site, Recipe.site_id == Site.id)
-        .where(
-            Site.project_id == project_id,
-            Recipe.status == RecipeStatus.published,
-        )
+        .where(*conditions)
         .order_by(Site.id, Recipe.created_at.asc())
     )
     rows = result.all()
