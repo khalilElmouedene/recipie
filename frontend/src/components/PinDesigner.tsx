@@ -3887,7 +3887,12 @@ export default function PinDesigner({
               </button>
               <button
                 type="button"
-                onClick={() => router.push(`/pinterest-gallery${projectId ? `?project_id=${projectId}` : ""}`)}
+                onClick={() => {
+                  const params = new URLSearchParams();
+                  if (projectId) params.set("project_id", projectId);
+                  if (siteId) params.set("site_id", siteId);
+                  router.push(`/pinterest-gallery${params.toString() ? `?${params.toString()}` : ""}`);
+                }}
                 className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-pink-800/50 text-pink-300"
                 title="Open Pinterest page for this project's published recipes"
               >

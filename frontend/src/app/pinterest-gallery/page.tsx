@@ -51,6 +51,7 @@ function PinterestGalleryInner() {
   const toast = useToast();
 
   const projectIdParam = searchParams.get("project_id");
+  const siteIdParam = searchParams.get("site_id");
   const fromProjectDetails = searchParams.get("from_project") === "1";
 
   const [projects, setProjects] = useState<ProjectOut[]>([]);
@@ -110,8 +111,13 @@ function PinterestGalleryInner() {
 
   useEffect(() => {
     if (websites.length === 0) { if (selectedWebsite !== "") setSelectedWebsite(""); return; }
-    if (!selectedWebsite || !websites.includes(selectedWebsite)) setSelectedWebsite(websites[0]);
-  }, [websites, selectedWebsite]);
+    if (selectedWebsite && websites.includes(selectedWebsite)) return;
+    if (siteIdParam) {
+      const match = allRecipes.find((r) => r.site_id === siteIdParam)?.site_domain;
+      if (match && websites.includes(match)) { setSelectedWebsite(match); return; }
+    }
+    setSelectedWebsite(websites[0]);
+  }, [websites, selectedWebsite, siteIdParam, allRecipes]);
 
   const websiteScopedRecipes = useMemo(() =>
     selectedWebsite ? allRecipes.filter((r) => r.site_domain === selectedWebsite) : [],
