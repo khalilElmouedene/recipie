@@ -1000,6 +1000,7 @@ export default function PinDesigner({
     return d.toISOString().slice(0, 16);
   });
   const [wpScheduleInterval, setWpScheduleInterval] = useState(240);
+  const [lastPublishDateLoading, setLastPublishDateLoading] = useState(false);
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
 
@@ -3822,7 +3823,18 @@ export default function PinDesigner({
             <>
               <button
                 type="button"
-                onClick={() => setShowWpScheduleModal(true)}
+                onClick={() => {
+                  setShowWpScheduleModal(true);
+                  if (siteId) {
+                    setLastPublishDateLoading(true);
+                    api.getLastPublishDate(siteId).then(({ last_publish_date }) => {
+                      if (last_publish_date) {
+                        const d = new Date(last_publish_date + "Z");
+                        setWpScheduleFirstAt(d.toISOString().slice(0, 16));
+                      }
+                    }).catch(() => {}).finally(() => setLastPublishDateLoading(false));
+                  }
+                }}
                 disabled={!!wpBatchBusy}
                 className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-brand-700/60 text-brand-300"
                 title={!frames?.length && recipeId
@@ -3931,15 +3943,25 @@ export default function PinDesigner({
             </p>
             <div className="space-y-4">
               <div>
-                <label className="text-xs text-gray-400 block mb-1">
-                  {!frames?.length && recipeId ? "Publish date & time" : "First post publish date & time"}
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs text-gray-400">
+                    {!frames?.length && recipeId ? "Publish date & time" : "First post publish date & time"}
+                  </label>
+                  {lastPublishDateLoading && (
+                    <span className="text-xs text-gray-500 animate-pulse">Fetching last post date…</span>
+                  )}
+                </div>
                 <input
                   type="datetime-local"
                   value={wpScheduleFirstAt}
                   onChange={(e) => setWpScheduleFirstAt(e.target.value)}
                   className="input-field w-full"
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  {lastPublishDateLoading
+                    ? "Loading last published post date from WordPress…"
+                    : "Pre-filled from your last published WordPress post. Adjust as needed."}
+                </p>
                 {!(!frames?.length && recipeId) && (
                   <p className="text-xs text-gray-500 mt-1">Article 1 publishes at this time. Each next article adds the interval below.</p>
                 )}

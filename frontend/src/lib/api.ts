@@ -289,6 +289,9 @@ export const api = {
   // ── Sites ──────────────────────────────────────────────
   getSites: (projectId: string) => request<SiteOut[]>(`/api/projects/${projectId}/sites`),
 
+  getLastPublishDate: (siteId: string) =>
+    request<{ last_publish_date: string | null }>(`/api/sites/${siteId}/last-publish-date`),
+
   createSite: (projectId: string, data: SiteCreateData) =>
     request<SiteOut>(`/api/projects/${projectId}/sites`, { method: "POST", body: JSON.stringify(data) }),
 

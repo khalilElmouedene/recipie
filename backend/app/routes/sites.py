@@ -379,3 +379,30 @@ async def upload_from_url_to_wordpress(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail="WordPress operation failed")
+
+
+@router.get("/api/sites/{site_id}/last-publish-date")
+async def get_last_publish_date(
+    site_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)] = None,
+    db: Annotated[AsyncSession, Depends(get_db)] = None,
+):
+    """Return the GMT date of the most recently published WordPress post for this site."""
+    result = await db.execute(select(Site).where(Site.id == site_id))
+    site = result.scalar_one_or_none()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    await check_project_access(site.project_id, user, db)
+
+    wp_username, wp_password = get_random_wp_credentials(site)
+    base = site.wp_url.replace("xmlrpc.php", "").rstrip("/")
+    url = f"{base}/wp-json/wp/v2/posts?orderby=date&order=desc&per_page=1&status=publish"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(url, auth=(wp_username, wp_password))
+        posts = r.json() if r.status_code == 200 else []
+        if isinstance(posts, list) and posts:
+            return {"last_publish_date": posts[0].get("date_gmt")}
+    except Exception:
+        pass
+    return {"last_publish_date": None}
