@@ -479,7 +479,7 @@ export async function buildTemplateOnCanvas(
           const resolved = await resolveImageUrl(imageUrl);
           const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
           const bbox = imageGroupBounds.get(assignedIdx) ?? { left: el.x, top: el.y, width: el.width, height: el.height };
-          const scale = getCoverScale(bbox.width, bbox.height, img.width || 1, img.height || 1);
+          const scale = getCoverScale(bbox.width, bbox.height, img.width || 1, img.height || 1) * 0.85;
           img.set({
             left: bbox.left + bbox.width / 2,
             top: bbox.top + bbox.height / 2,
@@ -2008,7 +2008,7 @@ export default function PinDesigner({
             const bboxH = bbox.height;
             const imgW = img.width || 1;
             const imgH = img.height || 1;
-            const scale = getCoverScale(bboxW, bboxH, imgW, imgH);
+            const scale = getCoverScale(bboxW, bboxH, imgW, imgH) * 0.85;
             const shouldFlip = (el as any).flipX === true;
             img.set({
               left: bbox.left + bboxW / 2,
