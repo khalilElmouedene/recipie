@@ -13,7 +13,7 @@ import {
   History,
   FlipHorizontal2, FlipVertical2,
   Lock, Unlock,
-  Sheet,
+  ExternalLink,
 } from "lucide-react";
 import { api, getApiBaseUrl } from "@/lib/api";
 import { appendPinImageToArticleHtml } from "@/lib/pinArticleEmbed";
@@ -24,14 +24,6 @@ import BatchPublishModal from "@/components/BatchPublishModal";
 import type { PublishBatchRequest } from "@/lib/api";
 import { useDesignerStore } from "@/store/useDesignerStore";
 import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
-import {
-  PINTEREST_WORKSHEET_HEADER,
-  PINTEREST_WORKSHEET_INIT_KEY,
-  PinterestWorksheetRecipe,
-  PinterestWorksheetSnapshot,
-  buildPinterestWorksheetRows,
-  rowsToCsv,
-} from "@/lib/pinterestWorksheet";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
@@ -990,14 +982,7 @@ export default function PinDesigner({
   const [wpBatchBusy, setWpBatchBusy] = useState<null | "wordpress_scheduled" | "manual_backdate">(null);
   const [wpBatchDone, setWpBatchDone] = useState(false);
   const [wpBatchModalData, setWpBatchModalData] = useState<PublishBatchRequest | null>(null);
-  const [showCsvModal, setShowCsvModal] = useState(false);
-  const [csvStartDate, setCsvStartDate] = useState(() => {
-    const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1);
-    return d.toISOString().slice(0, 16);
-  });
-  const [csvInterval, setCsvInterval] = useState(300);
-  const [csvGenerating, setCsvGenerating] = useState(false);
-  const [worksheetPreparing, setWorksheetPreparing] = useState(false);
+
   const [showWpScheduleModal, setShowWpScheduleModal] = useState(false);
   const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
   const [saveTemplateName, setSaveTemplateName] = useState("");
@@ -1105,8 +1090,7 @@ export default function PinDesigner({
       extra?: { pin_title?: string; pin_description?: string }
     ) => {
       // Always upload the pin image to the server to obtain a stable public URL.
-      // This URL is stored as pin_design_image so the Pinterest CSV/worksheet can
-      // use it directly without needing to upload on demand at CSV generation time.
+      // This URL is stored as pin_design_image for use on the Pinterest gallery page.
       let hostedImageUrl: string = dataUrl;
       if (siteId && dataUrl.startsWith("data:")) {
         try {
@@ -1535,106 +1519,6 @@ export default function PinDesigner({
     if (data) publishToPinterest(data);
   };
 
-  const buildPinterestWorksheetRowsFromFrames = useCallback(async (): Promise<string[][]> => {
-    if (!frames || frames.length === 0) return [];
-
-    // Fetch fresh recipe data for all frames to keep worksheet/CSV aligned with latest recipe metadata.
-    const recipes = await Promise.all(
-      frames.map((f) => api.getRecipe(f.recipeId).catch(() => null)),
-    );
-
-    const worksheetRecipes: PinterestWorksheetRecipe[] = recipes.map((r) => {
-      if (!r) {
-        return {
-          siteId: siteId ?? "",
-          pinTitle: "",
-          recipeText: "",
-          pinDesignImage: null,
-          pinBoard: null,
-          pinDescription: null,
-          wpPermalink: null,
-          pinTags: null,
-        };
-      }
-
-      return {
-        siteId: r.site_id || siteId || "",
-        pinTitle: r.pin_title,
-        recipeText: r.recipe_text || "",
-        pinDesignImage: r.pin_design_image,
-        pinBoard: r.pin_board,
-        pinDescription: r.pin_description,
-        wpPermalink: r.wp_permalink,
-        pinTags: r.pin_tags,
-      };
-    });
-
-    const resolveMediaUrl = async (recipe: PinterestWorksheetRecipe): Promise<string> => {
-      const pinDesignImage = recipe.pinDesignImage;
-      if (!pinDesignImage) return "";
-      // Already a hosted public URL — use it directly.
-      if (!pinDesignImage.startsWith("data:")) return pinDesignImage;
-      // Base64 fallback: upload on demand (happens when upload failed at save time).
-      if (!recipe.siteId) return "";
-      try {
-        return await api.uploadPinImageToServer(recipe.siteId, pinDesignImage);
-      } catch {
-        return "";
-      }
-    };
-
-    return buildPinterestWorksheetRows(
-      worksheetRecipes,
-      csvStartDate,
-      csvInterval,
-      resolveMediaUrl,
-    );
-  }, [csvInterval, csvStartDate, frames, siteId]);
-
-  const downloadPinterestCsv = async () => {
-    if (!frames || frames.length === 0) return;
-    setCsvGenerating(true);
-    try {
-      const rows = await buildPinterestWorksheetRowsFromFrames();
-      const csvContent = rowsToCsv(PINTEREST_WORKSHEET_HEADER, rows);
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `pinterest-pins-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    setShowCsvModal(false);
-
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "CSV generation failed");
-    } finally {
-      setCsvGenerating(false);
-    }
-  };
-
-  const openPinterestWorksheet = async () => {
-    if (!frames || frames.length === 0) return;
-    setWorksheetPreparing(true);
-    try {
-      const rows = await buildPinterestWorksheetRowsFromFrames();
-      const snapshot: PinterestWorksheetSnapshot = {
-        header: PINTEREST_WORKSHEET_HEADER,
-        rows,
-        generatedAt: new Date().toISOString(),
-        startDate: csvStartDate,
-        intervalMinutes: csvInterval,
-      };
-      sessionStorage.setItem(PINTEREST_WORKSHEET_INIT_KEY, JSON.stringify(snapshot));
-      router.push("/pinterest-gallery/worksheet");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Worksheet initialization failed");
-    } finally {
-      setWorksheetPreparing(false);
-    }
-  };
 
   const handleSaveToRecipe = async () => {
     if (!recipeId) return;
@@ -1648,7 +1532,7 @@ export default function PinDesigner({
       });
       toast.success(embedPinInArticle
         ? "Design saved. Pin image embedded in the article and hosted URL saved."
-        : "Design saved. Pin image hosted URL saved for Pinterest CSV.");
+        : "Design saved. Pin image hosted URL saved.");
     } catch (err: any) {
       toast.error(`Failed to save: ${err.message}`);
     } finally {
@@ -4003,23 +3887,12 @@ export default function PinDesigner({
               </button>
               <button
                 type="button"
-                onClick={() => setShowCsvModal(true)}
-                disabled={!wpBatchDone}
-                className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-pink-800/50 text-pink-300 disabled:opacity-40 disabled:cursor-not-allowed"
-                title={wpBatchDone ? "Download Pinterest scheduling CSV for all published pins" : "Publish to WordPress first to enable CSV download"}
+                onClick={() => router.push(`/pinterest-gallery${projectId ? `?project_id=${projectId}` : ""}`)}
+                className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-pink-800/50 text-pink-300"
+                title="Open Pinterest page for this project's published recipes"
               >
-                <Download size={14} />
-                <span className="hidden lg:inline">Pinterest CSV</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => void openPinterestWorksheet()}
-                disabled={!wpBatchDone || worksheetPreparing}
-                className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-blue-800/50 text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed"
-                title={wpBatchDone ? "Open Pinterest Worksheet for all published pins" : "Publish to WordPress first to enable Pinterest Sheet"}
-              >
-                {worksheetPreparing ? <Loader2 size={14} className="animate-spin" /> : <Sheet size={14} />}
-                <span className="hidden lg:inline">{worksheetPreparing ? "Preparing..." : "Pinterest Sheet"}</span>
+                <ExternalLink size={14} />
+                <span className="hidden lg:inline">Pinterest Page</span>
               </button>
             </>
           )}
@@ -4139,52 +4012,6 @@ export default function PinDesigner({
         </div>
       )}
 
-      {/* ── Pinterest CSV Modal ───────────────────────────────────────────── */}
-      {showCsvModal && (
-        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center">
-          <div className="bg-gray-900 rounded-xl p-6 w-full max-w-sm">
-            <h3 className="text-lg font-semibold text-white mb-1">Download Pinterest CSV</h3>
-            <p className="text-xs text-gray-400 mb-4">Configure publish schedule for the CSV. Each pin is staggered by the interval.</p>
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">First pin publish date &amp; time</label>
-                <input
-                  type="datetime-local"
-                  value={csvStartDate}
-                  onChange={(e) => setCsvStartDate(e.target.value)}
-                  className="input-field w-full"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">Interval between pins (minutes)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={10080}
-                  value={csvInterval}
-                  onChange={(e) => setCsvInterval(Number(e.target.value) || 300)}
-                  className="input-field w-full"
-                />
-              </div>
-              {csvGenerating && (
-                <p className="text-xs text-gray-400">Uploading pin images to WordPress media… this may take a moment.</p>
-              )}
-              <div className="flex gap-2 pt-2">
-                <button
-                  className="btn-primary flex-1 flex items-center justify-center gap-2 disabled:opacity-50"
-                  disabled={csvGenerating}
-                  onClick={() => void downloadPinterestCsv()}
-                >
-                  <Download size={14} /> {csvGenerating ? "Uploading…" : "Download CSV"}
-                </button>
-                <button className="btn-secondary flex-1" disabled={csvGenerating} onClick={() => setShowCsvModal(false)}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Pinterest Publish Modal ────────────────────────────────────────── */}
       {showPublishModal && (
