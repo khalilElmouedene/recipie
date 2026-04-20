@@ -54,6 +54,38 @@ function rgbaToHex(rgba: string): { hex: string; alpha: number } {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+function getCoverScale(boundsW: number, boundsH: number, imgW: number, imgH: number): number {
+  return Math.max(boundsW / Math.max(imgW, 1), boundsH / Math.max(imgH, 1));
+}
+
+function buildImageZoneGroupBounds(elements: TemplateElement[], imageCount: number) {
+  const groups = new Map<number, TemplateElement[]>();
+  let imageIndex = 0;
+
+  for (const el of elements) {
+    if (el.type !== "image") continue;
+    const elementId = String(el.id || "");
+    if (elementId.startsWith("bg_") || elementId.startsWith("img_")) continue;
+
+    const assignedIdx = imageIndex % Math.max(imageCount, 1);
+    imageIndex++;
+    const group = groups.get(assignedIdx) ?? [];
+    group.push(el);
+    groups.set(assignedIdx, group);
+  }
+
+  const bounds = new Map<number, { left: number; top: number; width: number; height: number }>();
+  for (const [assignedIdx, zones] of groups) {
+    const x1 = Math.min(...zones.map((zone) => zone.x));
+    const y1 = Math.min(...zones.map((zone) => zone.y));
+    const x2 = Math.max(...zones.map((zone) => zone.x + zone.width));
+    const y2 = Math.max(...zones.map((zone) => zone.y + zone.height));
+    bounds.set(assignedIdx, { left: x1, top: y1, width: x2 - x1, height: y2 - y1 });
+  }
+
+  return bounds;
+}
+
 interface TemplateElement {
   id: string;
   // `type` comes from stored template data; runtime behavior relies on
@@ -408,6 +440,7 @@ export async function buildTemplateOnCanvas(
   const oTitleColor = overrides?.titleColor;
   const oBandColor = overrides?.bandColor;
   const oWebsite = overrides?.websiteText;
+  const imageGroupBounds = buildImageZoneGroupBounds(template.elements, Math.max(images.length, 1));
 
 
   for (const el of template.elements) {
@@ -445,15 +478,27 @@ export async function buildTemplateOnCanvas(
         try {
           const resolved = await resolveImageUrl(imageUrl);
           const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
+          const bbox = imageGroupBounds.get(assignedIdx) ?? { left: el.x, top: el.y, width: el.width, height: el.height };
+          const scale = getCoverScale(bbox.width, bbox.height, img.width || 1, img.height || 1);
           img.set({
+            left: bbox.left + bbox.width / 2,
+            top: bbox.top + bbox.height / 2,
+            originX: "center",
+            originY: "center",
+            scaleX: scale,
+            scaleY: scale,
+            flipX: (el as any).flipX === true,
+          });
+          (img as any).__pinId = el.id;
+          (img as any).__pinType = "imageContent";
+          (img as any).clipPath = new fabric.Rect({
             left: el.x,
             top: el.y,
-            originX: "left",
-            originY: "top",
-            scaleX: el.width / (img.width || 1),
-            scaleY: el.height / (img.height || 1),
+            width: el.width,
+            height: el.height,
+            absolutePositioned: true,
+            fill: "",
           });
-          (img as any).__pinId = el.id; (img as any).__pinType = "image";
           canvas.add(img);
         } catch {
           const rect = new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: el.bgColor || "#e0e0e0" });
@@ -1920,32 +1965,7 @@ export default function PinDesigner({
     const { Rect, FabricText } = fabric;
     let imageIndex = 0;
 
-    // Pre-scan image zones to group those sharing the same imageIndex.
-    // Zones that map to the same recipe image will use the combined bounding
-    // box for cover-fit scaling, producing a seamless continuous-image effect.
-    type _IZInfo = { el: (typeof template.elements)[0]; assignedIdx: number };
-    const _imgZoneGroups = new Map<number, _IZInfo[]>();
-    {
-      let _idx = 0;
-      for (const el of template.elements) {
-        if (el.type !== "image") continue;
-        const lid = String(el.id || "");
-        if (lid.startsWith("bg_") || lid.startsWith("img_")) continue;
-        const ai = _idx % Math.max(imgs.length, 1);
-        const g = _imgZoneGroups.get(ai) ?? [];
-        g.push({ el, assignedIdx: ai });
-        _imgZoneGroups.set(ai, g);
-        _idx++;
-      }
-    }
-    const _groupBBox = new Map<number, { left: number; top: number; width: number; height: number }>();
-    for (const [ai, zones] of _imgZoneGroups) {
-      const x1 = Math.min(...zones.map((z) => z.el.x));
-      const y1 = Math.min(...zones.map((z) => z.el.y));
-      const x2 = Math.max(...zones.map((z) => z.el.x + z.el.width));
-      const y2 = Math.max(...zones.map((z) => z.el.y + z.el.height));
-      _groupBBox.set(ai, { left: x1, top: y1, width: x2 - x1, height: y2 - y1 });
-    }
+    const imageGroupBounds = buildImageZoneGroupBounds(template.elements, Math.max(imgs.length, 1));
 
     for (const el of template.elements) {
       if (el.type === "asset" && (el as any).imageUrl) {
@@ -1983,21 +2003,12 @@ export default function PinDesigner({
         if (imageUrl) {
           try {
             const img = await fabric.FabricImage.fromURL(proxyUrl(imageUrl), { crossOrigin: "anonymous" });
-            const bbox = _groupBBox.get(assignedIdx) ?? { left: el.x, top: el.y, width: el.width, height: el.height };
+            const bbox = imageGroupBounds.get(assignedIdx) ?? { left: el.x, top: el.y, width: el.width, height: el.height };
             const bboxW = bbox.width;
             const bboxH = bbox.height;
             const imgW = img.width || 1;
             const imgH = img.height || 1;
-
-            // Cover-fit to the combined bounding box so zones sharing the same
-            // image appear as one continuous photo.
-            const panMarginPx = Math.max(24, Math.min(bboxW, bboxH) * 0.06);
-            const scale = Math.max(
-              bboxW / imgW,
-              bboxH / imgH,
-              (bboxW + panMarginPx) / imgW,
-              (bboxH + panMarginPx) / imgH
-            );
+            const scale = getCoverScale(bboxW, bboxH, imgW, imgH);
             const shouldFlip = (el as any).flipX === true;
             img.set({
               left: bbox.left + bboxW / 2,
@@ -3181,13 +3192,7 @@ export default function PinDesigner({
       .then((img: any) => {
         if (!img || !img.width) throw new Error("Empty image");
 
-        const panMarginPx = Math.max(24, Math.min(zoneW, zoneH) * 0.06);
-        const scale = Math.max(
-          zoneW / (img.width || 1),
-          zoneH / (img.height || 1),
-          (zoneW + panMarginPx) / (img.width || 1),
-          (zoneH + panMarginPx) / (img.height || 1)
-        );
+        const scale = getCoverScale(zoneW, zoneH, img.width || 1, img.height || 1);
         img.set({
           left: zoneLeft + zoneW / 2,
           top: zoneTop + zoneH / 2,
@@ -3274,7 +3279,7 @@ export default function PinDesigner({
     const zoneH = clip.height ?? 1;
     const imgNatW = img.width || 1;
     const imgNatH = img.height || 1;
-    const minScale = Math.max(zoneW / imgNatW, zoneH / imgNatH);
+    const minScale = getCoverScale(zoneW, zoneH, imgNatW, imgNatH);
     const newScale = Math.max(img.scaleX * factor, minScale);
     img.set({ scaleX: newScale, scaleY: newScale });
     // Re-clamp position
@@ -3483,9 +3488,7 @@ export default function PinDesigner({
     // If image has a clip zone, enforce minimum scale so it always covers the zone
     if (obj.clipPath && obj.clipPath.absolutePositioned) {
       const clip = obj.clipPath;
-      const minScaleX = (clip.width  || 0) / (obj.width  || 1);
-      const minScaleY = (clip.height || 0) / (obj.height || 1);
-      const minScale  = Math.max(minScaleX, minScaleY);
+      const minScale = getCoverScale(clip.width || 0, clip.height || 0, obj.width || 1, obj.height || 1);
       obj.set({ scaleX: Math.max(minScale, newScaleX), scaleY: Math.max(minScale, newScaleY) });
       // Re-clamp position so image still covers the frame
       const imgW = (obj.width || 1) * (obj.scaleX || 1);
