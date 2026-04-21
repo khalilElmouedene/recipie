@@ -1,13 +1,13 @@
 """merge site mj upscale + user pin elements heads
 
-Revision ID: merge_site_mj_and_user_pin_elements
+Revision ID: merge_mj_pin_elems
 Revises: add_site_mj_upscale_count, add_user_custom_pin_elements
 Create Date: 2026-04-21
 """
 
 from __future__ import annotations
 
-revision = "merge_site_mj_and_user_pin_elements"
+revision = "merge_mj_pin_elems"
 down_revision = ("add_site_mj_upscale_count", "add_user_custom_pin_elements")
 branch_labels = None
 depends_on = None
