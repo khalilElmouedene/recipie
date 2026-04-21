@@ -4,14 +4,17 @@ import csv
 import functools
 import io
 import json
+import logging
 import random
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import requests as _requests
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse, Response
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +31,10 @@ from ..models import (
 )
 
 router = APIRouter(tags=["recipes"])
+limiter = Limiter(key_func=get_remote_address)
+logger = logging.getLogger(__name__)
+_IMAGE_PROXY_MAX_BYTES = 10 * 1024 * 1024
+_IMAGE_PROXY_CHUNK_SIZE = 64 * 1024
 
 def _is_safe_url(url: str) -> bool:
     """Return True only for public http/https URLs.
@@ -71,7 +78,9 @@ def _is_safe_url(url: str) -> bool:
 
 
 @router.get("/api/image-proxy")
+@limiter.limit("60/minute")
 def image_proxy(
+    request: Request,
     url: str = Query(...),
     _user: Annotated[User, Depends(get_current_user_download)] = None,
 ):
@@ -79,15 +88,38 @@ def image_proxy(
     if not _is_safe_url(url):
         raise HTTPException(status_code=400, detail="URL not allowed")
     try:
-        r = _requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20, stream=True)
+        r = _requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=(5, 20),
+            stream=True,
+            allow_redirects=True,
+        )
         r.raise_for_status()
         media_type = r.headers.get("content-type", "image/jpeg").split(";")[0].strip()
         if not media_type.startswith("image/") or media_type == "image/svg+xml":
             raise HTTPException(status_code=400, detail="URL is not an allowed image type")
+
+        content_length = r.headers.get("content-length", "").strip()
+        if content_length:
+            try:
+                if int(content_length) > _IMAGE_PROXY_MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="Image exceeds the 10 MB size limit")
+            except ValueError:
+                pass
+
+        data = bytearray()
+        for chunk in r.iter_content(chunk_size=_IMAGE_PROXY_CHUNK_SIZE):
+            if not chunk:
+                continue
+            data.extend(chunk)
+            if len(data) > _IMAGE_PROXY_MAX_BYTES:
+                raise HTTPException(status_code=413, detail="Image exceeds the 10 MB size limit")
+
         return Response(
-            content=r.content,
+            content=bytes(data),
             media_type=media_type,
-            headers={"Cache-Control": "public, max-age=3600"},
+            headers={"Cache-Control": "private, max-age=300"},
         )
     except HTTPException:
         raise
@@ -260,7 +292,9 @@ async def update_recipe(
 
 
 @router.post("/api/recipes/{recipe_id}/pinterest", response_model=PinterestBulkResponse)
+@limiter.limit("20/minute")
 async def create_pinterest_pins(
+    request: Request,
     recipe_id: uuid.UUID,
     body: PinterestPinRequest,
     user: Annotated[User, Depends(get_current_user)],
@@ -349,7 +383,9 @@ async def delete_recipe(
 
 
 @router.post("/api/recipes/{recipe_id}/publish-article", response_model=dict)
+@limiter.limit("10/minute")
 async def publish_recipe_article(
+    request: Request,
     recipe_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -407,9 +443,16 @@ async def publish_recipe_article(
     )
 
     if not pub_result.get("wp_post_id"):
+        raw_error = pub_result.get("error_message")
+        if raw_error:
+            logger.warning(
+                "WordPress publish failed for recipe %s: %s",
+                recipe_id,
+                str(raw_error)[:500],
+            )
         raise HTTPException(
             status_code=500,
-            detail=pub_result.get("error_message", "Failed to publish article to WordPress"),
+            detail="Failed to publish article to WordPress",
         )
 
     recipe.wp_post_id = pub_result.get("wp_post_id")

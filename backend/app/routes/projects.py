@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import functools
+import logging
 import random
 import uuid
 from collections import defaultdict
@@ -8,7 +9,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import json as _json
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from fastapi.responses import Response
 from starlette.responses import StreamingResponse
 from sqlalchemy import select, func, delete as sql_delete
@@ -36,6 +39,8 @@ from ..services.publisher import publish_recipe
 from ..site_credentials import get_random_wp_credentials
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+limiter = Limiter(key_func=get_remote_address)
+logger = logging.getLogger(__name__)
 
 
 async def _project_out(project: Project, db: AsyncSession) -> dict:
@@ -459,7 +464,9 @@ async def set_publish_schedule(
 
 
 @router.post("/{project_id}/publish-schedule/start-now", response_model=PublishScheduleOut)
+@limiter.limit("10/minute")
 async def start_publish_schedule_now(
+    request: Request,
     project_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -495,7 +502,9 @@ async def start_publish_schedule_now(
 
 
 @router.post("/{project_id}/publish-batch")
+@limiter.limit("5/minute")
 async def publish_batch_to_wordpress(
+    request: Request,
     project_id: uuid.UUID,
     body: PublishBatchRequest,
     user: Annotated[User, Depends(get_current_user)],
@@ -581,17 +590,30 @@ async def publish_batch_to_wordpress(
                 try:
                     result = await asyncio.to_thread(pub_fn)
                 except Exception as exc:
-                    result = {"error_message": str(exc)}
+                    logger.warning(
+                        "Publish batch exception for recipe %s in project %s: %s",
+                        recipe_dict.get("id"),
+                        project_id,
+                        str(exc)[:500],
+                    )
+                    result = {"error_message": "Failed to publish article to WordPress"}
 
                 recipe_id = uuid.UUID(recipe_dict["id"])
                 row = await bg_db.execute(select(Recipe).where(Recipe.id == recipe_id))
                 recipe = row.scalar_one_or_none()
                 if recipe:
-                    if result.get("error_message"):
+                    raw_error = result.get("error_message")
+                    if raw_error:
+                        logger.warning(
+                            "Publish batch provider failure for recipe %s in project %s: %s",
+                            recipe_id,
+                            project_id,
+                            str(raw_error)[:500],
+                        )
                         recipe.status = RecipeStatus.failed
-                        recipe.error_message = str(result["error_message"])
+                        recipe.error_message = "Failed to publish article to WordPress"
                         failed += 1
-                        errors.append(str(result["error_message"]))
+                        errors.append("Failed to publish article to WordPress")
                     else:
                         recipe.wp_post_id = result.get("wp_post_id")
                         recipe.wp_permalink = result.get("wp_permalink")
@@ -647,7 +669,9 @@ def _append_work(work: list, recipe: "Recipe", site: "Site", post_dt: datetime) 
 
 
 @router.post("/{project_id}/image-cleanup/run", response_model=ImageCleanupRunResult)
+@limiter.limit("5/hour")
 async def run_image_cleanup_now(
+    request: Request,
     project_id: uuid.UUID,
     body: ImageCleanupRunRequest,
     user: Annotated[User, Depends(get_current_user)],

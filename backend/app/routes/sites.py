@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File, Query
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select, func, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
@@ -32,6 +34,9 @@ _RECIPE_IMAGE_EXT = {
 }
 
 router = APIRouter(tags=["sites"])
+limiter = Limiter(key_func=get_remote_address)
+_REMOTE_IMAGE_FETCH_MAX_BYTES = 10 * 1024 * 1024
+_REMOTE_IMAGE_FETCH_CHUNK_SIZE = 64 * 1024
 
 
 class MediaUploadResponse(BaseModel):
@@ -258,7 +263,9 @@ async def upload_recipe_source_image(
 
 
 @router.post("/api/sites/{site_id}/upload-media", response_model=MediaUploadResponse)
+@limiter.limit("30/minute")
 async def upload_media_to_wordpress(
+    request: Request,
     site_id: uuid.UUID,
     file: UploadFile = File(...),
     title: str = Query("Pin Design"),
@@ -317,7 +324,9 @@ async def upload_media_to_wordpress(
 
 
 @router.post("/api/sites/{site_id}/upload-from-url", response_model=MediaUploadResponse)
+@limiter.limit("30/minute")
 async def upload_from_url_to_wordpress(
+    request: Request,
     site_id: uuid.UUID,
     image_url: str = Query(..., description="URL of the image to upload"),
     title: str = Query("Pin Design"),
@@ -336,19 +345,57 @@ async def upload_from_url_to_wordpress(
 
     await check_project_access(site.project_id, user, db)
 
+    file_content = b""
+    content_type = ""
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(image_url, timeout=30)
-            resp.raise_for_status()
-            file_content = resp.content
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to fetch image: {e}")
+        timeout = httpx.Timeout(25.0, connect=5.0, read=20.0)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            async with client.stream("GET", image_url, headers={"User-Agent": "Mozilla/5.0"}) as resp:
+                resp.raise_for_status()
+
+                content_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+                if content_type and (not content_type.startswith("image/") or content_type == "image/svg+xml"):
+                    raise HTTPException(status_code=400, detail="Remote URL is not an allowed image type")
+
+                content_length = resp.headers.get("content-length", "").strip()
+                if content_length:
+                    try:
+                        if int(content_length) > _REMOTE_IMAGE_FETCH_MAX_BYTES:
+                            raise HTTPException(status_code=413, detail="Remote image exceeds the 10 MB size limit")
+                    except ValueError:
+                        pass
+
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.aiter_bytes(_REMOTE_IMAGE_FETCH_CHUNK_SIZE):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > _REMOTE_IMAGE_FETCH_MAX_BYTES:
+                        raise HTTPException(status_code=413, detail="Remote image exceeds the 10 MB size limit")
+                    chunks.append(chunk)
+                file_content = b"".join(chunks)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Failed to fetch remote image")
+
+    if not file_content:
+        raise HTTPException(status_code=400, detail="Remote image is empty")
 
     ext = ".jpg"
-    if "png" in (image_url.lower().split("?")[0] or ""):
+    if content_type == "image/png":
+        ext = ".png"
+    elif content_type == "image/webp":
+        ext = ".webp"
+    elif content_type == "image/gif":
+        ext = ".gif"
+    elif "png" in (image_url.lower().split("?")[0] or ""):
         ext = ".png"
     elif "webp" in (image_url.lower().split("?")[0] or ""):
         ext = ".webp"
+    elif "gif" in (image_url.lower().split("?")[0] or ""):
+        ext = ".gif"
     filename = f"recipe-{uuid.uuid4().hex[:8]}{ext}"
 
     wp_username, wp_password = get_random_wp_credentials(site)

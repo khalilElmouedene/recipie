@@ -1,6 +1,9 @@
 from __future__ import annotations
+import logging
 import time
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 def create_pin(
@@ -39,10 +42,15 @@ def create_pin(
             pin_url = f"https://www.pinterest.com/pin/{pin_id}/" if pin_id else ""
             return {"pin_id": pin_id, "pin_url": pin_url}
         else:
-            detail = resp.text[:300]
-            return {"error": f"Pinterest API {resp.status_code}: {detail}"}
+            logger.warning(
+                "Pinterest create_pin failed (status=%s, body=%s)",
+                resp.status_code,
+                (resp.text or "")[:300],
+            )
+            return {"error": "Failed to create pin on Pinterest"}
     except Exception as e:
-        return {"error": str(e)}
+        logger.warning("Pinterest create_pin request failed: %s", str(e)[:300])
+        return {"error": "Failed to create pin on Pinterest"}
 
 
 def create_pins_bulk(

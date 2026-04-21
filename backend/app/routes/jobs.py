@@ -2,7 +2,9 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select, delete as sql_delete, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,10 +15,13 @@ from ..models import JobStart, JobOut, JobLogOut, GeneratedJobRecipeOut
 from ..workers.job_manager import job_manager
 
 router = APIRouter(tags=["jobs"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/api/projects/{project_id}/jobs", response_model=JobOut, status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")
 async def start_job(
+    request: Request,
     project_id: uuid.UUID,
     body: JobStart,
     user: Annotated[User, Depends(get_current_user)],
