@@ -23,7 +23,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       setReady(true);
       return;
     }
-    setReady(false);
     let mounted = true;
     api.me()
       .then((me) => {
@@ -39,7 +38,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, [pathname, router]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Close sidebar only on mobile route changes.
   useEffect(() => {
