@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from datetime import datetime, timezone
 
@@ -13,6 +14,8 @@ from app.database import SessionLocal
 from app.db_models import ThreadsAccount, ThreadsPost, ThreadsPostStatus
 from app.services.cloudinary_utils import delete_cloudinary_media
 from app.services.threads_api import add_reply, publish_post
+
+logger = logging.getLogger(__name__)
 
 
 def _to_absolute(url: str) -> str:
@@ -91,8 +94,9 @@ async def run_threads_scheduler(stop_event: asyncio.Event) -> None:
                         delete_cloudinary_media(all_media, settings.cloudinary_cloud_name, settings.cloudinary_api_key, settings.cloudinary_api_secret)
 
                 except Exception as exc:
+                    logger.error("[threads_scheduler] publish failed for post %s: %s", post.id, str(exc)[:500])
                     post.status = ThreadsPostStatus.failed
-                    post.error_message = str(exc)
+                    post.error_message = "Failed to publish to Threads"
 
             await db.commit()
 

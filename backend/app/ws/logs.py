@@ -17,9 +17,9 @@ router = APIRouter()
 
 @router.websocket("/ws/logs/{job_id}")
 async def websocket_logs(websocket: WebSocket, job_id: str):
-    token = websocket.query_params.get("token")
+    token = websocket.cookies.get(settings.auth_cookie_name)
     if not token:
-        await websocket.close(code=4001, reason="Missing token")
+        await websocket.close(code=4001, reason="Missing auth cookie")
         return
 
     try:

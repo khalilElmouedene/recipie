@@ -16,8 +16,28 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-me-to-a-random-secret"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440
+    auth_cookie_name: str = "access_token"
+    auth_session_cookie_name: str = "ag_session"
+    auth_cookie_secure: bool = False
+    auth_cookie_samesite: str = "lax"
+    auth_cookie_domain: str = ""
     encryption_key: str = ""
     cors_origins: str = "http://localhost:3000"
+    csp_report_only: bool = True
+    csp_policy: str = (
+        "default-src 'self'; "
+        "img-src 'self' data: blob: https:; "
+        "style-src 'self' 'unsafe-inline' https:; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
+        "connect-src 'self' https: ws: wss:; "
+        "font-src 'self' data: https:; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    hsts_max_age_seconds: int = 31536000
+    hsts_include_subdomains: bool = True
+    hsts_preload: bool = False
     
     # Base URL this server is reachable at (used to build permanent image URLs)
     server_base_url: str = "http://localhost:8000"

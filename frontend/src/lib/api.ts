@@ -1,4 +1,4 @@
-/** In browser: use NEXT_PUBLIC_API_URL if set, otherwise same-origin (relative URLs) for reverse-proxy setups. */
+﻿/** In browser: use NEXT_PUBLIC_API_URL if set, otherwise same-origin (relative URLs) for reverse-proxy setups. */
 export function getApiBaseUrl(): string {
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;
@@ -8,25 +8,17 @@ export function getApiBaseUrl(): string {
     if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
       return "http://localhost:8000";
     }
-    return ""; // Same origin – relative URLs (reverse proxy setup)
+    return ""; // Same origin â€“ relative URLs (reverse proxy setup)
   }
   return "http://localhost:8000";
 }
 const API_URL = getApiBaseUrl();
 
-function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("token");
-}
-
 async function downloadFile(path: string, filename: string): Promise<void> {
-  const token = getToken();
-  const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${API_URL}${path}`, { headers });
+  const res = await fetch(`${API_URL}${path}`, { credentials: "include" });
   if (res.status === 401) {
     if (typeof window !== "undefined") {
-      localStorage.removeItem("token");
+      localStorage.removeItem("auth_user");
       window.location.href = "/login";
     }
     throw new Error("Unauthorized");
@@ -47,18 +39,16 @@ async function downloadFile(path: string, filename: string): Promise<void> {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const res = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
 
   if (res.status === 401) {
     if (typeof window !== "undefined") {
-      localStorage.removeItem("token");
+      localStorage.removeItem("auth_user");
       window.location.href = "/login";
     }
     throw new Error("Unauthorized");
@@ -78,7 +68,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
-// ── Auth ────────────────────────────────────────────────
+// â”€â”€ Auth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export const api = {
   register: (email: string, password: string, full_name: string) =>
     request<{ access_token: string }>("/api/auth/register", {
@@ -92,6 +82,11 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
 
+  logout: () =>
+    request<void>("/api/auth/logout", {
+      method: "POST",
+    }),
+
   me: () => request<UserOut>("/api/auth/me"),
 
   googleAuthUrl: () =>
@@ -103,7 +98,7 @@ export const api = {
       body: JSON.stringify({ code, state }),
     }),
 
-  // ── Users (Owner) ──────────────────────────────────────
+  // â”€â”€ Users (Owner) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getUsers: () => request<UserOut[]>("/api/users"),
 
   createUser: (data: { email: string; full_name: string; role: string }) =>
@@ -118,7 +113,7 @@ export const api = {
   resendInvite: (id: string) =>
     request<void>(`/api/users/${id}/resend-invite`, { method: "POST" }),
 
-  // ── Projects ───────────────────────────────────────────
+  // â”€â”€ Projects â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getProjects: () => request<ProjectOut[]>("/api/projects"),
 
   getProjectPinterestRecipes: (projectId: string, siteId?: string, signal?: AbortSignal) =>
@@ -163,13 +158,12 @@ export const api = {
     data: PublishBatchRequest,
     onEvent: (event: BatchPublishEvent) => void,
   ): Promise<void> => {
-    const token = getToken();
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch(`${API_URL}/api/projects/${projectId}/publish-batch`, {
       method: "POST",
       headers,
       body: JSON.stringify(data),
+      credentials: "include",
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -199,7 +193,7 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  // ── Members ────────────────────────────────────────────
+  // â”€â”€ Members â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getMembers: (projectId: string) => request<MemberOut[]>(`/api/projects/${projectId}/members`),
 
   addMember: (projectId: string, userId: string, role: string) =>
@@ -211,7 +205,7 @@ export const api = {
   removeMember: (projectId: string, userId: string) =>
     request<void>(`/api/projects/${projectId}/members/${userId}`, { method: "DELETE" }),
 
-  // ── Credentials ────────────────────────────────────────
+  // â”€â”€ Credentials â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getCredentials: (projectId: string) =>
     request<CredentialOut[]>(`/api/projects/${projectId}/credentials`),
 
@@ -221,7 +215,7 @@ export const api = {
       body: JSON.stringify(creds),
     }),
 
-  // ── Settings (clés API globales, non liées aux projets) ──
+  // â”€â”€ Settings (clÃ©s API globales, non liÃ©es aux projets) â”€â”€
   getSettingsCredentials: () => request<CredentialOut[]>(`/api/settings/credentials`),
   setSettingsCredentials: (creds: { key_type: string; value: string }[]) =>
     request<CredentialOut[]>(`/api/settings/credentials`, {
@@ -263,13 +257,12 @@ export const api = {
     }),
 
   importBoardsExcel: async (file: File): Promise<{ boards: string }> => {
-    const token = getToken();
     const formData = new FormData();
     formData.append("file", file);
     const res = await fetch(`${API_URL}/api/settings/boards/import`, {
       method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
+      credentials: "include",
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -279,9 +272,8 @@ export const api = {
   },
 
   downloadBoardsTemplate: async (): Promise<void> => {
-    const token = getToken();
     const res = await fetch(`${API_URL}/api/settings/boards/template`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: "include",
     });
     if (!res.ok) throw new Error("Failed to download template");
     const blob = await res.blob();
@@ -293,7 +285,7 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
-  // ── Sites ──────────────────────────────────────────────
+  // â”€â”€ Sites â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getSites: (projectId: string) => request<SiteOut[]>(`/api/projects/${projectId}/sites`),
 
   getLastPublishDate: (siteId: string) =>
@@ -310,17 +302,16 @@ export const api = {
 
   /** Store recipe source image on the app server (not WordPress). URL is subject to 7-day retention. */
   uploadRecipeImage: async (siteId: string, file: File): Promise<{ url: string }> => {
-    const token = getToken();
     const form = new FormData();
     form.append("file", file);
     const res = await fetch(`${API_URL}/api/sites/${siteId}/recipe-images`, {
       method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: form,
+      credentials: "include",
     });
     if (res.status === 401) {
       if (typeof window !== "undefined") {
-        localStorage.removeItem("token");
+        localStorage.removeItem("auth_user");
         window.location.href = "/login";
       }
       throw new Error("Unauthorized");
@@ -344,23 +335,22 @@ export const api = {
     ),
 
   uploadPinImageToServer: async (siteId: string, dataUrl: string): Promise<string> => {
-    // Convert base64 data URL → Blob → FormData, POST to app server (7-day retention, not WordPress)
-    const token = getToken();
+    // Convert base64 data URL â†’ Blob â†’ FormData, POST to app server (7-day retention, not WordPress)
     const res = await fetch(dataUrl);
     const blob = await res.blob();
     const formData = new FormData();
     formData.append("file", blob, `pin-${Date.now()}.png`);
     const resp = await fetch(`${API_URL}/api/sites/${siteId}/recipe-images`, {
       method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
+      credentials: "include",
     });
     if (!resp.ok) throw new Error(`Pin image upload failed: ${resp.status}`);
     const data = await resp.json();
     return (data.url as string) || "";
   },
 
-  // ── Recipes ────────────────────────────────────────────
+  // â”€â”€ Recipes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getRecipes: (siteId: string, summary = true) =>
     request<RecipeOut[]>(`/api/sites/${siteId}/recipes${summary ? "?summary=true" : ""}`),
 
@@ -403,10 +393,10 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  // ── Pin Generator ──────────────────────────────────────
+  // â”€â”€ Pin Generator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getPinTemplates: () => request<PinTemplate[]>("/api/pin-templates"),
 
-  // ── Pin Designer Templates (user-created layouts) ──────────────────────
+  // â”€â”€ Pin Designer Templates (user-created layouts) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getPinDesignerTemplates: (projectId?: string) =>
     request<PinDesignerTemplateOut[]>(
       `/api/pin-designer-templates${projectId ? `?project_id=${projectId}` : ""}`,
@@ -446,7 +436,7 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  // ── Spy Sheet ──────────────────────────────────────────
+  // â”€â”€ Spy Sheet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getSpySheet: (projectId: string) =>
     request<{ project_id: string; data: string | null; updated_at: string | null }>(`/api/projects/${projectId}/spy-sheet`),
 
@@ -485,7 +475,7 @@ export const api = {
   downloadProjectExcel: (projectId: string, projectName: string) =>
     downloadFile(`/api/projects/${projectId}/export/excel`, `${projectName.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}.xlsx`),
 
-  // ── Jobs ───────────────────────────────────────────────
+  // â”€â”€ Jobs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getProjectJobs: (projectId: string) => request<JobOut[]>(`/api/projects/${projectId}/jobs`),
 
   startJob: (projectId: string, data: { job_type: string; site_id?: string; recipe_id?: string; shared_recipes?: SharedRecipeInput[] }) =>
@@ -506,10 +496,10 @@ export const api = {
   deleteJob: (jobId: string) =>
     request<void>(`/api/jobs/${jobId}`, { method: "DELETE" }),
 
-  // ── Dashboard ──────────────────────────────────────────
+  // â”€â”€ Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getDashboard: () => request<DashboardStats>("/api/dashboard"),
 
-  // ── Threads Projects ───────────────────────────────────
+  // â”€â”€ Threads Projects â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getThreadsProjects: () => request<ThreadsProjectOut[]>("/api/threads-projects"),
   createThreadsProject: (data: { name: string; description: string; app_id: string; app_secret: string }) =>
     request<ThreadsProjectOut>("/api/threads-projects", { method: "POST", body: JSON.stringify(data) }),
@@ -518,7 +508,7 @@ export const api = {
   deleteThreadsProject: (id: string) =>
     request<void>(`/api/threads-projects/${id}`, { method: "DELETE" }),
 
-  // ── Threads Accounts ───────────────────────────────────
+  // â”€â”€ Threads Accounts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getThreadsAccounts: (projectId: string) =>
     request<ThreadsAccountOut[]>(`/api/threads-projects/${projectId}/accounts`),
   getThreadsOAuthUrl: (projectId: string) =>
@@ -532,17 +522,16 @@ export const api = {
   deleteThreadsAccount: (projectId: string, accountId: string) =>
     request<void>(`/api/threads-projects/${projectId}/accounts/${accountId}`, { method: "DELETE" }),
 
-  // ── Threads Posts ──────────────────────────────────────
+  // â”€â”€ Threads Posts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getThreadsPosts: (projectId: string) =>
     request<ThreadsPostOut[]>(`/api/threads-projects/${projectId}/posts`),
   uploadThreadsMedia: async (files: File[]): Promise<{ urls: string[] }> => {
-    const token = getToken();
     const formData = new FormData();
     files.forEach((f) => formData.append("files", f));
     const res = await fetch(`${API_URL}/api/threads/upload-media`, {
       method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
+      credentials: "include",
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -566,7 +555,7 @@ export const api = {
   deleteThreadsPost: (postId: string) =>
     request<void>(`/api/threads-posts/${postId}`, { method: "DELETE" }),
 
-  // ── Cleanup Config ─────────────────────────────────────
+  // â”€â”€ Cleanup Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getCleanupConfig: () =>
     request<CleanupConfigOut>("/api/settings/cleanup-config"),
   setCleanupConfig: (data: { enabled: boolean; interval_days: number }) =>
@@ -576,12 +565,11 @@ export const api = {
 };
 
 export function getWsUrl(jobId: string): string {
-  const token = getToken();
   const base = API_URL.replace("http", "ws");
-  return `${base}/ws/logs/${jobId}?token=${token}`;
+  return `${base}/ws/logs/${jobId}`;
 }
 
-// ── Types ────────────────────────────────────────────────
+// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface CleanupConfigOut {
   enabled: boolean;
@@ -894,7 +882,7 @@ export interface DashboardStats {
   projects: ProjectOut[];
 }
 
-// ── Pin Generator ────────────────────────────────────────
+// â”€â”€ Pin Generator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface PinTemplate {
   id: string;
@@ -994,3 +982,4 @@ export interface ThreadsPostOut {
   error_message: string | null;
   created_at: string;
 }
+

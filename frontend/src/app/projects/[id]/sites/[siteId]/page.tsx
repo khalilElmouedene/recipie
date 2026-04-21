@@ -256,9 +256,8 @@ export default function SiteDetailPage() {
   }, [detailTab, boards.length, boardsLoading, projectId]);
 
   const handleConnectPinterest = () => {
-    const token = localStorage.getItem("token");
     fetch(`${API_URL}/pinterest/auth-url?project_id=${projectId}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: "include",
     })
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {

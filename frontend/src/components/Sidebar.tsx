@@ -4,6 +4,7 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle, ScrollText } from "lucide-react";
 import { clearToken, getUserEmail, getUserRole } from "@/lib/auth";
+import { api } from "@/lib/api";
 import ThemeToggle from "@/components/ThemeToggle";
 
 const PinterestIcon = ({ size = 20 }: { size?: number }) => (
@@ -98,7 +99,11 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         </div>
         */}
         <button
-          onClick={() => { clearToken(); router.push("/login"); }}
+          onClick={async () => {
+            try { await api.logout(); } catch {}
+            clearToken();
+            router.push("/login");
+          }}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition"
         >
           <LogOut size={20} />

@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
-import { isLoggedIn } from "@/lib/auth";
+import { clearToken, setAuthUser } from "@/lib/auth";
+import { api } from "@/lib/api";
 import Sidebar from "./Sidebar";
 import { ToastProvider } from "@/contexts/ToastContext";
 import { ConfirmProvider } from "@/components/ConfirmModal";
@@ -16,11 +17,26 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
-    if (!PUBLIC.includes(pathname) && !isLoggedIn()) {
-      router.replace("/login");
-    } else {
+    if (PUBLIC.includes(pathname)) {
       setReady(true);
+      return;
     }
+    setReady(false);
+    let mounted = true;
+    api.me()
+      .then((me) => {
+        if (!mounted) return;
+        setAuthUser({ id: me.id, email: me.email, role: me.role });
+        setReady(true);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        clearToken();
+        router.replace("/login");
+      });
+    return () => {
+      mounted = false;
+    };
   }, [pathname, router]);
 
   // Close sidebar on route change (mobile)

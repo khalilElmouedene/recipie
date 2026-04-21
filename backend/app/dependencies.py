@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 import uuid
 from functools import wraps
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from sqlalchemy import select
@@ -35,30 +35,24 @@ async def _decode_token(token: str, db: AsyncSession) -> User:
 
 
 async def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    """Standard auth dependency — accepts Bearer token from Authorization header only."""
-    if not credentials:
+    """Standard auth dependency - accepts bearer token or auth cookie."""
+    raw = credentials.credentials if credentials else request.cookies.get(settings.auth_cookie_name)
+    if not raw:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    return await _decode_token(credentials.credentials, db)
+    return await _decode_token(raw, db)
 
 
 async def get_current_user_download(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     db: Annotated[AsyncSession, Depends(get_db)],
-    token: str | None = Query(default=None),
 ) -> User:
-    """Auth dependency for file-download / streaming endpoints opened via window.open().
-    Accepts a token from the Authorization header OR from the ?token= query parameter.
-    Do NOT use this for regular API routes — tokens in URLs leak via browser history and
-    server/proxy logs.
-    """
-    raw = None
-    if credentials:
-        raw = credentials.credentials
-    elif token:
-        raw = token
+    """Auth dependency for download/proxy endpoints; query-string tokens are not accepted."""
+    raw = credentials.credentials if credentials else request.cookies.get(settings.auth_cookie_name)
     if not raw:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     return await _decode_token(raw, db)

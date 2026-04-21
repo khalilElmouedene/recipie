@@ -45,13 +45,12 @@ export default function PinterestCallbackPage() {
 
     const exchangeCode = async () => {
       try {
-        const token = localStorage.getItem("token");
         const response = await fetch(`${getApiBaseUrl()}/pinterest/callback`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
           },
+          credentials: "include",
           body: JSON.stringify({
             code,
             state,

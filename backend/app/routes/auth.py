@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -26,6 +26,44 @@ limiter = Limiter(key_func=get_remote_address)
 # ── Google OAuth state store ─────────────────────────────────────────────────
 _GOOGLE_STATES: dict[str, float] = {}
 _STATE_TTL = 600  # 10 minutes
+
+
+def _cookie_base_kwargs() -> dict:
+    kwargs = {
+        "secure": settings.auth_cookie_secure,
+        "samesite": settings.auth_cookie_samesite,
+        "max_age": settings.jwt_expire_minutes * 60,
+        "path": "/",
+    }
+    domain = settings.auth_cookie_domain.strip()
+    if domain:
+        kwargs["domain"] = domain
+    return kwargs
+
+
+def _set_auth_cookies(response: Response, access_token: str) -> None:
+    base_kwargs = _cookie_base_kwargs()
+    response.set_cookie(
+        settings.auth_cookie_name,
+        access_token,
+        httponly=True,
+        **base_kwargs,
+    )
+    response.set_cookie(
+        settings.auth_session_cookie_name,
+        "1",
+        httponly=False,
+        **base_kwargs,
+    )
+
+
+def _clear_auth_cookies(response: Response) -> None:
+    kwargs = {"path": "/"}
+    domain = settings.auth_cookie_domain.strip()
+    if domain:
+        kwargs["domain"] = domain
+    response.delete_cookie(settings.auth_cookie_name, **kwargs)
+    response.delete_cookie(settings.auth_session_cookie_name, **kwargs)
 
 
 def _issue_state() -> str:
@@ -58,7 +96,12 @@ class GoogleCallbackRequest(BaseModel):
 # ── Standard auth ────────────────────────────────────────────────────────────
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/hour")
-async def register(request: Request, body: RegisterRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+async def register(
+    request: Request,
+    response: Response,
+    body: RegisterRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
     existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -77,18 +120,25 @@ async def register(request: Request, body: RegisterRequest, db: Annotated[AsyncS
     await db.refresh(user)
 
     token = create_access_token(str(user.id), user.role.value, user.email)
+    _set_auth_cookies(response, token)
     return TokenResponse(access_token=token)
 
 
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("10/minute")
-async def login(request: Request, body: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+async def login(
+    request: Request,
+    response: Response,
+    body: LoginRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
     if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     token = create_access_token(str(user.id), user.role.value, user.email)
+    _set_auth_cookies(response, token)
     return TokenResponse(access_token=token)
 
 
@@ -123,6 +173,7 @@ async def update_me(
 
 @router.post("/setup-password", response_model=TokenResponse)
 async def setup_password(
+    response: Response,
     body: SetupPasswordRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
@@ -149,6 +200,7 @@ async def setup_password(
     await db.commit()
 
     token = create_access_token(str(user.id), user.role.value, user.email)
+    _set_auth_cookies(response, token)
     return TokenResponse(access_token=token)
 
 
@@ -178,6 +230,7 @@ async def google_auth_url():
 
 @router.post("/google/callback", response_model=TokenResponse)
 async def google_callback(
+    response: Response,
     body: GoogleCallbackRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
@@ -250,4 +303,10 @@ async def google_callback(
     await db.refresh(user)
 
     token = create_access_token(str(user.id), user.role.value, user.email)
+    _set_auth_cookies(response, token)
     return TokenResponse(access_token=token)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(response: Response):
+    _clear_auth_cookies(response)

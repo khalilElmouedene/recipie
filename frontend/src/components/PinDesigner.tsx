@@ -416,13 +416,9 @@ export async function buildTemplateOnCanvas(
   canvas.backgroundColor = overrides?.bgColor || template.bgColor;
   let imageIndex = 0;
 
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
   const fetchAsDataUrl = async (url: string): Promise<string> => {
     const proxyEndpoint = `${proxyBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch(proxyEndpoint, { headers });
+    const res = await fetch(proxyEndpoint, { credentials: "include" });
     if (!res.ok) throw new Error(`Proxy fetch failed: ${res.status}`);
     const blob = await res.blob();
     return new Promise((resolve, reject) => {
@@ -1277,10 +1273,9 @@ export default function PinDesigner({
   const checkPinterestStatus = async () => {
     if (!projectId) return;
     try {
-      const token = localStorage.getItem("token");
       const res = await fetch(
         `${getApiBaseUrl()}/pinterest/status?project_id=${projectId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { credentials: "include" }
       );
       if (res.ok) {
         const data = await res.json();
@@ -1295,10 +1290,9 @@ export default function PinDesigner({
   const fetchPinterestBoards = async () => {
     if (!projectId) return;
     try {
-      const token = localStorage.getItem("token");
       const res = await fetch(
         `${getApiBaseUrl()}/pinterest/boards?project_id=${projectId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { credentials: "include" }
       );
       if (res.ok) {
         const boards = await res.json();
@@ -1313,10 +1307,9 @@ export default function PinDesigner({
   const connectPinterest = async () => {
     if (!projectId) return;
     try {
-      const token = localStorage.getItem("token");
       const res = await fetch(
         `${getApiBaseUrl()}/pinterest/auth-url?project_id=${projectId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { credentials: "include" }
       );
       if (res.ok) {
         const data = await res.json();
@@ -1333,10 +1326,10 @@ export default function PinDesigner({
     if (!projectId || !selectedBoard) return;
     setPublishing(true);
     try {
-      const token = localStorage.getItem("token");
       const res = await fetch(`${getApiBaseUrl()}/pinterest/create-pin`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           project_id: projectId,
           board_id: selectedBoard,

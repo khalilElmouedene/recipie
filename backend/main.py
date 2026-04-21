@@ -111,6 +111,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        if settings.csp_policy.strip():
+            csp_header = "Content-Security-Policy-Report-Only" if settings.csp_report_only else "Content-Security-Policy"
+            response.headers[csp_header] = settings.csp_policy.strip()
+        if request.url.scheme == "https" and settings.hsts_max_age_seconds > 0:
+            hsts = f"max-age={settings.hsts_max_age_seconds}"
+            if settings.hsts_include_subdomains:
+                hsts += "; includeSubDomains"
+            if settings.hsts_preload:
+                hsts += "; preload"
+            response.headers["Strict-Transport-Security"] = hsts
         return response
 
 

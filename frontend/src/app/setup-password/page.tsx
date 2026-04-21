@@ -49,6 +49,7 @@ export default function SetupPasswordPage() {
     const res = await fetch(`${getApiBaseUrl()}/api/auth/setup-password`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ token, password }),
     });
     setLoading(false);

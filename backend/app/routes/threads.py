@@ -331,7 +331,8 @@ async def add_threads_account_by_token(
     try:
         user_info = threads_api.get_user_info_by_token(token)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        logger.warning("Threads token validation failed for project %s: %s", project_id, str(exc)[:500])
+        raise HTTPException(status_code=400, detail="Invalid Threads access token")
 
     threads_user_id = str(user_info["id"])
     username = user_info.get("username", threads_user_id)
@@ -422,7 +423,8 @@ async def threads_oauth_callback(
             redirect_uri=settings.threads_redirect_uri,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        logger.warning("Threads OAuth code exchange failed for project %s: %s", project_id, str(exc)[:500])
+        raise HTTPException(status_code=400, detail="Threads OAuth code exchange failed")
 
     access_token = token_data["access_token"]
     threads_user_id = token_data["user_id"]
@@ -431,7 +433,8 @@ async def threads_oauth_callback(
     try:
         user_info = threads_api.get_user_info(access_token, threads_user_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        logger.warning("Threads user info lookup failed for project %s: %s", project_id, str(exc)[:500])
+        raise HTTPException(status_code=400, detail="Failed to fetch Threads account information")
 
     username = user_info.get("username", threads_user_id)
     token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
@@ -647,13 +650,12 @@ async def publish_threads_post_now(
             image_url=abs_image,
         )
     except ValueError as exc:
-        err_msg = str(exc)
-        logger.error("[threads] publish failed for post %s: %s", post.id, err_msg)
+        logger.error("[threads] publish failed for post %s: %s", post.id, str(exc)[:500])
         post.status = ThreadsPostStatus.failed
-        post.error_message = err_msg
+        post.error_message = "Failed to publish to Threads"
         await db.commit()
         await db.refresh(post)
-        raise HTTPException(status_code=400, detail=err_msg)
+        raise HTTPException(status_code=400, detail="Failed to publish to Threads")
 
     # Optionally post first comment as a reply
     if post.first_comment:
@@ -742,10 +744,11 @@ async def batch_publish_threads_posts(
                 image_url=abs_img,
             )
         except ValueError as exc:
+            logger.error("[threads] batch publish failed for post %s: %s", post.id, str(exc)[:500])
             post.status = ThreadsPostStatus.failed
-            post.error_message = str(exc)
+            post.error_message = "Failed to publish to Threads"
             await db.commit()
-            failed.append({"id": str(post_id), "error": str(exc)})
+            failed.append({"id": str(post_id), "error": "Failed to publish to Threads"})
             continue
 
         if post.first_comment:

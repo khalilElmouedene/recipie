@@ -148,13 +148,12 @@ export default function SettingsPage() {
       return;
     }
     setInfoLoading(true);
-    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     const res = await fetch(`${getApiBaseUrl()}/api/auth/me`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
       },
+      credentials: "include",
       body: JSON.stringify({ full_name: fullName.trim() }),
     });
     setInfoLoading(false);
@@ -193,13 +192,12 @@ export default function SettingsPage() {
       return;
     }
     setPwLoading(true);
-    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     const res = await fetch(`${getApiBaseUrl()}/api/auth/me`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
       },
+      credentials: "include",
       body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
     });
     setPwLoading(false);
