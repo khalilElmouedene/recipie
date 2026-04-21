@@ -166,7 +166,6 @@ class SiteCreate(BaseModel):
     pinterest_url: str = ""
     image_mode: str = "featured_and_top"
     embed_pin_in_article: bool = False
-    mj_upscale_count: int = Field(default=1, ge=1, le=3)
 
 
 class SiteUpdate(BaseModel):
@@ -178,7 +177,6 @@ class SiteUpdate(BaseModel):
     pinterest_url: str | None = None
     image_mode: str | None = None
     embed_pin_in_article: bool | None = None
-    mj_upscale_count: int | None = Field(default=None, ge=1, le=3)
 
 
 class WpUserOut(BaseModel):
@@ -217,7 +215,6 @@ class SiteOut(BaseModel):
     pinterest_url: str = ""
     image_mode: str = "featured_and_top"
     embed_pin_in_article: bool = False
-    mj_upscale_count: int = 1
     created_at: datetime
     recipe_count: int = 0
 

@@ -213,8 +213,6 @@ class Site(Base):
     image_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="featured_and_top")
     # When True, the pin designer image is embedded in the article HTML on save.
     embed_pin_in_article: Mapped[bool] = mapped_column(default=False, server_default="false")
-    # How many of the 4 Midjourney grid images to upscale (1–3).
-    mj_upscale_count: Mapped[int] = mapped_column(default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     project: Mapped[Project] = relationship(back_populates="sites")

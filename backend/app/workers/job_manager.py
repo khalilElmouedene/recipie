@@ -374,7 +374,6 @@ class JobManager:
                         on_progress=_on_progress,
                         on_recipe_done=_on_recipe_done,
                         pinterest_url=site_pinterest_url,
-                        num_upscales=int(site_obj.mj_upscale_count) if site_obj and site_obj.mj_upscale_count else 1,
                     )
                 elif db_job.job_type == JobType.publisher:
                     publish_recipes_from_db(
@@ -415,7 +414,6 @@ class JobManager:
                                 prompts=prompts,
                                 log=rj.log,
                                 should_stop=rj.should_stop,
-                                num_upscales=int(sites[0].mj_upscale_count) if sites and sites[0].mj_upscale_count else 1,
                             )
                             if not shared_images:
                                 raise ValueError(
@@ -819,7 +817,6 @@ class JobManager:
                             on_progress=_on_progress,
                             on_recipe_done=_on_recipe_done,
                             pinterest_url=site_pinterest_url,
-                            num_upscales=int(site_obj.mj_upscale_count) if site_obj and site_obj.mj_upscale_count else 1,
                         )
                     elif db_job.job_type == JobType.publisher:
                         publish_recipes_from_db(
@@ -854,7 +851,6 @@ class JobManager:
                                     prompts=prompts,
                                     log=rj.log,
                                     should_stop=rj.should_stop,
-                                    num_upscales=int(sites[0].mj_upscale_count) if sites and sites[0].mj_upscale_count else 1,
                                 )
                                 if not shared_images:
                                     raise ValueError(

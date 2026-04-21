@@ -105,7 +105,6 @@ async def _site_out(site: Site, db: AsyncSession) -> dict:
         "pinterest_url": site.pinterest_url or "",
         "image_mode": site.image_mode or "featured_and_top",
         "embed_pin_in_article": bool(site.embed_pin_in_article),
-        "mj_upscale_count": int(site.mj_upscale_count) if site.mj_upscale_count is not None else 3,
         "created_at": site.created_at,
         "recipe_count": recipe_count,
     }
@@ -151,7 +150,6 @@ async def create_site(
         pinterest_url=body.pinterest_url or None,
         image_mode=body.image_mode if body.image_mode in ("featured_only", "featured_and_top") else "featured_and_top",
         embed_pin_in_article=body.embed_pin_in_article,
-        mj_upscale_count=max(1, min(3, body.mj_upscale_count)),
     )
     db.add(site)
     await db.commit()
@@ -205,8 +203,6 @@ async def update_site(
         site.image_mode = body.image_mode if body.image_mode in ("featured_only", "featured_and_top") else "featured_and_top"
     if body.embed_pin_in_article is not None:
         site.embed_pin_in_article = body.embed_pin_in_article
-    if body.mj_upscale_count is not None:
-        site.mj_upscale_count = max(1, min(3, body.mj_upscale_count))
 
     await db.commit()
     row = await db.execute(select(Site).where(Site.id == site_id))

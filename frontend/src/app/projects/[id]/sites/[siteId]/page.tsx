@@ -90,6 +90,7 @@ export default function SiteDetailPage() {
   const prevActiveJobStatusRef = useRef<string | undefined>(undefined);
   const [jobToast, setJobToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const detailsLoadedRef = useRef<Set<string>>(new Set());
+  const deletingIdsRef = useRef<Set<string>>(new Set());
   const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
   // Idempotency refs: block re-entry between click and React re-render (same-frame double-clicks)
   const jobStartingRef = useRef(false);
@@ -99,11 +100,12 @@ export default function SiteDetailPage() {
     () =>
       api.getRecipes(siteId, true)
         .then((rows) => {
-          const incomingIds = new Set(rows.map((r) => r.id));
+          const filtered = rows.filter((r) => !deletingIdsRef.current.has(r.id));
+          const incomingIds = new Set(filtered.map((r) => r.id));
 
           setRecipes((prev) => {
             const prevById = new Map(prev.map((r) => [r.id, r]));
-            return rows.map((row) => {
+            return filtered.map((row) => {
               const previous = prevById.get(row.id);
               if (!previous || !detailsLoadedRef.current.has(row.id)) return row;
 
@@ -324,12 +326,15 @@ export default function SiteDetailPage() {
 
   const handleDelete = async (recipeId: string) => {
     if (!await openConfirm({ message: "Delete this recipe?", danger: true, confirmLabel: "Delete" })) return;
+    deletingIdsRef.current.add(recipeId);
     setRecipes((prev) => prev.filter((r) => r.id !== recipeId));
     if (expandedId === recipeId) setExpandedId(null);
     try {
       await api.deleteRecipe(recipeId);
     } catch (err: any) {
       toast.error(err.message || "Failed to delete recipe");
+    } finally {
+      deletingIdsRef.current.delete(recipeId);
     }
     loadRecipes();
   };
