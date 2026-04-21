@@ -29,6 +29,11 @@ interface SidebarProps {
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const closeIfMobile = () => {
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches) {
+      onClose?.();
+    }
+  };
   const role = getUserRole();
   const email = (getUserEmail() || "").trim().toLowerCase();
   const isAuditViewer = email === "khalil@gmail.com";
@@ -43,7 +48,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
     <aside
       className={[
         "flex h-screen w-64 flex-col border-r border-gray-800 bg-gray-900",
-        "fixed inset-y-0 left-0 z-40 transition-transform duration-300 md:static md:translate-x-0",
+        "fixed inset-y-0 left-0 z-40 transition-transform duration-300 md:static md:translate-x-0 md:transform-none",
         isOpen ? "translate-x-0" : "-translate-x-full",
       ].join(" ")}
     >
@@ -77,7 +82,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             <Link
               key={item.href}
               href={item.href}
-              onClick={onClose}
+              onClick={closeIfMobile}
               className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
                 active
                   ? "bg-brand-600/10 text-brand-400"

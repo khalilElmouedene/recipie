@@ -15,6 +15,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [ready, setReady] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const isMobileViewport = () =>
+    typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
 
   useEffect(() => {
     if (PUBLIC.includes(pathname)) {
@@ -39,9 +41,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [pathname, router]);
 
-  // Close sidebar on route change (mobile)
+  // Close sidebar only on mobile route changes.
   useEffect(() => {
-    setSidebarOpen(false);
+    if (isMobileViewport()) {
+      setSidebarOpen(false);
+    }
   }, [pathname]);
 
   if (!ready) return null;
