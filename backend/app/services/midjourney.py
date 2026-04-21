@@ -143,6 +143,7 @@ class MidjourneyApi:
             raise ValueError("Timeout")
 
     def choose_images(self):
+        """Click U1–U4 to upscale all 4 grid images (round 1)."""
         url = "https://discord.com/api/v9/interactions"
         self.get_message()
         if not self.custom_ids:
@@ -166,6 +167,68 @@ class MidjourneyApi:
                 self._log(f"Failed to upscale button {custom_id}, status: {response.status_code}")
             self._interruptible_sleep(self.upscale_gap_seconds)
         self._log("Upscale requests sent for all 4 images")
+
+    def _find_upscale_2x_buttons(self) -> list[dict]:
+        """Find messages after baseline that have image attachments and an 'Upscale (2x)' button."""
+        after_id = getattr(self, "upscale_baseline_id", self.message_id)
+        try:
+            response = requests.get(
+                f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
+                headers=self._headers(),
+                params={"after": after_id, "limit": 50},
+            )
+            messages = response.json()
+        except Exception as e:
+            self._log(f"Error fetching messages for further upscale: {e}")
+            return []
+
+        result = []
+        for msg in messages:
+            if not msg.get("attachments"):
+                continue
+            upscale_2x_id = None
+            for row in msg.get("components", []):
+                for btn in row.get("components", []):
+                    label = btn.get("label", "")
+                    custom_id = btn.get("custom_id", "")
+                    # Match "Upscale (2x)" label or known Midjourney v6 custom_id patterns
+                    if "2x" in label or "upsample_v6_2x" in custom_id or "upscale_v6_2x" in custom_id:
+                        upscale_2x_id = custom_id
+                        break
+                if upscale_2x_id:
+                    break
+            if upscale_2x_id:
+                result.append({"message_id": msg["id"], "custom_id": upscale_2x_id})
+            if len(result) >= 4:
+                break
+        return result
+
+    def upscale_further(self) -> None:
+        """Perform one additional upscale round by clicking 'Upscale (2x)' on each image."""
+        upscale_targets = self._find_upscale_2x_buttons()
+        if not upscale_targets:
+            raise ValueError("No 'Upscale (2x)' buttons found — cannot perform additional upscale round")
+
+        # Update baseline before triggering so download_image finds the new results
+        self.upscale_baseline_id = self._get_latest_message_id()
+
+        url = "https://discord.com/api/v9/interactions"
+        for item in upscale_targets:
+            data = {
+                "type": 3,
+                "guild_id": self.guild_id,
+                "channel_id": self.channel_id,
+                "message_flags": 0,
+                "message_id": item["message_id"],
+                "application_id": self.application_id,
+                "session_id": "cannot be empty",
+                "data": {"component_type": 2, "custom_id": item["custom_id"]},
+            }
+            response = requests.post(url, headers=self._headers(), json=data)
+            if response.status_code != 204:
+                self._log(f"Further upscale failed for message {item['message_id']}: {response.status_code}")
+            self._interruptible_sleep(self.upscale_gap_seconds)
+        self._log(f"Further upscale requests sent for {len(upscale_targets)} images")
 
     def download_image(self) -> list[str]:
         img_urls: list[str] = []
@@ -205,13 +268,18 @@ def generate_images(
     prompts: dict[str, str] | None = None,
     wait_time: int = 190,
     upscale_gap_seconds: int = 10,
+    num_upscales: int = 1,
     post_upscale_wait_seconds: int = 30,
     max_attempts: int | None = None,
     retry_delay_seconds: int = 15,
     log: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
 ) -> list[str]:
-    """High-level function to generate 4 Midjourney images for a recipe.
+    """High-level function to generate Midjourney images for a recipe.
+    num_upscales controls how many upscale rounds to perform:
+      1 = standard (U1-U4 only)
+      2 = U1-U4, then Upscale (2x) on each result
+      3 = U1-U4, then Upscale (2x) twice
     credentials dict must contain: discord_app_id, discord_guild, discord_channel,
     mj_version, mj_id, discord_auth
     """
@@ -221,6 +289,7 @@ def generate_images(
     tpl = get_prompt(prompts or {}, "midjourney_imagine")
     prompt = tpl.format(recipe_name=recipe_name, img_url=img_url, source_img=img_url)
 
+    rounds = max(1, min(3, int(num_upscales)))
     retry_delay = max(1, min(300, int(retry_delay_seconds)))
     post_wait = max(10, min(600, post_upscale_wait_seconds))
     attempts_limit = max(1, int(max_attempts)) if max_attempts is not None else None
@@ -279,10 +348,18 @@ def generate_images(
                     raise ValueError("Generation stopped by user")
                 time.sleep(1)
 
-    # From here onward, do not retry the full generation: only the first communication is retried.
+    # Round 1: standard U1–U4 upscale
     mj.choose_images()
     _log(f"Waiting {post_wait}s for upscaled images to appear...")
     mj._interruptible_sleep(post_wait)
+
+    # Rounds 2+: click "Upscale (2x)" on each result
+    for round_num in range(2, rounds + 1):
+        _log(f"Upscale round {round_num}/{rounds}: clicking 'Upscale (2x)' on all images...")
+        mj.upscale_further()
+        _log(f"Waiting {post_wait}s for round {round_num} images to appear...")
+        mj._interruptible_sleep(post_wait)
+
     image_urls = mj.download_image()
     if not image_urls:
         raise ValueError("Midjourney returned no image URLs")

@@ -178,12 +178,12 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
   const openConfirm = useConfirm();
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
+  const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, mj_upscale_count: 1, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [loading, setLoading] = useState(false);
   const [publishingSiteId, setPublishingSiteId] = useState<string | null>(null);
   const [detailsSite, setDetailsSite] = useState<SiteOut | null>(null);
   const [editSite, setEditSite] = useState<SiteOut | null>(null);
-  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
+  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, mj_upscale_count: 1, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [editing, setEditing] = useState(false);
 
   const load = () => api.getSites(projectId).then(setSites).catch(() => {});
@@ -203,7 +203,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
     setLoading(true);
     try {
       await api.createSite(projectId, { ...form, wp_users: validUsers });
-      setForm({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, wp_users: [emptyWpUser()] });
+      setForm({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, mj_upscale_count: 1, wp_users: [emptyWpUser()] });
       setShow(false);
       load();
     } catch {}
@@ -239,6 +239,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
       pinterest_url: s.pinterest_url || "",
       image_mode: s.image_mode || "featured_and_top",
       embed_pin_in_article: s.embed_pin_in_article ?? false,
+      mj_upscale_count: s.mj_upscale_count ?? 3,
       wp_users: wpUsers.length ? wpUsers : [emptyWpUser()],
     });
   };
@@ -259,6 +260,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
         pinterest_url: editForm.pinterest_url || "",
         image_mode: editForm.image_mode,
         embed_pin_in_article: editForm.embed_pin_in_article,
+        mj_upscale_count: editForm.mj_upscale_count,
         wp_users: validUsers.map((u) => ({ username: u.username, password: u.password })),
       };
       await api.updateSite(editSite.id, data);
@@ -323,6 +325,16 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
                 <p className="text-xs text-gray-500">When enabled, the Pin Designer image is automatically inserted into the article body before publishing.</p>
               </div>
             </label>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">Midjourney upscale rounds <span className="text-gray-500 font-normal">(1–3)</span></label>
+            <input
+              type="number" min={1} max={3}
+              value={form.mj_upscale_count}
+              onChange={(e) => setForm({ ...form, mj_upscale_count: Math.max(1, Math.min(3, parseInt(e.target.value) || 3)) })}
+              className="input-field w-full"
+            />
+            <p className="text-xs text-gray-500 mt-1">Number of upscale rounds. 1 = standard (4 images). 2 = upscale each result again with Upscale (2x). 3 = one more round.</p>
           </div>
           <div className="col-span-2">
             <label className="block text-sm font-medium text-gray-300 mb-1">WP Users (one randomly selected per publish)</label>
@@ -504,6 +516,16 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
                     <p className="text-xs text-gray-500">When enabled, the Pin Designer image is automatically inserted into the article body before publishing.</p>
                   </div>
                 </label>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Midjourney upscale rounds <span className="text-gray-500 font-normal">(1–3)</span></label>
+                <input
+                  type="number" min={1} max={3}
+                  value={editForm.mj_upscale_count}
+                  onChange={(e) => setEditForm({ ...editForm, mj_upscale_count: Math.max(1, Math.min(3, parseInt(e.target.value) || 3)) })}
+                  className="input-field w-full"
+                />
+                <p className="text-xs text-gray-500 mt-1">Number of upscale rounds. 1 = standard (4 images). 2 = upscale each result again with Upscale (2x). 3 = one more round.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-1">WP Users (blank password = keep current)</label>

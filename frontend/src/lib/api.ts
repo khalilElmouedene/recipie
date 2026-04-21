@@ -669,6 +669,7 @@ export interface SiteOut {
   pinterest_url: string;
   image_mode: string;
   embed_pin_in_article: boolean;
+  mj_upscale_count: number;
   created_at: string;
   recipe_count: number;
 }
@@ -687,6 +688,7 @@ export interface SiteCreateData {
   pinterest_url?: string;
   image_mode?: string;
   embed_pin_in_article?: boolean;
+  mj_upscale_count?: number;
 }
 
 export interface RecipeOut {

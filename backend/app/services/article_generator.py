@@ -299,6 +299,7 @@ def generate_for_recipe(
     log: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     pinterest_url: str = "",
+    num_upscales: int = 1,
 ) -> dict:
     """Generate all content for a single recipe. Returns a dict of fields to update on the Recipe row."""
     _log = log or print
@@ -338,6 +339,7 @@ def generate_for_recipe(
                     prompts=prompts,
                     wait_time=gw,
                     upscale_gap_seconds=_MJ_UPSCALE_GAP_SEC,
+                    num_upscales=max(1, min(3, num_upscales)),
                     post_upscale_wait_seconds=_MJ_POST_UPSCALE_WAIT_SEC,
                     log=_log,
                     should_stop=_stop,
@@ -488,6 +490,7 @@ def generate_images_only(
     prompts: dict[str, str] | None = None,
     log: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    num_upscales: int = 1,
 ) -> str | None:
     """Generate Midjourney images only and return JSON string urls (or None)."""
     _log = log or print
@@ -512,6 +515,7 @@ def generate_images_only(
             prompts=prompts,
             wait_time=gw,
             upscale_gap_seconds=_MJ_UPSCALE_GAP_SEC,
+            num_upscales=max(1, min(3, num_upscales)),
             post_upscale_wait_seconds=_MJ_POST_UPSCALE_WAIT_SEC,
             log=_log,
             should_stop=_stop,
@@ -530,6 +534,7 @@ def process_recipes_from_db(
     on_progress: Callable[[int, int], None] | None = None,
     on_recipe_done: Callable[[str, dict], None] | None = None,
     pinterest_url: str = "",
+    num_upscales: int = 1,
 ):
     """Process a list of pending recipes from the database.
     recipes: list of dicts with id, recipe_text, image_url.
@@ -567,6 +572,7 @@ def process_recipes_from_db(
             log=_log,
             should_stop=_stop,
             pinterest_url=pinterest_url,
+            num_upscales=num_upscales,
         )
 
         if _stop():
