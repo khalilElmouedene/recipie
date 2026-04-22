@@ -9,6 +9,7 @@ import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
 
 const API_URL = getApiBaseUrl();
+const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "stopped"]);
 const DETAILED_PRESERVE_FIELDS: (keyof RecipeOut)[] = [
   "generated_article",
   "generated_json",
@@ -87,7 +88,8 @@ export default function SiteDetailPage() {
   const [activeJob, setActiveJob] = useState<JobOut | null>(null);
   const [activeJobLastLog, setActiveJobLastLog] = useState<string>("");
   const activeJobWsRef = useRef<WebSocket | null>(null);
-  const prevActiveJobStatusRef = useRef<string | undefined>(undefined);
+  const activeJobStatusByIdRef = useRef<Map<string, string>>(new Map());
+  const notifiedTerminalJobStatesRef = useRef<Set<string>>(new Set());
   const [jobToast, setJobToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const detailsLoadedRef = useRef<Set<string>>(new Set());
   const deletingIdsRef = useRef<Set<string>>(new Set());
@@ -179,23 +181,28 @@ export default function SiteDetailPage() {
   // Fire notification when active job finishes
   useEffect(() => {
     if (!activeJob) return;
-    const prev = prevActiveJobStatusRef.current;
-    prevActiveJobStatusRef.current = activeJob.status;
-    if (prev === "running" && activeJob.status !== "running") {
-      const isSuccess = activeJob.status === "completed";
-      const msg = isSuccess
-        ? "Generation completed successfully!"
-        : activeJob.status === "failed"
-          ? "Generation failed."
-          : "Generation stopped.";
-      setJobToast({ message: msg, type: isSuccess ? "success" : activeJob.status === "failed" ? "error" : "info" });
-      setTimeout(() => setJobToast(null), 6000);
+    const prevStatus = activeJobStatusByIdRef.current.get(activeJob.id);
+    activeJobStatusByIdRef.current.set(activeJob.id, activeJob.status);
 
-      if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
-        new Notification(`Job ${activeJob.status}`, { body: msg, icon: "/favicon.ico" });
-      }
+    const isTerminal = TERMINAL_JOB_STATUSES.has(activeJob.status);
+    const wasActive = !!prevStatus && !TERMINAL_JOB_STATUSES.has(prevStatus);
+    const notificationKey = `${activeJob.id}:${activeJob.status}`;
+    if (!isTerminal || !wasActive || notifiedTerminalJobStatesRef.current.has(notificationKey)) return;
+
+    notifiedTerminalJobStatesRef.current.add(notificationKey);
+    const isSuccess = activeJob.status === "completed";
+    const msg = isSuccess
+      ? "Generation completed successfully!"
+      : activeJob.status === "failed"
+        ? "Generation failed."
+        : "Generation stopped.";
+    setJobToast({ message: msg, type: isSuccess ? "success" : activeJob.status === "failed" ? "error" : "info" });
+    setTimeout(() => setJobToast(null), 6000);
+
+    if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      new Notification(`Job ${activeJob.status}`, { body: msg, icon: "/favicon.ico" });
     }
-  }, [activeJob?.status]);
+  }, [activeJob?.id, activeJob?.status]);
 
   // Sync pin design form when expanded recipe changes (auto-fill from generated data)
   useEffect(() => {
@@ -394,7 +401,8 @@ export default function SiteDetailPage() {
   // Live WebSocket stream for active job
   useEffect(() => {
     if (!activeJob || activeJob.status !== "running") return;
-    const ws = new WebSocket(getWsUrl(activeJob.id));
+    const trackedJobId = activeJob.id;
+    const ws = new WebSocket(getWsUrl(trackedJobId));
     activeJobWsRef.current = ws;
     ws.onmessage = (e) => {
       if (!e.data) return;
@@ -405,8 +413,9 @@ export default function SiteDetailPage() {
         e.data.includes("Job failed")
       ) {
         setTimeout(() => {
-          api.getJob(activeJob.id).then((j) => {
-            setActiveJob(j);
+          api.getJob(trackedJobId).then((j) => {
+            // Ignore late updates from a job that is no longer the actively tracked one.
+            setActiveJob((prev) => (prev && prev.id === trackedJobId ? j : prev));
             if (j.status !== "running") loadRecipes();
           }).catch(() => {});
         }, 800);
@@ -414,8 +423,9 @@ export default function SiteDetailPage() {
     };
     ws.onclose = () => {
       const poll = (attempts: number) => {
-        api.getJob(activeJob.id).then((j) => {
-          setActiveJob(j);
+        api.getJob(trackedJobId).then((j) => {
+          // A finished older job must not overwrite a newer running job in the UI.
+          setActiveJob((prev) => (prev && prev.id === trackedJobId ? j : prev));
           if (j.status !== "running") { loadRecipes(); return; }
           if (attempts > 0) setTimeout(() => poll(attempts - 1), 1500);
         }).catch(() => {});
@@ -428,9 +438,10 @@ export default function SiteDetailPage() {
   // Poll active job status every 3s while pending/running.
   useEffect(() => {
     if (!activeJob || (activeJob.status !== "running" && activeJob.status !== "pending")) return;
+    const trackedJobId = activeJob.id;
     const t = setInterval(() => {
-      api.getJob(activeJob.id).then((j) => {
-        setActiveJob(j);
+      api.getJob(trackedJobId).then((j) => {
+        setActiveJob((prev) => (prev && prev.id === trackedJobId ? j : prev));
         if (j.status !== "running" && j.status !== "pending") {
           loadRecipes();
         }

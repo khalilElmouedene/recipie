@@ -6,6 +6,7 @@ import { api, JobOut, getWsUrl } from "@/lib/api";
 
 // ── Step definitions (7 steps per recipe) ───────────────────────────────────
 const TOTAL_STEPS = 7;
+const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "stopped"]);
 
 interface RecipeCard {
   name: string;
@@ -86,6 +87,7 @@ export default function JobDetailPage() {
   const [logs, setLogs] = useState<string[]>([]);
   const logRef = useRef<HTMLDivElement>(null);
   const prevStatusRef = useRef<string | undefined>(undefined);
+  const notifiedTerminalStatesRef = useRef<Set<string>>(new Set());
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
 
   // Request notification permission on mount
@@ -100,25 +102,30 @@ export default function JobDetailPage() {
     if (!job) return;
     const prev = prevStatusRef.current;
     prevStatusRef.current = job.status;
-    if (prev === "running" && job.status !== "running") {
-      const isSuccess = job.status === "completed";
-      const msg = isSuccess
-        ? "Generation completed successfully!"
-        : job.status === "failed"
-          ? "Generation failed."
-          : "Generation stopped.";
 
-      setToast({ message: msg, type: isSuccess ? "success" : job.status === "failed" ? "error" : "info" });
-      setTimeout(() => setToast(null), 6000);
+    const isTerminal = TERMINAL_JOB_STATUSES.has(job.status);
+    const wasActive = !!prev && !TERMINAL_JOB_STATUSES.has(prev);
+    const notificationKey = `${job.id}:${job.status}`;
+    if (!isTerminal || !wasActive || notifiedTerminalStatesRef.current.has(notificationKey)) return;
 
-      if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
-        new Notification(`Job ${job.status}`, {
-          body: msg,
-          icon: "/favicon.ico",
-        });
-      }
+    notifiedTerminalStatesRef.current.add(notificationKey);
+    const isSuccess = job.status === "completed";
+    const msg = isSuccess
+      ? "Generation completed successfully!"
+      : job.status === "failed"
+        ? "Generation failed."
+        : "Generation stopped.";
+
+    setToast({ message: msg, type: isSuccess ? "success" : job.status === "failed" ? "error" : "info" });
+    setTimeout(() => setToast(null), 6000);
+
+    if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      new Notification(`Job ${job.status}`, {
+        body: msg,
+        icon: "/favicon.ico",
+      });
     }
-  }, [job?.status]);
+  }, [job?.id, job?.status]);
 
   useEffect(() => {
     api.getJob(id).then(setJob).catch(() => router.push("/"));
