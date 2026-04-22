@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Plus, FolderKanban, Globe, ChefHat, Copy, Trash2, Pencil, Check, X } from "lucide-react";
+import { Plus, FolderKanban, Globe, ChefHat, Copy, Trash2, Pencil, X } from "lucide-react";
 import { api, ProjectOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
@@ -16,9 +16,9 @@ export default function ProjectsPage() {
   const [duplicating, setDuplicating] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
-  const [savingName, setSavingName] = useState(false);
+  const [renameProject, setRenameProject] = useState<ProjectOut | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [savingRename, setSavingRename] = useState(false);
   const toast = useToast();
   const syncedOnceRef = useRef(false);
   const previousProjectsRef = useRef<Map<string, string>>(new Map());
@@ -97,17 +97,31 @@ export default function ProjectsPage() {
     setDeleting(null);
   };
 
-  const handleRename = async (id: string) => {
-    if (!editName.trim()) return;
-    setSavingName(true);
+  const openRenameDialog = (project: ProjectOut, e: React.MouseEvent) => {
+    e.preventDefault();
+    setRenameProject(project);
+    setRenameName(project.name);
+  };
+
+  const closeRenameDialog = () => {
+    if (savingRename) return;
+    setRenameProject(null);
+    setRenameName("");
+  };
+
+  const handleRename = async () => {
+    if (!renameProject || !renameName.trim()) return;
+    setSavingRename(true);
     try {
-      const updated = await api.updateProject(id, { name: editName.trim() });
-      setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name: updated.name } : p)));
-      setEditingId(null);
+      const updated = await api.updateProject(renameProject.id, { name: renameName.trim() });
+      setProjects((prev) => prev.map((p) => (p.id === updated.id ? { ...p, name: updated.name } : p)));
+      setRenameProject(null);
+      setRenameName("");
     } catch {
       toast.error("Failed to rename project");
+    } finally {
+      setSavingRename(false);
     }
-    setSavingName(false);
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -158,35 +172,7 @@ export default function ProjectsPage() {
                   <FolderKanban size={20} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  {editingId === p.id ? (
-                    <div className="flex items-center gap-1" onClick={(e) => e.preventDefault()}>
-                      <input
-                        autoFocus
-                        value={editName}
-                        onChange={(e) => setEditName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") handleRename(p.id);
-                          if (e.key === "Escape") setEditingId(null);
-                        }}
-                        className="bg-gray-800 border border-gray-600 text-white text-sm rounded px-2 py-0.5 w-full focus:outline-none focus:border-brand-500"
-                      />
-                      <button
-                        onClick={() => handleRename(p.id)}
-                        disabled={savingName}
-                        className="p-1 text-green-400 hover:text-green-300 transition"
-                      >
-                        <Check size={14} />
-                      </button>
-                      <button
-                        onClick={() => setEditingId(null)}
-                        className="p-1 text-gray-500 hover:text-gray-300 transition"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  ) : (
-                    <h3 className="font-semibold text-white group-hover:text-brand-400 transition truncate">{p.name}</h3>
-                  )}
+                  <h3 className="font-semibold text-white group-hover:text-brand-400 transition truncate">{p.name}</h3>
                   {p.description && <p className="text-xs text-gray-500 truncate max-w-[200px]">{p.description}</p>}
                 </div>
               </div>
@@ -216,7 +202,7 @@ export default function ProjectsPage() {
                 ) : (
                   <>
                     <button
-                      onClick={(e) => { e.preventDefault(); setEditName(p.name); setEditingId(p.id); }}
+                      onClick={(e) => openRenameDialog(p, e)}
                       title="Rename project"
                       className="p-1.5 rounded text-gray-500 hover:text-yellow-400 hover:bg-gray-800 transition"
                     >
@@ -250,6 +236,59 @@ export default function ProjectsPage() {
           </div>
         )}
       </div>
+
+      {renameProject && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-gray-900 rounded-xl border border-gray-700 max-w-md w-full p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">Rename Project</h3>
+              <button
+                onClick={closeRenameDialog}
+                disabled={savingRename}
+                className="text-gray-400 hover:text-gray-200 transition disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleRename();
+              }}
+            >
+              <label className="block text-sm font-medium text-gray-300 mb-1">Project name</label>
+              <input
+                autoFocus
+                value={renameName}
+                onChange={(e) => setRenameName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") closeRenameDialog();
+                }}
+                required
+                className="input-field mb-4"
+                placeholder="Project name"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeRenameDialog}
+                  disabled={savingRename}
+                  className="px-4 py-2 rounded-lg border border-gray-600 text-gray-300 hover:border-gray-500 hover:text-white transition disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingRename || !renameName.trim()}
+                  className="btn-primary disabled:opacity-50"
+                >
+                  {savingRename ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
