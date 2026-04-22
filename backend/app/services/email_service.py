@@ -49,6 +49,24 @@ async def send_welcome_email(to_email: str, full_name: str, setup_link: str) -> 
     await send_email(to_email, subject, html)
 
 
+async def send_password_reset_email(to_email: str, reset_link: str) -> None:
+    subject = "Reset your Recipe Generator password"
+    html = f"""
+    <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:24px">
+      <h2 style="color:#1e293b">Reset your password</h2>
+      <p style="color:#475569">We received a request to reset the password for your <strong>Recipe Generator</strong> account.</p>
+      <p style="color:#475569">Click the button below to choose a new password. This link expires in <strong>15 minutes</strong>.</p>
+      <a href="{reset_link}"
+         style="display:inline-block;margin:16px 0;padding:12px 24px;background:#7c3aed;color:#fff;text-decoration:none;border-radius:8px;font-weight:600">
+        Reset My Password
+      </a>
+      <p style="color:#94a3b8;font-size:13px">If you did not request a password reset, you can safely ignore this email. Your password will not change.</p>
+      <p style="color:#94a3b8;font-size:13px">Or copy this link: {reset_link}</p>
+    </div>
+    """
+    await send_email(to_email, subject, html)
+
+
 async def send_project_invite_email(
     to_email: str, full_name: str, project_name: str, role: str, app_url: str
 ) -> None:

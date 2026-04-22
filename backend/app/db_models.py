@@ -106,6 +106,8 @@ class PasswordSetupToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # "invite" (new account setup) | "reset" (forgot password flow)
+    token_type: Mapped[str] = mapped_column(String(16), nullable=False, default="invite")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

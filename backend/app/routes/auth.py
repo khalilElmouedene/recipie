@@ -18,7 +18,8 @@ from ..config import settings
 from ..database import get_db
 from ..db_models import User, UserRole, PasswordSetupToken
 from ..dependencies import get_current_user
-from ..models import RegisterRequest, LoginRequest, TokenResponse, UserOut, ProfileUpdate, SetupPasswordRequest
+from ..models import RegisterRequest, LoginRequest, TokenResponse, UserOut, ProfileUpdate, SetupPasswordRequest, ForgotPasswordRequest, ResetPasswordRequest
+from ..services.email_service import send_password_reset_email
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
@@ -194,6 +195,82 @@ async def setup_password(
     user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=400, detail="User not found")
+
+    user.password_hash = hash_password(body.password)
+    record.used = True
+    await db.commit()
+
+    token = create_access_token(str(user.id), user.role.value, user.email)
+    _set_auth_cookies(response, token)
+    return TokenResponse(access_token=token)
+
+
+# ── Forgot / Reset password ──────────────────────────────────────────────────
+@router.post("/forgot-password", status_code=status.HTTP_200_OK)
+@limiter.limit("3/hour")
+async def forgot_password(
+    request: Request,
+    body: ForgotPasswordRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    # Always return the same message — never reveal whether the email exists
+    generic = {"detail": "If this email is registered, you will receive a reset link shortly."}
+
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+    if not user:
+        return generic
+
+    # Google-only accounts have no password — silently skip
+    if not user.password_hash and user.google_id:
+        return generic
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    now = datetime.now(timezone.utc)
+
+    record = PasswordSetupToken(
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=now + timedelta(minutes=15),
+        token_type="reset",
+    )
+    db.add(record)
+    await db.commit()
+
+    reset_link = f"{settings.frontend_url.rstrip('/')}/reset-password?token={raw_token}"
+
+    try:
+        await send_password_reset_email(user.email, reset_link)
+    except Exception:
+        pass  # Don't expose email delivery failures
+
+    return generic
+
+
+@router.post("/reset-password", response_model=TokenResponse)
+async def reset_password(
+    response: Response,
+    body: ResetPasswordRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+    result = await db.execute(
+        select(PasswordSetupToken).where(
+            PasswordSetupToken.token_hash == token_hash,
+            PasswordSetupToken.token_type == "reset",
+        )
+    )
+    record = result.scalar_one_or_none()
+    if not record or record.used:
+        raise HTTPException(status_code=400, detail="Invalid or expired link")
+    if record.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="This link has expired")
+
+    user_result = await db.execute(select(User).where(User.id == record.user_id))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired link")
 
     user.password_hash = hash_password(body.password)
     record.used = True

@@ -93,9 +93,21 @@ export const api = {
     request<{ url: string; state: string }>("/api/auth/google/url"),
 
   googleCallback: (code: string, state: string) =>
-    request<{ access_token: string }>("/api/auth/google/callback", {
-      method: "POST",
+    request<{ access_token: string }>(“/api/auth/google/callback”, {
+      method: “POST”,
       body: JSON.stringify({ code, state }),
+    }),
+
+  forgotPassword: (email: string) =>
+    request<{ detail: string }>(“/api/auth/forgot-password”, {
+      method: “POST”,
+      body: JSON.stringify({ email }),
+    }),
+
+  resetPassword: (token: string, password: string) =>
+    request<{ access_token: string }>(“/api/auth/reset-password”, {
+      method: “POST”,
+      body: JSON.stringify({ token, password }),
     }),
 
   // â”€â”€ Users (Owner) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
