@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Eye, EyeOff } from "lucide-react";
 import { api } from "@/lib/api";
 import { setToken } from "@/lib/auth";
+import AuthLogo from "@/components/AuthLogo";
 
 function GoogleIcon() {
   return (
@@ -89,7 +90,7 @@ export default function RegisterPage() {
     <div className="flex min-h-screen items-center justify-center">
       <div className="w-full max-w-md card">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 h-12 w-12 rounded-xl bg-brand-600 flex items-center justify-center text-white font-bold text-xl">R</div>
+          <AuthLogo />
           <h1 className="text-2xl font-bold text-white">Create account</h1>
           <p className="mt-1 text-sm text-gray-400">The first user automatically becomes the Owner</p>
         </div>
