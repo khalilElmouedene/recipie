@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import hash_password, verify_password, create_access_token
@@ -107,14 +107,11 @@ async def register(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    user_count = await db.scalar(select(func.count()).select_from(User))
-    role = UserRole.owner if user_count == 0 else UserRole.member
-
     user = User(
         email=body.email,
         password_hash=hash_password(body.password),
         full_name=body.full_name,
-        role=role,
+        role=UserRole.owner,
     )
     db.add(user)
     await db.commit()
@@ -364,14 +361,12 @@ async def google_callback(
             # Link Google to existing email account
             user.google_id = google_id
         else:
-            # Brand new user — first user becomes owner
-            user_count = await db.scalar(select(func.count()).select_from(User))
-            role = UserRole.owner if user_count == 0 else UserRole.member
+            # Brand new user — always owner
             user = User(
                 email=email,
                 password_hash=None,
                 full_name=full_name,
-                role=role,
+                role=UserRole.owner,
                 google_id=google_id,
             )
             db.add(user)
