@@ -91,6 +91,7 @@ export default function SiteDetailPage() {
   const [jobToast, setJobToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const detailsLoadedRef = useRef<Set<string>>(new Set());
   const deletingIdsRef = useRef<Set<string>>(new Set());
+  const recentlyAddedRef = useRef<Map<string, RecipeOut>>(new Map());
   const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
   // Idempotency refs: block re-entry between click and React re-render (same-frame double-clicks)
   const jobStartingRef = useRef(false);
@@ -100,12 +101,19 @@ export default function SiteDetailPage() {
     () =>
       api.getRecipes(siteId, true)
         .then((rows) => {
+          const serverIds = new Set(rows.map((r) => r.id));
+          deletingIdsRef.current.forEach((id) => {
+            if (!serverIds.has(id)) deletingIdsRef.current.delete(id);
+          });
+          recentlyAddedRef.current.forEach((_, id) => {
+            if (serverIds.has(id)) recentlyAddedRef.current.delete(id);
+          });
           const filtered = rows.filter((r) => !deletingIdsRef.current.has(r.id));
           const incomingIds = new Set(filtered.map((r) => r.id));
 
           setRecipes((prev) => {
             const prevById = new Map(prev.map((r) => [r.id, r]));
-            return filtered.map((row) => {
+            const serverMerged = filtered.map((row) => {
               const previous = prevById.get(row.id);
               if (!previous || !detailsLoadedRef.current.has(row.id)) return row;
 
@@ -119,6 +127,12 @@ export default function SiteDetailPage() {
               }
               return merged;
             });
+
+            // Preserve locally-added recipes not yet confirmed by server
+            const pendingNew = Array.from(recentlyAddedRef.current.values()).filter(
+              (r) => !incomingIds.has(r.id)
+            );
+            return [...pendingNew, ...serverMerged];
           });
 
           const keptDetailed = new Set<string>();
@@ -317,6 +331,7 @@ export default function SiteDetailPage() {
       setRecipeText("");
       setImageSourceMode("url");
       setImageUploadError("");
+      recentlyAddedRef.current.set(newRecipe.id, newRecipe);
       setRecipes((prev) => [newRecipe, ...prev]);
     } catch (err: any) {
       toast.error(err.message || "Failed to add recipe");
@@ -331,10 +346,10 @@ export default function SiteDetailPage() {
     if (expandedId === recipeId) setExpandedId(null);
     try {
       await api.deleteRecipe(recipeId);
+      // deletingIdsRef is cleared by loadRecipes once the server confirms the recipe is absent
     } catch (err: any) {
-      toast.error(err.message || "Failed to delete recipe");
-    } finally {
       deletingIdsRef.current.delete(recipeId);
+      toast.error(err.message || "Failed to delete recipe");
     }
   };
 
