@@ -102,6 +102,7 @@ export default function AllSitesGeneratePage() {
   const [recipeFullById, setRecipeFullById] = useState<Record<string, RecipeOut>>({});
   const [loadingRecipeDetailId, setLoadingRecipeDetailId] = useState<string | null>(null);
   const [wpPublishingId, setWpPublishingId] = useState<string | null>(null);
+  const [resumingJobId, setResumingJobId] = useState<string | null>(null);
   const detailsLoadedRef = useRef<Set<string>>(new Set());
 
   const loadHistory = useCallback(() => {
@@ -430,6 +431,18 @@ export default function AllSitesGeneratePage() {
     }
   };
 
+  const handleResume = async (jobId: string) => {
+    if (!canAdmin || resumingJobId) return;
+    setResumingJobId(jobId);
+    try {
+      const job = await api.resumeJob(jobId);
+      router.push(`/jobs/${job.id}`);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to resume job");
+      setResumingJobId(null);
+    }
+  };
+
   const deleteRecipe = async (jobId: string, recipeId: string) => {
     if (!canAdmin) return;
     if (!await openConfirm({ message: "Delete this recipe?", danger: true, confirmLabel: "Delete" })) return;
@@ -697,6 +710,17 @@ export default function AllSitesGeneratePage() {
                       <button onClick={() => router.push(`/jobs/${j.id}`)} className="btn-secondary text-xs px-2 py-1">
                         Logs
                       </button>
+                      {canAdmin && (j.status === "stopped" || j.status === "failed") && !hasRunningGeneration && (
+                        <button
+                          onClick={() => handleResume(j.id)}
+                          disabled={resumingJobId === j.id}
+                          className="text-xs px-2 py-1 rounded-lg border border-green-700/50 text-green-400 hover:bg-green-950/30 disabled:opacity-50 flex items-center gap-1"
+                          title="Continue this generation from where it stopped"
+                        >
+                          {resumingJobId === j.id ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                          {resumingJobId === j.id ? "Resuming…" : "Continue"}
+                        </button>
+                      )}
                       {j.status !== "running" && (
                         <>
                           <button

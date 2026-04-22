@@ -505,6 +505,9 @@ export const api = {
   stopJob: (jobId: string) =>
     request<JobOut>(`/api/jobs/${jobId}/stop`, { method: "POST" }),
 
+  resumeJob: (jobId: string) =>
+    request<JobOut>(`/api/jobs/${jobId}/resume`, { method: "POST" }),
+
   deleteJob: (jobId: string) =>
     request<void>(`/api/jobs/${jobId}`, { method: "DELETE" }),
 

@@ -229,6 +229,49 @@ async def delete_job_and_linked_recipes(
     await db.commit()
 
 
+@router.post("/api/jobs/{job_id}/resume", response_model=JobOut)
+async def resume_job_endpoint(
+    job_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await check_project_access(job.project_id, user, db)
+
+    if job.job_type != JobType.articles_all_sites:
+        raise HTTPException(status_code=400, detail="Only articles_all_sites jobs can be resumed")
+
+    if job.status not in (JobStatus.stopped, JobStatus.failed):
+        raise HTTPException(status_code=400, detail="Job must be stopped or failed to resume")
+
+    dup = await db.execute(
+        select(Job).where(
+            Job.project_id == job.project_id,
+            Job.job_type == JobType.articles_all_sites,
+            Job.status.in_([JobStatus.running, JobStatus.pending]),
+        )
+    )
+    if dup.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Another generation job is already running for this project.")
+
+    # Revert any recipes stuck in 'generating' back to 'pending'
+    await db.execute(
+        sql_update(Recipe)
+        .where(Recipe.created_by_job_id == job.id, Recipe.status == RecipeStatus.generating)
+        .values(status=RecipeStatus.pending)
+    )
+    job.status = JobStatus.pending
+    await db.commit()
+
+    await job_manager.resume_job(job.id)
+
+    row = await db.execute(select(Job).where(Job.id == job_id))
+    return row.scalar_one()
+
+
 @router.post("/api/jobs/{job_id}/stop", response_model=JobOut)
 async def stop_job(
     job_id: uuid.UUID,
