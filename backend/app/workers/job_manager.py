@@ -35,7 +35,7 @@ def _split_images(images: list[str], n: int) -> list[list[str]]:
         idx += size
     return chunks
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db_models import (
@@ -828,8 +828,8 @@ class JobManager:
                             on_recipe_done=_on_recipe_done,
                         )
                     else:  # articles_all_sites
-                        total = len(recipes_data)
-                        done = 0
+                        total = total_count
+                        done = done_count
                         discord_auth = str(credentials.get("discord_auth", "")).strip()
                         for group in multi_site_groups:
                             if rj.should_stop():
@@ -915,10 +915,26 @@ class JobManager:
                     rj.log(f"Job failed: {e}")
                     _finalize(JobStatus.failed, error=str(e))
 
+            # Compute already-done and full-total counts so current_row/total_rows
+            # reflect the entire job (not just the remaining slice).
+            done_result = await db.execute(
+                select(func.count(Recipe.id)).where(
+                    Recipe.created_by_job_id == db_job.id,
+                    Recipe.status.in_([RecipeStatus.generated, RecipeStatus.published]),
+                )
+            )
+            done_count: int = done_result.scalar() or 0
+
+            total_result = await db.execute(
+                select(func.count(Recipe.id)).where(Recipe.created_by_job_id == db_job.id)
+            )
+            total_count: int = total_result.scalar() or len(recipes_data)
+
             thread = threading.Thread(target=_run_resumed, daemon=True)
             rj._thread = thread
             db_job.status = JobStatus.running
-            db_job.total_rows = len(recipes_data)
+            db_job.current_row = done_count
+            db_job.total_rows = total_count
             await db.commit()
             thread.start()
             logger.info("Resumed job %s (%s) with %d recipes", job_id_str, db_job.job_type.value, len(recipes_data))

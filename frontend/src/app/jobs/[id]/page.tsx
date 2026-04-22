@@ -176,10 +176,22 @@ export default function JobDetailPage() {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logs]);
 
+  // Poll job every 5 s while running so current_row / total_rows stay fresh
+  useEffect(() => {
+    if (!job || job.status !== "running") return;
+    const t = setInterval(() => {
+      api.getJob(id).then(setJob).catch(() => {});
+    }, 5000);
+    return () => clearInterval(t);
+  }, [job?.status, id]);
+
   const recipeCards = useMemo(() => parseRecipeCards(logs), [logs]);
   const currentStatus = useMemo(() => currentStatusFromLogs(logs), [logs]);
-  const completedCount = recipeCards.filter((c) => c.status === "completed").length;
-  const totalRecipes = recipeCards.length || job?.total_rows || 0;
+  // Use DB-tracked current_row/total_rows as the primary progress source so that
+  // already-completed recipes from previous runs are counted, and progress updates
+  // even during the Midjourney wait phase (before any RECIPE log lines appear).
+  const completedCount = job?.current_row ?? recipeCards.filter((c) => c.status === "completed").length;
+  const totalRecipes = (job?.total_rows ?? 0) > 0 ? job!.total_rows! : recipeCards.length;
 
   const statusBadge: Record<string, string> = {
     pending: "bg-gray-700 text-gray-300",
