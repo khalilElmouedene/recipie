@@ -107,43 +107,49 @@ class MidjourneyApi:
         self._log(f"Midjourney prompt sent (status {response.status_code})")
         return response
 
-    def get_message(self):
-        self._log(f"Waiting {self.wait_time}s for Midjourney generation...")
-        self._interruptible_sleep(self.wait_time)
-        try:
-            # Only look at messages that appeared AFTER we sent our prompt
-            response = requests.get(
-                f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
-                headers=self._headers(),
-                params={"after": self.baseline_id, "limit": 50},
-            )
-            messages = response.json()
-            # Find the grid message that has U1/U2/U3/U4 upscale buttons
-            for msg in messages:
-                try:
-                    comps = msg.get("components", [])
-                    if not comps:
-                        continue
-                    buttons = [
-                        c for c in comps[0].get("components", [])
-                        if c.get("label") in ["U1", "U2", "U3", "U4"]
-                    ]
-                    if len(buttons) >= 4:
-                        self.message_id = msg["id"]
-                        self.custom_ids = [b["custom_id"] for b in buttons]
-                        self._log(f"Got grid message {self.message_id} with {len(self.custom_ids)} upscale buttons")
-                        return
-                except (KeyError, IndexError):
+    def _find_grid_in_messages(self, messages: list) -> bool:
+        """Return True and set message_id/custom_ids if a grid message is found."""
+        for msg in messages:
+            try:
+                comps = msg.get("components", [])
+                if not comps:
                     continue
-            raise ValueError("No grid message with upscale buttons found")
-        except ValueError:
-            raise
-        except Exception as e:
-            self._log(f"Error getting messages: {e}")
-            raise ValueError("Timeout")
+                buttons = [
+                    c for c in comps[0].get("components", [])
+                    if c.get("label") in ["U1", "U2", "U3", "U4"]
+                ]
+                if len(buttons) >= 4:
+                    self.message_id = msg["id"]
+                    self.custom_ids = [b["custom_id"] for b in buttons]
+                    return True
+            except (KeyError, IndexError):
+                continue
+        return False
 
-    def choose_images(self):
-        """Click U1–U4 to upscale all 4 grid images."""
+    def get_message(self, poll_interval: int = 15) -> None:
+        """Poll Discord every poll_interval seconds until the grid appears or wait_time expires."""
+        self._log(f"Waiting up to {self.wait_time}s for Midjourney grid...")
+        elapsed = 0
+        while elapsed < self.wait_time:
+            self._interruptible_sleep(min(poll_interval, self.wait_time - elapsed))
+            elapsed += poll_interval
+            try:
+                response = requests.get(
+                    f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
+                    headers=self._headers(),
+                    params={"after": self.baseline_id, "limit": 50},
+                    timeout=15,
+                )
+                if self._find_grid_in_messages(response.json()):
+                    self._log(f"Got grid message {self.message_id} after {elapsed}s")
+                    return
+                self._log(f"Grid not ready yet ({elapsed}/{self.wait_time}s)...")
+            except Exception as e:
+                self._log(f"Grid poll error (will retry): {e}")
+        raise ValueError(f"No Midjourney grid found after {self.wait_time}s")
+
+    def choose_images(self, button_retries: int = 3) -> None:
+        """Click U1–U4 to upscale all 4 grid images, retrying each button on failure."""
         url = "https://discord.com/api/v9/interactions"
         self.get_message()
         if not self.custom_ids:
@@ -151,6 +157,7 @@ class MidjourneyApi:
         # Record baseline just before triggering upscales so download_image can
         # find only the 4 upscaled images that belong to this recipe
         self.upscale_baseline_id = self._get_latest_message_id()
+        failed = 0
         for custom_id in self.custom_ids[:4]:
             data = {
                 "type": 3,
@@ -162,41 +169,55 @@ class MidjourneyApi:
                 "session_id": "cannot be empty",
                 "data": {"component_type": 2, "custom_id": custom_id},
             }
-            response = requests.post(url, headers=self._headers(), json=data)
-            if response.status_code != 204:
-                self._log(f"Failed to upscale button {custom_id}, status: {response.status_code}")
+            sent = False
+            for attempt in range(button_retries):
+                response = requests.post(url, headers=self._headers(), json=data, timeout=15)
+                if response.status_code == 204:
+                    sent = True
+                    break
+                self._log(f"Upscale button attempt {attempt + 1}/{button_retries} failed (status {response.status_code})")
+                if attempt < button_retries - 1:
+                    self._interruptible_sleep(5)
+            if not sent:
+                failed += 1
+                self._log(f"Upscale button {custom_id} failed after {button_retries} attempts — skipping")
             self._interruptible_sleep(self.upscale_gap_seconds)
-        self._log("Upscale requests sent for all 4 images")
+        if failed == 4:
+            raise ValueError("All 4 upscale buttons failed — Discord may be down")
+        if failed:
+            self._log(f"Warning: {failed}/4 upscale buttons failed — continuing with partial upscales")
+        self._log(f"Upscale requests sent ({4 - failed}/4 succeeded)")
 
-    def download_image(self) -> list[str]:
-        img_urls: list[str] = []
-        try:
-            # Only look at messages after our upscale requests were sent
-            after_id = getattr(self, "upscale_baseline_id", self.message_id)
-            response = requests.get(
-                f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
-                headers=self._headers(),
-                params={"after": after_id, "limit": 50},
-            )
-            messages = response.json()
-            # Collect the first 4 messages that have image attachments
-            for msg in messages:
-                try:
-                    if msg.get("attachments"):
-                        img_urls.append(msg["attachments"][0]["url"])
-                        if len(img_urls) >= 4:
-                            break
-                except (KeyError, IndexError):
-                    continue
-            if not img_urls:
-                raise ValueError("No upscaled images found")
-            self._log(f"Downloaded {len(img_urls)} image URLs")
-            return img_urls
-        except ValueError:
-            raise
-        except Exception as e:
-            self._log(f"Error downloading images: {e}")
-            raise ValueError("Timeout")
+    def download_image(self, post_upscale_wait: int = 120, poll_interval: int = 10) -> list[str]:
+        """Poll Discord every poll_interval seconds until upscaled images appear or post_upscale_wait expires."""
+        after_id = getattr(self, "upscale_baseline_id", self.message_id)
+        elapsed = 0
+        while elapsed < post_upscale_wait:
+            self._interruptible_sleep(min(poll_interval, post_upscale_wait - elapsed))
+            elapsed += poll_interval
+            try:
+                response = requests.get(
+                    f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
+                    headers=self._headers(),
+                    params={"after": after_id, "limit": 50},
+                    timeout=15,
+                )
+                img_urls: list[str] = []
+                for msg in response.json():
+                    try:
+                        if msg.get("attachments"):
+                            img_urls.append(msg["attachments"][0]["url"])
+                            if len(img_urls) >= 4:
+                                break
+                    except (KeyError, IndexError):
+                        continue
+                if img_urls:
+                    self._log(f"Got {len(img_urls)} upscaled image(s) after {elapsed}s")
+                    return img_urls
+                self._log(f"Upscaled images not ready yet ({elapsed}/{post_upscale_wait}s)...")
+            except Exception as e:
+                self._log(f"Image download poll error (will retry): {e}")
+        raise ValueError(f"No upscaled images found after {post_upscale_wait}s")
 
 
 def generate_images(
@@ -281,10 +302,7 @@ def generate_images(
                 time.sleep(1)
 
     mj.choose_images()
-    _log(f"Waiting {post_wait}s for upscaled images to appear...")
-    mj._interruptible_sleep(post_wait)
-
-    image_urls = mj.download_image()
+    image_urls = mj.download_image(post_upscale_wait=post_wait)
     if not image_urls:
         raise ValueError("Midjourney returned no image URLs")
     return image_urls
