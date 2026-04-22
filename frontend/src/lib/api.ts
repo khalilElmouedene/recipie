@@ -8,7 +8,7 @@ export function getApiBaseUrl(): string {
     if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
       return "http://localhost:8000";
     }
-    return ""; // Same origin â€“ relative URLs (reverse proxy setup)
+    return ""; // Same origin - relative URLs (reverse proxy setup)
   }
   return "http://localhost:8000";
 }
@@ -68,7 +68,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
-// â”€â”€ Auth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- Auth ------------------------------------------------
 export const api = {
   register: (email: string, password: string, full_name: string) =>
     request<{ access_token: string }>("/api/auth/register", {
@@ -93,24 +93,24 @@ export const api = {
     request<{ url: string; state: string }>("/api/auth/google/url"),
 
   googleCallback: (code: string, state: string) =>
-    request<{ access_token: string }>(“/api/auth/google/callback”, {
-      method: “POST”,
+    request<{ access_token: string }>("/api/auth/google/callback", {
+      method: "POST",
       body: JSON.stringify({ code, state }),
     }),
 
   forgotPassword: (email: string) =>
-    request<{ detail: string }>(“/api/auth/forgot-password”, {
-      method: “POST”,
+    request<{ detail: string }>("/api/auth/forgot-password", {
+      method: "POST",
       body: JSON.stringify({ email }),
     }),
 
   resetPassword: (token: string, password: string) =>
-    request<{ access_token: string }>(“/api/auth/reset-password”, {
-      method: “POST”,
+    request<{ access_token: string }>("/api/auth/reset-password", {
+      method: "POST",
       body: JSON.stringify({ token, password }),
     }),
 
-  // â”€â”€ Users (Owner) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Users (Owner) --------------------------------------
   getUsers: () => request<UserOut[]>("/api/users"),
 
   createUser: (data: { email: string; full_name: string; role: string }) =>
@@ -125,7 +125,7 @@ export const api = {
   resendInvite: (id: string) =>
     request<void>(`/api/users/${id}/resend-invite`, { method: "POST" }),
 
-  // â”€â”€ Projects â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Projects -------------------------------------------
   getProjects: () => request<ProjectOut[]>("/api/projects"),
 
   getProjectPinterestRecipes: (projectId: string, siteId?: string, signal?: AbortSignal) =>
@@ -205,7 +205,7 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  // â”€â”€ Members â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Members --------------------------------------------
   getMembers: (projectId: string) => request<MemberOut[]>(`/api/projects/${projectId}/members`),
 
   addMember: (projectId: string, userId: string, role: string) =>
@@ -217,7 +217,7 @@ export const api = {
   removeMember: (projectId: string, userId: string) =>
     request<void>(`/api/projects/${projectId}/members/${userId}`, { method: "DELETE" }),
 
-  // â”€â”€ Credentials â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Credentials ----------------------------------------
   getCredentials: (projectId: string) =>
     request<CredentialOut[]>(`/api/projects/${projectId}/credentials`),
 
@@ -227,7 +227,7 @@ export const api = {
       body: JSON.stringify(creds),
     }),
 
-  // â”€â”€ Settings (clÃ©s API globales, non liÃ©es aux projets) â”€â”€
+  // -- Settings (clÃ©s API globales, non liÃ©es aux projets) --
   getSettingsCredentials: () => request<CredentialOut[]>(`/api/settings/credentials`),
   setSettingsCredentials: (creds: { key_type: string; value: string }[]) =>
     request<CredentialOut[]>(`/api/settings/credentials`, {
@@ -297,7 +297,7 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
-  // â”€â”€ Sites â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Sites ----------------------------------------------
   getSites: (projectId: string) => request<SiteOut[]>(`/api/projects/${projectId}/sites`),
 
   getLastPublishDate: (siteId: string) =>
@@ -347,7 +347,7 @@ export const api = {
     ),
 
   uploadPinImageToServer: async (siteId: string, dataUrl: string): Promise<string> => {
-    // Convert base64 data URL â†’ Blob â†’ FormData, POST to app server (7-day retention, not WordPress)
+    // Convert base64 data URL â†' Blob â†' FormData, POST to app server (7-day retention, not WordPress)
     const res = await fetch(dataUrl);
     const blob = await res.blob();
     const formData = new FormData();
@@ -362,7 +362,7 @@ export const api = {
     return (data.url as string) || "";
   },
 
-  // â”€â”€ Recipes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Recipes --------------------------------------------
   getRecipes: (siteId: string, summary = true) =>
     request<RecipeOut[]>(`/api/sites/${siteId}/recipes${summary ? "?summary=true" : ""}`),
 
@@ -405,10 +405,10 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  // â”€â”€ Pin Generator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Pin Generator --------------------------------------
   getPinTemplates: () => request<PinTemplate[]>("/api/pin-templates"),
 
-  // â”€â”€ Pin Designer Templates (user-created layouts) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Pin Designer Templates (user-created layouts) ----------------------
   getPinDesignerTemplates: (projectId?: string) =>
     request<PinDesignerTemplateOut[]>(
       `/api/pin-designer-templates${projectId ? `?project_id=${projectId}` : ""}`,
@@ -448,7 +448,7 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  // â”€â”€ Spy Sheet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Spy Sheet ------------------------------------------
   getSpySheet: (projectId: string) =>
     request<{ project_id: string; data: string | null; updated_at: string | null }>(`/api/projects/${projectId}/spy-sheet`),
 
@@ -487,7 +487,7 @@ export const api = {
   downloadProjectExcel: (projectId: string, projectName: string) =>
     downloadFile(`/api/projects/${projectId}/export/excel`, `${projectName.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}.xlsx`),
 
-  // â”€â”€ Jobs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Jobs -----------------------------------------------
   getProjectJobs: (projectId: string) => request<JobOut[]>(`/api/projects/${projectId}/jobs`),
 
   startJob: (projectId: string, data: { job_type: string; site_id?: string; recipe_id?: string; shared_recipes?: SharedRecipeInput[] }) =>
@@ -508,10 +508,10 @@ export const api = {
   deleteJob: (jobId: string) =>
     request<void>(`/api/jobs/${jobId}`, { method: "DELETE" }),
 
-  // â”€â”€ Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Dashboard ------------------------------------------
   getDashboard: () => request<DashboardStats>("/api/dashboard"),
 
-  // â”€â”€ Threads Projects â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Threads Projects -----------------------------------
   getThreadsProjects: () => request<ThreadsProjectOut[]>("/api/threads-projects"),
   createThreadsProject: (data: { name: string; description: string; app_id: string; app_secret: string }) =>
     request<ThreadsProjectOut>("/api/threads-projects", { method: "POST", body: JSON.stringify(data) }),
@@ -520,7 +520,7 @@ export const api = {
   deleteThreadsProject: (id: string) =>
     request<void>(`/api/threads-projects/${id}`, { method: "DELETE" }),
 
-  // â”€â”€ Threads Accounts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Threads Accounts -----------------------------------
   getThreadsAccounts: (projectId: string) =>
     request<ThreadsAccountOut[]>(`/api/threads-projects/${projectId}/accounts`),
   getThreadsOAuthUrl: (projectId: string) =>
@@ -534,7 +534,7 @@ export const api = {
   deleteThreadsAccount: (projectId: string, accountId: string) =>
     request<void>(`/api/threads-projects/${projectId}/accounts/${accountId}`, { method: "DELETE" }),
 
-  // â”€â”€ Threads Posts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Threads Posts --------------------------------------
   getThreadsPosts: (projectId: string) =>
     request<ThreadsPostOut[]>(`/api/threads-projects/${projectId}/posts`),
   uploadThreadsMedia: async (files: File[]): Promise<{ urls: string[] }> => {
@@ -567,7 +567,7 @@ export const api = {
   deleteThreadsPost: (postId: string) =>
     request<void>(`/api/threads-posts/${postId}`, { method: "DELETE" }),
 
-  // â”€â”€ Cleanup Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Cleanup Config -------------------------------------
   getCleanupConfig: () =>
     request<CleanupConfigOut>("/api/settings/cleanup-config"),
   setCleanupConfig: (data: { enabled: boolean; interval_days: number }) =>
@@ -581,7 +581,7 @@ export function getWsUrl(jobId: string): string {
   return `${base}/ws/logs/${jobId}`;
 }
 
-// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- Types ------------------------------------------------
 
 export interface CleanupConfigOut {
   enabled: boolean;
@@ -892,7 +892,7 @@ export interface DashboardStats {
   projects: ProjectOut[];
 }
 
-// â”€â”€ Pin Generator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- Pin Generator ----------------------------------------
 
 export interface PinTemplate {
   id: string;
