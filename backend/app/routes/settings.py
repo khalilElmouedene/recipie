@@ -274,7 +274,7 @@ class MidjourneyGridWaitUpdate(BaseModel):
 
 
 def _clamp_grid_wait(g: int) -> int:
-    return max(30, min(600, g))
+    return max(30, min(900, g))
 
 
 def _parse_grid_wait_json(raw: str | None) -> int:
