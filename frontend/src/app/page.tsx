@@ -1,15 +1,31 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FolderKanban, Globe, ChefHat, Briefcase } from "lucide-react";
+import { FolderKanban, Globe, ChefHat, Briefcase, ShieldAlert, X } from "lucide-react";
 import { api, DashboardStats } from "@/lib/api";
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [showNoPwWarning, setShowNoPwWarning] = useState(false);
+  const [userId, setUserId] = useState("");
 
   useEffect(() => {
     api.getDashboard().then(setStats).catch(() => {});
+    api.me().then((me) => {
+      if (!me.has_password) {
+        const dismissed = localStorage.getItem(`pw_banner_dismissed_${me.id}`) === "1";
+        if (!dismissed) {
+          setUserId(String(me.id));
+          setShowNoPwWarning(true);
+        }
+      }
+    }).catch(() => {});
   }, []);
+
+  const dismissWarning = () => {
+    localStorage.setItem(`pw_banner_dismissed_${userId}`, "1");
+    setShowNoPwWarning(false);
+  };
 
   if (!stats) return <div className="text-gray-400">Loading dashboard...</div>;
 
@@ -23,6 +39,29 @@ export default function DashboardPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-white mb-6">Dashboard</h1>
+
+      {showNoPwWarning && (
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4">
+          <ShieldAlert size={20} className="mt-0.5 shrink-0 text-amber-400" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-amber-300">Set up a password for your account</p>
+            <p className="mt-0.5 text-sm text-amber-400/80">
+              You signed up with Google and have no password yet.{" "}
+              <Link href="/settings" className="font-semibold underline underline-offset-2 hover:text-amber-200">
+                Set one in Settings
+              </Link>{" "}
+              to also enable email login.
+            </p>
+          </div>
+          <button
+            onClick={dismissWarning}
+            className="shrink-0 rounded-lg p-1 text-amber-400 hover:bg-amber-500/20 transition"
+            aria-label="Dismiss"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {cards.map((c) => (
