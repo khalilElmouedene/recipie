@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import mimetypes
 import re
 import threading
 import time
@@ -16,8 +17,14 @@ import requests
 
 from . import midjourney, openai_service
 from app.config import settings
+from ..midjourney_settings import (
+    DEFAULT_GRID_WAIT_SECONDS,
+    POST_UPSCALE_WAIT_SECONDS,
+    UPSCALE_GAP_SECONDS,
+    clamp_grid_wait,
+)
 
-# Per-channel locks — each Discord channel gets its own lock so different users
+# Per-channel locks - each Discord channel gets its own lock so different users
 # (with different channels) run Midjourney in parallel, while recipes on the
 # same channel are still serialized to avoid result cross-contamination.
 _midjourney_locks: dict[str, threading.Lock] = {}
@@ -32,20 +39,29 @@ def _get_mj_lock(channel_id: str) -> threading.Lock:
 
 UPLOADS_DIR = Path("/app/uploads")
 
-# Midjourney: grid wait is configurable (owner Settings); these two are fixed.
-_MJ_DEFAULT_GRID_WAIT_SEC = 190
-_MJ_UPSCALE_GAP_SEC = 10
-_MJ_POST_UPSCALE_WAIT_SEC = 30
-
 
 def _mj_grid_wait_from_credentials(credentials: dict) -> int:
     raw = credentials.get("mj_grid_wait_seconds")
     if raw is None or raw == "":
-        return _MJ_DEFAULT_GRID_WAIT_SEC
+        return DEFAULT_GRID_WAIT_SECONDS
     try:
-        return max(30, min(600, int(str(raw).strip())))
+        return clamp_grid_wait(int(str(raw).strip()))
     except ValueError:
-        return _MJ_DEFAULT_GRID_WAIT_SEC
+        return DEFAULT_GRID_WAIT_SECONDS
+
+
+def _image_extension_from_response(url: str, response: requests.Response) -> str:
+    content_type = (response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+    guessed = mimetypes.guess_extension(content_type) if content_type else None
+    if guessed == ".jpe":
+        guessed = ".jpg"
+    if guessed:
+        return guessed
+
+    suffix = Path(urlparse(url).path).suffix.lower()
+    if suffix:
+        return suffix
+    return ".bin"
 
 
 def _cache_image(url: str, log: Callable[[str], None] | None = None) -> str:
@@ -55,7 +71,7 @@ def _cache_image(url: str, log: Callable[[str], None] | None = None) -> str:
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
         r.raise_for_status()
         UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-        filename = f"{uuid.uuid4().hex}.webp"
+        filename = f"{uuid.uuid4().hex}{_image_extension_from_response(url, r)}"
         dest = UPLOADS_DIR / filename
         dest.write_bytes(r.content)
         permanent_url = f"{settings.server_base_url.rstrip('/')}/uploads/{filename}"
@@ -138,7 +154,7 @@ def _parse_sitemap_xml(xml_content: bytes) -> tuple[list[str], list[str]]:
             child_sitemaps.append(text)
         else:
             # Only include loc elements whose immediate parent tag ends with "url"
-            # (i.e. the canonical <url><loc>…</loc></url> pattern).
+            # (i.e. the canonical <url><loc>...</loc></url> pattern).
             parent = parent_map.get(el)
             parent_tag = (parent.tag or "").lower() if parent is not None else ""
             if not parent_tag.endswith("url"):
@@ -261,18 +277,18 @@ def get_sitemap_links(site_domain: str, log: Callable[[str], None] | None = None
                         break
                 if links:
                     result = list(dict.fromkeys(links))[:50]
-                    _log(f"Sitemap index found at {url} → {len(result)} post URLs")
+                    _log(f"Sitemap index found at {url} -> {len(result)} post URLs")
                     return result
             else:
                 if page_urls:
                     result = list(dict.fromkeys(page_urls))[:50]
-                    _log(f"Sitemap found at {url} → {len(result)} post URLs")
+                    _log(f"Sitemap found at {url} -> {len(result)} post URLs")
                     return result
         except Exception:
             continue
 
     # Fallback: crawl homepage links if all sitemap variants fail.
-    _log("No sitemap found — falling back to homepage link crawl")
+    _log("No sitemap found - falling back to homepage link crawl")
     for base in domain_variants:
         try:
             r = requests.get(base, timeout=15, headers=headers)
@@ -285,7 +301,7 @@ def get_sitemap_links(site_domain: str, log: Callable[[str], None] | None = None
         except Exception:
             continue
 
-    _log("WARNING: No internal links found — article will use fallback category links")
+    _log("WARNING: No internal links found - article will use fallback category links")
     return []
 
 
@@ -337,8 +353,8 @@ def generate_for_recipe(
                     credentials,
                     prompts=prompts,
                     wait_time=gw,
-                    upscale_gap_seconds=_MJ_UPSCALE_GAP_SEC,
-                    post_upscale_wait_seconds=_MJ_POST_UPSCALE_WAIT_SEC,
+                    upscale_gap_seconds=UPSCALE_GAP_SECONDS,
+                    post_upscale_wait_seconds=POST_UPSCALE_WAIT_SECONDS,
                     log=_log,
                     should_stop=_stop,
                 )
@@ -442,36 +458,6 @@ def generate_for_recipe(
             except Exception as e:
                 _log(f"Pinterest pin tags generation failed (non-fatal): {e}")
 
-        # 7. Midjourney images (only if Discord credentials exist)
-        discord_auth = ""
-        if False:
-            if _stop():
-                return result
-            _log("Waiting for Midjourney queue slot (one recipe at a time)...")
-            with _midjourney_lock:
-                if _stop():
-                    return result
-                _log("Midjourney slot acquired — generating images...")
-                try:
-                    gw = _mj_grid_wait_from_credentials(credentials)
-                    img_urls = midjourney.generate_images(
-                        recipe_title,
-                        image_url,
-                        credentials,
-                        prompts=prompts,
-                        wait_time=gw,
-                        upscale_gap_seconds=_MJ_UPSCALE_GAP_SEC,
-                        post_upscale_wait_seconds=_MJ_POST_UPSCALE_WAIT_SEC,
-                        log=_log,
-                    )
-                    # Cache immediately — Discord CDN URLs expire after a few hours
-                    cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
-                    result["generated_images"] = json.dumps(cached_urls)
-                except Exception as e:
-                    _log(f"Midjourney failed (non-fatal): {e}")
-        else:
-            pass
-
         _log(f"Content generation complete for: {recipe_title}")
         return result
 
@@ -503,7 +489,7 @@ def generate_images_only(
     with _get_mj_lock(channel_id):
         if _stop():
             return None
-        _log("Midjourney slot acquired — generating images...")
+        _log("Midjourney slot acquired - generating images...")
         gw = _mj_grid_wait_from_credentials(credentials)
         img_urls = midjourney.generate_images(
             recipe_title,
@@ -511,8 +497,8 @@ def generate_images_only(
             credentials,
             prompts=prompts,
             wait_time=gw,
-            upscale_gap_seconds=_MJ_UPSCALE_GAP_SEC,
-            post_upscale_wait_seconds=_MJ_POST_UPSCALE_WAIT_SEC,
+            upscale_gap_seconds=UPSCALE_GAP_SECONDS,
+            post_upscale_wait_seconds=POST_UPSCALE_WAIT_SECONDS,
             log=_log,
             should_stop=_stop,
         )
@@ -543,7 +529,7 @@ def process_recipes_from_db(
 
     for idx, recipe in enumerate(recipes):
         if _stop():
-            _log("STOP REQUESTED — aborting")
+            _log("STOP REQUESTED - aborting")
             return
 
         recipe_id = recipe["id"]
@@ -570,7 +556,7 @@ def process_recipes_from_db(
         )
 
         if _stop():
-            _log("STOP REQUESTED — skipping recipe update, status already reverted")
+            _log("STOP REQUESTED - skipping recipe update, status already reverted")
             return
 
         if on_recipe_done:

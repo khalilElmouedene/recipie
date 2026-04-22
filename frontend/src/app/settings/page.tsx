@@ -472,7 +472,7 @@ export default function SettingsPage() {
             How long to wait after /imagine before reading the grid from Discord.
           </p>
 
-          {mjLoading && <p className="text-sm text-gray-400">Loading…</p>}
+          {mjLoading && <p className="text-sm text-gray-400">Loading...</p>}
 
           {!mjLoading && mjTimers && (
             <div className="max-w-md space-y-1">
@@ -480,7 +480,7 @@ export default function SettingsPage() {
               <input
                 type="number"
                 min={30}
-                max={600}
+                max={900}
                 value={mjTimers.grid_wait_seconds}
                 onChange={(e) =>
                   setMjTimers({ ...mjTimers, grid_wait_seconds: Number(e.target.value) || 30 })
@@ -488,7 +488,7 @@ export default function SettingsPage() {
                 disabled={profile.role !== "owner"}
                 className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-60"
               />
-              <p className="mt-1 text-xs text-gray-500">After sending /imagine, wait before reading the grid (30–600).</p>
+              <p className="mt-1 text-xs text-gray-500">After sending /imagine, wait before reading the grid (30-900).</p>
             </div>
           )}
 
@@ -499,7 +499,7 @@ export default function SettingsPage() {
               disabled={mjSaving}
               className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
             >
-              {mjSaving ? "Saving…" : "Save grid wait"}
+              {mjSaving ? "Saving..." : "Save grid wait"}
             </button>
           )}
 
@@ -535,7 +535,7 @@ export default function SettingsPage() {
             <div>
               <p className="text-sm font-medium text-gray-200">Enable Automatic Cleanup</p>
               <p className="text-xs text-gray-500 mt-0.5">
-                {cleanupEnabled ? "Service is active — will run every " + cleanupIntervalDays + " day(s)." : "Service is disabled — no automatic deletion will occur."}
+                {cleanupEnabled ? "Service is active - will run every " + cleanupIntervalDays + " day(s)." : "Service is disabled - no automatic deletion will occur."}
               </p>
             </div>
             <button
@@ -660,7 +660,7 @@ export default function SettingsPage() {
               </div>
               <div>
                 <h3 className="text-base font-semibold text-white">Reset all prompts?</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Affects every project — cannot be undone</p>
+                <p className="text-xs text-gray-400 mt-0.5">Affects every project - cannot be undone</p>
               </div>
             </div>
             <p className="text-sm text-gray-300 mb-6">
@@ -720,3 +720,4 @@ export default function SettingsPage() {
     </div>
   );
 }
+

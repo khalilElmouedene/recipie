@@ -1,7 +1,20 @@
 from __future__ import annotations
+import re
 import time
 import requests
 from typing import Callable
+
+from ..midjourney_settings import (
+    DEFAULT_GRID_WAIT_SECONDS,
+    DISCORD_HTTP_TIMEOUT_SECONDS,
+    INITIAL_SEND_MAX_ATTEMPTS,
+    POST_UPSCALE_WAIT_SECONDS,
+    UPSCALE_GAP_SECONDS,
+)
+
+
+class MidjourneyPermanentError(ValueError):
+    """Raised when Midjourney/Discord rejects a request that should not be retried."""
 
 
 class MidjourneyApi:
@@ -16,8 +29,10 @@ class MidjourneyApi:
         version: str,
         mj_id: str,
         authorization: str,
-        wait_time: int = 190,
-        upscale_gap_seconds: int = 10,
+        recipe_name: str = "",
+        source_img_url: str = "",
+        wait_time: int = DEFAULT_GRID_WAIT_SECONDS,
+        upscale_gap_seconds: int = UPSCALE_GAP_SECONDS,
         log: Callable[[str], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
     ):
@@ -27,6 +42,8 @@ class MidjourneyApi:
         self.version = version
         self.id = mj_id
         self.authorization = authorization
+        self.recipe_name = recipe_name
+        self.source_img_url = source_img_url
         self.prompt = prompt
         self.wait_time = wait_time
         self.upscale_gap_seconds = max(1, min(120, upscale_gap_seconds))
@@ -50,12 +67,66 @@ class MidjourneyApi:
             "Content-Type": "application/json",
         }
 
+    def _message_text(self, msg: dict) -> str:
+        parts: list[str] = [str(msg.get("content", ""))]
+        for embed in msg.get("embeds", []) or []:
+            if not isinstance(embed, dict):
+                continue
+            parts.extend(
+                [
+                    str(embed.get("title", "")),
+                    str(embed.get("description", "")),
+                ]
+            )
+            for field in embed.get("fields", []) or []:
+                if not isinstance(field, dict):
+                    continue
+                parts.extend([str(field.get("name", "")), str(field.get("value", ""))])
+        return " ".join(parts)
+
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        return " ".join(str(value or "").lower().split())
+
+    def _job_markers(self) -> list[str]:
+        markers: list[str] = []
+        for raw, min_length in ((self.recipe_name, 4), (self.prompt, 8)):
+            cleaned = re.sub(r"https?://\S+", " ", raw or "")
+            normalized = self._normalize_text(cleaned)
+            if len(normalized) >= min_length:
+                markers.append(normalized[:160])
+        source_marker = self._normalize_text(self.source_img_url)
+        if len(source_marker) >= 8:
+            markers.append(source_marker[:160])
+        return list(dict.fromkeys(markers))
+
+    def _message_matches_job(self, msg: dict) -> bool:
+        text = self._normalize_text(self._message_text(msg))
+        if not text:
+            return False
+        return any(marker in text for marker in self._job_markers())
+
+    def _message_references_grid(self, msg: dict) -> bool:
+        ref = msg.get("message_reference") or {}
+        if str(ref.get("message_id", "")) == self.message_id:
+            return True
+        referenced = msg.get("referenced_message") or {}
+        return str(referenced.get("id", "")) == self.message_id
+
+    @staticmethod
+    def _message_sort_id(msg: dict) -> int:
+        try:
+            return int(str(msg.get("id", "0")))
+        except ValueError:
+            return 0
+
     def _get_latest_message_id(self) -> str:
         """Return the ID of the most recent message in the channel (used as a baseline)."""
         try:
             r = requests.get(
                 f"https://discord.com/api/v9/channels/{self.channel_id}/messages?limit=1",
                 headers=self._headers(),
+                timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
             )
             msgs = r.json()
             if msgs:
@@ -103,12 +174,18 @@ class MidjourneyApi:
                 "attachments": [],
             },
         }
-        response = requests.post(url, headers=self._headers(), json=data)
+        response = requests.post(
+            url,
+            headers=self._headers(),
+            json=data,
+            timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
+        )
         self._log(f"Midjourney prompt sent (status {response.status_code})")
         return response
 
     def _find_grid_in_messages(self, messages: list) -> bool:
         """Return True and set message_id/custom_ids if a grid message is found."""
+        candidates: list[tuple[int, dict, list[dict]]] = []
         for msg in messages:
             try:
                 comps = msg.get("components", [])
@@ -119,12 +196,22 @@ class MidjourneyApi:
                     if c.get("label") in ["U1", "U2", "U3", "U4"]
                 ]
                 if len(buttons) >= 4:
-                    self.message_id = msg["id"]
-                    self.custom_ids = [b["custom_id"] for b in buttons]
-                    return True
+                    score = 2 if self._message_matches_job(msg) else 0
+                    if msg.get("attachments"):
+                        score += 1
+                    candidates.append((score, msg, buttons))
             except (KeyError, IndexError):
                 continue
-        return False
+        if not candidates:
+            return False
+        candidates.sort(key=lambda item: (item[0], self._message_sort_id(item[1])), reverse=True)
+        best_score, best_msg, best_buttons = candidates[0]
+        if best_score <= 0 and len(candidates) > 1:
+            self._log("Found multiple Midjourney grid candidates without a prompt match; waiting for a clearer match...")
+            return False
+        self.message_id = best_msg["id"]
+        self.custom_ids = [b["custom_id"] for b in best_buttons]
+        return True
 
     def get_message(self, poll_interval: int = 15) -> None:
         """Poll Discord every poll_interval seconds until the grid appears or wait_time expires."""
@@ -138,7 +225,7 @@ class MidjourneyApi:
                     f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
                     headers=self._headers(),
                     params={"after": self.baseline_id, "limit": 50},
-                    timeout=15,
+                    timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
                 )
                 if self._find_grid_in_messages(response.json()):
                     self._log(f"Got grid message {self.message_id} after {elapsed}s")
@@ -171,7 +258,12 @@ class MidjourneyApi:
             }
             sent = False
             for attempt in range(button_retries):
-                response = requests.post(url, headers=self._headers(), json=data, timeout=15)
+                response = requests.post(
+                    url,
+                    headers=self._headers(),
+                    json=data,
+                    timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
+                )
                 if response.status_code == 204:
                     sent = True
                     break
@@ -200,17 +292,27 @@ class MidjourneyApi:
                     f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
                     headers=self._headers(),
                     params={"after": after_id, "limit": 50},
-                    timeout=15,
+                    timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
                 )
-                img_urls: list[str] = []
+                strict_urls: list[str] = []
+                fallback_urls: list[str] = []
                 for msg in response.json():
                     try:
-                        if msg.get("attachments"):
-                            img_urls.append(msg["attachments"][0]["url"])
-                            if len(img_urls) >= 4:
-                                break
+                        if not msg.get("attachments"):
+                            continue
+                        attachment_url = msg["attachments"][0]["url"]
+                        if self._message_references_grid(msg) or self._message_matches_job(msg):
+                            strict_urls.append(attachment_url)
+                        else:
+                            fallback_urls.append(attachment_url)
+                        if len(strict_urls) >= 4:
+                            break
                     except (KeyError, IndexError):
                         continue
+                img_urls = strict_urls
+                if not img_urls and len(fallback_urls) == 1:
+                    self._log("Only one upscaled image candidate found without a direct match; accepting it.")
+                    img_urls = fallback_urls
                 if img_urls:
                     self._log(f"Got {len(img_urls)} upscaled image(s) after {elapsed}s")
                     return img_urls
@@ -225,10 +327,10 @@ def generate_images(
     img_url: str,
     credentials: dict,
     prompts: dict[str, str] | None = None,
-    wait_time: int = 190,
-    upscale_gap_seconds: int = 10,
-    post_upscale_wait_seconds: int = 30,
-    max_attempts: int | None = None,
+    wait_time: int = DEFAULT_GRID_WAIT_SECONDS,
+    upscale_gap_seconds: int = UPSCALE_GAP_SECONDS,
+    post_upscale_wait_seconds: int = POST_UPSCALE_WAIT_SECONDS,
+    max_attempts: int | None = INITIAL_SEND_MAX_ATTEMPTS,
     retry_delay_seconds: int = 15,
     log: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
@@ -265,6 +367,8 @@ def generate_images(
                 version=credentials.get("mj_version", ""),
                 mj_id=credentials.get("mj_id", ""),
                 authorization=credentials.get("discord_auth", ""),
+                recipe_name=recipe_name,
+                source_img_url=img_url,
                 wait_time=wait_time,
                 upscale_gap_seconds=upscale_gap_seconds,
                 log=_log,
@@ -281,11 +385,16 @@ def generate_images(
                     body = ""
                 if len(body) > 240:
                     body = body[:240] + "...[truncated]"
-                raise ValueError(
+                error = (
                     f"Midjourney prompt send failed (status {send_resp.status_code})"
                     + (f": {body}" if body else "")
                 )
+                if send_resp.status_code in {400, 401, 403, 404}:
+                    raise MidjourneyPermanentError(error)
+                raise ValueError(error)
             break
+        except MidjourneyPermanentError:
+            raise
         except Exception as e:
             if attempts_limit is None:
                 _log(f"Midjourney initial communication failed (attempt {attempt}): {e}. Retrying in {retry_delay}s...")

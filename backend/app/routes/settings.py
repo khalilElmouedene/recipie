@@ -17,6 +17,12 @@ from ..crypto import encrypt, decrypt
 from ..database import get_db
 from ..db_models import User, UserCredential, Prompt, UserRole, CleanupConfig, Project
 from ..dependencies import get_current_user, require_owner, check_project_access
+from ..midjourney_settings import (
+    DEFAULT_GRID_WAIT_SECONDS,
+    POST_UPSCALE_WAIT_SECONDS,
+    UPSCALE_GAP_SECONDS,
+    clamp_grid_wait,
+)
 from ..models import CredentialSet, CredentialOut, PromptOut, PromptsUpdate
 from ..services.prompts import DEFAULT_PROMPTS
 
@@ -259,32 +265,24 @@ async def get_boards_template(
 
 # ── Midjourney: configurable grid wait only (upscale gap & download wait fixed in code) ──
 
-MJ_UPSCALE_GAP_FIXED = 10
-MJ_POST_DOWNLOAD_WAIT_FIXED = 60
-
-
 class MidjourneyTimersOut(BaseModel):
     grid_wait_seconds: int
-    upscale_gap_seconds: int = MJ_UPSCALE_GAP_FIXED
-    post_upscale_wait_seconds: int = MJ_POST_DOWNLOAD_WAIT_FIXED
+    upscale_gap_seconds: int = UPSCALE_GAP_SECONDS
+    post_upscale_wait_seconds: int = POST_UPSCALE_WAIT_SECONDS
 
 
 class MidjourneyGridWaitUpdate(BaseModel):
     grid_wait_seconds: int
 
 
-def _clamp_grid_wait(g: int) -> int:
-    return max(30, min(900, g))
-
-
 def _parse_grid_wait_json(raw: str | None) -> int:
     if not raw:
-        return 190
+        return DEFAULT_GRID_WAIT_SECONDS
     try:
         j = json.loads(raw)
-        return _clamp_grid_wait(int(j.get("grid_wait_seconds", 190)))
+        return clamp_grid_wait(int(j.get("grid_wait_seconds", DEFAULT_GRID_WAIT_SECONDS)))
     except (ValueError, TypeError, json.JSONDecodeError):
-        return 190
+        return DEFAULT_GRID_WAIT_SECONDS
 
 
 @router.get("/midjourney-timers", response_model=MidjourneyTimersOut)
@@ -298,8 +296,8 @@ async def get_midjourney_timers(
     grid = _parse_grid_wait_json(owner.mj_timer_settings if owner else None)
     return MidjourneyTimersOut(
         grid_wait_seconds=grid,
-        upscale_gap_seconds=MJ_UPSCALE_GAP_FIXED,
-        post_upscale_wait_seconds=MJ_POST_DOWNLOAD_WAIT_FIXED,
+        upscale_gap_seconds=UPSCALE_GAP_SECONDS,
+        post_upscale_wait_seconds=POST_UPSCALE_WAIT_SECONDS,
     )
 
 
@@ -309,13 +307,13 @@ async def set_midjourney_grid_wait(
     user: Annotated[User, Depends(require_owner)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    g = _clamp_grid_wait(body.grid_wait_seconds)
+    g = clamp_grid_wait(body.grid_wait_seconds)
     user.mj_timer_settings = json.dumps({"grid_wait_seconds": g})
     await db.commit()
     return MidjourneyTimersOut(
         grid_wait_seconds=g,
-        upscale_gap_seconds=MJ_UPSCALE_GAP_FIXED,
-        post_upscale_wait_seconds=MJ_POST_DOWNLOAD_WAIT_FIXED,
+        upscale_gap_seconds=UPSCALE_GAP_SECONDS,
+        post_upscale_wait_seconds=POST_UPSCALE_WAIT_SECONDS,
     )
 
 

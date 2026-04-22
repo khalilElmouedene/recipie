@@ -1,0 +1,15 @@
+from __future__ import annotations
+
+DEFAULT_GRID_WAIT_SECONDS = 190
+MIN_GRID_WAIT_SECONDS = 30
+MAX_GRID_WAIT_SECONDS = 900
+
+UPSCALE_GAP_SECONDS = 10
+POST_UPSCALE_WAIT_SECONDS = 60
+
+DISCORD_HTTP_TIMEOUT_SECONDS = 15
+INITIAL_SEND_MAX_ATTEMPTS = 3
+
+
+def clamp_grid_wait(seconds: int) -> int:
+    return max(MIN_GRID_WAIT_SECONDS, min(MAX_GRID_WAIT_SECONDS, int(seconds)))

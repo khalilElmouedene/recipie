@@ -8,17 +8,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..crypto import decrypt
 from ..db_models import Project, ProjectCredential, ProjectMember, User, UserCredential
+from ..midjourney_settings import DEFAULT_GRID_WAIT_SECONDS, clamp_grid_wait
 
 
 def _merge_mj_grid_wait(credentials: dict[str, str], owner: User | None) -> None:
-    g = 190
+    g = DEFAULT_GRID_WAIT_SECONDS
     if owner and owner.mj_timer_settings:
         try:
             j = json.loads(owner.mj_timer_settings)
             g = int(j.get("grid_wait_seconds", g))
         except (ValueError, TypeError, json.JSONDecodeError):
             pass
-    g = max(30, min(600, g))
+    g = clamp_grid_wait(g)
     credentials["mj_grid_wait_seconds"] = str(g)
 
 
