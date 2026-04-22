@@ -312,12 +312,12 @@ export default function SiteDetailPage() {
     }
     setAdding(true);
     try {
-      await api.createRecipe(siteId, { image_url: imageUrl.trim(), recipe_text: recipeText });
+      const newRecipe = await api.createRecipe(siteId, { image_url: imageUrl.trim(), recipe_text: recipeText });
       setImageUrl("");
       setRecipeText("");
       setImageSourceMode("url");
       setImageUploadError("");
-      loadRecipes();
+      setRecipes((prev) => [newRecipe, ...prev]);
     } catch (err: any) {
       toast.error(err.message || "Failed to add recipe");
     }
@@ -336,7 +336,6 @@ export default function SiteDetailPage() {
     } finally {
       deletingIdsRef.current.delete(recipeId);
     }
-    loadRecipes();
   };
 
   const [generatingId, setGeneratingId] = useState<string | null>(null);

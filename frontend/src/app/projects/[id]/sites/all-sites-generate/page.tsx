@@ -433,20 +433,17 @@ export default function AllSitesGeneratePage() {
   const deleteRecipe = async (jobId: string, recipeId: string) => {
     if (!canAdmin) return;
     if (!await openConfirm({ message: "Delete this recipe?", danger: true, confirmLabel: "Delete" })) return;
+    // Remove immediately before the API call so the UI feels instant
+    detailsLoadedRef.current.delete(recipeId);
+    setRecipeFullById((m) => { const n = { ...m }; delete n[recipeId]; return n; });
+    if (expandedRecipeId === recipeId) setExpandedRecipeId(null);
+    setJobRecipeMap((m) => ({
+      ...m,
+      [jobId]: (m[jobId] || []).filter((r) => r.id !== recipeId),
+    }));
     setDeletingRecipeId(recipeId);
     try {
       await api.deleteRecipe(recipeId);
-      detailsLoadedRef.current.delete(recipeId);
-      setRecipeFullById((m) => {
-        const n = { ...m };
-        delete n[recipeId];
-        return n;
-      });
-      if (expandedRecipeId === recipeId) setExpandedRecipeId(null);
-      setJobRecipeMap((m) => ({
-        ...m,
-        [jobId]: (m[jobId] || []).filter((r) => r.id !== recipeId),
-      }));
     } catch (e: any) {
       toast.error(e?.message || "Failed to delete recipe");
     } finally {
