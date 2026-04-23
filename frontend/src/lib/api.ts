@@ -136,6 +136,8 @@ export const api = {
 
   getProject: (id: string) => request<ProjectOut>(`/api/projects/${id}`),
 
+  getProjectHealth: (id: string) => request<ProjectHealthOverviewOut>(`/api/projects/${id}/health`),
+
   updateProject: (id: string, data: { name?: string; description?: string }) =>
     request<ProjectOut>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 
@@ -513,6 +515,7 @@ export const api = {
 
   // -- Dashboard ------------------------------------------
   getDashboard: () => request<DashboardStats>("/api/dashboard"),
+  getOperationsOverview: () => request<OperationsOverviewOut>("/api/dashboard/operations"),
 
   // -- Threads Projects -----------------------------------
   getThreadsProjects: () => request<ThreadsProjectOut[]>("/api/threads-projects"),
@@ -893,6 +896,53 @@ export interface DashboardStats {
   total_recipes: number;
   total_jobs: number;
   projects: ProjectOut[];
+}
+
+export interface OperationsMetricOut {
+  key: string;
+  label: string;
+  value: number;
+  tone: string;
+  hint: string | null;
+}
+
+export interface OperationsCheckOut {
+  key: string;
+  label: string;
+  status: string;
+  detail: string;
+  href: string | null;
+}
+
+export interface OperationsTaskOut {
+  key: string;
+  label: string;
+  done: boolean;
+  detail: string;
+  href: string | null;
+}
+
+export interface OperationsFailureOut {
+  kind: string;
+  id: string;
+  title: string;
+  detail: string;
+  status: string;
+  created_at: string;
+  href: string;
+}
+
+export interface OperationsOverviewOut {
+  analytics: OperationsMetricOut[];
+  monitoring: OperationsCheckOut[];
+  onboarding: OperationsTaskOut[];
+  failures: OperationsFailureOut[];
+}
+
+export interface ProjectHealthOverviewOut {
+  summary: OperationsMetricOut[];
+  schedule: OperationsCheckOut;
+  failures: OperationsFailureOut[];
 }
 
 // -- Pin Generator ----------------------------------------

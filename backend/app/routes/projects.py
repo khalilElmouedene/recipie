@@ -22,7 +22,7 @@ from ..config import settings
 from ..database import get_db
 from ..db_models import (
     User, UserRole, Project, ProjectMember, ProjectMemberRole,
-    Site, Recipe, Job, ProjectPublishSchedule, RecipeStatus,
+    Site, Recipe, Job, JobStatus, ProjectPublishSchedule, RecipeStatus,
 )
 from ..dependencies import get_current_user, require_owner, check_project_access
 from ..models import (
@@ -31,6 +31,7 @@ from ..models import (
     PublishBatchRequest, PublishBatchOut,
     ImageCleanupRunRequest, ImageCleanupRunResult,
     PinterestRecipeOut,
+    OperationsCheckOut, OperationsFailureOut, OperationsMetricOut, ProjectHealthOverviewOut,
 )
 from ..services.email_service import send_project_invite_email
 from ..database import SessionLocal
@@ -41,6 +42,15 @@ from ..site_credentials import get_random_wp_credentials
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 limiter = Limiter(key_func=get_remote_address)
 logger = logging.getLogger(__name__)
+
+
+def _trim_detail(value: str | None, fallback: str) -> str:
+    if not value:
+        return fallback
+    compact = " ".join(value.split())
+    if len(compact) <= 160:
+        return compact
+    return compact[:157] + "..."
 
 
 async def _project_out(project: Project, db: AsyncSession) -> dict:
@@ -123,6 +133,195 @@ async def get_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return await _project_out(project, db)
+
+
+@router.get("/{project_id}/health", response_model=ProjectHealthOverviewOut)
+async def get_project_health(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    await check_project_access(project_id, user, db)
+
+    project_row = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_row.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+
+    total_sites = await db.scalar(
+        select(func.count()).select_from(Site).where(Site.project_id == project_id)
+    ) or 0
+    running_jobs = await db.scalar(
+        select(func.count()).select_from(Job).where(
+            Job.project_id == project_id,
+            Job.status == JobStatus.running,
+        )
+    ) or 0
+    failed_jobs_recent = await db.scalar(
+        select(func.count()).select_from(Job).where(
+            Job.project_id == project_id,
+            Job.status == JobStatus.failed,
+            Job.created_at >= cutoff,
+        )
+    ) or 0
+    failed_recipes = await db.scalar(
+        select(func.count())
+        .select_from(Recipe)
+        .join(Site, Recipe.site_id == Site.id)
+        .where(
+            Site.project_id == project_id,
+            Recipe.status == RecipeStatus.failed,
+        )
+    ) or 0
+    published_recipes = await db.scalar(
+        select(func.count())
+        .select_from(Recipe)
+        .join(Site, Recipe.site_id == Site.id)
+        .where(
+            Site.project_id == project_id,
+            Recipe.status == RecipeStatus.published,
+        )
+    ) or 0
+
+    schedule_row = await db.execute(
+        select(ProjectPublishSchedule).where(ProjectPublishSchedule.project_id == project_id)
+    )
+    schedule = schedule_row.scalar_one_or_none()
+
+    summary = [
+        OperationsMetricOut(
+            key="sites",
+            label="Sites",
+            value=int(total_sites),
+            tone="neutral",
+            hint="Connected WordPress sites",
+        ),
+        OperationsMetricOut(
+            key="running_jobs",
+            label="Running Jobs",
+            value=int(running_jobs),
+            tone="neutral",
+            hint="Active background work in this project",
+        ),
+        OperationsMetricOut(
+            key="failed_jobs_7d",
+            label="Failed Jobs (7d)",
+            value=int(failed_jobs_recent),
+            tone="danger" if failed_jobs_recent else "success",
+            hint="Recent job failures that may need retry",
+        ),
+        OperationsMetricOut(
+            key="failed_recipes",
+            label="Failed Recipes",
+            value=int(failed_recipes),
+            tone="danger" if failed_recipes else "success",
+            hint="Recipe rows currently marked as failed",
+        ),
+        OperationsMetricOut(
+            key="published_recipes",
+            label="Published Recipes",
+            value=int(published_recipes),
+            tone="success" if published_recipes else "neutral",
+            hint="Recipes already delivered to WordPress",
+        ),
+    ]
+
+    schedule_check = OperationsCheckOut(
+        key="publish_schedule",
+        label="Publish schedule",
+        status=(
+            "critical"
+            if schedule and schedule.last_error
+            else ("ok" if schedule and schedule.enabled else "warning")
+        ),
+        detail=(
+            _trim_detail(schedule.last_error, "The scheduler reported an issue.")
+            if schedule and schedule.last_error
+            else (
+                f"Automation is enabled every {schedule.interval_minutes} minute(s)."
+                if schedule and schedule.enabled
+                else "Automation is disabled for this project."
+            )
+        ),
+        href=f"/projects/{project_id}",
+    )
+
+    failures: list[OperationsFailureOut] = []
+
+    failed_job_rows = (
+        await db.execute(
+            select(Job)
+            .where(
+                Job.project_id == project_id,
+                Job.status == JobStatus.failed,
+            )
+            .order_by(Job.created_at.desc())
+            .limit(3)
+        )
+    ).scalars().all()
+    for job in failed_job_rows:
+        failures.append(
+            OperationsFailureOut(
+                kind="job",
+                id=str(job.id),
+                title=f"{project.name} job failed",
+                detail=_trim_detail(job.error, "The job failed without a stored error message."),
+                status=str(job.status.value if hasattr(job.status, "value") else job.status),
+                created_at=job.created_at,
+                href=f"/jobs/{job.id}",
+            )
+        )
+
+    failed_recipe_rows = (
+        await db.execute(
+            select(Recipe, Site)
+            .join(Site, Recipe.site_id == Site.id)
+            .where(
+                Site.project_id == project_id,
+                Recipe.status == RecipeStatus.failed,
+            )
+            .order_by(Recipe.created_at.desc())
+            .limit(3)
+        )
+    ).all()
+    for recipe, site in failed_recipe_rows:
+        failures.append(
+            OperationsFailureOut(
+                kind="recipe",
+                id=str(recipe.id),
+                title=f"{site.domain} recipe failed",
+                detail=_trim_detail(
+                    recipe.error_message,
+                    "The recipe is marked as failed without a stored error message.",
+                ),
+                status=str(recipe.status.value if hasattr(recipe.status, "value") else recipe.status),
+                created_at=recipe.created_at,
+                href=f"/projects/{project_id}/sites/{site.id}",
+            )
+        )
+
+    if schedule and schedule.last_error:
+        failures.append(
+            OperationsFailureOut(
+                kind="schedule",
+                id=str(project_id),
+                title=f"{project.name} schedule issue",
+                detail=_trim_detail(schedule.last_error, "The scheduler reported an issue."),
+                status="warning",
+                created_at=schedule.updated_at,
+                href=f"/projects/{project_id}",
+            )
+        )
+
+    failures.sort(key=lambda item: item.created_at, reverse=True)
+
+    return ProjectHealthOverviewOut(
+        summary=summary,
+        schedule=schedule_check,
+        failures=failures[:6],
+    )
 
 
 @router.patch("/{project_id}", response_model=ProjectOut)

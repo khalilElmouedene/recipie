@@ -505,6 +505,53 @@ class DashboardStats(BaseModel):
     projects: list[ProjectOut]
 
 
+class OperationsMetricOut(BaseModel):
+    key: str
+    label: str
+    value: int
+    tone: str = "neutral"
+    hint: str | None = None
+
+
+class OperationsCheckOut(BaseModel):
+    key: str
+    label: str
+    status: str
+    detail: str
+    href: str | None = None
+
+
+class OperationsTaskOut(BaseModel):
+    key: str
+    label: str
+    done: bool
+    detail: str
+    href: str | None = None
+
+
+class OperationsFailureOut(BaseModel):
+    kind: str
+    id: str
+    title: str
+    detail: str
+    status: str
+    created_at: datetime
+    href: str
+
+
+class OperationsOverviewOut(BaseModel):
+    analytics: list[OperationsMetricOut]
+    monitoring: list[OperationsCheckOut]
+    onboarding: list[OperationsTaskOut]
+    failures: list[OperationsFailureOut]
+
+
+class ProjectHealthOverviewOut(BaseModel):
+    summary: list[OperationsMetricOut]
+    schedule: OperationsCheckOut
+    failures: list[OperationsFailureOut]
+
+
 # ── Pin Generator ────────────────────────────────────────
 
 class PinTemplateOut(BaseModel):

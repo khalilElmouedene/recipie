@@ -64,6 +64,12 @@ def require_owner(user: Annotated[User, Depends(get_current_user)]) -> User:
     return user
 
 
+def require_staff(user: Annotated[User, Depends(get_current_user)]) -> User:
+    if user.role not in (UserRole.owner, UserRole.admin):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Owner or admin access required")
+    return user
+
+
 async def check_project_access(
     project_id: uuid.UUID,
     user: User,

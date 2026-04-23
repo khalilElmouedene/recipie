@@ -2,7 +2,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle, ScrollText } from "lucide-react";
+import { Activity, LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle, ScrollText } from "lucide-react";
 import { clearToken, getUserEmail, getUserRole } from "@/lib/auth";
 import { api } from "@/lib/api";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -37,9 +37,13 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const role = getUserRole();
   const email = (getUserEmail() || "").trim().toLowerCase();
   const isAuditViewer = email === "khalil@gmail.com";
+  const showOperations = role === "owner" || role === "admin";
+  const navItems = showOperations
+    ? [{ href: "/operations", label: "Operations", icon: Activity }, ...NAV]
+    : NAV;
   const baseItems = role === "owner"
-    ? [...NAV, { href: "/users", label: "Users", icon: Users }, { href: "/settings", label: "Settings", icon: Settings }]
-    : [...NAV, { href: "/settings", label: "Settings", icon: Settings }];
+    ? [...navItems, { href: "/users", label: "Users", icon: Users }, { href: "/settings", label: "Settings", icon: Settings }]
+    : [...navItems, { href: "/settings", label: "Settings", icon: Settings }];
   const allItems = isAuditViewer
     ? [...baseItems, { href: "/logs", label: "Logs", icon: ScrollText }]
     : baseItems;

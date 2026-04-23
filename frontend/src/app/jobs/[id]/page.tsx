@@ -194,11 +194,19 @@ export default function JobDetailPage() {
 
   const recipeCards = useMemo(() => parseRecipeCards(logs), [logs]);
   const currentStatus = useMemo(() => currentStatusFromLogs(logs), [logs]);
-  // Use DB-tracked current_row/total_rows as the primary progress source so that
-  // already-completed recipes from previous runs are counted, and progress updates
-  // even during the Midjourney wait phase (before any RECIPE log lines appear).
-  const completedCount = job?.current_row ?? recipeCards.filter((c) => c.status === "completed").length;
   const totalRecipes = (job?.total_rows ?? 0) > 0 ? job!.total_rows! : recipeCards.length;
+  const completedFromLogs = recipeCards.filter((c) => c.status === "completed").length;
+  const runningCardCount = recipeCards.filter((c) => c.status === "running").length;
+  // `current_row` is updated when a recipe starts, so during an in-flight recipe it is
+  // effectively the current recipe index, not the number of completed recipes.
+  // We therefore derive the visible "completed" counter from parsed recipe cards and
+  // only use the DB field as a conservative fallback after removing in-flight cards.
+  const persistedCompletedCount = Math.max(0, (job?.current_row ?? 0) - runningCardCount);
+  const completedCount = recipeCards.length > 0
+    ? Math.max(completedFromLogs, persistedCompletedCount)
+    : job?.status === "completed"
+      ? totalRecipes
+      : 0;
 
   const statusBadge: Record<string, string> = {
     pending: "bg-gray-700 text-gray-300",

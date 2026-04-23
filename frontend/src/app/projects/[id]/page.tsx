@@ -2,8 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload, RotateCcw, AlertTriangle, Sheet } from "lucide-react";
-import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut } from "@/lib/api";
+import { Activity, Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload, RotateCcw, AlertTriangle, Sheet, CheckCircle2 } from "lucide-react";
+import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut, ProjectHealthOverviewOut } from "@/lib/api";
 import { getUserRole, getUserId } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
@@ -147,6 +147,11 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
+      <ProjectHealthPanel
+        projectId={id}
+        canViewOperations={globalRole === "owner" || globalRole === "admin"}
+      />
+
       <div className="flex gap-1 border-b border-gray-800 mb-6">
         {tabs.map((t) => (
           <button
@@ -165,6 +170,163 @@ export default function ProjectDetailPage() {
       {tab === "members" && <MembersTab projectId={id} role={globalRole} />}
       {tab === "jobs" && <JobsTab projectId={id} />}
       {tab === "settings" && <SettingsTab projectId={id} />}
+    </div>
+  );
+}
+
+function ProjectHealthPanel({ projectId, canViewOperations }: { projectId: string; canViewOperations: boolean }) {
+  const [health, setHealth] = useState<ProjectHealthOverviewOut | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    api.getProjectHealth(projectId)
+      .then((data) => {
+        if (!mounted) return;
+        setHealth(data);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setHealth(null);
+      })
+      .finally(() => {
+        if (!mounted) return;
+        setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [projectId]);
+
+  const statusClass = (status: string) => {
+    switch (status) {
+      case "ok":
+        return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+      case "critical":
+      case "failed":
+        return "border-red-500/30 bg-red-500/10 text-red-300";
+      case "warning":
+        return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+      default:
+        return "border-gray-700 bg-gray-800 text-gray-300";
+    }
+  };
+
+  const metricToneClass = (tone: string) => {
+    switch (tone) {
+      case "success":
+        return "border-emerald-500/20 bg-emerald-500/10";
+      case "danger":
+        return "border-red-500/20 bg-red-500/10";
+      default:
+        return "border-gray-800";
+    }
+  };
+
+  if (loading) {
+    return <div className="card mb-6 text-sm text-gray-400">Loading project health...</div>;
+  }
+
+  if (!health) {
+    return null;
+  }
+
+  return (
+    <div className="mb-6 space-y-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Project Health</h2>
+          <p className="mt-1 text-sm text-gray-400">
+            A smaller operational view for this project only, without exposing workspace-wide settings.
+          </p>
+        </div>
+        {canViewOperations && (
+          <Link href="/operations" className="inline-flex items-center gap-2 text-sm font-medium text-brand-400 hover:text-brand-300">
+            Open workspace operations
+            <ExternalLink size={14} />
+          </Link>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+        {health.summary.map((metric) => (
+          <div key={metric.key} className={`card p-4 ${metricToneClass(metric.tone)}`}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-400">{metric.label}</p>
+                <p className="mt-2 text-2xl font-bold text-white">{metric.value}</p>
+              </div>
+              <div className="rounded-lg bg-gray-800/70 p-2 text-brand-400">
+                <Activity size={16} />
+              </div>
+            </div>
+            {metric.hint && <p className="mt-3 text-xs leading-5 text-gray-400">{metric.hint}</p>}
+          </div>
+        ))}
+      </div>
+
+      <div className={`rounded-xl border px-4 py-4 ${statusClass(health.schedule.status)}`}>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="flex items-start gap-3">
+            <Shield size={18} className="mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-semibold">{health.schedule.label}</p>
+              <p className="mt-1 text-sm leading-6 opacity-90">{health.schedule.detail}</p>
+            </div>
+          </div>
+          <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(health.schedule.status)}`}>
+            {health.schedule.status.charAt(0).toUpperCase() + health.schedule.status.slice(1)}
+          </span>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-white">Recent Project Failures</h3>
+            <p className="mt-1 text-sm text-gray-400">Latest job, recipe, and schedule issues for this project.</p>
+          </div>
+        </div>
+
+        {health.failures.length === 0 ? (
+          <div className="mt-4 flex items-start gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-4">
+            <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-300" />
+            <div>
+              <p className="text-sm font-semibold text-emerald-200">No recent project failures</p>
+              <p className="mt-1 text-sm text-emerald-300/90">This project is currently clear on the latest monitored issues.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {health.failures.map((failure) => (
+              <Link
+                key={`${failure.kind}-${failure.id}`}
+                href={failure.href}
+                className="block rounded-xl border border-gray-800 bg-gray-900/70 px-4 py-4 hover:border-gray-700 transition"
+              >
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-gray-700 bg-gray-800 px-2.5 py-1 text-xs font-medium text-gray-300">
+                        {failure.kind}
+                      </span>
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(failure.status)}`}>
+                        {failure.status}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm font-semibold text-white">{failure.title}</p>
+                    <p className="mt-1 text-sm leading-6 text-gray-400">{failure.detail}</p>
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {new Date(failure.created_at).toLocaleString()}
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
