@@ -28,6 +28,21 @@ import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 const PIN_W = 1000;
 const PIN_H = 1500;
 type TextVariable = "" | "title" | "pinTitle" | "website";
+const DESIGNER_CUSTOM_KEYS = [
+  "__pinId",
+  "__pinLabel",
+  "__pinType",
+  "__isLabel",
+  "__forId",
+  "__strokeStyle",
+  "__flipX",
+  "__textTransform",
+  "__textVariable",
+  "__rawText",
+  "__pinLocked",
+  "__designerBorder",
+  "__forPinId",
+];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -383,6 +398,72 @@ function resolveTemplateTextContent(
     return context.website || element.defaultText || "";
   }
   return element.defaultText || "";
+}
+
+function restoreSerializedCanvasCustomProperties(canvas: any, serialized: string): void {
+  try {
+    const savedData = JSON.parse(serialized);
+    const savedObjs: any[] = savedData.objects || [];
+    const remaining = [...savedObjs];
+
+    (canvas.getObjects() as any[]).forEach((canvasObj) => {
+      const idx = remaining.findIndex((savedObj) =>
+        savedObj.type === canvasObj.type &&
+        Math.abs((savedObj.left ?? 0) - (canvasObj.left ?? 0)) < 1 &&
+        Math.abs((savedObj.top ?? 0) - (canvasObj.top ?? 0)) < 1
+      );
+      if (idx === -1) return;
+
+      DESIGNER_CUSTOM_KEYS.forEach((key) => {
+        if (remaining[idx][key] !== undefined) canvasObj[key] = remaining[idx][key];
+      });
+      remaining.splice(idx, 1);
+    });
+  } catch {
+    // Ignore malformed serialized canvas data.
+  }
+}
+
+function syncCanvasTextBindings(
+  canvas: any,
+  context: { title: string; pinTitle: string; website: string }
+): void {
+  (canvas.getObjects() as any[]).forEach((obj) => {
+    if (obj?.__pinType !== "text") return;
+
+    const textVariable = ((obj.__textVariable ?? "") as TextVariable);
+    const pinId = String(obj.__pinId ?? "");
+    const hasDynamicBinding =
+      textVariable !== "" ||
+      pinId === "title" ||
+      pinId === "title1" ||
+      pinId === "title2" ||
+      pinId === "title3" ||
+      pinId === "website";
+
+    if (!hasDynamicBinding) return;
+
+    const rawText = resolveTemplateTextContent(
+      {
+        id: pinId,
+        type: "text",
+        label: String(obj.__pinLabel || "Text"),
+        x: Number(obj.left ?? 0),
+        y: Number(obj.top ?? 0),
+        width: Number(obj.width ?? 0),
+        height: Number(obj.height ?? 0),
+        defaultText: typeof obj.__rawText === "string" ? obj.__rawText : obj.text ?? "",
+        textVariable,
+      },
+      context
+    );
+
+    const textTransform = obj.__textTransform ?? "none";
+    obj.set("text", applyTextTransform(rawText, textTransform));
+    obj.__rawText = rawText;
+    if (typeof obj.initDimensions === "function") obj.initDimensions();
+    if (typeof obj.setCoords === "function") obj.setCoords();
+  });
 }
 
 async function ensureGoogleFontLoaded(fontName: string): Promise<void> {
@@ -1065,7 +1146,7 @@ export default function PinDesigner({
 
     // Save current frame JSON
     frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
-      canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId", "__flipX"])
+      canvas.toObject(DESIGNER_CUSTOM_KEYS)
     );
 
     // Generate preview of current frame before switching
@@ -1085,7 +1166,13 @@ export default function PinDesigner({
     const savedJson = frameJsonsRef.current[newIdx];
     if (savedJson && savedJson !== "{}") {
       await canvas.loadFromJSON(savedJson);
+      restoreSerializedCanvasCustomProperties(canvas, savedJson);
       normalizeCanvasObjectMetadata();
+      syncCanvasTextBindings(canvas, {
+        title: frames[newIdx].title,
+        pinTitle: resolvePinTitleValue(frames[newIdx].pinTitle, frames[newIdx].title),
+        website,
+      });
       canvas.renderAll();
       updateLayers();
     } else if (selectedTemplate) {
@@ -1127,6 +1214,12 @@ export default function PinDesigner({
 
         if (savedJson && savedJson !== "{}") {
           await fc.loadFromJSON(savedJson);
+          restoreSerializedCanvasCustomProperties(fc, savedJson);
+          syncCanvasTextBindings(fc, {
+            title: frame.title,
+            pinTitle: resolvePinTitleValue(frame.pinTitle, frame.title),
+            website,
+          });
         } else {
           await buildTemplateOnCanvas(fabricMod, fc, template, frame.images, proxyBase, frame.title, website, {
             pinTitleText: frame.pinTitle,
@@ -1192,7 +1285,7 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (canvas) {
       frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
-        canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId", "__flipX"])
+        canvas.toObject(DESIGNER_CUSTOM_KEYS)
       );
     }
     setSavingAll(true);
@@ -1220,6 +1313,12 @@ export default function PinDesigner({
 
         if (savedJson && savedJson !== "{}") {
           await fc.loadFromJSON(savedJson);
+          restoreSerializedCanvasCustomProperties(fc, savedJson);
+          syncCanvasTextBindings(fc, {
+            title: frame.title,
+            pinTitle: resolvePinTitleValue(frame.pinTitle, frame.title),
+            website,
+          });
           fc.renderAll();
         } else if (selectedTemplate) {
           await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website, {
@@ -1682,7 +1781,7 @@ export default function PinDesigner({
   const MAX_UNDO = 50;
 
   // Fabric v6: toJSON() ignores propertiesToInclude — must use toObject() to include custom keys
-  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__flipX", "__textTransform", "__rawText", "__pinLocked", "__designerBorder", "__forPinId"];
+  const UNDO_CUSTOM_KEYS = [...DESIGNER_CUSTOM_KEYS];
 
   const saveUndoState = () => {
     const canvas = fabricCanvasRef.current;
@@ -1707,27 +1806,12 @@ export default function PinDesigner({
 
     try {
       // Parse first so we have the saved custom props for post-load restoration
-      const savedData = JSON.parse(entry.json);
-      const savedObjs: any[] = savedData.objects || [];
-
       await canvas.loadFromJSON(entry.json);
-
-      // Post-load: restore custom properties by matching type + position.
-      // Needed because Fabric v6 toJSON() ignores propertiesToInclude — we use
-      // toObject() when saving, but loadFromJSON does not auto-restore unknown keys.
-      const remaining = [...savedObjs];
-      (canvas.getObjects() as any[]).forEach((canvasObj) => {
-        const idx = remaining.findIndex((s) =>
-          s.type === canvasObj.type &&
-          Math.abs((s.left ?? 0) - (canvasObj.left ?? 0)) < 1 &&
-          Math.abs((s.top ?? 0) - (canvasObj.top ?? 0)) < 1
-        );
-        if (idx !== -1) {
-          UNDO_CUSTOM_KEYS.forEach((k) => {
-            if (remaining[idx][k] !== undefined) canvasObj[k] = remaining[idx][k];
-          });
-          remaining.splice(idx, 1);
-        }
+      restoreSerializedCanvasCustomProperties(canvas, entry.json);
+      syncCanvasTextBindings(canvas, {
+        title: effectiveTitle,
+        pinTitle: effectivePinTitle,
+        website,
       });
 
       const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel && !o.__designerBorder);
@@ -2006,7 +2090,10 @@ export default function PinDesigner({
     const imgs = imagesOverride ?? effectiveImages;
     const ttl = titleOverride ?? effectiveTitle;
     const siteWebsite = websiteOverride ?? website;
-    const boundPinTitle = resolvePinTitleValue(pinTitleOverride, ttl);
+    const boundPinTitle =
+      pinTitleOverride === undefined
+        ? effectivePinTitle
+        : resolvePinTitleValue(pinTitleOverride, ttl);
     const isCustomTemplateId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       String(template.id || "")
     );
@@ -2641,7 +2728,13 @@ export default function PinDesigner({
           await Promise.all(fontFamilies.map(injectFontStylesheet));
         }
         await canvas.loadFromJSON(initialJson);
+        restoreSerializedCanvasCustomProperties(canvas, initialJson);
         normalizeCanvasObjectMetadata();
+        syncCanvasTextBindings(canvas, {
+          title: effectiveTitle,
+          pinTitle: effectivePinTitle,
+          website,
+        });
         canvas.renderAll();
         updateLayers();
       } catch { /* ignore */ }
@@ -2663,7 +2756,7 @@ export default function PinDesigner({
       getJson: () => {
         const canvas = fabricCanvasRef.current;
         if (!canvas) return "{}";
-        return JSON.stringify(canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId", "__flipX"]));
+        return JSON.stringify(canvas.toObject(DESIGNER_CUSTOM_KEYS));
       },
       exportPng: getExportDataUrl,
     });
@@ -2943,6 +3036,12 @@ export default function PinDesigner({
         const savedJson = refs[i];
         if (savedJson && savedJson !== "{}") {
           await fc.loadFromJSON(savedJson);
+          restoreSerializedCanvasCustomProperties(fc, savedJson);
+          syncCanvasTextBindings(fc, {
+            title: frame.title,
+            pinTitle: resolvePinTitleValue(frame.pinTitle, frame.title),
+            website,
+          });
         } else {
           await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website, {
             pinTitleText: frame.pinTitle,
@@ -2959,7 +3058,7 @@ export default function PinDesigner({
         fc.renderAll();
 
         refs[i] = JSON.stringify(
-          fc.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId", "__flipX"])
+          fc.toObject(DESIGNER_CUSTOM_KEYS)
         );
 
         fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
