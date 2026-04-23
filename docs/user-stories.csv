@@ -1,0 +1,52 @@
+ID,Epic,User story,Notes scope,Est_hours
+US-01,Auth,"As a user, I want to register and log in with email/password to access the dashboard.",Register login JWT,10
+US-02,Auth,"As a user, I want to sign in with Google.",OAuth Google URL + callback,14
+US-03,Auth,"As an invited user, I want to set my password via a secure link.",Setup-password tokens flow,10
+US-04,Auth,"As a user, I want to view and edit my profile.",PATCH /me + profile UI,6
+US-05,Users,"As a platform admin, I want to create update and delete users.",Users API + admin UI,16
+US-06,Users,"As a platform admin, I want to resend an invite to a user.",resend-invite,4
+US-07,Projects,"As an owner, I want to create update and delete projects.",Projects CRUD,12
+US-08,Projects,"As an owner, I want to duplicate a project to replicate structure.",duplicate endpoint,10
+US-09,Members,"As an owner, I want to add and remove project members with roles.",ProjectMember admin/member,14
+US-10,Access,"As the system, I must enforce project-scoped access and RBAC.",check_project_access dependencies,18
+US-11,Credentials,"As an owner, I want to store per-project API keys encrypted.",ProjectCredential + crypto,16
+US-12,Credentials,"As a user, I want global user credentials with project fallback.",UserCredential + credentials_loader,12
+US-13,Prompts,"As an owner, I want to edit AI prompts for generation.",Settings prompts + defaults,20
+US-14,Sites,"As an editor, I want to manage sites with WP URL Sheets and Pinterest URL.",Sites CRUD,16
+US-15,Sites,"As an editor, I want to upload media to WP from file or URL.",upload-media upload-from-url,18
+US-16,Recipes,"As an editor, I want full recipe CRUD per site.",Recipes API + UI,24
+US-17,Recipes,"As an editor, I want to publish a generated article to WordPress.",publish-article,14
+US-18,Jobs,"As an editor, I want to start an articles job for bulk AI generation.",JobType articles worker thread,22
+US-19,Jobs,"As an editor, I want to start a publisher job to push to WordPress.",JobType publisher,18
+US-20,Jobs,"As an editor, I want job history detail and live logs.",REST jobs + WebSocket ws/logs,20
+US-21,Jobs,"As an editor, I want to stop a job and revert generating recipes to pending.",stop + revert_generating,12
+US-22,AI,"As the system, I must generate full recipe JSON article meta category keyword via OpenAI.",article_generator openai_service,45
+US-23,AI,"As the system, I must add internal links from the site sitemap.",get_sitemap_links,10
+US-24,Midjourney,"As the system, I must generate images via Discord Midjourney with global serialization.",midjourney lock polling,40
+US-25,Midjourney,"As the system, I must cache Discord CDN images to local uploads.",_cache_image,8
+US-26,Multi-site,"As an editor, I want shared-input generation across multiple sites.",articles_all_sites job_manager,35
+US-27,Schedule,"As an owner, I want scheduled automatic publishing and image retention settings.",ProjectPublishSchedule scheduler,28
+US-28,Schedule,"As an owner, I want to trigger scheduled publish run now.",start-now,4
+US-29,Batch,"As an owner, I want controlled batch publish.",publish-batch,14
+US-30,WordPress,"As the system, I must publish to WordPress with multi-account support.",publisher wordpress service,40
+US-31,Sheets,"As the system, I must write permalink back to Google Sheet when configured.",gspread in wordpress flow,12
+US-32,Pinterest,"As an editor, I want Pinterest OAuth connect and status.",pinterest routes + UI,22
+US-33,Pinterest,"As an editor, I want to create pins from recipes including bulk.",create-pin bulk,18
+US-34,Pinterest,"As an editor, I want to list Pinterest boards.",boards endpoints,8
+US-35,Pin designer,"As an editor, I want to generate a pin image from template and fields.",generate-pin pin_generator,25
+US-36,Pin designer,"As a user, I want CRUD custom pin templates with Fabric canvas JSON.",pin_designer_templates + designer UI,45
+US-37,Pin designer,"As an editor, I want bulk pin generation for site or job.",bulk pins pages,20
+US-38,Export,"As an owner, I want Excel export for project site or recipes.",excel_export routes,14
+US-39,Boards import,"As a user, I want to import boards list from Excel template.",settings boards import,8
+US-40,Fonts,"As a user, I want custom fonts for visuals.",fonts API + profile,10
+US-41,Image cleanup,"As an owner, I want image retention cleanup and manual cleanup run.",schedulers + image-cleanup,14
+US-42,Reliability,"As ops, I want stale jobs reconciled after restart.",stale_job_reconciler,8
+US-43,Dashboard,"As a user, I want a dashboard with project site recipe job stats.",dashboard API + home page,10
+US-44,UI shell,"As a user, I want consistent navigation layout and dark dashboard UI.",layout routing,25
+US-45,Legal,"As a business, I want Terms and Privacy pages.",static pages,4
+US-46,Threads,"As a user, I want Threads projects and linked accounts with OAuth.",threads_projects accounts,35
+US-47,Threads,"As a user, I want create schedule publish Threads posts and batch publish.",threads posts API scheduler,50
+US-48,Threads,"As the system, I must upload Threads media and cleanup expired media.",upload + cleanup scheduler,18
+US-49,Infra,"As ops, I want Docker Compose and env-based configuration.",docker-compose env,12
+US-50,Security,"As the system, I apply CORS security headers and hide OpenAPI in prod.",FastAPI middleware,6
+US-51,QA Polish,"As a client, I want manual QA bugfixes and UX on critical flows.",testing polish buffer,45
