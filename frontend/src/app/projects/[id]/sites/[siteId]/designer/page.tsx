@@ -83,6 +83,7 @@ export default function PinDesignerPage() {
             generatedOnly.map((r) => ({
               recipeId: r.id,
               title: r.recipe_text?.split("\n")[0]?.trim() || "Recipe",
+              pinTitle: r.pin_title?.trim() || undefined,
               images: imagesFromJobRecipe(r),
             }))
           );
@@ -96,6 +97,7 @@ export default function PinDesignerPage() {
           setFrames(source.map((r) => ({
             recipeId: r.id,
             title: r.recipe_text?.split("\n")[0]?.trim() || "Recipe",
+            pinTitle: r.pin_title?.trim() || undefined,
             images: getRecipeImages(r),
           })));
         })

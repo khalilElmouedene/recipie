@@ -750,6 +750,8 @@ export interface GeneratedJobRecipeOut {
   image_url?: string;
   generated_images?: string | null;
   category?: string | null;
+  pin_title?: string | null;
+  pin_description?: string | null;
   pin_template_id?: string | null;
   created_at: string;
 }

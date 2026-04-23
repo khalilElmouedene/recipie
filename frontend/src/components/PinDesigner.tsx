@@ -27,6 +27,7 @@ import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
+type TextVariable = "" | "title" | "pinTitle" | "website";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -331,6 +332,7 @@ export interface BulkOverrides {
   fontWeight?: string;
   titleColor?: string;
   bandColor?: string;
+  pinTitleText?: string;
   websiteText?: string;
   bgColor?: string;
 }
@@ -342,6 +344,45 @@ export function applyTextTransform(text: string, transform: string): string {
   if (transform === "lowercase") return text.toLowerCase();
   if (transform === "capitalize") return text.replace(/\b\w/g, (c) => c.toUpperCase());
   return text;
+}
+
+function resolvePinTitleValue(pinTitle: string | null | undefined, title: string): string {
+  const trimmed = pinTitle?.trim();
+  return trimmed || title;
+}
+
+function resolveTemplateTextContent(
+  element: TemplateElement,
+  context: { title: string; pinTitle: string; website: string }
+): string {
+  const titleLines = (context.title || "")
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const firstLine = titleLines[0] || context.title || "";
+  const secondLine = titleLines[1] || "";
+  const thirdLine = titleLines[2] || "";
+  const tv = ((element as any).textVariable ?? "") as TextVariable;
+
+  if (tv === "pinTitle") {
+    return context.pinTitle || context.title || element.defaultText || "";
+  }
+  if (tv === "title" || element.id === "title") {
+    return context.title || element.defaultText || "";
+  }
+  if (element.id === "title1") {
+    return firstLine || element.defaultText || "";
+  }
+  if (element.id === "title2") {
+    return secondLine || element.defaultText || "";
+  }
+  if (element.id === "title3") {
+    return thirdLine || element.defaultText || "";
+  }
+  if (tv === "website" || element.id === "website") {
+    return context.website || element.defaultText || "";
+  }
+  return element.defaultText || "";
 }
 
 async function ensureGoogleFontLoaded(fontName: string): Promise<void> {
@@ -443,6 +484,7 @@ export async function buildTemplateOnCanvas(
   const oWeight = overrides?.fontWeight;
   const oTitleColor = overrides?.titleColor;
   const oBandColor = overrides?.bandColor;
+  const resolvedPinTitle = resolvePinTitleValue(overrides?.pinTitleText, title);
   const oWebsite = overrides?.websiteText;
   const imageGroupBounds = buildImageZoneGroupBounds(template.elements, Math.max(images.length, 1));
 
@@ -519,31 +561,15 @@ export async function buildTemplateOnCanvas(
       _applyTemplateLock(shape, el.locked);
       canvas.add(shape);
     } else if (el.type === "text") {
-      const titleLines = (title || "")
-        .split(/\r?\n/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const firstLine = titleLines[0] || title || "";
-      const secondLine = titleLines[1] || "";
-      const thirdLine = titleLines[2] || "";
-      const tv = (el as any).textVariable ?? "";
+      const tv = ((el as any).textVariable ?? "") as TextVariable;
       // Explicit textVariable wins. ID-based fallbacks only apply for built-in semantic IDs,
       // never for auto-generated IDs (text_*, website_*) — those must use textVariable.
-      let text: string;
-      if (tv === "title" || el.id === "title") {
-        text = title || el.defaultText || "";
-      } else if (el.id === "title1") {
-        text = firstLine || el.defaultText || "";
-      } else if (el.id === "title2") {
-        text = secondLine || el.defaultText || "";
-      } else if (el.id === "title3") {
-        text = thirdLine || el.defaultText || "";
-      } else if (tv === "website" || el.id === "website") {
-        text = oWebsite || website || el.defaultText || "";
-      } else {
-        text = el.defaultText || "";
-      }
-      const isTitle = tv === "title" || el.id === "title";
+      const text = resolveTemplateTextContent(el, {
+        title,
+        pinTitle: resolvedPinTitle,
+        website: oWebsite || website || "",
+      });
+      const isTitle = tv === "title" || tv === "pinTitle" || el.id === "title";
       const isWebsite = tv === "website" || el.id === "website";
       const fill = isTitle && oTitleColor ? oTitleColor : (el.fill || "#333333");
       const tt = (el as any).textTransform ?? "none";
@@ -754,6 +780,7 @@ export type PinDesignerApi = { getJson: () => string; exportPng: () => string | 
 export interface FrameInfo {
   recipeId: string;
   title: string;
+  pinTitle?: string;
   images: string[];
 }
 
@@ -932,6 +959,9 @@ export default function PinDesigner({
   const activeFrame = frames?.[activeFrameIdx];
   const effectiveImages = activeFrame ? activeFrame.images : recipeImages;
   const effectiveTitle = activeFrame ? activeFrame.title : initialTitle;
+  const effectivePinTitle = activeFrame
+    ? resolvePinTitleValue(activeFrame.pinTitle, activeFrame.title)
+    : resolvePinTitleValue(recipePinTitle, initialTitle);
   // Route external image URLs through backend proxy to avoid browser CORS restrictions
   const proxyUrl = (url: string) => {
     if (!url) return url;
@@ -997,8 +1027,8 @@ export default function PinDesigner({
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [pinSuccessUrl, setPinSuccessUrl] = useState<string | null>(null);
   const [selectedBoard, setSelectedBoard] = useState("");
-  const [pinTitle, setPinTitle] = useState(initialTitle);
-  const [pinDescription, setPinDescription] = useState("");
+  const [pinTitle, setPinTitle] = useState(effectivePinTitle);
+  const [pinDescription, setPinDescription] = useState(recipePinDescription || "");
   const [pinLink, setPinLink] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [savingToRecipe, setSavingToRecipe] = useState(false);
@@ -1050,6 +1080,7 @@ export default function PinDesigner({
 
     setActiveFrameIdx(newIdx);
     setPinName(frames[newIdx].title);
+    setPinTitle(resolvePinTitleValue(frames[newIdx].pinTitle, frames[newIdx].title));
 
     const savedJson = frameJsonsRef.current[newIdx];
     if (savedJson && savedJson !== "{}") {
@@ -1058,7 +1089,13 @@ export default function PinDesigner({
       canvas.renderAll();
       updateLayers();
     } else if (selectedTemplate) {
-      await loadTemplate(selectedTemplate, frames[newIdx].images, frames[newIdx].title);
+      await loadTemplate(
+        selectedTemplate,
+        frames[newIdx].images,
+        frames[newIdx].title,
+        undefined,
+        frames[newIdx].pinTitle,
+      );
     } else {
       canvas.clear();
       canvas.renderAll();
@@ -1091,7 +1128,9 @@ export default function PinDesigner({
         if (savedJson && savedJson !== "{}") {
           await fc.loadFromJSON(savedJson);
         } else {
-          await buildTemplateOnCanvas(fabricMod, fc, template, frame.images, proxyBase, frame.title, website);
+          await buildTemplateOnCanvas(fabricMod, fc, template, frame.images, proxyBase, frame.title, website, {
+            pinTitleText: frame.pinTitle,
+          });
         }
 
         fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
@@ -1183,7 +1222,9 @@ export default function PinDesigner({
           await fc.loadFromJSON(savedJson);
           fc.renderAll();
         } else if (selectedTemplate) {
-          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website);
+          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website, {
+            pinTitleText: frame.pinTitle,
+          });
         }
 
         fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
@@ -1198,7 +1239,11 @@ export default function PinDesigner({
         // Save pin image embedded in article HTML (after Conclusion, before WPRM recipe card)
         if (frame.recipeId) {
           try {
-            await savePinToRecipeWithArticleEmbed(frame.recipeId, dataUrl, frame.title);
+            await savePinToRecipeWithArticleEmbed(
+              frame.recipeId,
+              dataUrl,
+              resolvePinTitleValue(frame.pinTitle, frame.title),
+            );
           } catch { /* skip */ }
         }
         if (download) {
@@ -1936,7 +1981,13 @@ export default function PinDesigner({
 
   // ── Template loading ──────────────────────────────────────────────────────
 
-  const loadTemplate = async (template: PinTemplate, imagesOverride?: string[], titleOverride?: string, websiteOverride?: string) => {
+  const loadTemplate = async (
+    template: PinTemplate,
+    imagesOverride?: string[],
+    titleOverride?: string,
+    websiteOverride?: string,
+    pinTitleOverride?: string,
+  ) => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
@@ -1955,6 +2006,7 @@ export default function PinDesigner({
     const imgs = imagesOverride ?? effectiveImages;
     const ttl = titleOverride ?? effectiveTitle;
     const siteWebsite = websiteOverride ?? website;
+    const boundPinTitle = resolvePinTitleValue(pinTitleOverride, ttl);
     const isCustomTemplateId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       String(template.id || "")
     );
@@ -2159,28 +2211,12 @@ export default function PinDesigner({
         canvas.add(band);
         addDesignerBorder(fabric, canvas, el.x, el.y, el.width, el.height, el.id);
       } else if (el.type === "text") {
-        const titleLines = (ttl || "")
-          .split(/\r?\n/)
-          .map((s) => s.trim())
-          .filter(Boolean);
-        const firstLine = titleLines[0] || ttl || "";
-        const secondLine = titleLines[1] || "";
-        const thirdLine = titleLines[2] || "";
-        const tv = (el as any).textVariable ?? "";
-        let textContent: string;
-        if (tv === "title" || el.id === "title") {
-          textContent = ttl || el.defaultText || "Text";
-        } else if (el.id === "title1") {
-          textContent = firstLine || el.defaultText || "Text";
-        } else if (el.id === "title2") {
-          textContent = secondLine || el.defaultText || "";
-        } else if (el.id === "title3") {
-          textContent = thirdLine || el.defaultText || "";
-        } else if (tv === "website" || el.id === "website") {
-          textContent = siteWebsite || el.defaultText || "Text";
-        } else {
-          textContent = el.defaultText || "Text";
-        }
+        const tv = ((el as any).textVariable ?? "") as TextVariable;
+        const textContent = resolveTemplateTextContent(el, {
+          title: ttl,
+          pinTitle: boundPinTitle,
+          website: siteWebsite,
+        }) || "Text";
         const tt = (el as any).textTransform ?? el.textTransform ?? "none";
         const textbox = new fabric.Textbox(
           applyTextTransform(textContent, tt),
@@ -2204,6 +2240,7 @@ export default function PinDesigner({
         (textbox as any).__pinId = el.id;
         (textbox as any).__pinLabel = el.label;
         (textbox as any).__pinType = "text";
+        (textbox as any).__textVariable = tv;
         (textbox as any).__textTransform = tt;
         (textbox as any).__rawText = textContent;
         (textbox as any).__pinLocked = !!(el as any).locked;
@@ -2907,7 +2944,9 @@ export default function PinDesigner({
         if (savedJson && savedJson !== "{}") {
           await fc.loadFromJSON(savedJson);
         } else {
-          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website);
+          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website, {
+            pinTitleText: frame.pinTitle,
+          });
         }
 
         fc.getObjects().filter((o: any) => o.__pinType === "text" || o.type === "textbox").forEach((o: any) => {
