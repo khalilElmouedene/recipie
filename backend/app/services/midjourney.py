@@ -44,6 +44,34 @@ from ..midjourney_settings import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Prompt sanitizer — replaces words Midjourney's content filter commonly rejects
+# in food/recipe contexts. Plural forms must come before singulars so the shorter
+# pattern doesn't leave a stray "s" behind.
+# ---------------------------------------------------------------------------
+_MJ_SUBSTITUTIONS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bbreasts\b", re.IGNORECASE), "fillets"),
+    (re.compile(r"\bbreast\b",  re.IGNORECASE), "fillet"),
+    (re.compile(r"\bbutts\b",   re.IGNORECASE), "shoulders"),
+    (re.compile(r"\bbutt\b",    re.IGNORECASE), "shoulder"),
+    (re.compile(r"\bthighs\b",  re.IGNORECASE), "pieces"),
+    (re.compile(r"\bthigh\b",   re.IGNORECASE), "piece"),
+    (re.compile(r"\bnaked\b",   re.IGNORECASE), "plain"),
+    (re.compile(r"\bboners?\b", re.IGNORECASE), ""),
+]
+
+
+def _sanitize_mj_prompt(text: str, log: Callable[[str], None] = print) -> str:
+    """Replace flagged words with safe food synonyms before sending to Midjourney."""
+    for pattern, replacement in _MJ_SUBSTITUTIONS:
+        sanitized = pattern.sub(replacement, text)
+        if sanitized != text:
+            safe = replacement or "(removed)"
+            log(f"Prompt sanitized: '{pattern.pattern[2:-2]}' → '{safe}'")
+            text = sanitized
+    return re.sub(r" {2,}", " ", text).strip()
+
+
 class MidjourneyPermanentError(ValueError):
     """Raised when Midjourney/Discord rejects a request that should not be retried."""
 
@@ -442,7 +470,8 @@ def generate_images(
     _should_stop = should_stop or (lambda: False)
     from .prompts import get_prompt
     tpl = get_prompt(prompts or {}, "midjourney_imagine")
-    prompt = tpl.format(recipe_name=recipe_name, img_url=img_url, source_img=img_url)
+    safe_recipe_name = _sanitize_mj_prompt(recipe_name, _log)
+    prompt = tpl.format(recipe_name=safe_recipe_name, img_url=img_url, source_img=img_url)
 
     retry_delay = max(1, min(300, int(retry_delay_seconds)))
     post_wait = max(10, min(600, post_upscale_wait_seconds))
@@ -466,7 +495,7 @@ def generate_images(
                 version=credentials.get("mj_version", ""),
                 mj_id=credentials.get("mj_id", ""),
                 authorization=credentials.get("discord_auth", ""),
-                recipe_name=recipe_name,
+                recipe_name=safe_recipe_name,
                 source_img_url=img_url,
                 wait_time=wait_time,
                 upscale_gap_seconds=upscale_gap_seconds,
