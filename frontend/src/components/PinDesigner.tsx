@@ -102,6 +102,45 @@ function buildImageZoneGroupBounds(elements: TemplateElement[], imageCount: numb
   return bounds;
 }
 
+const proxiedImageDataUrlCache = new Map<string, Promise<string>>();
+
+async function resolveTemplateImageUrl(url: string, proxyBase: string): Promise<string> {
+  if (!url) return url;
+  if (url.startsWith("data:") || url.startsWith("blob:")) return url;
+  if (url.startsWith("/")) return url;
+  if (proxyBase && url.startsWith(proxyBase)) return url;
+  try {
+    if (typeof window !== "undefined" && url.startsWith(window.location.origin)) return url;
+  } catch {
+    // Ignore access errors and fall back to the proxy path.
+  }
+
+  const cacheKey = `${proxyBase}::${url}`;
+  const cached = proxiedImageDataUrlCache.get(cacheKey);
+  if (cached) return cached;
+
+  const pending = (async () => {
+    const proxyEndpoint = `${proxyBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
+    const res = await fetch(proxyEndpoint, { credentials: "include" });
+    if (!res.ok) throw new Error(`Proxy fetch failed: ${res.status}`);
+    const blob = await res.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  })();
+
+  proxiedImageDataUrlCache.set(cacheKey, pending);
+  try {
+    return await pending;
+  } catch (error) {
+    proxiedImageDataUrlCache.delete(cacheKey);
+    throw error;
+  }
+}
+
 interface TemplateElement {
   id: string;
   // `type` comes from stored template data; runtime behavior relies on
@@ -538,28 +577,6 @@ export async function buildTemplateOnCanvas(
   canvas.backgroundColor = overrides?.bgColor || template.bgColor;
   let imageIndex = 0;
 
-  const fetchAsDataUrl = async (url: string): Promise<string> => {
-    const proxyEndpoint = `${proxyBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
-    const res = await fetch(proxyEndpoint, { credentials: "include" });
-    if (!res.ok) throw new Error(`Proxy fetch failed: ${res.status}`);
-    const blob = await res.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  };
-
-  const resolveImageUrl = async (url: string): Promise<string> => {
-    if (!url) return url;
-    if (url.startsWith("data:") || url.startsWith("blob:")) return url;
-    if (url.startsWith("/")) return url;
-    if (proxyBase && url.startsWith(proxyBase)) return url;
-    try { if (typeof window !== "undefined" && url.startsWith(window.location.origin)) return url; } catch {}
-    return fetchAsDataUrl(url);
-  };
-
   const oFont = overrides?.fontFamily;
   const oSize = overrides?.fontSize;
   const oWeight = overrides?.fontWeight;
@@ -573,7 +590,7 @@ export async function buildTemplateOnCanvas(
   for (const el of template.elements) {
     if (el.type === "asset" && (el as any).imageUrl) {
       try {
-        const resolved = await resolveImageUrl(String((el as any).imageUrl));
+        const resolved = await resolveTemplateImageUrl(String((el as any).imageUrl), proxyBase);
         const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
         img.set({
           left: el.x ?? 0,
@@ -603,7 +620,7 @@ export async function buildTemplateOnCanvas(
       imageIndex++;
       if (imageUrl) {
         try {
-          const resolved = await resolveImageUrl(imageUrl);
+          const resolved = await resolveTemplateImageUrl(imageUrl, proxyBase);
           const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
           const scale = getCoverScale(el.width, el.height, img.width || 1, img.height || 1);
           img.set({
@@ -924,6 +941,7 @@ export default function PinDesigner({
   const [savingAll, setSavingAll] = useState(false);
   const [saveAllProgress, setSaveAllProgress] = useState(0);
   const [framePreviews, setFramePreviews] = useState<Record<number, string>>({});
+  const previewGenerationRunRef = useRef(0);
 
   // ── Custom fonts (persisted to database) ─────────────────────────────
   const [customFonts, setCustomFonts] = useState<string[]>([]);
@@ -1192,13 +1210,17 @@ export default function PinDesigner({
 
   const generateAllFramePreviews = async (template: PinTemplate) => {
     if (!frames || frames.length <= 1) return;
+    const runId = ++previewGenerationRunRef.current;
     const fabricMod = await import("fabric");
     const proxyBase = getApiBaseUrl();
-    const newPreviews: Record<number, string> = {};
     const tmplW = template.canvasWidth || PIN_W;
     const tmplH = template.canvasHeight || PIN_H;
 
+    // Let the active frame paint first, then fill the rest of the previews in the background.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     for (let i = 0; i < frames.length; i++) {
+      if (runId !== previewGenerationRunRef.current) return;
       if (i === activeFrameIdx) continue;
       const frame = frames[i];
       const savedJson = frameJsonsRef.current[i];
@@ -1228,14 +1250,17 @@ export default function PinDesigner({
 
         fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
         fc.renderAll();
-        newPreviews[i] = fc.toDataURL({ format: "png", multiplier: 0.5 });
+        const preview = fc.toDataURL({ format: "png", multiplier: 0.5 });
+        if (runId !== previewGenerationRunRef.current) {
+          fc.dispose();
+          return;
+        }
+        setFramePreviews((prev) => ({ ...prev, [i]: preview }));
         fc.dispose();
       } catch { /* skip */ } finally {
         document.body.removeChild(canvasEl);
       }
     }
-
-    setFramePreviews((prev) => ({ ...prev, ...newPreviews }));
   };
 
   const savePinToRecipeWithArticleEmbed = useCallback(
@@ -2765,14 +2790,27 @@ export default function PinDesigner({
 
   // Load template when ready (skip if initialJson already loaded)
   useEffect(() => {
-    if (canvasReady && selectedTemplate && !initialJson) {
-      if (skipTemplateAutoApplyRef.current) {
-        skipTemplateAutoApplyRef.current = false;
-        return;
-      }
-      loadTemplate(selectedTemplate);
-      if (frames && frames.length > 1) generateAllFramePreviews(selectedTemplate);
+    if (!(canvasReady && selectedTemplate && !initialJson)) return;
+
+    if (skipTemplateAutoApplyRef.current) {
+      skipTemplateAutoApplyRef.current = false;
+      return;
     }
+
+    let cancelled = false;
+    const run = async () => {
+      setFramePreviews({});
+      previewGenerationRunRef.current += 1;
+      await loadTemplate(selectedTemplate);
+      if (cancelled) return;
+      if (frames && frames.length > 1) void generateAllFramePreviews(selectedTemplate);
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+      previewGenerationRunRef.current += 1;
+    };
   }, [selectedTemplate, canvasReady, initialJson]);
 
   // Generate previews for other frames when frames arrive AFTER the template effect already ran
@@ -4877,7 +4915,6 @@ export default function PinDesigner({
                             if (frames && frames.length > 1) {
                               frameJsonsRef.current = {};
                               setFramePreviews({});
-                              generateAllFramePreviews(t);
                             }
                           }}
                           className={`text-xs px-3 py-1 rounded ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
@@ -4906,7 +4943,6 @@ export default function PinDesigner({
                             if (frames && frames.length > 1) {
                               frameJsonsRef.current = {};
                               setFramePreviews({});
-                              generateAllFramePreviews(t);
                             }
                           }}
                           className={`text-xs px-3 py-1 rounded mt-2 ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
