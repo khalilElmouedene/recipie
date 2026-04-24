@@ -14,14 +14,20 @@ export default function AllSitesJobPinsPage() {
   const router = useRouter();
   const { id: projectId, jobId } = params;
   const [recipes, setRecipes] = useState<GeneratedJobRecipeOut[]>([]);
+  const [totalRecipeCount, setTotalRecipeCount] = useState(0);
+  const [visibleRecipeCount, setVisibleRecipeCount] = useState(20);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.getJobGeneratedRecipes(jobId)
-      .then(setRecipes)
+    setLoading(true);
+    api.getJobGeneratedRecipesPage(jobId, { limit: visibleRecipeCount, offset: 0 })
+      .then(({ items, total }) => {
+        setRecipes(items);
+        setTotalRecipeCount(total);
+      })
       .catch(() => setRecipes([]))
       .finally(() => setLoading(false));
-  }, [jobId]);
+  }, [jobId, visibleRecipeCount]);
 
   const bySite = useMemo(() => {
     const m = new Map<string, { siteId: string; domain: string; items: GeneratedJobRecipeOut[] }>();
@@ -44,6 +50,7 @@ export default function AllSitesJobPinsPage() {
     (g) => g.items.length > 0 && g.publishedCount === g.items.length
   ).length;
   const publishedRecipes = bySite.reduce((sum, g) => sum + g.publishedCount, 0);
+  const remainingRecipeCount = Math.max(0, totalRecipeCount - recipes.length);
 
   if (loading) {
     return <div className="text-gray-400 p-6">Loading…</div>;
@@ -64,7 +71,8 @@ export default function AllSitesJobPinsPage() {
           Pin designer — all recipes from this run
         </h1>
         <p className="text-sm text-gray-400 mt-1">
-          Open the designer per website to create pins for every recipe generated in this job ({recipes.length} recipes).
+          Open the designer per website to create pins for every recipe generated in this job.
+          {totalRecipeCount > 0 && ` Showing ${recipes.length} of ${totalRecipeCount} loaded recipes.`}
         </p>
         {recipes.length > 0 && (
           <p className="text-xs text-gray-500 mt-1">
@@ -102,6 +110,17 @@ export default function AllSitesJobPinsPage() {
               </button>
             </div>
           ))}
+        </div>
+      )}
+      {remainingRecipeCount > 0 && (
+        <div className="flex justify-center mt-4">
+          <button
+            type="button"
+            onClick={() => setVisibleRecipeCount((count) => count + 20)}
+            className="btn-secondary text-sm px-4 py-2"
+          >
+            Load {Math.min(20, remainingRecipeCount)} more recipes
+          </button>
         </div>
       )}
     </div>

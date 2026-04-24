@@ -8,11 +8,13 @@ import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
 
 export default function UsersPage() {
+  const USERS_PAGE_SIZE = 20;
   const router = useRouter();
   const role = getUserRole();
   const toast = useToast();
   const openConfirm = useConfirm();
   const [users, setUsers] = useState<UserOut[]>([]);
+  const [totalUsers, setTotalUsers] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ email: "", full_name: "", role: "member" });
   const [loading, setLoading] = useState(false);
@@ -25,11 +27,17 @@ export default function UsersPage() {
     load();
   }, [role, router]);
 
-  const load = () => api.getUsers().then(setUsers).catch(() => {});
+  const load = (limit = Math.max(users.length || 0, USERS_PAGE_SIZE)) =>
+    api.getUsersPage({ limit, offset: 0 })
+      .then(({ items, total }) => {
+        setUsers(items);
+        setTotalUsers(total);
+      })
+      .catch(() => {});
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await api.getUsers().then(setUsers).catch(() => {});
+    await load();
     setRefreshing(false);
   };
 
@@ -76,12 +84,17 @@ export default function UsersPage() {
 
   if (role !== "owner") return null;
 
+  const remainingUsers = Math.max(0, totalUsers - users.length);
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">Users</h1>
-          <p className="text-sm text-gray-400 mt-1">{users.length} user{users.length !== 1 ? "s" : ""}</p>
+          <p className="text-sm text-gray-400 mt-1">
+            {totalUsers} user{totalUsers !== 1 ? "s" : ""}
+            {users.length < totalUsers && <span> · {users.length} loaded</span>}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={handleRefresh} disabled={refreshing} title="Refresh" className="btn-secondary flex items-center gap-2 disabled:opacity-50">
@@ -233,6 +246,17 @@ export default function UsersPage() {
           <p className="text-center py-8 text-gray-500 text-sm">No users yet.</p>
         )}
       </div>
+      {remainingUsers > 0 && (
+        <div className="flex justify-center pt-4">
+          <button
+            type="button"
+            onClick={() => load(users.length + USERS_PAGE_SIZE)}
+            className="btn-secondary text-sm px-4 py-2"
+          >
+            Load {Math.min(USERS_PAGE_SIZE, remainingUsers)} more
+          </button>
+        </div>
+      )}
     </div>
   );
 }

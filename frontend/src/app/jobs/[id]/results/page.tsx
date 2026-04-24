@@ -18,6 +18,8 @@ export default function JobResultsPage() {
   const canAdmin = role === "owner" || role === "admin";
   const [job, setJob] = useState<JobOut | null>(null);
   const [recipes, setRecipes] = useState<GeneratedJobRecipeOut[]>([]);
+  const [totalRecipeCount, setTotalRecipeCount] = useState(0);
+  const [visibleRecipeCount, setVisibleRecipeCount] = useState(20);
   const [schedule, setSchedule] = useState<PublishScheduleOut | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [intervalMinutes, setIntervalMinutes] = useState(240);
@@ -28,8 +30,16 @@ export default function JobResultsPage() {
   const [batchModalData, setBatchModalData] = useState<PublishBatchRequest | null>(null);
 
   useEffect(() => {
+    api.getJobGeneratedRecipesPage(id, { limit: visibleRecipeCount, offset: 0 })
+      .then(({ items, total }) => {
+        setRecipes(items);
+        setTotalRecipeCount(total);
+      })
+      .catch(() => {});
+  }, [id, visibleRecipeCount]);
+
+  useEffect(() => {
     api.getJob(id).then(setJob).catch(() => router.push("/"));
-    api.getJobGeneratedRecipes(id).then(setRecipes).catch(() => {});
   }, [id, router]);
 
   useEffect(() => {
@@ -78,8 +88,9 @@ export default function JobResultsPage() {
     try {
       const res = await api.runProjectImageCleanup(job.project_id, { delete_all_published: true });
       toast.success(`Deleted: ${res.recipes_deleted} recipes, ${res.files_deleted} image files removed.`);
-      const list = await api.getJobGeneratedRecipes(id);
-      setRecipes(list);
+      const page = await api.getJobGeneratedRecipesPage(id, { limit: visibleRecipeCount, offset: 0 });
+      setRecipes(page.items);
+      setTotalRecipeCount(page.total);
     } catch (e: any) {
       setError(e?.message || "Failed to delete published recipes.");
     } finally {
@@ -100,10 +111,13 @@ export default function JobResultsPage() {
     setBatchModalData(null);
     setBatchPublishing(null);
     if (didPublish) {
-      const list = await api.getJobGeneratedRecipes(id);
-      setRecipes(list);
+      const page = await api.getJobGeneratedRecipesPage(id, { limit: visibleRecipeCount, offset: 0 });
+      setRecipes(page.items);
+      setTotalRecipeCount(page.total);
     }
   };
+
+  const remainingRecipeCount = Math.max(0, totalRecipeCount - recipes.length);
 
   return (
     <div>
@@ -122,6 +136,7 @@ export default function JobResultsPage() {
         <h1 className="text-2xl font-bold text-white">All-Sites Generated Recipes</h1>
         <p className="text-sm text-gray-400 mt-1">
           Here are the recipes created from your input list. You can also configure automatic publishing to WordPress.
+          {totalRecipeCount > recipes.length && ` Showing ${recipes.length} of ${totalRecipeCount} loaded recipes.`}
         </p>
       </div>
 
@@ -224,6 +239,17 @@ export default function JobResultsPage() {
             </div>
           </div>
         ))}
+        {remainingRecipeCount > 0 && (
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={() => setVisibleRecipeCount((count) => count + 20)}
+              className="btn-secondary text-sm px-4 py-2"
+            >
+              Load {Math.min(20, remainingRecipeCount)} more recipes
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

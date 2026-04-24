@@ -25,6 +25,7 @@ from ..db_models import (
     Site, Recipe, Job, ProjectPublishSchedule, RecipeStatus,
 )
 from ..dependencies import get_current_user, require_owner, check_project_access
+from ..pagination import apply_limit_offset, count_rows, set_total_count
 from ..models import (
     ProjectCreate, ProjectUpdate, ProjectOut, MemberAdd, MemberOut,
     PublishScheduleOut, PublishScheduleUpdate,
@@ -75,11 +76,14 @@ async def _project_out(project: Project, db: AsyncSession) -> dict:
 
 @router.get("", response_model=list[ProjectOut])
 async def list_projects(
+    response: Response,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
     # Every user (including owner) sees only their own projects or ones they're a member of
-    result = await db.execute(
+    stmt = (
         select(Project)
         .where(
             (Project.owner_id == user.id) |
@@ -89,6 +93,9 @@ async def list_projects(
         )
         .order_by(Project.created_at.desc())
     )
+    total = await count_rows(db, stmt)
+    set_total_count(response, total)
+    result = await db.execute(apply_limit_offset(stmt, limit, offset))
     projects = result.scalars().all()
     return [await _project_out(p, db) for p in projects]
 
@@ -164,16 +171,22 @@ async def delete_project(
 
 @router.get("/{project_id}/members", response_model=list[MemberOut])
 async def list_members(
+    response: Response,
     project_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
     await check_project_access(project_id, user, db)
-    result = await db.execute(
+    stmt = (
         select(ProjectMember)
         .options(selectinload(ProjectMember.user))
         .where(ProjectMember.project_id == project_id)
     )
+    total = await count_rows(db, stmt)
+    set_total_count(response, total)
+    result = await db.execute(apply_limit_offset(stmt, limit, offset))
     members = result.scalars().all()
     return [
         MemberOut(
@@ -286,10 +299,13 @@ async def export_project_excel(
 
 @router.get("/{project_id}/pinterest-recipes", response_model=list[PinterestRecipeOut])
 async def get_project_pinterest_recipes(
+    response: Response,
     project_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     site_id: uuid.UUID | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
     """Return generated/published recipes for a project, optionally filtered to a single site."""
     await check_project_access(project_id, user, db)
@@ -299,12 +315,15 @@ async def get_project_pinterest_recipes(
     ]
     if site_id is not None:
         conditions.append(Recipe.site_id == site_id)
-    result = await db.execute(
+    stmt = (
         select(Recipe, Site)
         .join(Site, Recipe.site_id == Site.id)
         .where(*conditions)
         .order_by(Site.id, Recipe.created_at.asc())
     )
+    total = await count_rows(db, stmt)
+    set_total_count(response, total)
+    result = await db.execute(apply_limit_offset(stmt, limit, offset))
     rows = result.all()
     return [
         PinterestRecipeOut(

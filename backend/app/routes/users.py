@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select, delete as sql_delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +15,7 @@ from ..database import get_db
 from ..db_models import User, UserRole, PasswordSetupToken
 from ..dependencies import require_owner
 from ..models import UserOut, UserCreate, UserRoleUpdate
+from ..pagination import apply_limit_offset, count_rows, set_total_count
 from ..services.email_service import send_welcome_email
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -22,14 +23,20 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 
 @router.get("", response_model=list[UserOut])
 async def list_users(
+    response: Response,
     _owner: Annotated[User, Depends(require_owner)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
-    result = await db.execute(
+    stmt = (
         select(User)
         .where(User.created_by_owner_id == _owner.id)
         .order_by(User.created_at.desc())
     )
+    total = await count_rows(db, stmt)
+    set_total_count(response, total)
+    result = await db.execute(apply_limit_offset(stmt, limit, offset))
     return [UserOut.from_user(u) for u in result.scalars().all()]
 
 

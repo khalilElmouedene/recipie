@@ -7,7 +7,9 @@ import { getUserRole } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 
 export default function ProjectsPage() {
+  const PROJECTS_PAGE_SIZE = 12;
   const [projects, setProjects] = useState<ProjectOut[]>([]);
+  const [totalProjects, setTotalProjects] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
@@ -23,10 +25,14 @@ export default function ProjectsPage() {
   const syncedOnceRef = useRef(false);
   const previousProjectsRef = useRef<Map<string, string>>(new Map());
 
-  const load = useCallback(async (opts?: { announceMembershipChanges?: boolean }) => {
+  const load = useCallback(async (opts?: { announceMembershipChanges?: boolean; limit?: number }) => {
     try {
-      const rows = await api.getProjects();
+      const { items: rows, total } = await api.getProjectsPage({
+        limit: opts?.limit ?? Math.max(projects.length || 0, PROJECTS_PAGE_SIZE),
+        offset: 0,
+      });
       setProjects(rows);
+      setTotalProjects(total);
 
       const nextMap = new Map(rows.map((p) => [p.id, p.name]));
       const prevMap = previousProjectsRef.current;
@@ -49,7 +55,7 @@ export default function ProjectsPage() {
     } catch {
       // Keep current UI state on transient API errors.
     }
-  }, [role, toast]);
+  }, [PROJECTS_PAGE_SIZE, projects.length, role, toast]);
 
   useEffect(() => {
     load({ announceMembershipChanges: false });
@@ -135,12 +141,17 @@ export default function ProjectsPage() {
     setLoading(false);
   };
 
+  const remainingProjects = Math.max(0, totalProjects - projects.length);
+
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-white">Projects</h1>
-          <p className="text-sm text-gray-400 mt-1">{projects.length} project{projects.length !== 1 ? "s" : ""}</p>
+          <p className="text-sm text-gray-400 mt-1">
+            {totalProjects} project{totalProjects !== 1 ? "s" : ""}
+            {projects.length < totalProjects && <span> · {projects.length} loaded</span>}
+          </p>
         </div>
         {role === "owner" && (
           <button onClick={() => setShowCreate(!showCreate)} className="btn-primary flex items-center gap-2">
@@ -233,6 +244,22 @@ export default function ProjectsPage() {
         {projects.length === 0 && (
           <div className="col-span-full text-center py-12 text-gray-500">
             No projects yet. {role === "owner" ? "Create one to get started." : "Ask the owner to assign you to a project."}
+          </div>
+        )}
+        {remainingProjects > 0 && (
+          <div className="col-span-full flex justify-center pt-2">
+            <button
+              type="button"
+              onClick={() =>
+                load({
+                  announceMembershipChanges: false,
+                  limit: projects.length + PROJECTS_PAGE_SIZE,
+                })
+              }
+              className="btn-secondary text-sm px-4 py-2"
+            >
+              Load {Math.min(PROJECTS_PAGE_SIZE, remainingProjects)} more
+            </button>
           </div>
         )}
       </div>

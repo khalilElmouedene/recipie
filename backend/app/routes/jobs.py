@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select, delete as sql_delete, update as sql_update
@@ -12,6 +12,7 @@ from ..database import get_db
 from ..db_models import User, Job, JobLog, JobType, JobStatus, Project, Recipe, RecipeStatus, Site, ProjectMemberRole
 from ..dependencies import get_current_user, check_project_access
 from ..models import JobStart, JobOut, JobLogOut, GeneratedJobRecipeOut
+from ..pagination import apply_limit_offset, count_rows, set_total_count
 from ..workers.job_manager import job_manager
 
 router = APIRouter(tags=["jobs"])
@@ -120,14 +121,25 @@ async def start_job(
 
 @router.get("/api/projects/{project_id}/jobs", response_model=list[JobOut])
 async def list_project_jobs(
+    response: Response,
     project_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    job_type: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
     await check_project_access(project_id, user, db)
-    result = await db.execute(
-        select(Job).where(Job.project_id == project_id).order_by(Job.created_at.desc())
-    )
+    stmt = select(Job).where(Job.project_id == project_id)
+    if job_type:
+        try:
+            stmt = stmt.where(Job.job_type == JobType(job_type))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid job type")
+    stmt = stmt.order_by(Job.created_at.desc())
+    total = await count_rows(db, stmt)
+    set_total_count(response, total)
+    result = await db.execute(apply_limit_offset(stmt, limit, offset))
     return result.scalars().all()
 
 
@@ -147,9 +159,12 @@ async def get_job(
 
 @router.get("/api/jobs/{job_id}/logs", response_model=list[JobLogOut])
 async def get_job_logs(
+    response: Response,
     job_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ):
     result = await db.execute(select(Job).where(Job.id == job_id))
     job = result.scalar_one_or_none()
@@ -157,18 +172,22 @@ async def get_job_logs(
         raise HTTPException(status_code=404, detail="Job not found")
     await check_project_access(job.project_id, user, db)
 
-    logs = await db.execute(
-        select(JobLog).where(JobLog.job_id == job_id).order_by(JobLog.created_at.asc())
-    )
+    stmt = select(JobLog).where(JobLog.job_id == job_id).order_by(JobLog.created_at.asc())
+    total = await count_rows(db, stmt)
+    set_total_count(response, total)
+    logs = await db.execute(apply_limit_offset(stmt, limit, offset))
     return logs.scalars().all()
 
 
 @router.get("/api/jobs/{job_id}/generated-recipes", response_model=list[GeneratedJobRecipeOut])
 async def get_job_generated_recipes(
+    response: Response,
     job_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     site_id: uuid.UUID | None = None,
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
     result = await db.execute(select(Job).where(Job.id == job_id))
     job = result.scalar_one_or_none()
@@ -183,9 +202,10 @@ async def get_job_generated_recipes(
     )
     if site_id is not None:
         query = query.where(Recipe.site_id == site_id)
-    rows = await db.execute(
-        query.order_by(Site.domain.asc(), Recipe.created_at.asc())
-    )
+    stmt = query.order_by(Site.domain.asc(), Recipe.created_at.asc())
+    total = await count_rows(db, stmt)
+    set_total_count(response, total)
+    rows = await db.execute(apply_limit_offset(stmt, limit, offset))
     out: list[GeneratedJobRecipeOut] = []
     for recipe, domain in rows.all():
         out.append(

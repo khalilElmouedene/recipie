@@ -5,7 +5,9 @@ import { Plus, MessageCircle, Trash2, X, Settings } from "lucide-react";
 import { api, ThreadsProjectOut } from "@/lib/api";
 
 export default function ThreadsProjectsPage() {
+  const PROJECTS_PAGE_SIZE = 12;
   const [projects, setProjects] = useState<ThreadsProjectOut[]>([]);
+  const [totalProjects, setTotalProjects] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
@@ -25,8 +27,11 @@ export default function ThreadsProjectsPage() {
 
   const load = () => {
     setLoading(true);
-    api.getThreadsProjects()
-      .then(setProjects)
+    api.getThreadsProjectsPage({ limit: Math.max(projects.length || 0, PROJECTS_PAGE_SIZE), offset: 0 })
+      .then(({ items, total }) => {
+        setProjects(items);
+        setTotalProjects(total);
+      })
       .catch(() => setError("Failed to load Threads projects"))
       .finally(() => setLoading(false));
   };
@@ -95,7 +100,7 @@ export default function ThreadsProjectsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Threads Projects</h1>
           <p className="text-sm text-gray-400 mt-1">
-            {loading ? "Loading..." : `${projects.length} project${projects.length !== 1 ? "s" : ""}`}
+            {loading ? "Loading..." : `${totalProjects} project${totalProjects !== 1 ? "s" : ""}${projects.length < totalProjects ? ` · ${projects.length} loaded` : ""}`}
           </p>
         </div>
         <button
@@ -234,6 +239,29 @@ export default function ThreadsProjectsPage() {
           {projects.length === 0 && (
             <div className="col-span-full text-center py-12 text-gray-500">
               No Threads projects yet. Create one to get started.
+            </div>
+          )}
+          {totalProjects > projects.length && (
+            <div className="col-span-full flex justify-center pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setLoading(true);
+                  api.getThreadsProjectsPage({
+                    limit: projects.length + PROJECTS_PAGE_SIZE,
+                    offset: 0,
+                  })
+                    .then(({ items, total }) => {
+                      setProjects(items);
+                      setTotalProjects(total);
+                    })
+                    .catch(() => setError("Failed to load Threads projects"))
+                    .finally(() => setLoading(false));
+                }}
+                className="btn-secondary text-sm px-4 py-2"
+              >
+                Load {Math.min(PROJECTS_PAGE_SIZE, totalProjects - projects.length)} more
+              </button>
             </div>
           )}
         </div>

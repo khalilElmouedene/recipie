@@ -562,13 +562,21 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
 }
 
 function MembersTab({ projectId, role }: { projectId: string; role: string | null }) {
+  const MEMBERS_PAGE_SIZE = 20;
   const openConfirm = useConfirm();
   const [members, setMembers] = useState<MemberOut[]>([]);
+  const [totalMembers, setTotalMembers] = useState(0);
   const [users, setUsers] = useState<UserOut[]>([]);
   const [selUser, setSelUser] = useState("");
   const [selRole, setSelRole] = useState("member");
 
-  const load = () => api.getMembers(projectId).then(setMembers).catch(() => {});
+  const load = (limit = Math.max(members.length || 0, MEMBERS_PAGE_SIZE)) =>
+    api.getMembersPage(projectId, { limit, offset: 0 })
+      .then(({ items, total }) => {
+        setMembers(items);
+        setTotalMembers(total);
+      })
+      .catch(() => {});
   useEffect(() => {
     load();
     if (role === "owner") api.getUsers().then(setUsers).catch(() => {});
@@ -629,14 +637,34 @@ function MembersTab({ projectId, role }: { projectId: string; role: string | nul
           </div>
         ))}
         {members.length === 0 && <p className="text-center py-8 text-gray-500">No members assigned yet.</p>}
+        {totalMembers > members.length && (
+          <div className="flex justify-center pt-2">
+            <button
+              type="button"
+              onClick={() => load(members.length + MEMBERS_PAGE_SIZE)}
+              className="btn-secondary text-sm px-4 py-2"
+            >
+              Load {Math.min(MEMBERS_PAGE_SIZE, totalMembers - members.length)} more members
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 function JobsTab({ projectId }: { projectId: string }) {
+  const JOBS_PAGE_SIZE = 20;
   const [jobs, setJobs] = useState<JobOut[]>([]);
-  useEffect(() => { api.getProjectJobs(projectId).then(setJobs).catch(() => {}); }, [projectId]);
+  const [totalJobs, setTotalJobs] = useState(0);
+  const load = (limit = Math.max(jobs.length || 0, JOBS_PAGE_SIZE)) =>
+    api.getProjectJobsPage(projectId, { limit, offset: 0 })
+      .then(({ items, total }) => {
+        setJobs(items);
+        setTotalJobs(total);
+      })
+      .catch(() => {});
+  useEffect(() => { load(); }, [projectId]);
 
   const statusColor: Record<string, string> = {
     pending: "bg-gray-700 text-gray-300",
@@ -661,6 +689,17 @@ function JobsTab({ projectId }: { projectId: string }) {
         </Link>
       ))}
       {jobs.length === 0 && <p className="text-center py-8 text-gray-500">No jobs yet.</p>}
+      {totalJobs > jobs.length && (
+        <div className="flex justify-center pt-2">
+          <button
+            type="button"
+            onClick={() => load(jobs.length + JOBS_PAGE_SIZE)}
+            className="btn-secondary text-sm px-4 py-2"
+          >
+            Load {Math.min(JOBS_PAGE_SIZE, totalJobs - jobs.length)} more jobs
+          </button>
+        </div>
+      )}
     </div>
   );
 }

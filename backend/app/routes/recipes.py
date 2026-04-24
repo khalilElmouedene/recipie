@@ -23,6 +23,7 @@ from ..db_models import User, Site, Recipe, ProjectCredential, RecipeStatus
 from ..dependencies import get_current_user, get_current_user_download, check_project_access
 from ..crypto import decrypt
 from ..site_credentials import get_random_wp_credentials
+from ..pagination import apply_limit_offset, count_rows, set_total_count
 from ..models import (
     RecipeCreate, RecipeOut, RecipeUpdate,
     PinterestPinRequest, PinterestBulkResponse,
@@ -129,10 +130,13 @@ def image_proxy(
 
 @router.get("/api/sites/{site_id}/recipes", response_model=list[RecipeOut])
 async def list_recipes(
+    response: Response,
     site_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     summary: bool = Query(default=False, description="Return lightweight rows without heavy generated text fields"),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
     result = await db.execute(select(Site).where(Site.id == site_id))
     site = result.scalar_one_or_none()
@@ -142,7 +146,7 @@ async def list_recipes(
     await check_project_access(site.project_id, user, db)
 
     if summary:
-        rows = await db.execute(
+        stmt = (
             select(
                 Recipe.id,
                 Recipe.site_id,
@@ -166,6 +170,9 @@ async def list_recipes(
             .where(Recipe.site_id == site_id)
             .order_by(Recipe.created_at.desc())
         )
+        total = await count_rows(db, stmt)
+        set_total_count(response, total)
+        rows = await db.execute(apply_limit_offset(stmt, limit, offset))
         out: list[dict] = []
         for row in rows:
             out.append({
@@ -190,9 +197,10 @@ async def list_recipes(
             })
         return out
 
-    result = await db.execute(
-        select(Recipe).where(Recipe.site_id == site_id).order_by(Recipe.created_at.desc())
-    )
+    stmt = select(Recipe).where(Recipe.site_id == site_id).order_by(Recipe.created_at.desc())
+    total = await count_rows(db, stmt)
+    set_total_count(response, total)
+    result = await db.execute(apply_limit_offset(stmt, limit, offset))
     return result.scalars().all()
 
 

@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles, Globe, Square, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { api, getApiBaseUrl, SiteOut, RecipeOut, PinterestBoard, PinterestBulkResponse, PinTemplate, BulkGeneratePinsResponse, BulkPinItem, JobOut, getWsUrl } from "@/lib/api";
@@ -98,11 +98,16 @@ export default function SiteDetailPage() {
   // Idempotency refs: block re-entry between click and React re-render (same-frame double-clicks)
   const jobStartingRef = useRef(false);
   const generatingIdsRef = useRef<Set<string>>(new Set());
+  const [visibleRecipeCount, setVisibleRecipeCount] = useState(10);
+  const [totalRecipeCount, setTotalRecipeCount] = useState(0);
+  const RECIPES_PAGE_SIZE = 10;
 
   const loadRecipes = useCallback(
     () =>
-      api.getRecipes(siteId, true)
-        .then((rows) => {
+      api.getRecipesPage(siteId, { summary: true, limit: visibleRecipeCount, offset: 0 })
+        .then(({ items, total }) => {
+          setTotalRecipeCount(total);
+          const rows = items;
           const serverIds = new Set(rows.map((r) => r.id));
           deletingIdsRef.current.forEach((id) => {
             if (!serverIds.has(id)) deletingIdsRef.current.delete(id);
@@ -154,7 +159,7 @@ export default function SiteDetailPage() {
           setExpandedId((current) => (current && !incomingIds.has(current) ? null : current));
         })
         .catch(() => {}),
-    [siteId]
+    [siteId, visibleRecipeCount]
   );
 
   const ensureRecipeDetails = useCallback(async (recipeId: string) => {
@@ -340,6 +345,7 @@ export default function SiteDetailPage() {
       setImageUploadError("");
       recentlyAddedRef.current.set(newRecipe.id, newRecipe);
       setRecipes((prev) => [newRecipe, ...prev]);
+      setTotalRecipeCount((count) => count + 1);
     } catch (err: any) {
       toast.error(err.message || "Failed to add recipe");
     }
@@ -350,12 +356,14 @@ export default function SiteDetailPage() {
     if (!await openConfirm({ message: "Delete this recipe?", danger: true, confirmLabel: "Delete" })) return;
     deletingIdsRef.current.add(recipeId);
     setRecipes((prev) => prev.filter((r) => r.id !== recipeId));
+    setTotalRecipeCount((count) => Math.max(0, count - 1));
     if (expandedId === recipeId) setExpandedId(null);
     try {
       await api.deleteRecipe(recipeId);
       // deletingIdsRef is cleared by loadRecipes once the server confirms the recipe is absent
     } catch (err: any) {
       deletingIdsRef.current.delete(recipeId);
+      setTotalRecipeCount((count) => count + 1);
       toast.error(err.message || "Failed to delete recipe");
     }
   };
@@ -378,7 +386,9 @@ export default function SiteDetailPage() {
           if (successAttempts >= maxSuccessAttempts) {
             clearInterval(interval);
             try {
-              const jobs = projectId ? await api.getProjectJobs(projectId) : [];
+              const jobs = projectId
+                ? (await api.getProjectJobsPage(projectId, { limit: 20, offset: 0 })).items
+                : [];
               const stillRunning = jobs.some((j) => j.job_type === "articles" && j.status === "running");
               if (!stillRunning) {
                 const rr = await api.getRecipe(recipeId);
@@ -459,8 +469,8 @@ export default function SiteDetailPage() {
     let cancelled = false;
     const syncExternal = () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      api.getProjectJobs(projectId)
-        .then((jobs) => {
+      api.getProjectJobsPage(projectId, { limit: 20, offset: 0 })
+        .then(({ items: jobs }) => {
           if (cancelled) return;
           const activeArticleJob = jobs.find(
             (j) => j.job_type === "articles" && (j.status === "running" || j.status === "pending")
@@ -504,7 +514,7 @@ export default function SiteDetailPage() {
     }
 
     try {
-      const jobs = await api.getProjectJobs(projectId);
+      const jobs = (await api.getProjectJobsPage(projectId, { limit: 20, offset: 0 })).items;
       const latestArticleJob =
         jobs.find((j) => j.job_type === "articles" && (j.status === "running" || j.status === "pending")) ||
         jobs.find((j) => j.job_type === "articles");
@@ -767,10 +777,28 @@ export default function SiteDetailPage() {
     failed: "bg-red-600/20 text-red-400",
   };
 
-  const pendingCount = recipes.filter((r) => r.status === "pending").length;
-  const generatedCount = recipes.filter((r) => r.status === "generated").length;
-  const publishedCount = recipes.filter((r) => r.status === "published").length;
-  const failedCount = recipes.filter((r) => r.status === "failed").length;
+  const recipeStats = useMemo(() => {
+    let pending = 0;
+    let generated = 0;
+    let published = 0;
+    let failed = 0;
+    for (const recipe of recipes) {
+      if (recipe.status === "pending") pending += 1;
+      else if (recipe.status === "generated") generated += 1;
+      else if (recipe.status === "published") published += 1;
+      else if (recipe.status === "failed") failed += 1;
+    }
+    return { pending, generated, published, failed };
+  }, [recipes]);
+  const pendingCount = recipeStats.pending;
+  const generatedCount = recipeStats.generated;
+  const publishedCount = recipeStats.published;
+  const failedCount = recipeStats.failed;
+  const visibleRecipes = recipes;
+  const remainingRecipeCount = Math.max(0, totalRecipeCount - recipes.length);
+  const loadMoreRecipes = useCallback(() => {
+    setVisibleRecipeCount((count) => count + RECIPES_PAGE_SIZE);
+  }, []);
 
   if (!site) return null;
 
@@ -868,7 +896,9 @@ export default function SiteDetailPage() {
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-white truncate">{site.domain}</h1>
           <p className="text-sm text-gray-400 mt-1">
-            {recipes.length} recipes &middot; {pendingCount} pending &middot; {generatedCount} generated &middot; {publishedCount} published
+            {totalRecipeCount} recipes
+            {recipes.length < totalRecipeCount && <span> &middot; {recipes.length} loaded</span>}
+            &middot; Loaded: {pendingCount} pending &middot; {generatedCount} generated &middot; {publishedCount} published
             {failedCount > 0 && <span className="text-red-400"> &middot; {failedCount} failed</span>}
           </p>
         </div>
@@ -1019,9 +1049,16 @@ export default function SiteDetailPage() {
         </form>
       </div>
 
-      <h2 className="text-lg font-semibold text-white mb-3">Recipes</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <h2 className="text-lg font-semibold text-white">Recipes</h2>
+        {totalRecipeCount > RECIPES_PAGE_SIZE && (
+          <p className="text-xs text-gray-500">
+            Showing {recipes.length} of {totalRecipeCount} recipes
+          </p>
+        )}
+      </div>
       <div className="space-y-2">
-        {recipes.map((r) => (
+        {visibleRecipes.map((r) => (
           <div key={r.id} className="card p-0 overflow-hidden">
             <div
               className="flex items-center gap-3 p-4 cursor-pointer hover:bg-gray-800/50 transition"
@@ -1033,7 +1070,13 @@ export default function SiteDetailPage() {
               }}
             >
               {r.image_url && (
-                <img src={r.image_url} alt="" className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
+                <img
+                  src={r.image_url}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
+                />
               )}
               <div className="flex-1 min-w-0">
                 {editingTitleId === r.id ? (
@@ -1193,7 +1236,15 @@ export default function SiteDetailPage() {
                     <div>
                       <div className="mb-3">
                         <span className="text-xs font-semibold text-gray-400 uppercase">Source Image</span>
-                        {r.image_url && <img src={r.image_url} alt="Source" className="mt-2 max-w-xs rounded-lg" />}
+                                      {r.image_url && (
+                                        <img
+                                          src={r.image_url}
+                                          alt="Source"
+                                          loading="lazy"
+                                          decoding="async"
+                                          className="mt-2 max-w-xs rounded-lg"
+                                        />
+                                      )}
                       </div>
                       {r.generated_images ? (
                         <div>
@@ -1212,7 +1263,13 @@ export default function SiteDetailPage() {
                                 const imgs: string[] = JSON.parse(r.generated_images);
                                 return imgs.map((url: string, i: number) => (
                                   <div key={i} className="relative group">
-                                    <img src={url} alt={`Generated ${i + 1}`} className="rounded-lg w-full" />
+                                              <img
+                                                src={url}
+                                                alt={`Generated ${i + 1}`}
+                                                loading="lazy"
+                                                decoding="async"
+                                                className="rounded-lg w-full"
+                                              />
                                     {editingImageIdx?.recipeId === r.id && editingImageIdx?.idx === i ? (
                                       <div className="mt-2 space-y-2">
                                         <input
@@ -1332,7 +1389,13 @@ export default function SiteDetailPage() {
                                   </p>
                                   {pinResult.pins.map((pin, pi) => (
                                     <div key={pi} className="flex items-center gap-2 text-xs">
-                                      <img src={pin.image_url} alt="" className="w-8 h-8 rounded object-cover" />
+                                        <img
+                                          src={pin.image_url}
+                                          alt=""
+                                          loading="lazy"
+                                          decoding="async"
+                                          className="w-8 h-8 rounded object-cover"
+                                        />
                                       {pin.pin_url ? (
                                         <a href={pin.pin_url} target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:underline truncate">
                                           {pin.pin_url}
@@ -1363,7 +1426,13 @@ export default function SiteDetailPage() {
                         <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-4">
                           <div className="flex flex-col sm:flex-row gap-4">
                             <div className="flex-shrink-0 relative group">
-                              <img src={r.pin_design_image} alt="Saved pin" className="w-48 rounded-lg border border-gray-600 object-cover" />
+                              <img
+                                src={r.pin_design_image}
+                                alt="Saved pin"
+                                loading="lazy"
+                                decoding="async"
+                                className="w-48 rounded-lg border border-gray-600 object-cover"
+                              />
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1488,7 +1557,18 @@ export default function SiteDetailPage() {
             )}
           </div>
         ))}
-        {recipes.length === 0 && <p className="text-center py-8 text-gray-500">No recipes yet. Add one above.</p>}
+        {totalRecipeCount === 0 && <p className="text-center py-8 text-gray-500">No recipes yet. Add one above.</p>}
+        {remainingRecipeCount > 0 && (
+          <div className="pt-3 flex justify-center">
+            <button
+              type="button"
+              onClick={loadMoreRecipes}
+              className="btn-secondary text-sm px-4 py-2"
+            >
+              Load {Math.min(RECIPES_PAGE_SIZE, remainingRecipeCount)} more
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Bulk Pin Generator */}
@@ -1580,7 +1660,13 @@ export default function SiteDetailPage() {
                     <div key={pi} className="rounded-lg overflow-hidden bg-gray-800">
                       {pin.image_base64 ? (
                         <>
-                          <img src={pin.image_base64} alt={pin.recipe_title} className="w-full" />
+                          <img
+                            src={pin.image_base64}
+                            alt={pin.recipe_title}
+                            loading="lazy"
+                            decoding="async"
+                            className="w-full"
+                          />
                           <div className="p-2">
                             <p className="text-[11px] text-gray-300 truncate">{pin.recipe_title}</p>
                             <button
