@@ -193,48 +193,57 @@ class JobManager:
         if db_job.job_type == JobType.articles_all_sites:
             site_domain = ""
             created_recipe_ids: list[uuid.UUID] = []
-            for idx, item in enumerate(shared_recipes or []):
-                if isinstance(item, dict):
-                    recipe_text = str(item.get("recipe_text", "")).strip()
-                    image_url = str(item.get("image_url", "")).strip()
-                else:
-                    recipe_text = str(getattr(item, "recipe_text", "")).strip()
-                    image_url = str(getattr(item, "image_url", "")).strip()
-                if not recipe_text or not image_url:
-                    continue
-                group_items: list[dict] = []
-                for s in sites:
-                    new_recipe = Recipe(
-                        site_id=s.id,
-                        created_by=db_job.created_by,
-                        created_by_job_id=db_job.id,
-                        image_url=image_url,
-                        recipe_text=recipe_text,
-                        status=RecipeStatus.generating,
-                    )
-                    db.add(new_recipe)
-                    await db.flush()
-                    created_recipe_ids.append(new_recipe.id)
-                    group_items.append(
-                        {
-                            "id": str(new_recipe.id),
-                            "site_domain": s.domain,
-                            "pinterest_url": s.pinterest_url or "",
-                            "recipe_text": recipe_text,
-                            "image_url": image_url,
-                            "group_idx": idx + 1,
-                        }
-                    )
-                if group_items:
-                    multi_site_groups.append({"idx": idx + 1, "items": group_items, "recipe_text": recipe_text, "image_url": image_url})
-            if not multi_site_groups:
+            try:
+                for idx, item in enumerate(shared_recipes or []):
+                    if isinstance(item, dict):
+                        recipe_text = str(item.get("recipe_text", "")).strip()
+                        image_url = str(item.get("image_url", "")).strip()
+                    else:
+                        recipe_text = str(getattr(item, "recipe_text", "")).strip()
+                        image_url = str(getattr(item, "image_url", "")).strip()
+                    if not recipe_text or not image_url:
+                        continue
+                    group_items: list[dict] = []
+                    for s in sites:
+                        new_recipe = Recipe(
+                            site_id=s.id,
+                            created_by=db_job.created_by,
+                            created_by_job_id=db_job.id,
+                            image_url=image_url,
+                            recipe_text=recipe_text,
+                            status=RecipeStatus.generating,
+                        )
+                        db.add(new_recipe)
+                        await db.flush()
+                        created_recipe_ids.append(new_recipe.id)
+                        group_items.append(
+                            {
+                                "id": str(new_recipe.id),
+                                "site_domain": s.domain,
+                                "pinterest_url": s.pinterest_url or "",
+                                "recipe_text": recipe_text,
+                                "image_url": image_url,
+                                "group_idx": idx + 1,
+                            }
+                        )
+                    if group_items:
+                        multi_site_groups.append({"idx": idx + 1, "items": group_items, "recipe_text": recipe_text, "image_url": image_url})
+                if not multi_site_groups:
+                    db_job.status = JobStatus.failed
+                    db_job.error = "No valid shared recipes to process"
+                    db_job.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    return
+                recipes_data = [{"id": str(rid)} for rid in created_recipe_ids]
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                logger.exception("Failed to create recipes for job %s", db_job.id)
                 db_job.status = JobStatus.failed
-                db_job.error = "No valid shared recipes to process"
+                db_job.error = f"Failed to create recipes: {e}"
                 db_job.finished_at = datetime.now(timezone.utc)
                 await db.commit()
                 return
-            recipes_data = [{"id": str(rid)} for rid in created_recipe_ids]
-            await db.commit()
         elif recipe_id and db_job.job_type == JobType.articles:
             recipe_query = (
                 select(Recipe)

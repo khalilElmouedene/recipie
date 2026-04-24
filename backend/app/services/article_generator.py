@@ -391,8 +391,16 @@ def generate_for_recipe(
                         log=_log,
                         should_stop=_stop,
                     )
-                    # Cache immediately - Discord CDN URLs expire after a few hours
-                    cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
+                    # Cache immediately — Discord CDN URLs expire after a few hours.
+                    # Cache each image individually so one failure doesn't lose the rest.
+                    cached_urls = []
+                    for u in img_urls:
+                        if not u:
+                            continue
+                        try:
+                            cached_urls.append(_cache_image(u, log=_log))
+                        except Exception as cache_err:
+                            _log(f"Warning: failed to cache image, skipping: {cache_err}")
                     if not cached_urls:
                         raise ValueError("Midjourney did not return any images")
                     result["generated_images"] = json.dumps(cached_urls)
@@ -539,7 +547,16 @@ def generate_images_only(
                 log=_log,
                 should_stop=_stop,
             )
-            cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
+            cached_urls = []
+            for u in img_urls:
+                if not u:
+                    continue
+                try:
+                    cached_urls.append(_cache_image(u, log=_log))
+                except Exception as cache_err:
+                    _log(f"Warning: failed to cache image, skipping: {cache_err}")
+            if not cached_urls:
+                raise RuntimeError("All Midjourney images failed to cache")
             return json.dumps(cached_urls)
 
 

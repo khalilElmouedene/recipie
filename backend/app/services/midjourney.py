@@ -172,17 +172,21 @@ class MidjourneyApi:
 
     def _get_latest_message_id(self) -> str:
         """Return the ID of the most recent message in the channel (used as a baseline)."""
-        try:
-            r = requests.get(
-                f"https://discord.com/api/v9/channels/{self.channel_id}/messages?limit=1",
-                headers=self._headers(),
-                timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
-            )
-            msgs = r.json()
-            if msgs:
-                return msgs[0]["id"]
-        except Exception:
-            pass
+        for _ in range(2):
+            try:
+                r = requests.get(
+                    f"https://discord.com/api/v9/channels/{self.channel_id}/messages?limit=1",
+                    headers=self._headers(),
+                    timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
+                )
+                if self._check_rate_limit(r):
+                    continue
+                msgs = r.json()
+                if msgs:
+                    return msgs[0]["id"]
+                return "0"
+            except Exception:
+                pass
         return "0"
 
     def send_message(self) -> requests.Response:
