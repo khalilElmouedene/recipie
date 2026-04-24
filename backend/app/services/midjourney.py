@@ -37,6 +37,7 @@ _SUPER_PROPERTIES: str = base64.b64encode(
 from ..midjourney_settings import (
     DEFAULT_GRID_WAIT_SECONDS,
     DISCORD_HTTP_TIMEOUT_SECONDS,
+    GRID_GRACE_PERIOD_SECONDS,
     INITIAL_SEND_MAX_ATTEMPTS,
     POST_UPSCALE_WAIT_SECONDS,
     UPSCALE_GAP_SECONDS,
@@ -268,29 +269,44 @@ class MidjourneyApi:
         self.custom_ids = [b["custom_id"] for b in best_buttons]
         return True
 
-    def get_message(self, poll_interval: int = 30) -> None:
-        """Poll Discord every poll_interval seconds until the grid appears or wait_time expires."""
+    def _poll_grid_once(self) -> bool:
+        """Single Discord channel read to check for a grid message. Returns True if found."""
+        response = requests.get(
+            f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
+            headers=self._headers(),
+            params={"after": self.baseline_id, "limit": 50},
+            timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
+        )
+        if self._check_rate_limit(response):
+            return False
+        return self._find_grid_in_messages(response.json())
+
+    def get_message(self, poll_interval: int = 30, grace_seconds: int = GRID_GRACE_PERIOD_SECONDS) -> None:
+        """Poll Discord every poll_interval seconds until the grid appears or wait_time expires.
+        After wait_time, sleeps grace_seconds and makes one final attempt before giving up."""
         self._log(f"Waiting up to {self.wait_time}s for Midjourney grid...")
         elapsed = 0
         while elapsed < self.wait_time:
-            self._interruptible_sleep(min(poll_interval, self.wait_time - elapsed))
-            elapsed += poll_interval
+            step = min(poll_interval, self.wait_time - elapsed)
+            self._interruptible_sleep(step)
+            elapsed += step
             try:
-                response = requests.get(
-                    f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
-                    headers=self._headers(),
-                    params={"after": self.baseline_id, "limit": 50},
-                    timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
-                )
-                if self._check_rate_limit(response):
-                    continue
-                if self._find_grid_in_messages(response.json()):
+                if self._poll_grid_once():
                     self._log(f"Got grid message {self.message_id} after {elapsed}s")
                     return
                 self._log(f"Grid not ready yet ({elapsed}/{self.wait_time}s)...")
             except Exception as e:
                 self._log(f"Grid poll error (will retry): {e}")
-        raise ValueError(f"No Midjourney grid found after {self.wait_time}s")
+        # Grace period: one last attempt after a short extra wait
+        self._log(f"Grid not found after {self.wait_time}s — waiting {grace_seconds}s more for final check...")
+        self._interruptible_sleep(grace_seconds)
+        try:
+            if self._poll_grid_once():
+                self._log(f"Got grid message {self.message_id} after {elapsed + grace_seconds}s (grace period)")
+                return
+        except Exception as e:
+            self._log(f"Final grid poll error: {e}")
+        raise ValueError(f"No Midjourney grid found after {self.wait_time}s + {grace_seconds}s grace period")
 
     def choose_images(self, button_retries: int = 3) -> None:
         """Click U1–U4 to upscale all 4 grid images, retrying each button on failure."""
