@@ -306,6 +306,27 @@ class MidjourneyApi:
                 return
         except Exception as e:
             self._log(f"Final grid poll error: {e}")
+        # Last-resort: fetch the most recent messages WITHOUT the after filter in case
+        # the baseline_id was wrong (e.g. captured "0") or messages exceed limit=50.
+        try:
+            response = requests.get(
+                f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
+                headers=self._headers(),
+                params={"limit": 10},
+                timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
+            )
+            if not self._check_rate_limit(response):
+                if self._find_grid_in_messages(response.json()):
+                    self._log(f"Got grid message {self.message_id} via fallback scan (baseline may have been off)")
+                    return
+        except Exception as e:
+            self._log(f"Fallback scan error: {e}")
+        self._log(
+            "Grid still not found. If you can see the Midjourney result in Discord but it shows "
+            "'Only you can see this', the channel is sending ephemeral responses — "
+            "grant the Midjourney bot 'Send Messages' + 'Attach Files' permissions on that channel "
+            "so results appear as public messages."
+        )
         raise ValueError(f"No Midjourney grid found after {self.wait_time}s + {grace_seconds}s grace period")
 
     def choose_images(self, button_retries: int = 3) -> None:
