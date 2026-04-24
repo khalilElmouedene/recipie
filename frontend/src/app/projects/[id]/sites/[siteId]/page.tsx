@@ -232,33 +232,6 @@ export default function SiteDetailPage() {
     loadRecipes();
   }, [projectId, siteId, router, loadRecipes]);
 
-  // Passive collaborative sync: keep recipe list fresh for add/delete/status changes
-  // made by other members, even when no generation job is currently active locally.
-  useEffect(() => {
-    const hasActiveJob = !!activeJob && (activeJob.status === "running" || activeJob.status === "pending");
-    if (hasActiveJob) return;
-
-    const syncNow = () => {
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      loadRecipes();
-    };
-
-    syncNow();
-    const t = setInterval(syncNow, 10000);
-    const onFocus = () => syncNow();
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") syncNow();
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      clearInterval(t);
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [activeJob?.status, loadRecipes]);
-
   // Load boards from pinterest_boards_list prompt setting (already stored per-project, no OAuth needed)
   const [pinterestNotConnected, setPinterestNotConnected] = useState(false);
   useEffect(() => {
