@@ -1,8 +1,38 @@
 from __future__ import annotations
+import base64
+import json
+import random
 import re
 import time
+import uuid
 import requests
 from typing import Callable
+
+_SUPER_PROPERTIES: str = base64.b64encode(
+    json.dumps(
+        {
+            "os": "Windows",
+            "browser": "Chrome",
+            "device": "",
+            "system_locale": "en-US",
+            "browser_user_agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "browser_version": "124.0.0.0",
+            "os_version": "10",
+            "referrer": "",
+            "referring_domain": "",
+            "referrer_current": "",
+            "referring_domain_current": "",
+            "release_channel": "stable",
+            "client_build_number": 294044,
+            "client_event_source": None,
+        },
+        separators=(",", ":"),
+    ).encode()
+).decode()
 
 from ..midjourney_settings import (
     DEFAULT_GRID_WAIT_SECONDS,
@@ -47,6 +77,7 @@ class MidjourneyApi:
         self.prompt = prompt
         self.wait_time = wait_time
         self.upscale_gap_seconds = max(1, min(120, upscale_gap_seconds))
+        self.session_id = str(uuid.uuid4())
         self.message_id = ""
         self.custom_ids: list[str] = []
         self._log = log or print
@@ -65,7 +96,26 @@ class MidjourneyApi:
         return {
             "Authorization": self.authorization,
             "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "X-Super-Properties": _SUPER_PROPERTIES,
+            "X-Discord-Locale": "en-US",
         }
+
+    @staticmethod
+    def _nonce() -> str:
+        return str(random.randint(100_000_000_000_000_000, 999_999_999_999_999_999))
+
+    def _check_rate_limit(self, response: requests.Response) -> bool:
+        """Sleep retry_after seconds if Discord returned 429. Returns True so callers can continue."""
+        if response.status_code == 429:
+            try:
+                retry_after = int(response.json().get("retry_after", 5)) + 1
+            except Exception:
+                retry_after = 6
+            self._log(f"Discord rate limit hit, sleeping {retry_after}s...")
+            self._interruptible_sleep(retry_after)
+            return True
+        return False
 
     def _message_text(self, msg: dict) -> str:
         parts: list[str] = [str(msg.get("content", ""))]
@@ -144,7 +194,8 @@ class MidjourneyApi:
             "application_id": self.application_id,
             "guild_id": self.guild_id,
             "channel_id": self.channel_id,
-            "session_id": "cannot be empty",
+            "session_id": self.session_id,
+            "nonce": self._nonce(),
             "data": {
                 "version": self.version,
                 "id": self.id,
@@ -227,6 +278,8 @@ class MidjourneyApi:
                     params={"after": self.baseline_id, "limit": 50},
                     timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
                 )
+                if self._check_rate_limit(response):
+                    continue
                 if self._find_grid_in_messages(response.json()):
                     self._log(f"Got grid message {self.message_id} after {elapsed}s")
                     return
@@ -253,7 +306,8 @@ class MidjourneyApi:
                 "message_flags": 0,
                 "message_id": self.message_id,
                 "application_id": self.application_id,
-                "session_id": "cannot be empty",
+                "session_id": self.session_id,
+                "nonce": self._nonce(),
                 "data": {"component_type": 2, "custom_id": custom_id},
             }
             sent = False
@@ -267,6 +321,8 @@ class MidjourneyApi:
                 if response.status_code == 204:
                     sent = True
                     break
+                if self._check_rate_limit(response):
+                    continue
                 self._log(f"Upscale button attempt {attempt + 1}/{button_retries} failed (status {response.status_code})")
                 if attempt < button_retries - 1:
                     self._interruptible_sleep(5)
@@ -294,6 +350,8 @@ class MidjourneyApi:
                     params={"after": after_id, "limit": 50},
                     timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
                 )
+                if self._check_rate_limit(response):
+                    continue
                 strict_urls: list[str] = []
                 fallback_urls: list[str] = []
                 for msg in response.json():

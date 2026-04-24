@@ -110,8 +110,15 @@ class JobManager:
         # Use same db session as request - same pattern as Paramètres/Settings API
         credentials = await load_credentials_for_job(db, project_id, db_job.created_by)
 
-        if not credentials.get("openai"):
-            logger.warning("No OpenAI key found. Loaded keys: %s", list(credentials.keys()))
+        if not credentials.get("openai") and db_job.job_type == JobType.articles:
+            db_job.status = JobStatus.failed
+            db_job.error = (
+                "OpenAI API key not found. Go to Paramètres → Clés API, "
+                "paste your OpenAI key (sk-...), and click Enregistrer."
+            )
+            db_job.finished_at = datetime.now(timezone.utc)
+            await db.commit()
+            return
 
         # Load configurable prompts — project-scoped first, fallback to owner-level
         prompts: dict[str, str] = {}
