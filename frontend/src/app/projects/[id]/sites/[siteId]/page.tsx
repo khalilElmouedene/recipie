@@ -239,7 +239,7 @@ export default function SiteDetailPage() {
     };
 
     syncNow();
-    const t = setInterval(syncNow, 5000);
+    const t = setInterval(syncNow, 10000);
     const onFocus = () => syncNow();
     const onVisibility = () => {
       if (document.visibilityState === "visible") syncNow();
@@ -453,10 +453,12 @@ export default function SiteDetailPage() {
   // Cross-user real-time sync: discover active generation jobs started by other members.
   // This runs even when the local recipe list is stale (still "pending"), then the WS/poll
   // pipeline takes over and updates status/logs for everyone without page refresh.
+  // 15s interval — background discovery doesn't need to be instant, and skips hidden tabs.
   useEffect(() => {
     if (activeJob?.status === "running") return;
     let cancelled = false;
-    const syncExternal = () =>
+    const syncExternal = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       api.getProjectJobs(projectId)
         .then((jobs) => {
           if (cancelled) return;
@@ -479,9 +481,10 @@ export default function SiteDetailPage() {
           loadRecipes();
         })
         .catch(() => {});
+    };
 
     syncExternal();
-    const t = setInterval(syncExternal, 3000);
+    const t = setInterval(syncExternal, 15000);
 
     return () => {
       cancelled = true;
