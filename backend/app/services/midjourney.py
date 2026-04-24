@@ -268,7 +268,7 @@ class MidjourneyApi:
         self.custom_ids = [b["custom_id"] for b in best_buttons]
         return True
 
-    def get_message(self, poll_interval: int = 15) -> None:
+    def get_message(self, poll_interval: int = 30) -> None:
         """Poll Discord every poll_interval seconds until the grid appears or wait_time expires."""
         self._log(f"Waiting up to {self.wait_time}s for Midjourney grid...")
         elapsed = 0
@@ -340,7 +340,7 @@ class MidjourneyApi:
             self._log(f"Warning: {failed}/4 upscale buttons failed — continuing with partial upscales")
         self._log(f"Upscale requests sent ({4 - failed}/4 succeeded)")
 
-    def download_image(self, post_upscale_wait: int = 120, poll_interval: int = 10) -> list[str]:
+    def download_image(self, post_upscale_wait: int = 120, poll_interval: int = 30) -> list[str]:
         """Poll Discord every poll_interval seconds until upscaled images appear or post_upscale_wait expires."""
         after_id = getattr(self, "upscale_baseline_id", self.message_id)
         elapsed = 0
