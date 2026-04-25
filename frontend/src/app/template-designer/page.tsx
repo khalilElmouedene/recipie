@@ -81,6 +81,7 @@ function TemplateDesignerInner() {
 
   const [mounted, setMounted] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState(false);
   const [zoom, setZoom] = useState(38);
 
   // Template meta
@@ -483,6 +484,7 @@ function TemplateDesignerInner() {
       )
     );
     if (templateFonts.length > 0) {
+      setTemplateLoading(true);
       await Promise.all(templateFonts.map(injectFontStylesheet));
       setCustomFonts((prev) => {
         const extra = templateFonts.filter((f) => !prev.includes(f));
@@ -639,6 +641,7 @@ function TemplateDesignerInner() {
     undoHistoryRef.current = [];
     saveUndoState();
     syncLayers();
+    setTemplateLoading(false);
   }, [applySelectionVisuals, canvasH, canvasW, saveUndoState, injectFontStylesheet]);
 
   const loadExistingTemplate = useCallback(async () => {
@@ -1645,6 +1648,7 @@ function TemplateDesignerInner() {
           <div className="flex-1 overflow-auto p-8">
             <div
               style={{
+                position: "relative",
                 width: canvasW * zoomPct,
                 height: canvasH * zoomPct,
                 margin: "0 auto",
@@ -1665,6 +1669,17 @@ function TemplateDesignerInner() {
               >
                 {mounted && <canvas ref={canvasRef} />}
               </div>
+              {templateLoading && (
+                <div
+                  style={{ borderRadius: 4 }}
+                  className="absolute inset-0 z-20 flex items-center justify-center bg-gray-950/85"
+                >
+                  <div className="flex flex-col items-center gap-3">
+                    <Loader2 size={28} className="animate-spin text-brand-400" />
+                    <span className="text-sm text-gray-300">Loading fonts…</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </main>

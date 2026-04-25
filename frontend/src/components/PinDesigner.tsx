@@ -1110,6 +1110,7 @@ export default function PinDesigner({
   const openConfirm = useConfirm();
   const [mounted, setMounted] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState(false);
   const [imageEditModeId, setImageEditModeId] = useState<string | null>(null);
   const setEditMode = (id: string | null) => { imageEditModeIdRef.current = id; setImageEditModeId(id); };
   const [selectedTemplate, setSelectedTemplate] = useState<PinTemplate | null>(null);
@@ -2109,6 +2110,7 @@ export default function PinDesigner({
         .map((el) => (el as any).fontFamily as string)
     ));
     if (templateFonts.length > 0) {
+      setTemplateLoading(true);
       await Promise.all(templateFonts.map(injectFontStylesheet));
     }
 
@@ -2436,6 +2438,7 @@ export default function PinDesigner({
     canvas.renderAll();
     updateLayers();
     saveUndoState();
+    setTemplateLoading(false);
   };
 
   // ── Canvas initialization ─────────────────────────────────────────────────
@@ -5136,6 +5139,14 @@ export default function PinDesigner({
                     className="shadow-2xl rounded-lg overflow-hidden border-2 border-brand-500"
                   >
                     <canvas ref={canvasRef} />
+                    {templateLoading && (
+                      <div className="absolute inset-0 z-20 flex items-center justify-center bg-gray-950/85 rounded-lg">
+                        <div className="flex flex-col items-center gap-3">
+                          <Loader2 size={28} className="animate-spin text-brand-400" />
+                          <span className="text-sm text-gray-300">Loading fonts…</span>
+                        </div>
+                      </div>
+                    )}
                     {!selectedTemplate && (
                       <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 rounded-lg">
                         <div className="text-center px-6 py-4">
@@ -5192,6 +5203,14 @@ export default function PinDesigner({
                   className="shadow-2xl rounded-lg overflow-hidden border-2 border-gray-600"
                 >
                   <canvas ref={canvasRef} />
+                  {templateLoading && (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-gray-950/85 rounded-lg">
+                      <div className="flex flex-col items-center gap-3">
+                        <Loader2 size={28} className="animate-spin text-brand-400" />
+                        <span className="text-sm text-gray-300">Loading fonts…</span>
+                      </div>
+                    </div>
+                  )}
                   {!selectedTemplate && (
                     <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 rounded-lg">
                       <div className="text-center px-6 py-4">
