@@ -354,6 +354,8 @@ class GeneratedJobRecipeOut(BaseModel):
     image_url: str = ""
     generated_images: str | None = None
     category: str | None = None
+    pin_title: str | None = None
+    pin_description: str | None = None
     pin_template_id: str | None = None
     created_at: datetime
 
