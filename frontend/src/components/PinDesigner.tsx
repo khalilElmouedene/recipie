@@ -27,6 +27,11 @@ import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
+const IMAGE_RESOURCE_CACHE_MAX = 72;
+const PREVIEW_RENDER_CACHE_MAX = 48;
+const PREVIEW_EAGER_COUNT = 6;
+const PREVIEW_BACKGROUND_BATCH = 2;
+const PREVIEW_MULTIPLIER = 0.35;
 type TextVariable = "" | "title" | "pinTitle" | "website";
 const DESIGNER_CUSTOM_KEYS = [
   "__pinId",
@@ -102,9 +107,20 @@ function buildImageZoneGroupBounds(elements: TemplateElement[], imageCount: numb
   return bounds;
 }
 
-const proxiedImageDataUrlCache = new Map<string, Promise<string>>();
+const imageElementCache = new Map<string, Promise<HTMLImageElement>>();
+const templateRenderSignatureCache = new WeakMap<PinTemplate, string>();
 
-async function resolveTemplateImageUrl(url: string, proxyBase: string): Promise<string> {
+function touchImageElementCache(cacheKey: string, entry: Promise<HTMLImageElement>): void {
+  if (imageElementCache.has(cacheKey)) imageElementCache.delete(cacheKey);
+  imageElementCache.set(cacheKey, entry);
+  while (imageElementCache.size > IMAGE_RESOURCE_CACHE_MAX) {
+    const oldest = imageElementCache.keys().next().value;
+    if (!oldest) break;
+    imageElementCache.delete(oldest);
+  }
+}
+
+function normalizeDesignerImageUrl(url: string, proxyBase: string): string {
   if (!url) return url;
   if (url.startsWith("data:") || url.startsWith("blob:")) return url;
   if (url.startsWith("/")) return url;
@@ -114,31 +130,83 @@ async function resolveTemplateImageUrl(url: string, proxyBase: string): Promise<
   } catch {
     // Ignore access errors and fall back to the proxy path.
   }
+  return proxyBase ? `${proxyBase}/api/image-proxy?url=${encodeURIComponent(url)}` : url;
+}
 
-  const cacheKey = `${proxyBase}::${url}`;
-  const cached = proxiedImageDataUrlCache.get(cacheKey);
-  if (cached) return cached;
+async function loadCachedImageElement(url: string): Promise<HTMLImageElement> {
+  const cacheKey = url;
+  const cached = imageElementCache.get(cacheKey);
+  if (cached) {
+    touchImageElementCache(cacheKey, cached);
+    return cached;
+  }
 
-  const pending = (async () => {
-    const proxyEndpoint = `${proxyBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
-    const res = await fetch(proxyEndpoint, { credentials: "include" });
-    if (!res.ok) throw new Error(`Proxy fetch failed: ${res.status}`);
-    const blob = await res.blob();
-    return await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  })();
+  const pending = new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    if (!url.startsWith("data:") && !url.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
+    img.decoding = "async";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Failed to load image: ${url}`));
+    img.src = url;
+  });
 
-  proxiedImageDataUrlCache.set(cacheKey, pending);
+  touchImageElementCache(cacheKey, pending);
   try {
     return await pending;
   } catch (error) {
-    proxiedImageDataUrlCache.delete(cacheKey);
+    imageElementCache.delete(cacheKey);
     throw error;
   }
+}
+
+async function createCachedFabricImage(fabric: any, url: string, proxyBase: string): Promise<any> {
+  const resolvedUrl = normalizeDesignerImageUrl(url, proxyBase);
+  const imageEl = await loadCachedImageElement(resolvedUrl);
+  return new fabric.FabricImage(imageEl, { crossOrigin: "anonymous" });
+}
+
+function getTemplateRenderSignature(template: PinTemplate): string {
+  const cached = templateRenderSignatureCache.get(template);
+  if (cached) return cached;
+  const signature = JSON.stringify({
+    id: template.id,
+    bgColor: template.bgColor,
+    canvasWidth: template.canvasWidth || PIN_W,
+    canvasHeight: template.canvasHeight || PIN_H,
+    elements: template.elements,
+  });
+  templateRenderSignatureCache.set(template, signature);
+  return signature;
+}
+
+function touchPreviewCacheEntry(cache: Map<string, string>, cacheKey: string, preview: string): void {
+  if (cache.has(cacheKey)) cache.delete(cacheKey);
+  cache.set(cacheKey, preview);
+  while (cache.size > PREVIEW_RENDER_CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (!oldest) break;
+    cache.delete(oldest);
+  }
+}
+
+function readPreviewCacheEntry(cache: Map<string, string>, cacheKey: string): string | undefined {
+  const cached = cache.get(cacheKey);
+  if (!cached) return undefined;
+  touchPreviewCacheEntry(cache, cacheKey, cached);
+  return cached;
+}
+
+function getPreviewGenerationOrder(frameCount: number, activeIndex: number): number[] {
+  const ordered: number[] = [];
+  for (let distance = 1; ordered.length < frameCount - 1; distance += 1) {
+    const before = activeIndex - distance;
+    const after = activeIndex + distance;
+    if (before >= 0) ordered.push(before);
+    if (after < frameCount) ordered.push(after);
+  }
+  return ordered;
 }
 
 interface TemplateElement {
@@ -590,8 +658,7 @@ export async function buildTemplateOnCanvas(
   for (const el of template.elements) {
     if (el.type === "asset" && (el as any).imageUrl) {
       try {
-        const resolved = await resolveTemplateImageUrl(String((el as any).imageUrl), proxyBase);
-        const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
+        const img = await createCachedFabricImage(fabric, String((el as any).imageUrl), proxyBase);
         img.set({
           left: el.x ?? 0,
           top: el.y ?? 0,
@@ -620,8 +687,7 @@ export async function buildTemplateOnCanvas(
       imageIndex++;
       if (imageUrl) {
         try {
-          const resolved = await resolveTemplateImageUrl(imageUrl, proxyBase);
-          const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
+          const img = await createCachedFabricImage(fabric, imageUrl, proxyBase);
           const scale = getCoverScale(el.width, el.height, img.width || 1, img.height || 1);
           img.set({
             left: el.x + el.width / 2,
@@ -941,7 +1007,11 @@ export default function PinDesigner({
   const [savingAll, setSavingAll] = useState(false);
   const [saveAllProgress, setSaveAllProgress] = useState(0);
   const [framePreviews, setFramePreviews] = useState<Record<number, string>>({});
+  const framePreviewsRef = useRef<Record<number, string>>({});
   const previewGenerationRunRef = useRef(0);
+  const previewCacheRef = useRef<Map<string, string>>(new Map());
+  const pendingPreviewCacheKeysRef = useRef<Set<string>>(new Set());
+  const scheduledPreviewTaskRef = useRef<number | null>(null);
 
   // ── Custom fonts (persisted to database) ─────────────────────────────
   const [customFonts, setCustomFonts] = useState<string[]>([]);
@@ -1061,14 +1131,13 @@ export default function PinDesigner({
   const effectivePinTitle = activeFrame
     ? resolvePinTitleValue(activeFrame.pinTitle, activeFrame.title)
     : resolvePinTitleValue(recipePinTitle, initialTitle);
+  useEffect(() => {
+    framePreviewsRef.current = framePreviews;
+  }, [framePreviews]);
+
   // Route external image URLs through backend proxy to avoid browser CORS restrictions
   const proxyUrl = (url: string) => {
-    if (!url) return url;
-    if (url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("/")) return url;
-    if (url.startsWith(window.location.origin)) return url;
-    const apiBase = getApiBaseUrl();
-    if (apiBase && url.startsWith(apiBase)) return url;
-    return `${apiBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
+    return normalizeDesignerImageUrl(url, getApiBaseUrl());
   };
 
   // ── Canvas refs ──────────────────────────────────────────────────────────
@@ -1158,6 +1227,137 @@ export default function PinDesigner({
     );
 
   // ── Frame switching ──────────────────────────────────────────────────────
+  const cancelScheduledPreviewTask = () => {
+    if (scheduledPreviewTaskRef.current == null || typeof window === "undefined") return;
+    const win = window as any;
+    if (typeof win.cancelIdleCallback === "function") {
+      win.cancelIdleCallback(scheduledPreviewTaskRef.current);
+    } else {
+      window.clearTimeout(scheduledPreviewTaskRef.current);
+    }
+    scheduledPreviewTaskRef.current = null;
+  };
+
+  const schedulePreviewTask = (task: () => void) => {
+    if (typeof window === "undefined") return;
+    cancelScheduledPreviewTask();
+    const win = window as any;
+    if (typeof win.requestIdleCallback === "function") {
+      scheduledPreviewTaskRef.current = win.requestIdleCallback(() => {
+        scheduledPreviewTaskRef.current = null;
+        task();
+      }, { timeout: 250 });
+    } else {
+      scheduledPreviewTaskRef.current = window.setTimeout(() => {
+        scheduledPreviewTaskRef.current = null;
+        task();
+      }, 32);
+    }
+  };
+
+  const getFramePreviewCacheKey = (template: PinTemplate, frame: FrameInfo) =>
+    `${getTemplateRenderSignature(template)}::${frame.recipeId}::${frame.title}::${resolvePinTitleValue(frame.pinTitle, frame.title)}::${website}::${frame.images.join("|")}`;
+
+  const renderFramePreview = async (template: PinTemplate, frameIndex: number, runId: number) => {
+    if (!frames || frameIndex < 0 || frameIndex >= frames.length || frameIndex === activeFrameIdx) return;
+    const frame = frames[frameIndex];
+    const cacheKey = getFramePreviewCacheKey(template, frame);
+    const cachedPreview = readPreviewCacheEntry(previewCacheRef.current, cacheKey);
+    if (cachedPreview) {
+      if (runId === previewGenerationRunRef.current) {
+        setFramePreviews((prev) => {
+          const next = prev[frameIndex] === cachedPreview ? prev : { ...prev, [frameIndex]: cachedPreview };
+          framePreviewsRef.current = next;
+          return next;
+        });
+      }
+      return;
+    }
+    if (framePreviewsRef.current[frameIndex] || pendingPreviewCacheKeysRef.current.has(cacheKey)) return;
+
+    pendingPreviewCacheKeysRef.current.add(cacheKey);
+    const fabricMod = await import("fabric");
+    const proxyBase = getApiBaseUrl();
+    const tmplW = template.canvasWidth || PIN_W;
+    const tmplH = template.canvasHeight || PIN_H;
+    const savedJson = frameJsonsRef.current[frameIndex];
+    const canvasEl = document.createElement("canvas");
+    canvasEl.width = tmplW;
+    canvasEl.height = tmplH;
+    canvasEl.style.display = "none";
+    document.body.appendChild(canvasEl);
+
+    try {
+      const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
+      const fc = new FC(canvasEl, { width: tmplW, height: tmplH, enableRetinaScaling: false });
+
+      if (savedJson && savedJson !== "{}") {
+        await fc.loadFromJSON(savedJson);
+        restoreSerializedCanvasCustomProperties(fc, savedJson);
+        syncCanvasTextBindings(fc, {
+          title: frame.title,
+          pinTitle: resolvePinTitleValue(frame.pinTitle, frame.title),
+          website,
+        });
+      } else {
+        await buildTemplateOnCanvas(fabricMod, fc, template, frame.images, proxyBase, frame.title, website, {
+          pinTitleText: frame.pinTitle,
+        });
+      }
+
+      fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
+      fc.renderAll();
+      const preview = fc.toDataURL({ format: "png", multiplier: PREVIEW_MULTIPLIER });
+      touchPreviewCacheEntry(previewCacheRef.current, cacheKey, preview);
+      if (runId === previewGenerationRunRef.current) {
+        setFramePreviews((prev) => {
+          const next = prev[frameIndex] === preview ? prev : { ...prev, [frameIndex]: preview };
+          framePreviewsRef.current = next;
+          return next;
+        });
+      }
+      fc.dispose();
+    } catch {
+      // Ignore preview failures; the page can still be opened directly.
+    } finally {
+      pendingPreviewCacheKeysRef.current.delete(cacheKey);
+      document.body.removeChild(canvasEl);
+    }
+  };
+
+  const queueFramePreviewGeneration = (template: PinTemplate, resetExisting: boolean = false) => {
+    if (!frames || frames.length <= 1) return;
+    const runId = ++previewGenerationRunRef.current;
+    cancelScheduledPreviewTask();
+    if (resetExisting) {
+      framePreviewsRef.current = {};
+      setFramePreviews({});
+    }
+
+    const orderedIndices = getPreviewGenerationOrder(frames.length, activeFrameIdx);
+    let cursor = 0;
+
+    const runBatch = async (batchSize: number) => {
+      let remaining = batchSize;
+      while (cursor < orderedIndices.length && remaining > 0) {
+        if (runId !== previewGenerationRunRef.current) return;
+        const frameIndex = orderedIndices[cursor];
+        await renderFramePreview(template, frameIndex, runId);
+        cursor += 1;
+        remaining -= 1;
+        if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      if (cursor < orderedIndices.length && runId === previewGenerationRunRef.current) {
+        schedulePreviewTask(() => {
+          void runBatch(PREVIEW_BACKGROUND_BATCH);
+        });
+      }
+    };
+
+    void runBatch(PREVIEW_EAGER_COUNT);
+  };
+
   const switchToFrame = async (newIdx: number) => {
     if (!frames || newIdx === activeFrameIdx || newIdx < 0 || newIdx >= frames.length) return;
     const canvas = fabricCanvasRef.current;
@@ -1172,10 +1372,21 @@ export default function PinDesigner({
     try {
       canvas.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
       canvas.renderAll();
-      const preview = canvas.toDataURL({ format: "png", multiplier: 0.5 });
+      const preview = canvas.toDataURL({ format: "png", multiplier: PREVIEW_MULTIPLIER });
       canvas.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", true));
       canvas.renderAll();
-      setFramePreviews((prev) => ({ ...prev, [activeFrameIdx]: preview }));
+      if (selectedTemplate) {
+        touchPreviewCacheEntry(
+          previewCacheRef.current,
+          getFramePreviewCacheKey(selectedTemplate, frames[activeFrameIdx]),
+          preview,
+        );
+      }
+      setFramePreviews((prev) => {
+        const next = { ...prev, [activeFrameIdx]: preview };
+        framePreviewsRef.current = next;
+        return next;
+      });
     } catch { /* skip */ }
 
     setActiveFrameIdx(newIdx);
@@ -1206,61 +1417,6 @@ export default function PinDesigner({
       canvas.clear();
       canvas.renderAll();
       updateLayers();
-    }
-  };
-
-  const generateAllFramePreviews = async (template: PinTemplate) => {
-    if (!frames || frames.length <= 1) return;
-    const runId = ++previewGenerationRunRef.current;
-    const fabricMod = await import("fabric");
-    const proxyBase = getApiBaseUrl();
-    const tmplW = template.canvasWidth || PIN_W;
-    const tmplH = template.canvasHeight || PIN_H;
-
-    // Let the active frame paint first, then fill the rest of the previews in the background.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    for (let i = 0; i < frames.length; i++) {
-      if (runId !== previewGenerationRunRef.current) return;
-      if (i === activeFrameIdx) continue;
-      const frame = frames[i];
-      const savedJson = frameJsonsRef.current[i];
-      const canvasEl = document.createElement("canvas");
-      canvasEl.width = tmplW;
-      canvasEl.height = tmplH;
-      canvasEl.style.display = "none";
-      document.body.appendChild(canvasEl);
-
-      try {
-        const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
-        const fc = new FC(canvasEl, { width: tmplW, height: tmplH, enableRetinaScaling: false });
-
-        if (savedJson && savedJson !== "{}") {
-          await fc.loadFromJSON(savedJson);
-          restoreSerializedCanvasCustomProperties(fc, savedJson);
-          syncCanvasTextBindings(fc, {
-            title: frame.title,
-            pinTitle: resolvePinTitleValue(frame.pinTitle, frame.title),
-            website,
-          });
-        } else {
-          await buildTemplateOnCanvas(fabricMod, fc, template, frame.images, proxyBase, frame.title, website, {
-            pinTitleText: frame.pinTitle,
-          });
-        }
-
-        fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
-        fc.renderAll();
-        const preview = fc.toDataURL({ format: "png", multiplier: 0.5 });
-        if (runId !== previewGenerationRunRef.current) {
-          fc.dispose();
-          return;
-        }
-        setFramePreviews((prev) => ({ ...prev, [i]: preview }));
-        fc.dispose();
-      } catch { /* skip */ } finally {
-        document.body.removeChild(canvasEl);
-      }
     }
   };
 
@@ -2117,6 +2273,7 @@ export default function PinDesigner({
     const imgs = imagesOverride ?? effectiveImages;
     const ttl = titleOverride ?? effectiveTitle;
     const siteWebsite = websiteOverride ?? website;
+    const proxyBase = getApiBaseUrl();
     const boundPinTitle =
       pinTitleOverride === undefined
         ? effectivePinTitle
@@ -2149,7 +2306,7 @@ export default function PinDesigner({
       if (el.type === "asset" && (el as any).imageUrl) {
         // Restore uploaded image asset
         try {
-          const img = await fabric.FabricImage.fromURL((el as any).imageUrl, { crossOrigin: "anonymous" });
+          const img = await createCachedFabricImage(fabric, String((el as any).imageUrl), proxyBase);
           img.set({
             left: el.x ?? 0,
             top: el.y ?? 0,
@@ -2180,7 +2337,7 @@ export default function PinDesigner({
 
         if (imageUrl) {
           try {
-            const img = await fabric.FabricImage.fromURL(proxyUrl(imageUrl), { crossOrigin: "anonymous" });
+            const img = await createCachedFabricImage(fabric, imageUrl, proxyBase);
             const imgW = img.width || 1;
             const imgH = img.height || 1;
             const scale = getCoverScale(el.width, el.height, imgW, imgH);
@@ -2802,28 +2959,34 @@ export default function PinDesigner({
 
     let cancelled = false;
     const run = async () => {
-      setFramePreviews({});
-      previewGenerationRunRef.current += 1;
+      cancelScheduledPreviewTask();
       await loadTemplate(selectedTemplate);
       if (cancelled) return;
-      if (frames && frames.length > 1) void generateAllFramePreviews(selectedTemplate);
+      if (frames && frames.length > 1) queueFramePreviewGeneration(selectedTemplate, true);
     };
 
     void run();
     return () => {
       cancelled = true;
       previewGenerationRunRef.current += 1;
+      cancelScheduledPreviewTask();
     };
   }, [selectedTemplate, canvasReady, initialJson]);
 
-  // Generate previews for other frames when frames arrive AFTER the template effect already ran
-  // (frames are loaded async from props, so they may not be available during the effect above)
+  // Refresh nearby previews when frames arrive later or when the active page changes.
   useEffect(() => {
     if (canvasReady && selectedTemplate && frames && frames.length > 1 && !initialJson) {
-      generateAllFramePreviews(selectedTemplate);
+      queueFramePreviewGeneration(selectedTemplate);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frames?.length]);
+  }, [frames?.length, activeFrameIdx]);
+
+  useEffect(() => {
+    return () => {
+      previewGenerationRunRef.current += 1;
+      cancelScheduledPreviewTask();
+    };
+  }, []);
 
   // ── Ctrl+wheel zoom ───────────────────────────────────────────────────────
 
@@ -3104,7 +3267,7 @@ export default function PinDesigner({
 
         fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
         fc.renderAll();
-        newPreviews[i] = fc.toDataURL({ format: "png", multiplier: 0.5 });
+        newPreviews[i] = fc.toDataURL({ format: "png", multiplier: PREVIEW_MULTIPLIER });
         fc.dispose();
       } catch { /* skip */ } finally {
         document.body.removeChild(canvasEl);
@@ -4413,9 +4576,10 @@ export default function PinDesigner({
             <button
               onClick={() => {
                 frameJsonsRef.current = {};
+                framePreviewsRef.current = {};
                 setFramePreviews({});
                 loadTemplate(selectedTemplate, effectiveImages, effectiveTitle);
-                generateAllFramePreviews(selectedTemplate);
+                queueFramePreviewGeneration(selectedTemplate, true);
               }}
               className="btn-secondary flex items-center gap-1.5 px-2.5 py-1.5 text-sm border-brand-700 text-brand-400"
               title="Clear all edits and re-apply current template to all pages"
