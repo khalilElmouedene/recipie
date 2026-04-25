@@ -128,6 +128,12 @@ export default function JobDetailPage() {
   }, [job?.id, job?.status]);
 
   useEffect(() => {
+    if (job && !TERMINAL_JOB_STATUSES.has(job.status)) {
+      setToast(null);
+    }
+  }, [job]);
+
+  useEffect(() => {
     api.getJob(id).then(setJob).catch(() => router.push("/"));
     api.getJobLogs(id).then((l) => setLogs(l.map((x) => x.message))).catch(() => {});
   }, [id, router]);
@@ -199,6 +205,7 @@ export default function JobDetailPage() {
   // even during the Midjourney wait phase (before any RECIPE log lines appear).
   const completedCount = job?.current_row ?? recipeCards.filter((c) => c.status === "completed").length;
   const totalRecipes = (job?.total_rows ?? 0) > 0 ? job!.total_rows! : recipeCards.length;
+  const showErrorBanner = !!job?.error && TERMINAL_JOB_STATUSES.has(job.status) && job.status !== "completed";
 
   const statusBadge: Record<string, string> = {
     pending: "bg-gray-700 text-gray-300",
@@ -333,7 +340,7 @@ export default function JobDetailPage() {
         </div>
       )}
 
-      {job.error && (
+      {showErrorBanner && (
         <div className="card mb-4 border-red-800 bg-red-950/30">
           <p className="text-sm text-red-400">{job.error}</p>
         </div>

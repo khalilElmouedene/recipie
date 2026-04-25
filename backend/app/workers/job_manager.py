@@ -793,8 +793,7 @@ class JobManager:
                             final_status = JobStatus.stopped
                         job.status = final_status
                         job.finished_at = datetime.now(timezone.utc)
-                        if error and final_status != JobStatus.stopped:
-                            job.error = error
+                        job.error = error if error and final_status != JobStatus.stopped else None
                         for msg in logs:
                             session.add(JobLog(job_id=job.id, message=msg))
                         await session.commit()

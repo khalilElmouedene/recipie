@@ -333,6 +333,8 @@ async def resume_job_endpoint(
         .values(status=RecipeStatus.pending)
     )
     job.status = JobStatus.pending
+    job.error = None
+    job.finished_at = None
     await db.commit()
 
     await job_manager.resume_job(job.id)
