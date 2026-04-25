@@ -282,3 +282,70 @@ def publish_recipes_from_db(
             time.sleep(2)
 
     _log("\n=== ALL RECIPES PUBLISHED ===")
+
+
+def publish_recipes_from_db(
+    recipes: list[dict],
+    site_config: dict,
+    log: Callable[[str], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+    on_recipe_done: Callable[[str, dict], None] | None = None,
+    *,
+    progress_offset: int = 0,
+    progress_total: int | None = None,
+    emit_summary_logs: bool = True,
+) -> int:
+    """Publish a list of generated recipes to WordPress.
+    recipes: list of dicts with id + all generated fields.
+    on_recipe_done: callback(recipe_id, result_dict) to persist wp_post_id/permalink.
+    Returns the number of recipes attempted in this call.
+    """
+    _log = log or print
+    _stop = should_stop or (lambda: False)
+    total = len(recipes)
+    effective_total = progress_total if progress_total is not None else total
+    processed = 0
+
+    if emit_summary_logs:
+        domains = {
+            str((recipe.get("__site_config") or site_config or {}).get("domain", "unknown"))
+            for recipe in recipes
+        }
+        if len(domains) == 1:
+            _log(f"=== PUBLISHING {total} RECIPES TO {next(iter(domains))} ===")
+        else:
+            _log(f"=== PUBLISHING {total} RECIPES ACROSS {len(domains)} SITE(S) ===")
+
+    for idx, recipe in enumerate(recipes):
+        if _stop():
+            _log("STOP REQUESTED â€” aborting")
+            return processed
+
+        recipe_id = recipe["id"]
+        title = (recipe.get("recipe_text", "") or "").splitlines()[0][:60]
+        _log(f"\nPublishing {idx + 1}/{total}: {title}")
+        processed = idx + 1
+
+        if on_progress:
+            on_progress(progress_offset + processed, effective_total)
+
+        effective_site_config = recipe.get("__site_config") or site_config
+        if not effective_site_config:
+            raise ValueError("Missing WordPress site configuration for publish batch")
+        result = publish_recipe(
+            recipe,
+            effective_site_config,
+            log=_log,
+            post_date_gmt=recipe.get("__post_date_gmt"),
+        )
+
+        if on_recipe_done:
+            on_recipe_done(recipe_id, result)
+
+        if idx < total - 1:
+            time.sleep(2)
+
+    if emit_summary_logs:
+        _log("\n=== ALL RECIPES PUBLISHED ===")
+    return processed
