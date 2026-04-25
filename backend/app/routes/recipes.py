@@ -249,6 +249,7 @@ async def list_recipes(
                 Recipe.pin_template_id,
                 Recipe.pin_title,
                 Recipe.pin_description,
+                Recipe.created_at,
             )
             .where(Recipe.site_id == site_id)
             .order_by(Recipe.created_at.desc())
@@ -269,6 +270,7 @@ async def list_recipes(
                 "pin_template_id": row.pin_template_id,
                 "pin_title": row.pin_title,
                 "pin_description": row.pin_description,
+                "created_at": row.created_at,
             }
             for row in rows
         ]
