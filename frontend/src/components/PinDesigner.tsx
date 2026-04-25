@@ -1008,6 +1008,7 @@ export default function PinDesigner({
   const [saveAllProgress, setSaveAllProgress] = useState(0);
   const [framePreviews, setFramePreviews] = useState<Record<number, string>>({});
   const framePreviewsRef = useRef<Record<number, string>>({});
+  const [framePreviewPending, setFramePreviewPending] = useState<Record<number, boolean>>({});
   const previewGenerationRunRef = useRef(0);
   const previewCacheRef = useRef<Map<string, string>>(new Map());
   const pendingPreviewCacheKeysRef = useRef<Set<string>>(new Set());
@@ -1270,6 +1271,12 @@ export default function PinDesigner({
           framePreviewsRef.current = next;
           return next;
         });
+        setFramePreviewPending((prev) => {
+          if (!prev[frameIndex]) return prev;
+          const next = { ...prev };
+          delete next[frameIndex];
+          return next;
+        });
       }
       return;
     }
@@ -1320,6 +1327,14 @@ export default function PinDesigner({
     } catch {
       // Ignore preview failures; the page can still be opened directly.
     } finally {
+      if (runId === previewGenerationRunRef.current) {
+        setFramePreviewPending((prev) => {
+          if (!prev[frameIndex]) return prev;
+          const next = { ...prev };
+          delete next[frameIndex];
+          return next;
+        });
+      }
       pendingPreviewCacheKeysRef.current.delete(cacheKey);
       document.body.removeChild(canvasEl);
     }
@@ -1335,6 +1350,9 @@ export default function PinDesigner({
     }
 
     const orderedIndices = getPreviewGenerationOrder(frames.length, activeFrameIdx);
+    setFramePreviewPending(() =>
+      Object.fromEntries(orderedIndices.map((index) => [index, true]))
+    );
     let cursor = 0;
 
     const runBatch = async (batchSize: number) => {
@@ -2970,6 +2988,7 @@ export default function PinDesigner({
       cancelled = true;
       previewGenerationRunRef.current += 1;
       cancelScheduledPreviewTask();
+      setFramePreviewPending({});
     };
   }, [selectedTemplate, canvasReady, initialJson]);
 
@@ -2985,6 +3004,7 @@ export default function PinDesigner({
     return () => {
       previewGenerationRunRef.current += 1;
       cancelScheduledPreviewTask();
+      setFramePreviewPending({});
     };
   }, []);
 
@@ -5279,7 +5299,14 @@ export default function PinDesigner({
                         <img src={framePreviews[i]} alt={f.title} className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                          <p className="text-sm text-gray-600">Click to edit</p>
+                          {framePreviewPending[i] ? (
+                            <div className="flex flex-col items-center gap-2 text-gray-500">
+                              <Loader2 size={18} className="animate-spin" />
+                              <p className="text-xs uppercase tracking-wide">Rendering preview...</p>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-gray-600">Click to edit</p>
+                          )}
                         </div>
                       )}
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition flex items-center justify-center">
@@ -5345,7 +5372,14 @@ export default function PinDesigner({
                           <img src={framePreviews[i]} alt={f.title} className="w-full h-full object-cover" />
                         ) : (
                           <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                            <p className="text-sm text-gray-600">Click to edit</p>
+                            {framePreviewPending[i] ? (
+                              <div className="flex flex-col items-center gap-2 text-gray-500">
+                                <Loader2 size={18} className="animate-spin" />
+                                <p className="text-xs uppercase tracking-wide">Rendering preview...</p>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-600">Click to edit</p>
+                            )}
                           </div>
                         )}
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition flex items-center justify-center">
