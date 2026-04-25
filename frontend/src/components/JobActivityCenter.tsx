@@ -94,7 +94,7 @@ export default function JobActivityCenter() {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full z-[120] mt-3 w-[min(92vw,25rem)] overflow-hidden rounded-2xl border border-gray-800 bg-gray-950/96 shadow-2xl backdrop-blur-xl">
+        <div className="absolute right-0 top-full z-[120] mt-3 w-[min(92vw,25rem)] overflow-hidden rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl">
           <div className="border-b border-gray-800 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.18),_transparent_40%)] px-4 py-4">
             <div className="flex items-start justify-between gap-3">
               <div>
