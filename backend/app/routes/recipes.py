@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse, Response
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import select, delete as sql_delete
+from sqlalchemy import case, func, select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -29,6 +29,7 @@ from ..models import (
     PinterestPinRequest, PinterestBulkResponse,
     PinTemplateOut, GeneratePinRequest, GeneratePinResponse,
     BulkGeneratePinsRequest, BulkGeneratePinsResponse, BulkPinItem,
+    SiteRecipeCardOut, SiteRecipeCardPageOut,
 )
 
 router = APIRouter(tags=["recipes"])
@@ -36,6 +37,24 @@ limiter = Limiter(key_func=get_remote_address)
 logger = logging.getLogger(__name__)
 _IMAGE_PROXY_MAX_BYTES = 10 * 1024 * 1024
 _IMAGE_PROXY_CHUNK_SIZE = 64 * 1024
+
+
+def _recipe_card_title(recipe_text: str | None) -> str:
+    return (recipe_text or "").split("\n", 1)[0].strip()
+
+
+def _recipe_card_image_url(image_url: str | None, generated_images: str | None) -> str | None:
+    if generated_images:
+        try:
+            parsed = json.loads(generated_images)
+            if isinstance(parsed, list) and parsed:
+                first = parsed[0]
+                if isinstance(first, str) and first.strip():
+                    return first.strip()
+        except Exception:
+            pass
+    return image_url or None
+
 
 def _is_safe_url(url: str) -> bool:
     """Return True only for public http/https URLs.
@@ -126,6 +145,76 @@ def image_proxy(
         raise
     except Exception:
         raise HTTPException(status_code=404, detail="Image not available")
+
+
+@router.get("/api/sites/{site_id}/recipe-cards", response_model=SiteRecipeCardPageOut)
+async def list_recipe_cards(
+    site_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int | None = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    result = await db.execute(select(Site).where(Site.id == site_id))
+    site = result.scalar_one_or_none()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    await check_project_access(site.project_id, user, db)
+
+    stats_stmt = select(
+        func.count(Recipe.id).label("total"),
+        func.sum(case((Recipe.status == RecipeStatus.pending, 1), else_=0)).label("pending"),
+        func.sum(case((Recipe.status == RecipeStatus.generating, 1), else_=0)).label("generating"),
+        func.sum(case((Recipe.status == RecipeStatus.generated, 1), else_=0)).label("generated"),
+        func.sum(case((Recipe.status == RecipeStatus.published, 1), else_=0)).label("published"),
+        func.sum(case((Recipe.status == RecipeStatus.failed, 1), else_=0)).label("failed"),
+        func.sum(case((Recipe.generated_images.is_not(None), 1), else_=0)).label("with_generated_images"),
+    ).where(Recipe.site_id == site_id)
+    stats_row = (await db.execute(stats_stmt)).one()
+
+    items_stmt = (
+        select(
+            Recipe.id,
+            Recipe.recipe_text,
+            Recipe.image_url,
+            Recipe.generated_images,
+            Recipe.status,
+            Recipe.focus_keyword,
+            Recipe.category,
+            Recipe.wp_permalink,
+            Recipe.error_message,
+        )
+        .where(Recipe.site_id == site_id)
+        .order_by(Recipe.created_at.desc())
+    )
+    rows = await db.execute(apply_limit_offset(items_stmt, limit, offset))
+
+    items = [
+        SiteRecipeCardOut(
+            id=row.id,
+            title=_recipe_card_title(row.recipe_text),
+            list_image_url=_recipe_card_image_url(row.image_url, row.generated_images),
+            status=row.status.value if hasattr(row.status, "value") else str(row.status),
+            has_generated_images=bool(row.generated_images),
+            focus_keyword=row.focus_keyword,
+            category=row.category,
+            wp_permalink=row.wp_permalink,
+            error_message=row.error_message,
+        )
+        for row in rows
+    ]
+
+    return SiteRecipeCardPageOut(
+        total=int(stats_row.total or 0),
+        pending=int(stats_row.pending or 0),
+        generating=int(stats_row.generating or 0),
+        generated=int(stats_row.generated or 0),
+        published=int(stats_row.published or 0),
+        failed=int(stats_row.failed or 0),
+        with_generated_images=int(stats_row.with_generated_images or 0),
+        items=items,
+    )
 
 
 @router.get("/api/sites/{site_id}/recipes", response_model=list[RecipeOut])

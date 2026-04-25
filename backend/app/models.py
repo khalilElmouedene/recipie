@@ -321,6 +321,29 @@ class RecipeOut(BaseModel):
         from_attributes = True
 
 
+class SiteRecipeCardOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    list_image_url: str | None = None
+    status: str
+    has_generated_images: bool = False
+    focus_keyword: str | None = None
+    category: str | None = None
+    wp_permalink: str | None = None
+    error_message: str | None = None
+
+
+class SiteRecipeCardPageOut(BaseModel):
+    total: int
+    pending: int
+    generating: int
+    generated: int
+    published: int
+    failed: int
+    with_generated_images: int
+    items: list[SiteRecipeCardOut]
+
+
 class JobStart(BaseModel):
     job_type: str
     site_id: uuid.UUID | None = None

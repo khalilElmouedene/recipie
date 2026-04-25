@@ -453,6 +453,8 @@ export const api = {
       ...params,
       summary: params?.summary ?? true,
     }),
+  getSiteRecipeCards: (siteId: string, params?: PaginationParams) =>
+    request<SiteRecipeCardPageOut>(buildPathWithQuery(`/api/sites/${siteId}/recipe-cards`, params ?? {})),
 
   getRecipe: (recipeId: string) => request<RecipeOut>(`/api/recipes/${recipeId}`),
 
@@ -845,6 +847,29 @@ export interface RecipeOut {
   wp_tags: string | null;
   error_message: string | null;
   created_at: string;
+}
+
+export interface SiteRecipeCardOut {
+  id: string;
+  title: string;
+  list_image_url: string | null;
+  status: string;
+  has_generated_images: boolean;
+  focus_keyword: string | null;
+  category: string | null;
+  wp_permalink: string | null;
+  error_message: string | null;
+}
+
+export interface SiteRecipeCardPageOut {
+  total: number;
+  pending: number;
+  generating: number;
+  generated: number;
+  published: number;
+  failed: number;
+  with_generated_images: number;
+  items: SiteRecipeCardOut[];
 }
 
 export interface JobOut {
