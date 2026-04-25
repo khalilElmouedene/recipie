@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { Loader2, X, XCircle } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { api, PublishBatchRequest } from "@/lib/api";
+import { useToast } from "@/contexts/ToastContext";
+import { useJobActivity } from "@/contexts/JobActivityContext";
 
 interface Props {
   projectId: string;
@@ -10,174 +13,103 @@ interface Props {
   onClose: (didPublish: boolean) => void;
 }
 
-const POLL_MS = 1500;
+function publishTitleFromRequest(data: PublishBatchRequest): string {
+  if (data.recipe_id) return "Publishing one recipe to WordPress";
+  if (data.site_id) return "Publishing site recipes to WordPress";
+  return "Publishing project recipes to WordPress";
+}
 
 export default function BatchPublishModal({ projectId, data, onClose }: Props) {
+  const router = useRouter();
+  const toast = useToast();
+  const { trackJob } = useJobActivity();
   const [jobId, setJobId] = useState<string | null>(null);
-  const [total, setTotal] = useState<number | null>(null);
-  const [done, setDone] = useState(0);
-  const [succeeded, setSucceeded] = useState(0);
-  const [failed, setFailed] = useState(0);
-  const [errors, setErrors] = useState<string[]>([]);
-  const [finished, setFinished] = useState(false);
   const [fatalError, setFatalError] = useState<string | null>(null);
   const startedRef = useRef(false);
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
     let cancelled = false;
 
-    const clearPoll = () => {
-      if (pollRef.current) {
-        clearTimeout(pollRef.current);
-        pollRef.current = null;
-      }
-    };
-
-    const scheduleNext = (runner: () => Promise<void>) => {
-      clearPoll();
-      if (cancelled) return;
-      pollRef.current = setTimeout(() => {
-        void runner();
-      }, POLL_MS);
-    };
-
-    const syncJob = async (id: string): Promise<void> => {
-      try {
-        const [job, summary] = await Promise.all([
-          api.getJob(id),
-          api.getJobPublishSummary(id),
-        ]);
-        if (cancelled) return;
-
-        setTotal(summary.total ?? job.total_rows ?? null);
-        setDone(summary.processed ?? job.current_row ?? 0);
-        setSucceeded(summary.succeeded);
-        setFailed(summary.failed);
-
-        const terminal = job.status === "completed" || job.status === "failed" || job.status === "stopped";
-        if (terminal) {
-          setFinished(true);
-          const nextErrors: string[] = [];
-          if (job.error) nextErrors.push(job.error);
-          if (summary.failed > 0 && !job.error) {
-            nextErrors.push(`${summary.failed} recipe(s) failed to publish. Open the job page for detailed logs.`);
-          }
-          setErrors(nextErrors);
-          clearPoll();
-          return;
-        }
-
-        scheduleNext(() => syncJob(id));
-      } catch (err: unknown) {
-        if (cancelled) return;
-        setFatalError(err instanceof Error ? err.message : "Failed to refresh publish progress");
-        setFinished(true);
-        clearPoll();
-      }
-    };
-
     const start = async () => {
       try {
         const job = await api.publishBatchToWordPress(projectId, data);
         if (cancelled) return;
         setJobId(job.id);
-        setTotal(job.total_rows ?? null);
-        setDone(job.current_row ?? 0);
-        await syncJob(job.id);
+        trackJob(job, {
+          title: publishTitleFromRequest(data),
+          sourceLabel: "Open the pipeline icon anytime to watch progress or jump to logs.",
+          href: `/jobs/${job.id}`,
+        });
+        toast.success("Publish job added to the pipeline.");
+        onClose(false);
       } catch (err: unknown) {
         if (cancelled) return;
         setFatalError(err instanceof Error ? err.message : "Batch publish failed");
-        setFinished(true);
       }
     };
 
     void start();
-
     return () => {
       cancelled = true;
-      clearPoll();
     };
-  }, [projectId, data]);
-
-  const percent = total ? Math.round((done / total) * 100) : 0;
+  }, [data, onClose, projectId, toast, trackJob]);
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4">
       <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h3 className="text-lg font-semibold text-white">Publishing to WordPress</h3>
-            {jobId && <p className="text-[11px] text-gray-500 mt-1">Job: {jobId}</p>}
+            <h3 className="text-lg font-semibold text-white">Starting WordPress Publish</h3>
+            <p className="text-[11px] text-gray-500 mt-1">
+              The publish job will continue in the global pipeline so you can keep working.
+            </p>
           </div>
-          {finished && (
-            <button onClick={() => onClose(succeeded > 0)} className="text-gray-500 hover:text-gray-300">
+          {fatalError && (
+            <button onClick={() => onClose(false)} className="text-gray-500 hover:text-gray-300">
               <X size={18} />
             </button>
           )}
         </div>
 
         {fatalError ? (
-          <div className="flex items-start gap-2 text-red-400 text-sm">
-            <XCircle size={16} className="flex-shrink-0 mt-0.5" />
-            <span>{fatalError}</span>
+          <div className="space-y-4">
+            <div className="flex items-start gap-2 text-red-400 text-sm">
+              <XCircle size={16} className="flex-shrink-0 mt-0.5" />
+              <span>{fatalError}</span>
+            </div>
+            <div className="flex justify-end">
+              <button onClick={() => onClose(false)} className="btn-primary text-sm px-4 py-1.5">
+                Close
+              </button>
+            </div>
           </div>
         ) : (
-          <>
-            <div className="space-y-1">
-              <div className="flex justify-between text-xs text-gray-400">
-                <span>{total === null ? "Starting..." : `${done} / ${total}`}</span>
-                <span>{percent}%</span>
-              </div>
-              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-brand-500 rounded-full transition-all duration-300"
-                  style={{ width: `${percent}%` }}
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-4 text-sm">
-              <span className="flex items-center gap-1 text-green-400">
-                <CheckCircle size={14} /> {succeeded} succeeded
-              </span>
-              {failed > 0 && (
-                <span className="flex items-center gap-1 text-red-400">
-                  <XCircle size={14} /> {failed} failed
-                </span>
-              )}
-            </div>
-
-            {finished && errors.length > 0 && (
-              <div className="max-h-32 overflow-y-auto space-y-1">
-                <p className="text-xs font-medium text-red-400">Notes:</p>
-                {errors.map((entry, i) => (
-                  <p key={i} className="text-xs text-red-300">{entry}</p>
-                ))}
-              </div>
-            )}
-
-            {finished && (
-              <div className="flex items-center justify-between pt-1">
-                <p className="text-sm text-gray-300">
-                  {errors.length === 0
-                    ? `Finished: ${succeeded} recipe(s) published successfully.`
-                    : `Finished: ${succeeded} published, ${failed} failed.`}
+          <div className="rounded-2xl border border-blue-900/40 bg-blue-950/20 px-4 py-4">
+            <div className="flex items-start gap-3">
+              <Loader2 size={18} className="mt-0.5 flex-shrink-0 animate-spin text-blue-400" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-blue-100">
+                  Sending publish task to the background pipeline...
                 </p>
-                <button onClick={() => onClose(succeeded > 0)} className="btn-primary text-sm px-4 py-1.5">
-                  Close
-                </button>
+                <p className="mt-2 text-xs leading-5 text-blue-200/70">
+                  {jobId
+                    ? `Job ${jobId} is ready.`
+                    : "You will be able to open the job logs from the bell icon in the top bar."}
+                </p>
               </div>
-            )}
-
-            {!finished && (
-              <p className="text-xs text-gray-500 flex items-center gap-1">
-                <Loader2 size={11} className="animate-spin" /> Running in the background. This modal can stay open while the job continues safely.
-              </p>
-            )}
-          </>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => router.push(jobId ? `/jobs/${jobId}` : `/projects/${projectId}`)}
+                className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm font-medium text-gray-200 transition hover:border-gray-600 hover:bg-gray-800"
+              >
+                Open logs instead
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>

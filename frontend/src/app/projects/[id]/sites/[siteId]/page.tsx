@@ -6,6 +6,7 @@ import { api, getApiBaseUrl, SiteOut, RecipeOut, SiteRecipeCardOut, SiteRecipeCa
 import { sanitizeHtml } from "@/lib/sanitize";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import { useJobActivity } from "@/contexts/JobActivityContext";
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
@@ -74,6 +75,7 @@ export default function SiteDetailPage() {
   const router = useRouter();
   const toast = useToast();
   const openConfirm = useConfirm();
+  const { trackJob } = useJobActivity();
 
   const [site, setSite] = useState<SiteOut | null>(null);
   const [recipes, setRecipes] = useState<RecipeListItem[]>([]);
@@ -596,6 +598,10 @@ export default function SiteDetailPage() {
         site_id: siteId,
         recipe_id: recipeId,
       });
+      trackJob(job, {
+        title: `Generating recipe: ${currentRecipe?.title || "Recipe"}`,
+        sourceLabel: site?.domain || null,
+      });
       setRecipeJobMap((prev) => ({ ...prev, [recipeId]: job.id }));
       setActiveJob(job);
       setActiveJobLastLog("");
@@ -631,8 +637,13 @@ export default function SiteDetailPage() {
     setStarting(true);
     try {
       const job = await api.startJob(projectId, { job_type: type, site_id: siteId });
+      trackJob(job, {
+        title: type === "articles" ? "Generating recipes for this site" : "Publishing this site to WordPress",
+        sourceLabel: site?.domain || null,
+      });
       setActiveJob(job);
       setActiveJobLastLog("");
+      toast.success(`${type === "articles" ? "Generation" : "Publish"} added to the pipeline.`);
     } catch (err: any) {
       toast.error(err.message || "Failed to start job");
     }

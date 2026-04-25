@@ -36,6 +36,7 @@ import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import { useJobActivity } from "@/contexts/JobActivityContext";
 import BatchPublishModal from "@/components/BatchPublishModal";
 import type { PublishBatchRequest } from "@/lib/api";
 
@@ -71,6 +72,7 @@ export default function AllSitesGeneratePage() {
   const canAdmin = role === "owner" || role === "admin";
   const toast = useToast();
   const openConfirm = useConfirm();
+  const { trackJob } = useJobActivity();
 
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [loading, setLoading] = useState(false);
@@ -325,11 +327,15 @@ export default function AllSitesGeneratePage() {
         job_type: "articles_all_sites",
         shared_recipes: valid,
       });
-      router.push(`/jobs/${job.id}`);
+      trackJob(job, {
+        title: "All-sites recipe generation",
+        sourceLabel: `${valid.length} shared recipe input(s) across ${sites.length} site(s)`,
+      });
+      toast.success("All-sites generation added to the pipeline.");
     } catch (e: any) {
       toast.error(e.message || "Failed to start all-sites generation job");
-      setLoading(false);
     } finally {
+      setLoading(false);
       runStartingRef.current = false;
     }
   };
@@ -504,9 +510,14 @@ export default function AllSitesGeneratePage() {
     setResumingJobId(jobId);
     try {
       const job = await api.resumeJob(jobId);
-      router.push(`/jobs/${job.id}`);
+      trackJob(job, {
+        title: "Resumed all-sites generation",
+        sourceLabel: "Open the pipeline icon to monitor logs and progress.",
+      });
+      toast.success("Resumed job added back to the pipeline.");
     } catch (e: any) {
       toast.error(e.message || "Failed to resume job");
+    } finally {
       setResumingJobId(null);
     }
   };

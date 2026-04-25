@@ -7,6 +7,8 @@ import { api } from "@/lib/api";
 import Sidebar from "./Sidebar";
 import { ToastProvider } from "@/contexts/ToastContext";
 import { ConfirmProvider } from "@/components/ConfirmModal";
+import { JobActivityProvider } from "@/contexts/JobActivityContext";
+import JobActivityCenter from "./JobActivityCenter";
 
 const PUBLIC = ["/login", "/register", "/auth/google/callback", "/setup-password", "/forgot-password", "/reset-password"];
 
@@ -58,6 +60,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
     <ConfirmProvider>
+    <JobActivityProvider>
       <div className="flex h-screen overflow-hidden">
         {/* Mobile backdrop */}
         {sidebarOpen && (
@@ -70,20 +73,29 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
         <div className="flex flex-1 flex-col overflow-hidden">
-          {/* Mobile top bar */}
-          <div className="flex h-14 items-center border-b border-gray-800 bg-gray-900 px-4 md:hidden">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition"
-              aria-label="Open menu"
-            >
-              <Menu size={22} />
-            </button>
+          <div className="flex h-14 items-center justify-between border-b border-gray-800 bg-gray-950/95 px-4 backdrop-blur md:px-6">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="rounded-lg p-2 text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition md:hidden"
+                aria-label="Open menu"
+              >
+                <Menu size={22} />
+              </button>
+              <div className="hidden md:block">
+                <p className="text-[11px] uppercase tracking-[0.28em] text-gray-500">Workspace</p>
+                <p className="text-sm font-medium text-gray-200">Background pipeline stays available while you work</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <JobActivityCenter />
+            </div>
           </div>
 
           <main className="flex-1 overflow-y-auto p-4 md:p-8">{children}</main>
         </div>
       </div>
+    </JobActivityProvider>
     </ConfirmProvider>
     </ToastProvider>
   );

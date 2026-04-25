@@ -3,6 +3,7 @@ import { useEffect, useState, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Square, CheckCircle, XCircle, Clock, Loader2, X } from "lucide-react";
 import { api, JobOut, getWsUrl } from "@/lib/api";
+import { useJobActivity } from "@/contexts/JobActivityContext";
 
 // ── Step definitions (7 steps per recipe) ───────────────────────────────────
 const TOTAL_STEPS = 7;
@@ -83,6 +84,7 @@ function currentStatusFromLogs(logs: string[]): string | null {
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { trackJob } = useJobActivity();
   const [job, setJob] = useState<JobOut | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const logRef = useRef<HTMLDivElement>(null);
@@ -132,6 +134,18 @@ export default function JobDetailPage() {
       setToast(null);
     }
   }, [job]);
+
+  useEffect(() => {
+    if (!job) return;
+    trackJob(job, {
+      title:
+        job.job_type === "articles_all_sites"
+          ? "All-sites generation"
+          : job.job_type === "publisher"
+            ? "WordPress publishing"
+            : "Recipe generation",
+    });
+  }, [job, trackJob]);
 
   useEffect(() => {
     api.getJob(id).then(setJob).catch(() => router.push("/"));

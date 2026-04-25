@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { api, SharedRecipeInput } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
+import { useJobActivity } from "@/contexts/JobActivityContext";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DEFAULT_ROWS = 50;
@@ -461,6 +462,7 @@ export default function SpySheetPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const toast = useToast();
+  const { trackJob } = useJobActivity();
 
   const [workbook, setWorkbook] = useState<Workbook>(emptyWorkbook());
   const [loading, setLoading] = useState(true);
@@ -1077,9 +1079,12 @@ export default function SpySheetPage() {
         job_type: "articles_all_sites",
         shared_recipes: selectionCtxMenu.preview.items,
       });
+      trackJob(job, {
+        title: "Spy Sheet all-sites generation",
+        sourceLabel: `${selectionCtxMenu.preview.items.length} selected row(s)`,
+      });
       setSelectionCtxMenu(null);
-      toast.success(`Started generation for ${selectionCtxMenu.preview.items.length} selected row(s).`);
-      router.push(`/jobs/${job.id}`);
+      toast.success(`Started generation for ${selectionCtxMenu.preview.items.length} selected row(s). Added to the pipeline.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to start generation from Spy Sheet");
     } finally {

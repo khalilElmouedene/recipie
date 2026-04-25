@@ -7,6 +7,7 @@ import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, Pr
 import { getUserRole, getUserId } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import { useJobActivity } from "@/contexts/JobActivityContext";
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
@@ -178,6 +179,7 @@ const emptyWpUser = () => ({ username: "", password: "" });
 function SitesTab({ projectId, canManage, router }: { projectId: string; canManage: boolean; router: ReturnType<typeof useRouter> }) {
   const toast = useToast();
   const openConfirm = useConfirm();
+  const { trackJob } = useJobActivity();
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
   const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
@@ -216,7 +218,12 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
     setPublishingSiteId(siteId);
     try {
       const job = await api.startJob(projectId, { job_type: "publisher", site_id: siteId });
-      router.push(`/jobs/${job.id}`);
+      const siteDomain = sites.find((site) => site.id === siteId)?.domain || null;
+      trackJob(job, {
+        title: "Publishing site to WordPress",
+        sourceLabel: siteDomain,
+      });
+      toast.success("Publish job added to the pipeline.");
     } catch (e: any) {
       toast.error(e.message || "Failed to start publish job");
     } finally {
