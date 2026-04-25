@@ -150,6 +150,9 @@ async def list_recipes(
         stmt = (
             select(
                 Recipe.id,
+                Recipe.site_id,
+                Recipe.created_by,
+                Recipe.image_url,
                 Recipe.recipe_text,
                 Recipe.status,
                 Recipe.generated_images,
@@ -167,6 +170,9 @@ async def list_recipes(
         return [
             {
                 "id": row.id,
+                "site_id": row.site_id,
+                "created_by": row.created_by,
+                "image_url": row.image_url,
                 "recipe_text": row.recipe_text,
                 "status": row.status.value if hasattr(row.status, "value") else row.status,
                 "generated_images": row.generated_images,
