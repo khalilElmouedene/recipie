@@ -2,7 +2,7 @@
 import { Loader2 } from "lucide-react";
 
 interface Props {
-  sentinelRef: React.RefObject<HTMLDivElement | null>;
+  sentinelRef: React.Ref<HTMLDivElement>;
   loading: boolean;
   hasMore: boolean;
   /** Text shown next to the spinner while loading. */

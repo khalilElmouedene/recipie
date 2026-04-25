@@ -206,6 +206,10 @@ export default function JobDetailPage() {
   const completedCount = job?.current_row ?? recipeCards.filter((c) => c.status === "completed").length;
   const totalRecipes = (job?.total_rows ?? 0) > 0 ? job!.total_rows! : recipeCards.length;
   const showErrorBanner = !!job?.error && TERMINAL_JOB_STATUSES.has(job.status) && job.status !== "completed";
+  const backHref =
+    job?.job_type === "articles_all_sites"
+      ? `/projects/${job.project_id}/sites/all-sites-generate`
+      : `/projects/${job?.project_id ?? ""}`;
 
   const statusBadge: Record<string, string> = {
     pending: "bg-gray-700 text-gray-300",
@@ -235,8 +239,8 @@ export default function JobDetailPage() {
           </button>
         </div>
       )}
-      <button onClick={() => router.back()} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4">
-        <ArrowLeft size={16} /> Back
+      <button onClick={() => router.push(backHref)} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4">
+        <ArrowLeft size={16} /> {job.job_type === "articles_all_sites" ? "Back to Generate Articles For All Sites" : "Back"}
       </button>
 
       {/* Header */}

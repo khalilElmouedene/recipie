@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 
 /**
  * Attaches an IntersectionObserver to a sentinel element.
@@ -11,25 +11,27 @@ export function useInfiniteScroll(
   { hasMore, loading }: { hasMore: boolean; loading: boolean },
   rootMargin = "300px",
 ) {
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const [sentinelNode, setSentinelNode] = useState<HTMLDivElement | null>(null);
   const callbackRef = useRef(onLoadMore);
   useEffect(() => { callbackRef.current = onLoadMore; }, [onLoadMore]);
+  const sentinelRef = useCallback((node: HTMLDivElement | null) => {
+    setSentinelNode(node);
+  }, []);
 
   useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel || !hasMore || loading) return;
+    if (!sentinelNode || !hasMore || loading) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting) callbackRef.current();
+        if (entries[0]?.isIntersecting) callbackRef.current();
       },
       { rootMargin },
     );
 
-    observer.observe(sentinel);
+    observer.observe(sentinelNode);
     return () => observer.disconnect();
     // Re-attach when hasMore/loading changes so we stop observing when done
-  }, [hasMore, loading, rootMargin]);
+  }, [sentinelNode, hasMore, loading, rootMargin]);
 
   return sentinelRef;
 }
