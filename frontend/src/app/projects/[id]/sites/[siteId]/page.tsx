@@ -847,6 +847,7 @@ export default function SiteDetailPage() {
   const generatedCount = recipeListStats.generated;
   const publishedCount = recipeListStats.published;
   const failedCount = recipeListStats.failed;
+  const retryableGenerateCount = pendingCount + failedCount;
   const visibleRecipes = recipes;
   const hasMoreRecipes = recipes.length < totalRecipeCount;
   const [loadingMoreRecipes, setLoadingMoreRecipes] = useState(false);
@@ -994,10 +995,11 @@ export default function SiteDetailPage() {
           </button>
           <button
             onClick={() => handleRunJob("articles")}
-            disabled={starting || pendingCount === 0}
+            disabled={starting || retryableGenerateCount === 0}
             className="btn-primary flex items-center gap-2"
+            title={failedCount > 0 ? "Generate pending recipes and retry failed ones" : undefined}
           >
-            <Play size={16} /> Generate ({pendingCount})
+            <Play size={16} /> Generate ({retryableGenerateCount})
           </button>
           <button onClick={() => handleRunJob("publisher")} disabled={starting || generatedCount === 0} className="btn-secondary flex items-center gap-2">
             <Play size={16} /> Publish ({generatedCount})

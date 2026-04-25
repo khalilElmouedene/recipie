@@ -579,7 +579,12 @@ class JobManager:
         else:
             recipe_query = (
                 select(Recipe)
-                .where(Recipe.site_id == site_id, Recipe.status == target_status)
+                .where(
+                    Recipe.site_id == site_id,
+                    Recipe.status.in_([RecipeStatus.pending, RecipeStatus.failed])
+                    if db_job.job_type == JobType.articles
+                    else Recipe.status == target_status,
+                )
                 .order_by(Recipe.created_at.asc())
             )
             if recipe_id:
@@ -590,7 +595,7 @@ class JobManager:
             recipes_raw = recipe_rows.scalars().all()
             if not recipes_raw:
                 db_job.status = JobStatus.failed
-                status_label = "pending" if db_job.job_type == JobType.articles else "generated"
+                status_label = "pending or failed" if db_job.job_type == JobType.articles else "generated"
                 if recipe_id:
                     db_job.error = f"Recipe not found or not in '{status_label}' status"
                 else:
@@ -740,6 +745,17 @@ class JobManager:
                     total = len(recipes_data)
                     done = 0
                     discord_auth = str(credentials.get("discord_auth", "")).strip()
+
+                    def _mark_group_failed(items: list[dict], message: str) -> None:
+                        nonlocal done
+                        rj.log(message)
+                        for item in items:
+                            if rj.should_stop():
+                                break
+                            _on_recipe_done(item["id"], {"error_message": message})
+                            done += 1
+                            _on_progress(done, total)
+
                     for group in multi_site_groups:
                         if rj.should_stop():
                             break
@@ -750,43 +766,47 @@ class JobManager:
                         # Strict gate: when Midjourney is configured, images must exist
                         # before we generate any article content for this input recipe.
                         if discord_auth:
-                            if not group.get("image_url"):
-                                raise ValueError(f"Input recipe {group['idx']}: missing source image URL for Midjourney")
-                            rj.log(
-                                f"Input recipe {group['idx']}: generating images for {n_sites} site(s)"
-                            )
-                            shared_images = generate_images_only(
-                                recipe_title=group["recipe_text"].splitlines()[0].strip(),
-                                image_url=group["image_url"],
-                                credentials=credentials,
-                                prompts=prompts,
-                                log=rj.log,
-                                should_stop=rj.should_stop,
-                            )
-                            if not shared_images:
-                                raise ValueError(
-                                    f"Input recipe {group['idx']}: Midjourney failed to generate images"
-                                )
                             try:
-                                img_list: list[str] = json.loads(shared_images)
-                            except Exception as e:
-                                raise ValueError(
-                                    f"Input recipe {group['idx']}: invalid Midjourney payload ({e})"
-                                ) from e
-                            if not img_list:
-                                raise ValueError(
-                                    f"Input recipe {group['idx']}: Midjourney returned no images"
+                                if not group.get("image_url"):
+                                    raise ValueError(
+                                        f"Input recipe {group['idx']}: missing source image URL for Midjourney"
+                                    )
+                                rj.log(
+                                    f"Input recipe {group['idx']}: generating images for {n_sites} site(s)"
                                 )
+                                shared_images = generate_images_only(
+                                    recipe_title=group["recipe_text"].splitlines()[0].strip(),
+                                    image_url=group["image_url"],
+                                    credentials=credentials,
+                                    prompts=prompts,
+                                    log=rj.log,
+                                    should_stop=rj.should_stop,
+                                )
+                                if not shared_images:
+                                    raise ValueError(
+                                        f"Input recipe {group['idx']}: Midjourney failed to generate images"
+                                    )
+                                img_list: list[str] = json.loads(shared_images)
+                                if not img_list:
+                                    raise ValueError(
+                                        f"Input recipe {group['idx']}: Midjourney returned no images"
+                                    )
 
-                            shuffled = list(img_list)
-                            random.shuffle(shuffled)
-                            chunks = _split_images(shuffled, n_sites)
-                            rj.log(
-                                f"Distributing {len(img_list)} image(s) across "
-                                f"{n_sites} site(s) (~{len(chunks[0])} per site)"
-                            )
-                            for item, site_imgs in zip(items, chunks):
-                                per_recipe_images[item["id"]] = json.dumps(site_imgs)
+                                shuffled = list(img_list)
+                                random.shuffle(shuffled)
+                                chunks = _split_images(shuffled, n_sites)
+                                rj.log(
+                                    f"Distributing {len(img_list)} image(s) across "
+                                    f"{n_sites} site(s) (~{len(chunks[0])} per site)"
+                                )
+                                for item, site_imgs in zip(items, chunks):
+                                    per_recipe_images[item["id"]] = json.dumps(site_imgs)
+                            except Exception as e:
+                                _mark_group_failed(
+                                    items,
+                                    f"Input recipe {group['idx']} failed before article generation: {e}",
+                                )
+                                continue
                         else:
                             rj.log(
                                 f"Input recipe {group['idx']}: Midjourney skipped (no Discord credentials configured)"
@@ -1012,7 +1032,7 @@ class JobManager:
                     .join(Site, Recipe.site_id == Site.id)
                     .where(
                         Recipe.created_by_job_id == db_job.id,
-                        Recipe.status.in_([RecipeStatus.pending, RecipeStatus.failed]),
+                        Recipe.status == RecipeStatus.pending,
                     )
                     .order_by(Recipe.recipe_text, Site.created_at)
                 )
@@ -1225,6 +1245,17 @@ class JobManager:
                         total = total_count
                         done = done_count
                         discord_auth = str(credentials.get("discord_auth", "")).strip()
+
+                        def _mark_group_failed(items: list[dict], message: str) -> None:
+                            nonlocal done
+                            rj.log(message)
+                            for item in items:
+                                if rj.should_stop():
+                                    break
+                                _on_recipe_done(item["id"], {"error_message": message})
+                                done += 1
+                                _on_progress(done, total)
+
                         for group in multi_site_groups:
                             if rj.should_stop():
                                 break
@@ -1233,43 +1264,47 @@ class JobManager:
                             per_recipe_images: dict[str, str] = {}
 
                             if discord_auth:
-                                if not group.get("image_url"):
-                                    raise ValueError(f"Input recipe {group['idx']}: missing source image URL for Midjourney")
-                                rj.log(
-                                    f"Input recipe {group['idx']}: generating images for {n_sites} site(s)"
-                                )
-                                shared_images = generate_images_only(
-                                    recipe_title=group["recipe_text"].splitlines()[0].strip(),
-                                    image_url=group["image_url"],
-                                    credentials=credentials,
-                                    prompts=prompts,
-                                    log=rj.log,
-                                    should_stop=rj.should_stop,
-                                )
-                                if not shared_images:
-                                    raise ValueError(
-                                        f"Input recipe {group['idx']}: Midjourney failed to generate images"
-                                    )
                                 try:
-                                    img_list: list[str] = json.loads(shared_images)
-                                except Exception as e:
-                                    raise ValueError(
-                                        f"Input recipe {group['idx']}: invalid Midjourney payload ({e})"
-                                    ) from e
-                                if not img_list:
-                                    raise ValueError(
-                                        f"Input recipe {group['idx']}: Midjourney returned no images"
+                                    if not group.get("image_url"):
+                                        raise ValueError(
+                                            f"Input recipe {group['idx']}: missing source image URL for Midjourney"
+                                        )
+                                    rj.log(
+                                        f"Input recipe {group['idx']}: generating images for {n_sites} site(s)"
                                     )
+                                    shared_images = generate_images_only(
+                                        recipe_title=group["recipe_text"].splitlines()[0].strip(),
+                                        image_url=group["image_url"],
+                                        credentials=credentials,
+                                        prompts=prompts,
+                                        log=rj.log,
+                                        should_stop=rj.should_stop,
+                                    )
+                                    if not shared_images:
+                                        raise ValueError(
+                                            f"Input recipe {group['idx']}: Midjourney failed to generate images"
+                                        )
+                                    img_list: list[str] = json.loads(shared_images)
+                                    if not img_list:
+                                        raise ValueError(
+                                            f"Input recipe {group['idx']}: Midjourney returned no images"
+                                        )
 
-                                shuffled = list(img_list)
-                                random.shuffle(shuffled)
-                                chunks = _split_images(shuffled, n_sites)
-                                rj.log(
-                                    f"Distributing {len(img_list)} image(s) across "
-                                    f"{n_sites} site(s) (~{len(chunks[0])} per site)"
-                                )
-                                for item, site_imgs in zip(items, chunks):
-                                    per_recipe_images[item["id"]] = json.dumps(site_imgs)
+                                    shuffled = list(img_list)
+                                    random.shuffle(shuffled)
+                                    chunks = _split_images(shuffled, n_sites)
+                                    rj.log(
+                                        f"Distributing {len(img_list)} image(s) across "
+                                        f"{n_sites} site(s) (~{len(chunks[0])} per site)"
+                                    )
+                                    for item, site_imgs in zip(items, chunks):
+                                        per_recipe_images[item["id"]] = json.dumps(site_imgs)
+                                except Exception as e:
+                                    _mark_group_failed(
+                                        items,
+                                        f"Input recipe {group['idx']} failed before article generation: {e}",
+                                    )
+                                    continue
                             else:
                                 rj.log(
                                     f"Input recipe {group['idx']}: Midjourney skipped (no Discord credentials configured)"
@@ -1321,7 +1356,7 @@ class JobManager:
 
             # Compute already-done and full-total counts so current_row/total_rows
             # reflect the entire job (not just the remaining slice).
-            done_statuses = [RecipeStatus.generated, RecipeStatus.published]
+            done_statuses = [RecipeStatus.generated, RecipeStatus.published, RecipeStatus.failed]
             if db_job.job_type == JobType.publisher:
                 done_statuses = [RecipeStatus.published, RecipeStatus.failed]
             done_result = await db.execute(
