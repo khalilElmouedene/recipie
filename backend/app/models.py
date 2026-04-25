@@ -420,6 +420,7 @@ class PublishBatchRequest(BaseModel):
     interval_minutes: int | None = None  # override project interval
     site_id: uuid.UUID | None = None  # if set, only publish recipes for this site
     recipe_id: uuid.UUID | None = None  # if set, publish only this single recipe
+    recipe_ids: list[uuid.UUID] | None = None  # if set, publish only these specific recipes
 
 
 class PublishBatchOut(BaseModel):

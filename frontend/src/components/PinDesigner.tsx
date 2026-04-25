@@ -1644,12 +1644,14 @@ export default function PinDesigner({
         }
       }
       // 2. Open batch publish modal.
-      // In single-recipe mode, scope to only that recipe so we don't publish others.
+      // Scope publish to exactly the recipes visible in this designer session.
       setWpBatchModalData({
         mode,
         ...opts,
         ...(siteId ? { site_id: siteId } : {}),
-        ...(!frames?.length && recipeId ? { recipe_id: recipeId } : {}),
+        ...(frames?.length
+          ? { recipe_ids: frames.map((f) => f.recipeId) }
+          : recipeId ? { recipe_id: recipeId } : {}),
       });
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Failed to save pins before publishing");

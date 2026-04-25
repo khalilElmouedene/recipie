@@ -581,6 +581,7 @@ async def publish_batch_to_wordpress(
             "base_now": now.isoformat(),
             "site_id": str(body.site_id) if body.site_id else None,
             "recipe_id": str(body.recipe_id) if body.recipe_id else None,
+            "recipe_ids": [str(r) for r in body.recipe_ids] if body.recipe_ids else None,
         },
     )
 

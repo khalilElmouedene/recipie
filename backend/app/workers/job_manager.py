@@ -275,10 +275,13 @@ class JobManager:
         recipe_filters: list[Any] = [Recipe.site_id.in_(site_scope), Recipe.status == RecipeStatus.generated]
         site_id = publish_meta.get("site_id")
         recipe_id = publish_meta.get("recipe_id")
-        if site_id:
-            recipe_filters.append(Recipe.site_id == uuid.UUID(str(site_id)))
-        if recipe_id:
+        recipe_ids = publish_meta.get("recipe_ids")
+        if recipe_ids:
+            recipe_filters.append(Recipe.id.in_([uuid.UUID(str(r)) for r in recipe_ids]))
+        elif recipe_id:
             recipe_filters.append(Recipe.id == uuid.UUID(str(recipe_id)))
+        elif site_id:
+            recipe_filters.append(Recipe.site_id == uuid.UUID(str(site_id)))
 
         await db.execute(
             update(Recipe)

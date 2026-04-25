@@ -902,6 +902,7 @@ export interface PublishBatchRequest {
   interval_minutes?: number; // override project interval
   site_id?: string; // if set, only publish recipes for this site
   recipe_id?: string; // if set, publish only this single recipe
+  recipe_ids?: string[]; // if set, publish only these specific recipes (takes priority over site_id)
 }
 
 export interface PublishBatchOut {

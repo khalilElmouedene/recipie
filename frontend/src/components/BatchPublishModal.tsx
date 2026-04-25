@@ -15,6 +15,7 @@ interface Props {
 
 function publishTitleFromRequest(data: PublishBatchRequest): string {
   if (data.recipe_id) return "Publishing one recipe to WordPress";
+  if (data.recipe_ids) return `Publishing ${data.recipe_ids.length} recipe(s) to WordPress`;
   if (data.site_id) return "Publishing site recipes to WordPress";
   return "Publishing project recipes to WordPress";
 }
