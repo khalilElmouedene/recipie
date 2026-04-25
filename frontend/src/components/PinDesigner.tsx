@@ -1013,6 +1013,7 @@ export default function PinDesigner({
   const previewCacheRef = useRef<Map<string, string>>(new Map());
   const pendingPreviewCacheKeysRef = useRef<Set<string>>(new Set());
   const scheduledPreviewTaskRef = useRef<number | null>(null);
+  const stableScrollAreaStyle: React.CSSProperties = { scrollbarGutter: "stable" as any };
 
   // ── Custom fonts (persisted to database) ─────────────────────────────
   const [customFonts, setCustomFonts] = useState<string[]>([]);
@@ -1069,6 +1070,28 @@ export default function PinDesigner({
       .then((items) => setReusableElements(items))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (embedded || typeof document === "undefined") return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    const prevHtmlScrollbarGutter = (html.style as any).scrollbarGutter;
+    const prevBodyScrollbarGutter = (body.style as any).scrollbarGutter;
+
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    (html.style as any).scrollbarGutter = "stable";
+    (body.style as any).scrollbarGutter = "stable";
+
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+      (html.style as any).scrollbarGutter = prevHtmlScrollbarGutter;
+      (body.style as any).scrollbarGutter = prevBodyScrollbarGutter;
+    };
+  }, [embedded]);
 
   // Load user-created Pin Designer templates (filtered by project if available)
   useEffect(() => {
@@ -4338,7 +4361,7 @@ export default function PinDesigner({
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className={`${embedded ? "absolute inset-0" : "fixed inset-0 z-50"} flex flex-col bg-gray-950 text-white`}>
+    <div className={`${embedded ? "absolute inset-0" : "fixed inset-0 z-50"} flex flex-col overflow-hidden bg-gray-950 text-white`}>
 
       {/* ── Floating Toolbar ──────────────────────────────────────────────── */}
       {toolbarPos && selectedId && (
@@ -4884,7 +4907,7 @@ export default function PinDesigner({
       )}
 
       {/* ── Body ──────────────────────────────────────────────────────────── */}
-      <div className="flex flex-1 min-h-0 relative">
+      <div className="flex flex-1 min-h-0 overflow-hidden relative">
 
         {/* Mobile backdrop for panels */}
         {(leftPanelOpen || rightPanelOpen) && (
@@ -4923,7 +4946,7 @@ export default function PinDesigner({
             </button>
           </div>
 
-          <div className="p-3 overflow-y-auto flex-1">
+          <div className="p-3 overflow-y-auto flex-1" style={stableScrollAreaStyle}>
 
             {/* Elements Tab */}
             {leftTab === "elements" && (
@@ -5261,7 +5284,7 @@ export default function PinDesigner({
         </aside>
 
         {/* ── Canvas Area ─────────────────────────────────────────────────── */}
-        <main ref={canvasAreaRef} className="flex-1 overflow-auto bg-gray-900">
+        <main ref={canvasAreaRef} className="flex-1 overflow-auto bg-gray-900" style={stableScrollAreaStyle}>
           {/* Zoom bar */}
           <div className="sticky top-0 z-10 bg-gray-900/95 backdrop-blur border-b border-gray-800 px-4 py-2 flex items-center justify-center gap-2">
             <button onClick={() => setZoomPct(zoom - 10)} className="p-1.5 rounded bg-gray-800 hover:bg-gray-700">
@@ -5430,7 +5453,7 @@ export default function PinDesigner({
           rightPanelOpen
             ? "fixed inset-y-0 right-0 z-[60] flex flex-col"
             : "hidden md:block",
-        ].join(" ")}>
+        ].join(" ")} style={stableScrollAreaStyle}>
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-xs font-semibold text-gray-400 uppercase">Properties</h4>
             <button
