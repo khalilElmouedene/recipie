@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { api, getApiBaseUrl, type PinReusableElementOut } from "@/lib/api";
 import { appendPinImageToArticleHtml } from "@/lib/pinArticleEmbed";
+import { storePinterestGalleryContext } from "@/lib/pinterestGalleryContext";
 import { getUserRole, getUserId } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
@@ -1661,6 +1662,29 @@ export default function PinDesigner({
     setWpBatchBusy(null);
     if (didPublish) setWpBatchDone(true);
   };
+
+  const handleOpenPinterestGallery = useCallback(() => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    if (siteId) params.set("site_id", siteId);
+
+    const galleryRecipeIds = Array.from(
+      new Set(
+        (frames?.map((frame) => frame.recipeId) ?? [])
+          .concat(recipeId ? [recipeId] : [])
+          .filter(Boolean),
+      ),
+    );
+    const contextId = storePinterestGalleryContext({
+      source: "pin_designer",
+      projectId,
+      siteId,
+      recipeIds: galleryRecipeIds,
+    });
+    if (contextId) params.set("pin_context", contextId);
+
+    router.push(`/pinterest-gallery${params.toString() ? `?${params.toString()}` : ""}`);
+  }, [frames, projectId, recipeId, router, siteId]);
 
   // ── Mount ────────────────────────────────────────────────────────────────
   useEffect(() => { setMounted(true); }, []);
@@ -4723,14 +4747,9 @@ export default function PinDesigner({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  const params = new URLSearchParams();
-                  if (projectId) params.set("project_id", projectId);
-                  if (siteId) params.set("site_id", siteId);
-                  router.push(`/pinterest-gallery${params.toString() ? `?${params.toString()}` : ""}`);
-                }}
+                onClick={handleOpenPinterestGallery}
                 className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-pink-800/50 text-pink-300"
-                title="Open Pinterest page for this project's published recipes"
+                title="Open Pinterest page scoped to the recipes in this Pin Designer"
               >
                 <ExternalLink size={14} />
                 <span className="hidden lg:inline">Pinterest Page</span>

@@ -14,6 +14,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { api, ProjectOut, PinterestRecipeOut } from "@/lib/api";
+import { readPinterestGalleryContext, type PinterestGalleryContextSnapshot } from "@/lib/pinterestGalleryContext";
 import { useToast } from "@/contexts/ToastContext";
 import {
   PINTEREST_WORKSHEET_HEADER,
@@ -53,6 +54,7 @@ function PinterestGalleryInner() {
   const projectIdParam = searchParams.get("project_id");
   const siteIdParam = searchParams.get("site_id");
   const fromProjectDetails = searchParams.get("from_project") === "1";
+  const pinContextParam = searchParams.get("pin_context");
 
   const [projects, setProjects] = useState<ProjectOut[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -65,6 +67,7 @@ function PinterestGalleryInner() {
   const [search, setSearch] = useState("");
   const [selectedWebsite, setSelectedWebsite] = useState<string>("");
   const [selectedBoard, setSelectedBoard] = useState<string>("__all__");
+  const [pinDesignerContext, setPinDesignerContext] = useState<PinterestGalleryContextSnapshot | null>(null);
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -83,6 +86,23 @@ function PinterestGalleryInner() {
   const [csvInterval, setCsvInterval] = useState(300);
   const [csvGenerating, setCsvGenerating] = useState(false);
   const [worksheetPreparing, setWorksheetPreparing] = useState(false);
+
+  useEffect(() => {
+    if (!pinContextParam) {
+      setPinDesignerContext(null);
+      return;
+    }
+    const context = readPinterestGalleryContext(pinContextParam);
+    if (
+      context &&
+      (!projectIdParam || !context.projectId || context.projectId === projectIdParam) &&
+      (!siteIdParam || !context.siteId || context.siteId === siteIdParam)
+    ) {
+      setPinDesignerContext(context);
+      return;
+    }
+    setPinDesignerContext(null);
+  }, [pinContextParam, projectIdParam, siteIdParam]);
 
   // ── Load project list once ──
   useEffect(() => {
@@ -130,7 +150,20 @@ function PinterestGalleryInner() {
     if (!selectedWebsite || !websites.includes(selectedWebsite)) setSelectedWebsite(websites[0]);
   }, [websites, selectedWebsite, siteIdParam]);
 
-  const websiteScopedRecipes = siteIdParam ? allRecipes : (selectedWebsite ? allRecipes.filter((r) => r.site_domain === selectedWebsite) : []);
+  const pinDesignerRecipeIdSet = useMemo(
+    () => new Set(pinDesignerContext?.recipeIds ?? []),
+    [pinDesignerContext],
+  );
+
+  const websiteScopedRecipes = useMemo(() => {
+    let scoped = siteIdParam
+      ? allRecipes
+      : (selectedWebsite ? allRecipes.filter((r) => r.site_domain === selectedWebsite) : []);
+    if (pinDesignerRecipeIdSet.size > 0) {
+      scoped = scoped.filter((recipe) => pinDesignerRecipeIdSet.has(recipe.id));
+    }
+    return scoped;
+  }, [allRecipes, pinDesignerRecipeIdSet, selectedWebsite, siteIdParam]);
 
   const boards = useMemo(() => {
     const set = new Set<string>();
@@ -226,6 +259,7 @@ function PinterestGalleryInner() {
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
   const fromPinDesigner = Boolean(siteIdParam);
+  const hasPinDesignerRecipeScope = pinDesignerRecipeIdSet.size > 0;
   const hideProjectSelector = (fromProjectDetails && Boolean(projectIdParam)) || fromPinDesigner;
   const allBoards = useMemo(() => {
     const set = new Set<string>();
@@ -347,7 +381,7 @@ function PinterestGalleryInner() {
         {!recipesLoading && !recipesError && selectedProjectId && (
           <div className="mb-6 flex flex-wrap gap-3">
             <StatPill label="Total pins" value={fromPinDesigner ? websiteScopedRecipes.length : allRecipes.length} color="brand" />
-            <StatPill label="Boards" value={allBoards.length} color="purple" />
+            <StatPill label="Boards" value={fromPinDesigner ? boards.length : allBoards.length} color="purple" />
             {!fromPinDesigner && <StatPill label="Websites" value={websites.length} color="blue" />}
             {selectedBoard !== "__all__" && <StatPill label="Showing" value={filtered.length} color="pink" />}
           </div>
@@ -416,7 +450,9 @@ function PinterestGalleryInner() {
           <EmptyState message={`No published pins yet for "${selectedProject?.name}". Publish recipes to WordPress first.`} />
         )}
         {!recipesLoading && !recipesError && allRecipes.length > 0 && filtered.length === 0 && (
-          <EmptyState message="No pins match your current filter." />
+          <EmptyState message={hasPinDesignerRecipeScope
+            ? "No pins are available yet for the recipes from this Pin Designer session."
+            : "No pins match your current filter."} />
         )}
 
         {/* ── Pins grid ── */}
