@@ -596,6 +596,8 @@ export const api = {
     request<GeneratedJobRecipeOut[]>(
       `/api/jobs/${jobId}/generated-recipes${siteId ? `?site_id=${siteId}` : ""}`
     ),
+  getJobGeneratedSitesSummary: (jobId: string) =>
+    request<GeneratedJobSiteSummaryOut[]>(`/api/jobs/${jobId}/generated-sites-summary`),
   getJobGeneratedRecipesPage: (
     jobId: string,
     params?: PaginationParams & { siteId?: string },
@@ -877,6 +879,13 @@ export interface GeneratedJobRecipeOut {
   pin_description?: string | null;
   pin_template_id?: string | null;
   created_at: string;
+}
+
+export interface GeneratedJobSiteSummaryOut {
+  site_id: string;
+  site_domain: string;
+  recipe_count: number;
+  published_count: number;
 }
 
 export interface PublishScheduleOut {

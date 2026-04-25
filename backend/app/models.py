@@ -360,6 +360,13 @@ class GeneratedJobRecipeOut(BaseModel):
     created_at: datetime
 
 
+class GeneratedJobSiteSummaryOut(BaseModel):
+    site_id: uuid.UUID
+    site_domain: str
+    recipe_count: int
+    published_count: int
+
+
 class PublishScheduleOut(BaseModel):
     enabled: bool
     interval_minutes: int

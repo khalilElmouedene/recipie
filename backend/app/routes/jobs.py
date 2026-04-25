@@ -5,13 +5,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import select, delete as sql_delete, update as sql_update
+from sqlalchemy import case, func, or_, select, delete as sql_delete, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..db_models import User, Job, JobLog, JobType, JobStatus, Project, Recipe, RecipeStatus, Site, ProjectMemberRole
 from ..dependencies import get_current_user, check_project_access
-from ..models import JobStart, JobOut, JobLogOut, GeneratedJobRecipeOut
+from ..models import JobStart, JobOut, JobLogOut, GeneratedJobRecipeOut, GeneratedJobSiteSummaryOut
 from ..pagination import apply_limit_offset, count_rows, set_total_count
 from ..workers.job_manager import job_manager
 
@@ -224,8 +224,55 @@ async def get_job_generated_recipes(
                 pin_template_id=recipe.pin_template_id,
                 created_at=recipe.created_at,
             )
-        )
+    )
     return out
+
+
+@router.get("/api/jobs/{job_id}/generated-sites-summary", response_model=list[GeneratedJobSiteSummaryOut])
+async def get_job_generated_sites_summary(
+    job_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await check_project_access(job.project_id, user, db)
+
+    published_case = case(
+        (
+            or_(
+                Recipe.status == RecipeStatus.published,
+                Recipe.wp_permalink.is_not(None),
+            ),
+            1,
+        ),
+        else_=0,
+    )
+
+    stmt = (
+        select(
+            Site.id.label("site_id"),
+            Site.domain.label("site_domain"),
+            func.count(Recipe.id).label("recipe_count"),
+            func.sum(published_case).label("published_count"),
+        )
+        .join(Site, Recipe.site_id == Site.id)
+        .where(Recipe.created_by_job_id == job_id)
+        .group_by(Site.id, Site.domain)
+        .order_by(Site.domain.asc(), Site.id.asc())
+    )
+    rows = await db.execute(stmt)
+    return [
+        GeneratedJobSiteSummaryOut(
+            site_id=row.site_id,
+            site_domain=row.site_domain,
+            recipe_count=int(row.recipe_count or 0),
+            published_count=int(row.published_count or 0),
+        )
+        for row in rows
+    ]
 
 
 @router.delete("/api/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
