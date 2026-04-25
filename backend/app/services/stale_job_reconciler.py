@@ -53,18 +53,18 @@ async def resume_interrupted_jobs() -> None:
             )
 
             if job.created_at <= stale_cutoff:
-                # Too old — don't resume, just fail
+                # Too old - don't resume, just fail
                 job.status = JobStatus.failed
                 job.finished_at = now
-                job.error = "Run timed out — start the job again."
+                job.error = "Run timed out - start the job again."
                 logger.info("Marked stale job %s as failed (older than %dh)", job.id, STALE_RUNNING_JOB_HOURS)
             else:
-                # Recent job — reset status so resume_job can restart it
+                # Recent job - reset status so resume_job can restart it
                 job.status = JobStatus.pending
                 await db.commit()
                 resumed = await job_manager.resume_job(job.id)
                 if not resumed:
-                    # resume_job may have set it to completed/failed — nothing more to do
+                    # resume_job may have set it to completed/failed - nothing more to do
                     logger.info("Job %s had no remaining work, skipped resume", job.id)
                 else:
                     logger.info("Auto-resumed job %s after server restart", job.id)
@@ -74,7 +74,7 @@ async def resume_interrupted_jobs() -> None:
 
 
 async def reconcile_stale_jobs_and_recipes_once() -> None:
-    """Periodic cleanup: fail genuinely stuck jobs and clear orphaned generating rows."""
+    """Periodic cleanup: fail genuinely stuck jobs and clear orphaned in-progress rows."""
     now = datetime.now(timezone.utc)
     stale_job_cutoff = now - timedelta(hours=STALE_RUNNING_JOB_HOURS)
     orphan_cutoff = now - timedelta(hours=ORPHAN_GENERATING_HOURS)
@@ -82,6 +82,7 @@ async def reconcile_stale_jobs_and_recipes_once() -> None:
     async with SessionLocal() as db:
         # Only fail jobs that are truly stale (old AND not in memory)
         from app.workers.job_manager import job_manager
+
         stale_jobs = (
             await db.execute(
                 select(Job).where(
@@ -94,11 +95,11 @@ async def reconcile_stale_jobs_and_recipes_once() -> None:
 
         for job in stale_jobs:
             if job_manager.get_running(str(job.id)):
-                continue  # Still actively running — leave it alone
+                continue  # Still actively running - leave it alone
             job.status = JobStatus.failed
             job.finished_at = now
             if not job.error:
-                job.error = "Run timed out — start the job again."
+                job.error = "Run timed out - start the job again."
             await db.execute(
                 update(Recipe)
                 .where(
@@ -107,36 +108,52 @@ async def reconcile_stale_jobs_and_recipes_once() -> None:
                 )
                 .values(
                     status=RecipeStatus.pending,
-                    error_message="Generation interrupted — try Generate again.",
+                    error_message="Generation interrupted - try Generate again.",
+                )
+            )
+            await db.execute(
+                update(Recipe)
+                .where(
+                    Recipe.created_by_job_id == job.id,
+                    Recipe.status == RecipeStatus.publishing,
+                )
+                .values(
+                    status=RecipeStatus.generated,
+                    error_message="Publishing interrupted - try Publish again.",
                 )
             )
 
-        # Clear generating rows whose job is already done
+        # Clear in-progress rows whose job is already done
         stuck = (
             await db.execute(
                 select(Recipe)
                 .join(Job, Recipe.created_by_job_id == Job.id)
                 .where(
-                    Recipe.status == RecipeStatus.generating,
+                    Recipe.status.in_([RecipeStatus.generating, RecipeStatus.publishing]),
                     Job.status.in_([JobStatus.completed, JobStatus.failed, JobStatus.stopped]),
                 )
             )
         ).scalars()
         for rec in stuck:
-            rec.status = RecipeStatus.pending
-            rec.error_message = "Stale generating state cleared — try Generate again."
+            was_publishing = rec.status == RecipeStatus.publishing
+            rec.status = RecipeStatus.generated if was_publishing else RecipeStatus.pending
+            rec.error_message = (
+                "Stale publishing state cleared - try Publish again."
+                if was_publishing
+                else "Stale generating state cleared - try Generate again."
+            )
 
-        # Clear orphaned generating rows
+        # Clear orphaned in-progress rows
         await db.execute(
             update(Recipe)
             .where(
-                Recipe.status == RecipeStatus.generating,
+                Recipe.status.in_([RecipeStatus.generating, RecipeStatus.publishing]),
                 Recipe.created_by_job_id.is_(None),
                 Recipe.created_at <= orphan_cutoff,
             )
             .values(
                 status=RecipeStatus.pending,
-                error_message="Connection or server issue — try Generate again.",
+                error_message="Connection or server issue - try again.",
             )
         )
 

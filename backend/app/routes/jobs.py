@@ -11,9 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..db_models import User, Job, JobLog, JobType, JobStatus, Project, Recipe, RecipeStatus, Site, ProjectMemberRole
 from ..dependencies import get_current_user, check_project_access
-from ..models import JobStart, JobOut, JobLogOut, GeneratedJobRecipeOut, GeneratedJobSiteSummaryOut
+from ..models import JobStart, JobOut, JobLogOut, JobPublishSummaryOut, GeneratedJobRecipeOut, GeneratedJobSiteSummaryOut
 from ..pagination import apply_limit_offset, count_rows, set_total_count
-from ..workers.job_manager import job_manager
+from ..workers.job_manager import PUBLISH_META_PREFIX, job_manager
 
 router = APIRouter(tags=["jobs"])
 limiter = Limiter(key_func=get_remote_address)
@@ -157,6 +157,51 @@ async def get_job(
     return job
 
 
+@router.get("/api/jobs/{job_id}/publish-summary", response_model=JobPublishSummaryOut)
+async def get_job_publish_summary(
+    job_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await check_project_access(job.project_id, user, db)
+    if job.job_type != JobType.publisher:
+        raise HTTPException(status_code=400, detail="Publish summary is only available for publisher jobs")
+
+    counts_result = await db.execute(
+        select(
+            func.count(Recipe.id).label("total"),
+            func.coalesce(func.sum(case((Recipe.status == RecipeStatus.published, 1), else_=0)), 0).label("succeeded"),
+            func.coalesce(func.sum(case((Recipe.status == RecipeStatus.failed, 1), else_=0)), 0).label("failed"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Recipe.status.in_([RecipeStatus.generated, RecipeStatus.publishing]), 1),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("remaining"),
+        ).where(Recipe.created_by_job_id == job_id)
+    )
+    row = counts_result.one()
+    total = int(row.total or 0)
+    succeeded = int(row.succeeded or 0)
+    failed = int(row.failed or 0)
+    remaining = int(row.remaining or 0)
+    processed = max(0, total - remaining)
+    return JobPublishSummaryOut(
+        total=total,
+        processed=processed,
+        succeeded=succeeded,
+        failed=failed,
+        remaining=remaining,
+    )
+
+
 @router.get("/api/jobs/{job_id}/logs", response_model=list[JobLogOut])
 async def get_job_logs(
     response: Response,
@@ -172,7 +217,14 @@ async def get_job_logs(
         raise HTTPException(status_code=404, detail="Job not found")
     await check_project_access(job.project_id, user, db)
 
-    stmt = select(JobLog).where(JobLog.job_id == job_id).order_by(JobLog.created_at.asc())
+    stmt = (
+        select(JobLog)
+        .where(
+            JobLog.job_id == job_id,
+            JobLog.message.notlike(f"{PUBLISH_META_PREFIX}%"),
+        )
+        .order_by(JobLog.created_at.asc())
+    )
     total = await count_rows(db, stmt)
     set_total_count(response, total)
     logs = await db.execute(apply_limit_offset(stmt, limit, offset))

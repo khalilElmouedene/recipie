@@ -367,6 +367,14 @@ class JobOut(BaseModel):
         from_attributes = True
 
 
+class JobPublishSummaryOut(BaseModel):
+    total: int
+    processed: int
+    succeeded: int
+    failed: int
+    remaining: int
+
+
 class GeneratedJobRecipeOut(BaseModel):
     id: uuid.UUID
     site_id: uuid.UUID

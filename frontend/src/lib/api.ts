@@ -239,44 +239,10 @@ export const api = {
     }),
 
   publishBatchToWordPress: (projectId: string, data: PublishBatchRequest) =>
-    request<PublishBatchOut>(`/api/projects/${projectId}/publish-batch`, {
+    request<JobOut>(`/api/projects/${projectId}/publish-batch`, {
       method: "POST",
       body: JSON.stringify(data),
     }),
-
-  publishBatchStream: async (
-    projectId: string,
-    data: PublishBatchRequest,
-    onEvent: (event: BatchPublishEvent) => void,
-  ): Promise<void> => {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const res = await fetch(`${API_URL}/api/projects/${projectId}/publish-batch`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(data),
-      credentials: "include",
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(typeof err.detail === "string" ? err.detail : "Batch publish failed");
-    }
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed) {
-          try { onEvent(JSON.parse(trimmed) as BatchPublishEvent); } catch { /* skip malformed */ }
-        }
-      }
-    }
-  },
 
   runProjectImageCleanup: (projectId: string, data: ImageCleanupRunRequest) =>
     request<ImageCleanupRunResult>(`/api/projects/${projectId}/image-cleanup/run`, {
@@ -589,6 +555,8 @@ export const api = {
     request<JobOut>(`/api/projects/${projectId}/jobs`, { method: "POST", body: JSON.stringify(data) }),
 
   getJob: (jobId: string) => request<JobOut>(`/api/jobs/${jobId}`),
+  getJobPublishSummary: (jobId: string) =>
+    request<JobPublishSummaryOut>(`/api/jobs/${jobId}/publish-summary`),
 
   getJobLogs: (jobId: string) => request<JobLogOut[]>(`/api/jobs/${jobId}/logs`),
   getJobLogsPage: (jobId: string, params?: PaginationParams) =>
@@ -943,10 +911,13 @@ export interface PublishBatchOut {
   errors: string[];
 }
 
-export type BatchPublishEvent =
-  | { type: "start"; total: number; pre_failed: number }
-  | { type: "progress"; done: number; total: number; succeeded: number; failed: number; recipe_name: string; ok: boolean }
-  | { type: "done"; total: number; succeeded: number; failed: number; errors: string[] };
+export interface JobPublishSummaryOut {
+  total: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  remaining: number;
+}
 
 export interface ImageCleanupRunRequest {
   delete_all_published?: boolean;

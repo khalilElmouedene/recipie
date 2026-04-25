@@ -67,7 +67,7 @@ def _wordpress_display_title(recipe: dict, title_from_html: str) -> str:
 
 def publish_recipe(
     recipe: dict,
-    site_config: dict,
+    site_config: dict | None,
     log: Callable[[str], None] | None = None,
     *,
     post_date_gmt: datetime | None = None,
@@ -244,8 +244,14 @@ def publish_recipes_from_db(
     _stop = should_stop or (lambda: False)
     total = len(recipes)
 
-    domain = site_config.get("domain", "unknown")
-    _log(f"=== PUBLISHING {total} RECIPES TO {domain} ===")
+    domains = {
+        str((recipe.get("__site_config") or site_config or {}).get("domain", "unknown"))
+        for recipe in recipes
+    }
+    if len(domains) == 1:
+        _log(f"=== PUBLISHING {total} RECIPES TO {next(iter(domains))} ===")
+    else:
+        _log(f"=== PUBLISHING {total} RECIPES ACROSS {len(domains)} SITE(S) ===")
 
     for idx, recipe in enumerate(recipes):
         if _stop():
@@ -259,7 +265,15 @@ def publish_recipes_from_db(
         if on_progress:
             on_progress(idx + 1, total)
 
-        result = publish_recipe(recipe, site_config, log=_log)
+        effective_site_config = recipe.get("__site_config") or site_config
+        if not effective_site_config:
+            raise ValueError("Missing WordPress site configuration for publish batch")
+        result = publish_recipe(
+            recipe,
+            effective_site_config,
+            log=_log,
+            post_date_gmt=recipe.get("__post_date_gmt"),
+        )
 
         if on_recipe_done:
             on_recipe_done(recipe_id, result)

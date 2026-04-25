@@ -5,10 +5,114 @@ import logging
 import random
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 from typing import Any
+
+PUBLISH_META_PREFIX = "__PUBLISH_BATCH_META__:"
+
+
+def _ensure_utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return _ensure_utc(datetime.fromisoformat(value))
+    except Exception:
+        return None
+
+
+def _serialize_publish_meta(meta: dict[str, Any]) -> str:
+    return f"{PUBLISH_META_PREFIX}{json.dumps(meta, separators=(',', ':'))}"
+
+
+def _deserialize_publish_meta(message: str) -> dict[str, Any] | None:
+    idx = message.find(PUBLISH_META_PREFIX)
+    if idx == -1:
+        return None
+    payload = message[idx + len(PUBLISH_META_PREFIX):].strip()
+    try:
+        parsed = json.loads(payload)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _publisher_recipe_payload(
+    recipe: Recipe,
+    *,
+    site_config: dict | None = None,
+    post_date_gmt: datetime | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": str(recipe.id),
+        "site_id": str(recipe.site_id),
+        "recipe_text": recipe.recipe_text or "",
+        "pin_title": recipe.pin_title,
+        "image_url": recipe.image_url or "",
+        "generated_article": recipe.generated_article or "",
+        "generated_json": recipe.generated_json or "",
+        "focus_keyword": recipe.focus_keyword or "",
+        "meta_description": recipe.meta_description or "",
+        "category": recipe.category or "",
+        "generated_images": recipe.generated_images or "",
+        "wp_post_id": recipe.wp_post_id or "",
+        "wp_permalink": recipe.wp_permalink or "",
+        "seo_title": recipe.seo_title or "",
+        "wp_tags": recipe.wp_tags or "",
+        "pin_blog_link": recipe.pin_blog_link or "",
+    }
+    if site_config is not None:
+        payload["__site_config"] = site_config
+    if post_date_gmt is not None:
+        payload["__post_date_gmt"] = _ensure_utc(post_date_gmt)
+    return payload
+
+
+def _build_publish_schedule_map(
+    job_id: uuid.UUID,
+    recipe_items: list[dict[str, Any]],
+    meta: dict[str, Any] | None,
+) -> dict[str, datetime | None]:
+    if not meta or not meta.get("mode"):
+        return {str(item["id"]): None for item in recipe_items}
+
+    mode = str(meta.get("mode") or "")
+    first_publish_at = _parse_iso_datetime(meta.get("first_publish_at"))
+    base_now = _parse_iso_datetime(meta.get("base_now")) or datetime.now(timezone.utc)
+    interval_minutes = max(1, int(meta.get("interval_minutes") or 240))
+
+    if mode == "wordpress_scheduled" and first_publish_at is not None:
+        schedule_map: dict[str, datetime | None] = {}
+        by_site: dict[str, list[dict[str, Any]]] = {}
+        for item in recipe_items:
+            by_site.setdefault(str(item["site_id"]), []).append(item)
+        step = timedelta(minutes=interval_minutes)
+        for site_items in by_site.values():
+            for idx, item in enumerate(site_items):
+                schedule_map[str(item["id"])] = first_publish_at + (step * idx)
+        return schedule_map
+
+    if mode == "manual_backdate":
+        max_seconds = int(timedelta(days=183).total_seconds())
+        schedule_map: dict[str, datetime | None] = {}
+        for item in recipe_items:
+            recipe_uuid = uuid.UUID(str(item["id"]))
+            seed = job_id.int ^ recipe_uuid.int
+            rng = random.Random(seed)
+            offset_seconds = rng.randint(0, max(1, max_seconds))
+            schedule_map[str(item["id"])] = base_now - timedelta(seconds=offset_seconds)
+        return schedule_map
+
+    return {str(item["id"]): None for item in recipe_items}
 
 
 def _split_images(images: list[str], n: int) -> list[list[str]]:
@@ -93,6 +197,224 @@ class JobManager:
 
     def get_running(self, job_id: str) -> RunningJob | None:
         return self._running.get(job_id)
+
+    async def _load_publish_meta(self, job_id: uuid.UUID) -> dict[str, Any] | None:
+        async with SessionLocal() as session:
+            rows = await session.execute(
+                select(JobLog.message)
+                .where(JobLog.job_id == job_id)
+                .order_by(JobLog.created_at.asc())
+            )
+            for message in rows.scalars().all():
+                meta = _deserialize_publish_meta(message)
+                if meta is not None:
+                    return meta
+        return None
+
+    async def _revert_publishing_claims(self, job_id: str) -> None:
+        async with SessionLocal() as session:
+            await session.execute(
+                update(Recipe)
+                .where(
+                    Recipe.created_by_job_id == uuid.UUID(job_id),
+                    Recipe.status == RecipeStatus.publishing,
+                )
+                .values(status=RecipeStatus.generated)
+            )
+            await session.commit()
+
+    async def start_publish_batch_job(
+        self,
+        db_job: JobModel,
+        db: AsyncSession,
+        publish_meta: dict[str, Any],
+    ) -> None:
+        main_loop = asyncio.get_running_loop()
+        job_id_str = str(db_job.id)
+        query = (
+            select(Recipe, Site)
+            .join(Site, Recipe.site_id == Site.id)
+            .where(Site.project_id == db_job.project_id, Recipe.status == RecipeStatus.generated)
+        )
+        site_id = publish_meta.get("site_id")
+        recipe_id = publish_meta.get("recipe_id")
+        if site_id:
+            query = query.where(Recipe.site_id == uuid.UUID(str(site_id)))
+        if recipe_id:
+            query = query.where(Recipe.id == uuid.UUID(str(recipe_id)))
+        query = query.order_by(Site.id.asc(), Recipe.created_at.asc())
+        rows = (await db.execute(query)).all()
+        if not rows:
+            db_job.status = JobStatus.failed
+            db_job.error = "No generated recipes to publish for this project."
+            db_job.finished_at = datetime.now(timezone.utc)
+            await db.commit()
+            return
+
+        valid_pairs: list[tuple[Recipe, Site]] = []
+        for recipe, site in rows:
+            if recipe.generated_article:
+                valid_pairs.append((recipe, site))
+                continue
+            recipe.status = RecipeStatus.failed
+            recipe.error_message = "Missing generated article"
+
+        if not valid_pairs:
+            db_job.status = JobStatus.failed
+            db_job.error = "No publishable recipes found for this project."
+            db_job.finished_at = datetime.now(timezone.utc)
+            await db.commit()
+            return
+
+        valid_ids = [recipe.id for recipe, _site in valid_pairs]
+        await db.execute(
+            update(Recipe)
+            .where(
+                Recipe.id.in_(valid_ids),
+                Recipe.status == RecipeStatus.generated,
+            )
+            .values(
+                status=RecipeStatus.publishing,
+                created_by_job_id=db_job.id,
+                error_message=None,
+            )
+        )
+        claimed_rows = await db.execute(
+            select(Recipe, Site)
+            .join(Site, Recipe.site_id == Site.id)
+            .where(
+                Recipe.created_by_job_id == db_job.id,
+                Recipe.status == RecipeStatus.publishing,
+            )
+            .order_by(Site.id.asc(), Recipe.created_at.asc())
+        )
+        claimed_pairs = claimed_rows.all()
+        if not claimed_pairs:
+            db_job.status = JobStatus.failed
+            db_job.error = "No claimable generated recipes found. They may already be publishing."
+            db_job.finished_at = datetime.now(timezone.utc)
+            await db.commit()
+            return
+
+        await db.flush()
+        db.add(JobLog(job_id=db_job.id, message=_serialize_publish_meta(publish_meta)))
+        await db.commit()
+
+        schedule_map = _build_publish_schedule_map(
+            db_job.id,
+            [{"id": str(recipe.id), "site_id": str(recipe.site_id)} for recipe, _site in claimed_pairs],
+            publish_meta,
+        )
+        recipes_data = [
+            _publisher_recipe_payload(
+                recipe,
+                site_config=self._build_site_config(site),
+                post_date_gmt=schedule_map.get(str(recipe.id)),
+            )
+            for recipe, site in claimed_pairs
+        ]
+
+        rj = RunningJob(db_job.id)
+        self._running[job_id_str] = rj
+
+        async def _update_recipe(recipe_id_value: str, fields: dict[str, Any]) -> None:
+            async with SessionLocal() as session:
+                result = await session.execute(select(Recipe).where(Recipe.id == uuid.UUID(recipe_id_value)))
+                recipe = result.scalar_one_or_none()
+                if not recipe:
+                    return
+                for key, val in fields.items():
+                    if not hasattr(recipe, key) or val is None:
+                        continue
+                    if key == "pin_blog_link" and getattr(recipe, "pin_blog_link", None):
+                        continue
+                    setattr(recipe, key, val)
+                if fields.get("error_message"):
+                    recipe.status = RecipeStatus.failed
+                else:
+                    recipe.status = RecipeStatus.published
+                    recipe.error_message = None
+                await session.commit()
+
+        async def _persist_progress(current: int, total: int) -> None:
+            async with SessionLocal() as session:
+                result = await session.execute(select(JobModel).where(JobModel.id == db_job.id))
+                job = result.scalar_one_or_none()
+                if job:
+                    job.current_row = current
+                    job.total_rows = total
+                    await session.commit()
+
+        async def _persist_final(final_status: JobStatus, logs: list[str], error: str | None = None) -> None:
+            async with SessionLocal() as session:
+                result = await session.execute(select(JobModel).where(JobModel.id == db_job.id))
+                job = result.scalar_one_or_none()
+                if job:
+                    if job.status == JobStatus.stopped:
+                        final_status = JobStatus.stopped
+                    job.status = final_status
+                    job.finished_at = datetime.now(timezone.utc)
+                    job.error = error if error and final_status != JobStatus.stopped else None
+                    for msg in logs:
+                        session.add(JobLog(job_id=job.id, message=msg))
+                    await session.commit()
+
+        def _run() -> None:
+            from ..services.publisher import publish_recipes_from_db
+
+            def _on_recipe_done(recipe_id_value: str, fields: dict[str, Any]) -> None:
+                asyncio.run_coroutine_threadsafe(
+                    _update_recipe(recipe_id_value, fields),
+                    main_loop,
+                ).result()
+
+            def _on_progress(current: int, total: int) -> None:
+                rj.set_progress(current, total)
+                asyncio.run_coroutine_threadsafe(
+                    _persist_progress(current, total),
+                    main_loop,
+                ).result()
+
+            def _finalize(status: JobStatus, error: str | None = None) -> None:
+                asyncio.run_coroutine_threadsafe(
+                    _persist_final(status, rj._logs, error),
+                    main_loop,
+                ).result()
+                self._running.pop(job_id_str, None)
+
+            rj.log(f"Starting publisher job - {len(recipes_data)} recipes")
+            try:
+                publish_recipes_from_db(
+                    recipes=recipes_data,
+                    site_config=None,
+                    log=rj.log,
+                    should_stop=rj.should_stop,
+                    on_progress=_on_progress,
+                    on_recipe_done=_on_recipe_done,
+                )
+                final_status = JobStatus.stopped if rj.should_stop() else JobStatus.completed
+                if rj.should_stop():
+                    asyncio.run_coroutine_threadsafe(
+                        self._revert_publishing_claims(job_id_str),
+                        main_loop,
+                    ).result()
+                rj.log("Job completed successfully" if final_status == JobStatus.completed else "Job stopped")
+                _finalize(final_status)
+            except Exception as exc:
+                rj.log(f"Job failed: {exc}")
+                asyncio.run_coroutine_threadsafe(
+                    self._revert_publishing_claims(job_id_str),
+                    main_loop,
+                ).result()
+                _finalize(JobStatus.failed, error=str(exc))
+
+        thread = threading.Thread(target=_run, daemon=True)
+        rj._thread = thread
+        db_job.status = JobStatus.running
+        db_job.current_row = 0
+        db_job.total_rows = len(recipes_data)
+        await db.commit()
+        thread.start()
 
     async def start_job(
         self,
@@ -277,24 +599,7 @@ class JobManager:
                 await db.commit()
                 return
 
-            recipes_data = [
-                {
-                    "id": str(r.id),
-                    "recipe_text": r.recipe_text,
-                    "pin_title": r.pin_title,
-                    "image_url": r.image_url,
-                    "generated_article": r.generated_article,
-                    "generated_json": r.generated_json,
-                    "focus_keyword": r.focus_keyword,
-                    "meta_description": r.meta_description,
-                    "category": r.category,
-                    "generated_images": r.generated_images,
-                    "seo_title": r.seo_title,
-                    "wp_tags": r.wp_tags,
-                    "pin_blog_link": r.pin_blog_link,
-                }
-                for r in recipes_raw
-            ]
+            recipes_data = [_publisher_recipe_payload(r, site_config=site_config) for r in recipes_raw]
 
             if db_job.job_type == JobType.articles:
                 recipe_ids = [r.id for r in recipes_raw]
@@ -313,7 +618,7 @@ class JobManager:
                         Recipe.id.in_(recipe_ids),
                         Recipe.created_by_job_id == db_job.id,
                         Recipe.status == RecipeStatus.generating,
-                    )
+                    ).order_by(Recipe.created_at.asc())
                 )
                 claimed = claimed_rows.scalars().all()
                 if not claimed:
@@ -332,21 +637,48 @@ class JobManager:
                         len(recipe_ids),
                     )
                 recipes_data = [
-                    {
-                        "id": str(r.id),
-                        "recipe_text": r.recipe_text,
-                        "pin_title": r.pin_title,
-                        "image_url": r.image_url,
-                        "generated_article": r.generated_article,
-                        "generated_json": r.generated_json,
-                        "focus_keyword": r.focus_keyword,
-                        "meta_description": r.meta_description,
-                        "category": r.category,
-                        "generated_images": r.generated_images,
-                        "seo_title": r.seo_title,
-                        "wp_tags": r.wp_tags,
-                        "pin_blog_link": r.pin_blog_link,
-                    }
+                    _publisher_recipe_payload(r, site_config=site_config)
+                    for r in claimed
+                ]
+            elif db_job.job_type == JobType.publisher:
+                recipe_ids = [r.id for r in recipes_raw]
+                await db.execute(
+                    update(Recipe)
+                    .where(
+                        Recipe.id.in_(recipe_ids),
+                        Recipe.status == RecipeStatus.generated,
+                    )
+                    .values(
+                        status=RecipeStatus.publishing,
+                        created_by_job_id=db_job.id,
+                        error_message=None,
+                    )
+                )
+                claimed_rows = await db.execute(
+                    select(Recipe).where(
+                        Recipe.id.in_(recipe_ids),
+                        Recipe.created_by_job_id == db_job.id,
+                        Recipe.status == RecipeStatus.publishing,
+                    ).order_by(Recipe.created_at.asc())
+                )
+                claimed = claimed_rows.scalars().all()
+                if not claimed:
+                    db_job.status = JobStatus.failed
+                    db_job.error = (
+                        "No claimable generated recipes found. They may already be publishing."
+                    )
+                    db_job.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    return
+                if len(claimed) < len(recipe_ids):
+                    logger.warning(
+                        "Publisher job %s claimed %d/%d recipes; continuing with claimed subset",
+                        job_id_str,
+                        len(claimed),
+                        len(recipe_ids),
+                    )
+                recipes_data = [
+                    _publisher_recipe_payload(r, site_config=site_config)
                     for r in claimed
                 ]
 
@@ -394,7 +726,7 @@ class JobManager:
                 elif db_job.job_type == JobType.publisher:
                     publish_recipes_from_db(
                         recipes=recipes_data,
-                        site_config=site_config,
+                        site_config=site_config or None,
                         log=rj.log,
                         should_stop=rj.should_stop,
                         on_progress=_on_progress,
@@ -496,14 +828,27 @@ class JobManager:
 
                 final_status = JobStatus.stopped if rj.should_stop() else JobStatus.completed
                 rj.log("Job completed successfully" if final_status == JobStatus.completed else "Job stopped")
-                if rj.should_stop() and db_job.job_type in (JobType.articles, JobType.articles_all_sites):
-                    _revert_generating(recipes_data)
+                if rj.should_stop():
+                    if db_job.job_type in (JobType.articles, JobType.articles_all_sites):
+                        _revert_generating(recipes_data)
+                    elif db_job.job_type == JobType.publisher:
+                        future = asyncio.run_coroutine_threadsafe(
+                            self._revert_publishing_claims(job_id_str),
+                            main_loop,
+                        )
+                        future.result()
                 _finalize(job_id_str, final_status, rj._logs)
 
             except Exception as e:
                 rj.log(f"Job failed: {e}")
                 if db_job.job_type in (JobType.articles, JobType.articles_all_sites):
                     _revert_generating(recipes_data)
+                elif db_job.job_type == JobType.publisher:
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._revert_publishing_claims(job_id_str),
+                        main_loop,
+                    )
+                    future.result()
                 _finalize(job_id_str, JobStatus.failed, rj._logs, error=str(e))
 
         async def _update_recipe(recipe_id: str, fields: dict, job_type: JobType):
@@ -658,6 +1003,7 @@ class JobManager:
             multi_site_groups: list[dict] = []
             site_domain = ""
             site_config: dict = {}
+            site_pinterest_url = ""
 
             if db_job.job_type == JobType.articles_all_sites:
                 # Reload existing pending recipes grouped by (recipe_text, image_url)
@@ -700,8 +1046,56 @@ class JobManager:
                     })
                 recipes_data = [{"id": item["id"]} for g in multi_site_groups for item in g["items"]]
 
+            elif db_job.job_type == JobType.publisher:
+                publish_meta = await self._load_publish_meta(job_id)
+                claimed_rows = await db.execute(
+                    select(Recipe, Site)
+                    .join(Site, Recipe.site_id == Site.id)
+                    .where(Recipe.created_by_job_id == db_job.id)
+                    .order_by(Site.id.asc(), Recipe.created_at.asc())
+                )
+                claimed_pairs = claimed_rows.all()
+                if not claimed_pairs:
+                    db_job.status = JobStatus.completed
+                    db_job.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    return False
+
+                remaining_pairs = [
+                    (recipe, site)
+                    for recipe, site in claimed_pairs
+                    if recipe.status == RecipeStatus.publishing
+                ]
+                if not remaining_pairs:
+                    db_job.status = JobStatus.completed
+                    db_job.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    return False
+
+                schedule_map = _build_publish_schedule_map(
+                    db_job.id,
+                    [{"id": str(recipe.id), "site_id": str(recipe.site_id)} for recipe, _site in claimed_pairs],
+                    publish_meta,
+                )
+                site_ids = {str(site.id) for _recipe, site in claimed_pairs}
+                if len(site_ids) == 1:
+                    site_domain = remaining_pairs[0][1].domain
+                    site_config = self._build_site_config(remaining_pairs[0][1])
+                else:
+                    site_domain = "multiple sites"
+                    site_config = {}
+
+                recipes_data = [
+                    _publisher_recipe_payload(
+                        recipe,
+                        site_config=self._build_site_config(site),
+                        post_date_gmt=schedule_map.get(str(recipe.id)),
+                    )
+                    for recipe, site in remaining_pairs
+                ]
+
             else:
-                target_status = RecipeStatus.pending if db_job.job_type == JobType.articles else RecipeStatus.generated
+                target_status = RecipeStatus.pending
                 site_rows = await db.execute(
                     select(Site).where(Site.project_id == db_job.project_id).limit(1)
                 )
@@ -730,22 +1124,7 @@ class JobManager:
                     return False
 
                 recipes_data = [
-                    {
-                        "id": str(r.id),
-                        "recipe_text": r.recipe_text or "",
-                        "image_url": r.image_url or "",
-                        "focus_keyword": r.focus_keyword or "",
-                        "meta_description": r.meta_description or "",
-                        "category": r.category or "",
-                        "generated_article": r.generated_article or "",
-                        "generated_json": r.generated_json or "",
-                        "generated_images": r.generated_images or "",
-                        "wp_post_id": r.wp_post_id or "",
-                        "wp_permalink": r.wp_permalink or "",
-                        "seo_title": r.seo_title or "",
-                        "wp_tags": r.wp_tags or "",
-                        "pin_blog_link": r.pin_blog_link or "",
-                    }
+                    _publisher_recipe_payload(r, site_config=site_config)
                     for r in recipes_raw
                 ]
 
@@ -836,7 +1215,7 @@ class JobManager:
                     elif db_job.job_type == JobType.publisher:
                         publish_recipes_from_db(
                             recipes=recipes_data,
-                            site_config=site_config,
+                            site_config=site_config or None,
                             log=rj.log,
                             should_stop=rj.should_stop,
                             on_progress=_on_progress,
@@ -925,17 +1304,30 @@ class JobManager:
 
                     final_status = JobStatus.stopped if rj.should_stop() else JobStatus.completed
                     rj.log("Job completed" if final_status == JobStatus.completed else "Job stopped")
+                    if rj.should_stop() and db_job.job_type == JobType.publisher:
+                        asyncio.run_coroutine_threadsafe(
+                            self._revert_publishing_claims(job_id_str),
+                            main_loop,
+                        ).result()
                     _finalize(final_status)
                 except Exception as e:
                     rj.log(f"Job failed: {e}")
+                    if db_job.job_type == JobType.publisher:
+                        asyncio.run_coroutine_threadsafe(
+                            self._revert_publishing_claims(job_id_str),
+                            main_loop,
+                        ).result()
                     _finalize(JobStatus.failed, error=str(e))
 
             # Compute already-done and full-total counts so current_row/total_rows
             # reflect the entire job (not just the remaining slice).
+            done_statuses = [RecipeStatus.generated, RecipeStatus.published]
+            if db_job.job_type == JobType.publisher:
+                done_statuses = [RecipeStatus.published, RecipeStatus.failed]
             done_result = await db.execute(
                 select(func.count(Recipe.id)).where(
                     Recipe.created_by_job_id == db_job.id,
-                    Recipe.status.in_([RecipeStatus.generated, RecipeStatus.published]),
+                    Recipe.status.in_(done_statuses),
                 )
             )
             done_count: int = done_result.scalar() or 0

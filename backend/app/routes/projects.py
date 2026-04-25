@@ -22,22 +22,22 @@ from ..config import settings
 from ..database import get_db
 from ..db_models import (
     User, UserRole, Project, ProjectMember, ProjectMemberRole,
-    Site, Recipe, Job, ProjectPublishSchedule, RecipeStatus,
+    Site, Recipe, Job, JobStatus, JobType, ProjectPublishSchedule, RecipeStatus,
 )
 from ..dependencies import get_current_user, require_owner, check_project_access
 from ..pagination import apply_limit_offset, count_rows, set_total_count
 from ..models import (
     ProjectCreate, ProjectUpdate, ProjectOut, MemberAdd, MemberOut,
     PublishScheduleOut, PublishScheduleUpdate,
-    PublishBatchRequest, PublishBatchOut,
+    PublishBatchRequest, JobOut,
     ImageCleanupRunRequest, ImageCleanupRunResult,
     PinterestRecipeOut,
 )
 from ..services.email_service import send_project_invite_email
 from ..database import SessionLocal
 from ..services.image_retention_scheduler import cleanup_project_generated_images
-from ..services.publisher import publish_recipe
 from ..site_credentials import get_random_wp_credentials
+from ..workers.job_manager import job_manager
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 limiter = Limiter(key_func=get_remote_address)
@@ -520,7 +520,7 @@ async def start_publish_schedule_now(
     )
 
 
-@router.post("/{project_id}/publish-batch")
+@router.post("/{project_id}/publish-batch", response_model=JobOut, status_code=status.HTTP_202_ACCEPTED)
 @limiter.limit("5/minute")
 async def publish_batch_to_wordpress(
     request: Request,
@@ -529,8 +529,22 @@ async def publish_batch_to_wordpress(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Stream publishing progress as NDJSON. Each line is a JSON object with type=start|progress|done."""
+    """Queue a background WordPress publish job and return immediately."""
     await check_project_access(project_id, user, db, require_roles=[ProjectMemberRole.admin])
+
+    active_statuses = [JobStatus.pending, JobStatus.running]
+    dup = await db.execute(
+        select(Job).where(
+            Job.project_id == project_id,
+            Job.job_type == JobType.publisher,
+            Job.status.in_(active_statuses),
+        )
+    )
+    if dup.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409,
+            detail="A publish job is already running. Wait for it to finish.",
+        )
 
     sched_row = await db.execute(
         select(ProjectPublishSchedule).where(ProjectPublishSchedule.project_id == project_id)
@@ -538,129 +552,40 @@ async def publish_batch_to_wordpress(
     sched = sched_row.scalar_one_or_none()
     interval_minutes = max(1, body.interval_minutes if body.interval_minutes else (sched.interval_minutes if sched else 240))
 
-    query = (
-        select(Recipe, Site)
-        .join(Site, Recipe.site_id == Site.id)
-        .where(Site.project_id == project_id, Recipe.status == RecipeStatus.generated)
-    )
-    if body.site_id is not None:
-        query = query.where(Recipe.site_id == body.site_id)
-    if body.recipe_id is not None:
-        query = query.where(Recipe.id == body.recipe_id)
-    query = query.order_by(Site.id, Recipe.created_at.asc())
-    pairs_result = await db.execute(query)
-    pairs = pairs_result.all()
-    if not pairs:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No generated recipes to publish for this project.",
-        )
-
-    by_site: dict[uuid.UUID, list[tuple[Recipe, Site]]] = defaultdict(list)
-    for recipe, site in pairs:
-        by_site[site.id].append((recipe, site))
-
     now = datetime.now(timezone.utc)
-    base_dt = body.first_publish_at if body.first_publish_at else now
-    if base_dt.tzinfo is None:
-        base_dt = base_dt.replace(tzinfo=timezone.utc)
-    interval = timedelta(minutes=interval_minutes)
+    first_publish_at = body.first_publish_at if body.mode == "wordpress_scheduled" else None
+    if first_publish_at is None and body.mode == "wordpress_scheduled":
+        first_publish_at = now
+    if first_publish_at is not None and first_publish_at.tzinfo is None:
+        first_publish_at = first_publish_at.replace(tzinfo=timezone.utc)
 
-    work: list[tuple[dict, dict, datetime]] = []
+    job = Job(
+        project_id=project_id,
+        created_by=user.id,
+        job_type=JobType.publisher,
+        status=JobStatus.pending,
+    )
+    db.add(job)
+    await db.commit()
 
-    if body.mode == "wordpress_scheduled":
-        for _site_id, site_pairs in by_site.items():
-            for i, (recipe, site) in enumerate(site_pairs):
-                post_dt = base_dt + interval * i
-                _append_work(work, recipe, site, post_dt)
-    else:
-        six_months_sec = int(timedelta(days=183).total_seconds())
-        flat = [p for plist in by_site.values() for p in plist]
-        for recipe, site in flat:
-            off = random.randint(0, max(1, six_months_sec))
-            post_dt = now - timedelta(seconds=off)
-            _append_work(work, recipe, site, post_dt)
+    row = await db.execute(select(Job).where(Job.id == job.id))
+    job = row.scalar_one()
 
-    # Mark missing-article recipes as failed before streaming
-    valid_work: list[tuple[dict, dict, datetime]] = []
-    pre_failed = 0
-    for recipe_dict, site_config, post_dt in work:
-        if not recipe_dict.get("generated_article"):
-            row = await db.execute(select(Recipe).where(Recipe.id == uuid.UUID(recipe_dict["id"])))
-            r = row.scalar_one_or_none()
-            if r:
-                r.status = RecipeStatus.failed
-                r.error_message = "Missing generated article"
-                await db.commit()
-            pre_failed += 1
-        else:
-            valid_work.append((recipe_dict, site_config, post_dt))
+    await job_manager.start_publish_batch_job(
+        job,
+        db,
+        {
+            "mode": body.mode,
+            "first_publish_at": first_publish_at.isoformat() if first_publish_at else None,
+            "interval_minutes": interval_minutes,
+            "base_now": now.isoformat(),
+            "site_id": str(body.site_id) if body.site_id else None,
+            "recipe_id": str(body.recipe_id) if body.recipe_id else None,
+        },
+    )
 
-    async def generate():
-        yield _json.dumps({"type": "start", "total": len(valid_work), "pre_failed": pre_failed}) + "\n"
-        succeeded = 0
-        failed = 0
-        errors: list[str] = []
-        async with SessionLocal() as bg_db:
-            for recipe_dict, site_config, post_dt in valid_work:
-                pub_fn = functools.partial(
-                    publish_recipe, recipe_dict, site_config, None, post_date_gmt=post_dt,
-                )
-                try:
-                    result = await asyncio.to_thread(pub_fn)
-                except Exception as exc:
-                    logger.warning(
-                        "Publish batch exception for recipe %s in project %s: %s",
-                        recipe_dict.get("id"),
-                        project_id,
-                        str(exc)[:500],
-                    )
-                    result = {"error_message": "Failed to publish article to WordPress"}
-
-                recipe_id = uuid.UUID(recipe_dict["id"])
-                row = await bg_db.execute(select(Recipe).where(Recipe.id == recipe_id))
-                recipe = row.scalar_one_or_none()
-                if recipe:
-                    raw_error = result.get("error_message")
-                    if raw_error:
-                        logger.warning(
-                            "Publish batch provider failure for recipe %s in project %s: %s",
-                            recipe_id,
-                            project_id,
-                            str(raw_error)[:500],
-                        )
-                        recipe.status = RecipeStatus.failed
-                        recipe.error_message = "Failed to publish article to WordPress"
-                        failed += 1
-                        errors.append("Failed to publish article to WordPress")
-                    else:
-                        recipe.wp_post_id = result.get("wp_post_id")
-                        recipe.wp_permalink = result.get("wp_permalink")
-                        recipe.status = RecipeStatus.published
-                        recipe.error_message = None
-                        succeeded += 1
-                    await bg_db.commit()
-
-                recipe_name = (recipe_dict.get("recipe_text") or "")[:60].split("\n")[0]
-                yield _json.dumps({
-                    "type": "progress",
-                    "done": succeeded + failed,
-                    "total": len(valid_work),
-                    "succeeded": succeeded,
-                    "failed": failed,
-                    "recipe_name": recipe_name,
-                    "ok": not result.get("error_message"),
-                }) + "\n"
-
-        yield _json.dumps({
-            "type": "done",
-            "total": len(work),
-            "succeeded": succeeded,
-            "failed": failed + pre_failed,
-            "errors": errors[:20],
-        }) + "\n"
-
-    return StreamingResponse(generate(), media_type="application/x-ndjson")
+    row2 = await db.execute(select(Job).where(Job.id == job.id))
+    return row2.scalar_one()
 
 
 def _append_work(work: list, recipe: "Recipe", site: "Site", post_dt: datetime) -> None:
