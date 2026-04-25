@@ -1,11 +1,13 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2, MailCheck, RefreshCw } from "lucide-react";
 import { api, UserOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
 export default function UsersPage() {
   const USERS_PAGE_SIZE = 20;
@@ -21,6 +23,8 @@ export default function UsersPage() {
   const [error, setError] = useState("");
   const [resending, setResending] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const hasMore = users.length < totalUsers;
 
   useEffect(() => {
     if (role !== "owner") { router.push("/"); return; }
@@ -82,9 +86,26 @@ export default function UsersPage() {
     setResending(null);
   };
 
-  if (role !== "owner") return null;
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const { items, total } = await api.getUsersPage({
+        limit: USERS_PAGE_SIZE,
+        offset: users.length,
+      });
+      setUsers((prev) => [...prev, ...items]);
+      setTotalUsers(total);
+    } catch {
+      // keep current state on error
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, users.length, USERS_PAGE_SIZE]);
 
-  const remainingUsers = Math.max(0, totalUsers - users.length);
+  const sentinelRef = useInfiniteScroll(handleLoadMore, { hasMore, loading: loadingMore });
+
+  if (role !== "owner") return null;
 
   return (
     <div>
@@ -246,17 +267,7 @@ export default function UsersPage() {
           <p className="text-center py-8 text-gray-500 text-sm">No users yet.</p>
         )}
       </div>
-      {remainingUsers > 0 && (
-        <div className="flex justify-center pt-4">
-          <button
-            type="button"
-            onClick={() => load(users.length + USERS_PAGE_SIZE)}
-            className="btn-secondary text-sm px-4 py-2"
-          >
-            Load {Math.min(USERS_PAGE_SIZE, remainingUsers)} more
-          </button>
-        </div>
-      )}
+      <InfiniteScrollSentinel sentinelRef={sentinelRef} loading={loadingMore} hasMore={hasMore} />
     </div>
   );
 }

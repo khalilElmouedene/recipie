@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Save, CalendarClock, History, Trash2 } from "lucide-react";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 import { api, GeneratedJobRecipeOut, JobOut, PublishScheduleOut, PublishBatchRequest } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
@@ -19,7 +21,7 @@ export default function JobResultsPage() {
   const [job, setJob] = useState<JobOut | null>(null);
   const [recipes, setRecipes] = useState<GeneratedJobRecipeOut[]>([]);
   const [totalRecipeCount, setTotalRecipeCount] = useState(0);
-  const [visibleRecipeCount, setVisibleRecipeCount] = useState(20);
+  const RECIPES_PAGE_SIZE = 20;
   const [schedule, setSchedule] = useState<PublishScheduleOut | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [intervalMinutes, setIntervalMinutes] = useState(240);
@@ -30,13 +32,13 @@ export default function JobResultsPage() {
   const [batchModalData, setBatchModalData] = useState<PublishBatchRequest | null>(null);
 
   useEffect(() => {
-    api.getJobGeneratedRecipesPage(id, { limit: visibleRecipeCount, offset: 0 })
+    api.getJobGeneratedRecipesPage(id, { limit: RECIPES_PAGE_SIZE, offset: 0 })
       .then(({ items, total }) => {
         setRecipes(items);
         setTotalRecipeCount(total);
       })
       .catch(() => {});
-  }, [id, visibleRecipeCount]);
+  }, [id]);
 
   useEffect(() => {
     api.getJob(id).then(setJob).catch(() => router.push("/"));
@@ -88,7 +90,7 @@ export default function JobResultsPage() {
     try {
       const res = await api.runProjectImageCleanup(job.project_id, { delete_all_published: true });
       toast.success(`Deleted: ${res.recipes_deleted} recipes, ${res.files_deleted} image files removed.`);
-      const page = await api.getJobGeneratedRecipesPage(id, { limit: visibleRecipeCount, offset: 0 });
+      const page = await api.getJobGeneratedRecipesPage(id, { limit: RECIPES_PAGE_SIZE, offset: 0 });
       setRecipes(page.items);
       setTotalRecipeCount(page.total);
     } catch (e: any) {
@@ -111,13 +113,33 @@ export default function JobResultsPage() {
     setBatchModalData(null);
     setBatchPublishing(null);
     if (didPublish) {
-      const page = await api.getJobGeneratedRecipesPage(id, { limit: visibleRecipeCount, offset: 0 });
+      const page = await api.getJobGeneratedRecipesPage(id, { limit: RECIPES_PAGE_SIZE, offset: 0 });
       setRecipes(page.items);
       setTotalRecipeCount(page.total);
     }
   };
 
-  const remainingRecipeCount = Math.max(0, totalRecipeCount - recipes.length);
+  const hasMore = recipes.length < totalRecipeCount;
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const { items, total } = await api.getJobGeneratedRecipesPage(id, {
+        limit: RECIPES_PAGE_SIZE,
+        offset: recipes.length,
+      });
+      setRecipes((prev) => [...prev, ...items]);
+      setTotalRecipeCount(total);
+    } catch {
+      // keep current state on error
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, id, recipes.length]);
+
+  const sentinelRef = useInfiniteScroll(handleLoadMore, { hasMore, loading: loadingMore });
 
   return (
     <div>
@@ -239,17 +261,7 @@ export default function JobResultsPage() {
             </div>
           </div>
         ))}
-        {remainingRecipeCount > 0 && (
-          <div className="flex justify-center">
-            <button
-              type="button"
-              onClick={() => setVisibleRecipeCount((count) => count + 20)}
-              className="btn-secondary text-sm px-4 py-2"
-            >
-              Load {Math.min(20, remainingRecipeCount)} more recipes
-            </button>
-          </div>
-        )}
+        <InfiniteScrollSentinel sentinelRef={sentinelRef} loading={loadingMore} hasMore={hasMore} />
       </div>
     </div>
   );

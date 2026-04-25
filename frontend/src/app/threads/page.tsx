@@ -1,8 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, MessageCircle, Trash2, X, Settings } from "lucide-react";
 import { api, ThreadsProjectOut } from "@/lib/api";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
 export default function ThreadsProjectsPage() {
   const PROJECTS_PAGE_SIZE = 12;
@@ -24,6 +26,8 @@ export default function ThreadsProjectsPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const hasMore = projects.length < totalProjects;
 
   const load = () => {
     setLoading(true);
@@ -37,6 +41,25 @@ export default function ThreadsProjectsPage() {
   };
 
   useEffect(() => { load(); }, []);
+
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const { items, total } = await api.getThreadsProjectsPage({
+        limit: PROJECTS_PAGE_SIZE,
+        offset: projects.length,
+      });
+      setProjects((prev) => [...prev, ...items]);
+      setTotalProjects(total);
+    } catch {
+      setError("Failed to load more projects");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, projects.length, PROJECTS_PAGE_SIZE]);
+
+  const sentinelRef = useInfiniteScroll(handleLoadMore, { hasMore, loading: loadingMore });
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -241,29 +264,9 @@ export default function ThreadsProjectsPage() {
               No Threads projects yet. Create one to get started.
             </div>
           )}
-          {totalProjects > projects.length && (
-            <div className="col-span-full flex justify-center pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setLoading(true);
-                  api.getThreadsProjectsPage({
-                    limit: projects.length + PROJECTS_PAGE_SIZE,
-                    offset: 0,
-                  })
-                    .then(({ items, total }) => {
-                      setProjects(items);
-                      setTotalProjects(total);
-                    })
-                    .catch(() => setError("Failed to load Threads projects"))
-                    .finally(() => setLoading(false));
-                }}
-                className="btn-secondary text-sm px-4 py-2"
-              >
-                Load {Math.min(PROJECTS_PAGE_SIZE, totalProjects - projects.length)} more
-              </button>
-            </div>
-          )}
+          <div className="col-span-full">
+            <InfiniteScrollSentinel sentinelRef={sentinelRef} loading={loadingMore} hasMore={hasMore} />
+          </div>
         </div>
       )}
     </div>

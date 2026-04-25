@@ -7,6 +7,8 @@ import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, Pr
 import { getUserRole, getUserId } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
 type Tab = "sites" | "members" | "jobs" | "settings";
 
@@ -569,6 +571,8 @@ function MembersTab({ projectId, role }: { projectId: string; role: string | nul
   const [users, setUsers] = useState<UserOut[]>([]);
   const [selUser, setSelUser] = useState("");
   const [selRole, setSelRole] = useState("member");
+  const [loadingMore, setLoadingMore] = useState(false);
+  const hasMoreMembers = members.length < totalMembers;
 
   const load = (limit = Math.max(members.length || 0, MEMBERS_PAGE_SIZE)) =>
     api.getMembersPage(projectId, { limit, offset: 0 })
@@ -577,6 +581,25 @@ function MembersTab({ projectId, role }: { projectId: string; role: string | nul
         setTotalMembers(total);
       })
       .catch(() => {});
+
+  const handleLoadMoreMembers = useCallback(async () => {
+    if (loadingMore || !hasMoreMembers) return;
+    setLoadingMore(true);
+    try {
+      const { items, total } = await api.getMembersPage(projectId, {
+        limit: MEMBERS_PAGE_SIZE,
+        offset: members.length,
+      });
+      setMembers((prev) => [...prev, ...items]);
+      setTotalMembers(total);
+    } catch {
+      // keep current state on error
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMoreMembers, members.length, MEMBERS_PAGE_SIZE, projectId]);
+
+  const membersSentinelRef = useInfiniteScroll(handleLoadMoreMembers, { hasMore: hasMoreMembers, loading: loadingMore });
   useEffect(() => {
     load();
     if (role === "owner") api.getUsers().then(setUsers).catch(() => {});
@@ -637,17 +660,7 @@ function MembersTab({ projectId, role }: { projectId: string; role: string | nul
           </div>
         ))}
         {members.length === 0 && <p className="text-center py-8 text-gray-500">No members assigned yet.</p>}
-        {totalMembers > members.length && (
-          <div className="flex justify-center pt-2">
-            <button
-              type="button"
-              onClick={() => load(members.length + MEMBERS_PAGE_SIZE)}
-              className="btn-secondary text-sm px-4 py-2"
-            >
-              Load {Math.min(MEMBERS_PAGE_SIZE, totalMembers - members.length)} more members
-            </button>
-          </div>
-        )}
+        <InfiniteScrollSentinel sentinelRef={membersSentinelRef} loading={loadingMore} hasMore={hasMoreMembers} />
       </div>
     </div>
   );
@@ -657,6 +670,9 @@ function JobsTab({ projectId }: { projectId: string }) {
   const JOBS_PAGE_SIZE = 20;
   const [jobs, setJobs] = useState<JobOut[]>([]);
   const [totalJobs, setTotalJobs] = useState(0);
+  const [loadingMoreJobs, setLoadingMoreJobs] = useState(false);
+  const hasMoreJobs = jobs.length < totalJobs;
+
   const load = (limit = Math.max(jobs.length || 0, JOBS_PAGE_SIZE)) =>
     api.getProjectJobsPage(projectId, { limit, offset: 0 })
       .then(({ items, total }) => {
@@ -665,6 +681,25 @@ function JobsTab({ projectId }: { projectId: string }) {
       })
       .catch(() => {});
   useEffect(() => { load(); }, [projectId]);
+
+  const handleLoadMoreJobs = useCallback(async () => {
+    if (loadingMoreJobs || !hasMoreJobs) return;
+    setLoadingMoreJobs(true);
+    try {
+      const { items, total } = await api.getProjectJobsPage(projectId, {
+        limit: JOBS_PAGE_SIZE,
+        offset: jobs.length,
+      });
+      setJobs((prev) => [...prev, ...items]);
+      setTotalJobs(total);
+    } catch {
+      // keep current state on error
+    } finally {
+      setLoadingMoreJobs(false);
+    }
+  }, [loadingMoreJobs, hasMoreJobs, jobs.length, JOBS_PAGE_SIZE, projectId]);
+
+  const jobsSentinelRef = useInfiniteScroll(handleLoadMoreJobs, { hasMore: hasMoreJobs, loading: loadingMoreJobs });
 
   const statusColor: Record<string, string> = {
     pending: "bg-gray-700 text-gray-300",
@@ -689,17 +724,7 @@ function JobsTab({ projectId }: { projectId: string }) {
         </Link>
       ))}
       {jobs.length === 0 && <p className="text-center py-8 text-gray-500">No jobs yet.</p>}
-      {totalJobs > jobs.length && (
-        <div className="flex justify-center pt-2">
-          <button
-            type="button"
-            onClick={() => load(jobs.length + JOBS_PAGE_SIZE)}
-            className="btn-secondary text-sm px-4 py-2"
-          >
-            Load {Math.min(JOBS_PAGE_SIZE, totalJobs - jobs.length)} more jobs
-          </button>
-        </div>
-      )}
+      <InfiniteScrollSentinel sentinelRef={jobsSentinelRef} loading={loadingMoreJobs} hasMore={hasMoreJobs} />
     </div>
   );
 }

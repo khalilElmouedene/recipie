@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, RefreshCcw, Search } from "lucide-react";
 import { api, AuditLogOut } from "@/lib/api";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 
 const ALLOWED_EMAIL = "khalil@gmail.com";
 const PAGE_SIZE = 50;
@@ -15,35 +16,63 @@ export default function LogsPage() {
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<AuditLogOut[]>([]);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
   const [action, setAction] = useState("");
   const [tableName, setTableName] = useState("");
   const [entityPk, setEntityPk] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Keep track of current offset for appending pages
+  const offsetRef = useRef(0);
+  const hasMore = logs.length < total;
 
-  const page = useMemo(() => Math.floor(offset / PAGE_SIZE) + 1, [offset]);
-  const maxPage = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total]);
-
-  const loadLogs = async (nextOffset = offset) => {
+  // Resets the list and fetches from offset 0 (used on search / filter change)
+  const loadLogs = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await api.getAuditLogs({
         limit: PAGE_SIZE,
-        offset: nextOffset,
+        offset: 0,
         action: action || undefined,
         table_name: tableName.trim() || undefined,
         entity_pk: entityPk.trim() || undefined,
       });
       setLogs(res.items);
       setTotal(res.total);
-      setOffset(nextOffset);
+      offsetRef.current = res.items.length;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load logs");
     } finally {
       setLoading(false);
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [action, tableName, entityPk]);
+
+  // Appends the next page (used by infinite scroll)
+  const loadMoreLogs = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await api.getAuditLogs({
+        limit: PAGE_SIZE,
+        offset: offsetRef.current,
+        action: action || undefined,
+        table_name: tableName.trim() || undefined,
+        entity_pk: entityPk.trim() || undefined,
+      });
+      setLogs((prev) => [...prev, ...res.items]);
+      setTotal(res.total);
+      offsetRef.current += res.items.length;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load logs");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, action, tableName, entityPk]);
+
+  const sentinelRef = useInfiniteScroll(loadMoreLogs, { hasMore, loading: loadingMore });
+
+  const _total = total;
 
   useEffect(() => {
     let active = true;
@@ -56,16 +85,13 @@ export default function LogsPage() {
           return;
         }
         setCheckingAccess(false);
-        await loadLogs(0);
+        await loadLogs();
       } catch {
         router.replace("/");
       }
     })();
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router]);
+    return () => { active = false; };
+  }, [router]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (checkingAccess) {
     return (
@@ -81,7 +107,7 @@ export default function LogsPage() {
         <h1 className="text-xl font-semibold text-white">Application Logs</h1>
         <div className="ml-auto flex items-center gap-2">
           <button
-            onClick={() => void loadLogs(0)}
+            onClick={() => void loadLogs()}
             disabled={loading}
             className="btn-secondary flex items-center gap-1.5 px-3 py-2 text-xs"
           >
@@ -115,7 +141,7 @@ export default function LogsPage() {
           className="input-field w-full"
         />
         <button
-          onClick={() => void loadLogs(0)}
+          onClick={() => void loadLogs()}
           disabled={loading}
           className="btn-primary flex items-center justify-center gap-1.5 text-sm"
         >
@@ -131,7 +157,7 @@ export default function LogsPage() {
       )}
 
       <div className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
-        <div className="max-h-[65vh] overflow-auto">
+        <div className="max-h-[70vh] overflow-auto">
           <table className="w-full min-w-[980px] border-collapse text-left text-xs">
             <thead className="sticky top-0 z-10 bg-gray-800">
               <tr>
@@ -166,25 +192,15 @@ export default function LogsPage() {
           </table>
         </div>
         <div className="flex items-center justify-between border-t border-gray-800 px-3 py-2 text-xs text-gray-400">
-          <span>Total: {total}</span>
-          <div className="flex items-center gap-2">
-            <button
-              disabled={offset === 0 || loading}
-              onClick={() => void loadLogs(Math.max(0, offset - PAGE_SIZE))}
-              className="rounded border border-gray-700 px-2 py-1 disabled:opacity-40"
-            >
-              Prev
-            </button>
-            <span>Page {page} / {maxPage}</span>
-            <button
-              disabled={offset + PAGE_SIZE >= total || loading}
-              onClick={() => void loadLogs(offset + PAGE_SIZE)}
-              className="rounded border border-gray-700 px-2 py-1 disabled:opacity-40"
-            >
-              Next
-            </button>
-          </div>
+          <span>Total: {_total} · Chargés: {logs.length}</span>
+          {loadingMore && (
+            <span className="flex items-center gap-1.5 text-gray-500">
+              <Loader2 size={12} className="animate-spin" /> Chargement…
+            </span>
+          )}
         </div>
+        {/* Sentinel outside the scrollable table so IntersectionObserver picks it up */}
+        <div ref={sentinelRef} className="h-1" />
       </div>
     </div>
   );

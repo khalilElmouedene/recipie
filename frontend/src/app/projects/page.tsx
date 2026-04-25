@@ -5,6 +5,8 @@ import { Plus, FolderKanban, Globe, ChefHat, Copy, Trash2, Pencil, X } from "luc
 import { api, ProjectOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
 export default function ProjectsPage() {
   const PROJECTS_PAGE_SIZE = 12;
@@ -22,8 +24,10 @@ export default function ProjectsPage() {
   const [renameName, setRenameName] = useState("");
   const [savingRename, setSavingRename] = useState(false);
   const toast = useToast();
+  const [loadingMore, setLoadingMore] = useState(false);
   const syncedOnceRef = useRef(false);
   const previousProjectsRef = useRef<Map<string, string>>(new Map());
+  const hasMore = projects.length < totalProjects;
 
   const load = useCallback(async (opts?: { announceMembershipChanges?: boolean; limit?: number }) => {
     try {
@@ -141,7 +145,24 @@ export default function ProjectsPage() {
     setLoading(false);
   };
 
-  const remainingProjects = Math.max(0, totalProjects - projects.length);
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const { items, total } = await api.getProjectsPage({
+        limit: PROJECTS_PAGE_SIZE,
+        offset: projects.length,
+      });
+      setProjects((prev) => [...prev, ...items]);
+      setTotalProjects(total);
+    } catch {
+      // keep current state on error
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, projects.length, PROJECTS_PAGE_SIZE]);
+
+  const sentinelRef = useInfiniteScroll(handleLoadMore, { hasMore, loading: loadingMore });
 
   return (
     <div>
@@ -246,22 +267,9 @@ export default function ProjectsPage() {
             No projects yet. {role === "owner" ? "Create one to get started." : "Ask the owner to assign you to a project."}
           </div>
         )}
-        {remainingProjects > 0 && (
-          <div className="col-span-full flex justify-center pt-2">
-            <button
-              type="button"
-              onClick={() =>
-                load({
-                  announceMembershipChanges: false,
-                  limit: projects.length + PROJECTS_PAGE_SIZE,
-                })
-              }
-              className="btn-secondary text-sm px-4 py-2"
-            >
-              Load {Math.min(PROJECTS_PAGE_SIZE, remainingProjects)} more
-            </button>
-          </div>
-        )}
+        <div className="col-span-full">
+          <InfiniteScrollSentinel sentinelRef={sentinelRef} loading={loadingMore} hasMore={hasMore} />
+        </div>
       </div>
 
       {renameProject && (

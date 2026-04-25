@@ -7,6 +7,8 @@ import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
 const API_URL = getApiBaseUrl();
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "stopped"]);
@@ -98,13 +100,13 @@ export default function SiteDetailPage() {
   // Idempotency refs: block re-entry between click and React re-render (same-frame double-clicks)
   const jobStartingRef = useRef(false);
   const generatingIdsRef = useRef<Set<string>>(new Set());
-  const [visibleRecipeCount, setVisibleRecipeCount] = useState(10);
-  const [totalRecipeCount, setTotalRecipeCount] = useState(0);
   const RECIPES_PAGE_SIZE = 10;
+  const visibleCountRef = useRef(RECIPES_PAGE_SIZE);
+  const [totalRecipeCount, setTotalRecipeCount] = useState(0);
 
   const loadRecipes = useCallback(
     () =>
-      api.getRecipesPage(siteId, { summary: true, limit: visibleRecipeCount, offset: 0 })
+      api.getRecipesPage(siteId, { summary: true, limit: visibleCountRef.current, offset: 0 })
         .then(({ items, total }) => {
           setTotalRecipeCount(total);
           const rows = items;
@@ -159,7 +161,7 @@ export default function SiteDetailPage() {
           setExpandedId((current) => (current && !incomingIds.has(current) ? null : current));
         })
         .catch(() => {}),
-    [siteId, visibleRecipeCount]
+    [siteId]
   );
 
   const ensureRecipeDetails = useCallback(async (recipeId: string) => {
@@ -768,10 +770,29 @@ export default function SiteDetailPage() {
   const publishedCount = recipeStats.published;
   const failedCount = recipeStats.failed;
   const visibleRecipes = recipes;
-  const remainingRecipeCount = Math.max(0, totalRecipeCount - recipes.length);
-  const loadMoreRecipes = useCallback(() => {
-    setVisibleRecipeCount((count) => count + RECIPES_PAGE_SIZE);
-  }, []);
+  const hasMoreRecipes = recipes.length < totalRecipeCount;
+  const [loadingMoreRecipes, setLoadingMoreRecipes] = useState(false);
+
+  const handleLoadMoreRecipes = useCallback(async () => {
+    if (loadingMoreRecipes || !hasMoreRecipes) return;
+    setLoadingMoreRecipes(true);
+    try {
+      const { items, total } = await api.getRecipesPage(siteId, {
+        summary: true,
+        limit: RECIPES_PAGE_SIZE,
+        offset: recipes.length,
+      });
+      setTotalRecipeCount(total);
+      setRecipes((prev) => [...prev, ...items]);
+      visibleCountRef.current += items.length;
+    } catch {
+      // keep current state on error
+    } finally {
+      setLoadingMoreRecipes(false);
+    }
+  }, [loadingMoreRecipes, hasMoreRecipes, siteId, recipes.length, RECIPES_PAGE_SIZE]);
+
+  const recipesSentinelRef = useInfiniteScroll(handleLoadMoreRecipes, { hasMore: hasMoreRecipes, loading: loadingMoreRecipes });
 
   if (!site) return null;
 
@@ -1531,17 +1552,7 @@ export default function SiteDetailPage() {
           </div>
         ))}
         {totalRecipeCount === 0 && <p className="text-center py-8 text-gray-500">No recipes yet. Add one above.</p>}
-        {remainingRecipeCount > 0 && (
-          <div className="pt-3 flex justify-center">
-            <button
-              type="button"
-              onClick={loadMoreRecipes}
-              className="btn-secondary text-sm px-4 py-2"
-            >
-              Load {Math.min(RECIPES_PAGE_SIZE, remainingRecipeCount)} more
-            </button>
-          </div>
-        )}
+        <InfiniteScrollSentinel sentinelRef={recipesSentinelRef} loading={loadingMoreRecipes} hasMore={hasMoreRecipes} className="pt-1" />
       </div>
 
       {/* Bulk Pin Generator */}

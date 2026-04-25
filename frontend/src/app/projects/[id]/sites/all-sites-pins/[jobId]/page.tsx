@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ImageIcon } from "lucide-react";
 import { api, GeneratedJobRecipeOut } from "@/lib/api";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
 function isRecipePublished(recipe: GeneratedJobRecipeOut): boolean {
   return recipe.status === "published" || Boolean(recipe.wp_permalink);
@@ -13,21 +15,21 @@ export default function AllSitesJobPinsPage() {
   const params = useParams<{ id: string; jobId: string }>();
   const router = useRouter();
   const { id: projectId, jobId } = params;
+  const RECIPES_PAGE_SIZE = 20;
   const [recipes, setRecipes] = useState<GeneratedJobRecipeOut[]>([]);
   const [totalRecipeCount, setTotalRecipeCount] = useState(0);
-  const [visibleRecipeCount, setVisibleRecipeCount] = useState(20);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    api.getJobGeneratedRecipesPage(jobId, { limit: visibleRecipeCount, offset: 0 })
+    api.getJobGeneratedRecipesPage(jobId, { limit: RECIPES_PAGE_SIZE, offset: 0 })
       .then(({ items, total }) => {
         setRecipes(items);
         setTotalRecipeCount(total);
       })
       .catch(() => setRecipes([]))
       .finally(() => setLoading(false));
-  }, [jobId, visibleRecipeCount]);
+  }, [jobId]);
 
   const bySite = useMemo(() => {
     const m = new Map<string, { siteId: string; domain: string; items: GeneratedJobRecipeOut[] }>();
@@ -45,6 +47,28 @@ export default function AllSitesJobPinsPage() {
       }))
       .sort((a, b) => a.domain.localeCompare(b.domain));
   }, [recipes]);
+
+  const hasMore = recipes.length < totalRecipeCount;
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const { items, total } = await api.getJobGeneratedRecipesPage(jobId, {
+        limit: RECIPES_PAGE_SIZE,
+        offset: recipes.length,
+      });
+      setRecipes((prev) => [...prev, ...items]);
+      setTotalRecipeCount(total);
+    } catch {
+      // keep current state on error
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, jobId, recipes.length]);
+
+  const sentinelRef = useInfiniteScroll(handleLoadMore, { hasMore, loading: loadingMore });
 
   const fullyPublishedSites = bySite.filter(
     (g) => g.items.length > 0 && g.publishedCount === g.items.length
@@ -112,17 +136,7 @@ export default function AllSitesJobPinsPage() {
           ))}
         </div>
       )}
-      {remainingRecipeCount > 0 && (
-        <div className="flex justify-center mt-4">
-          <button
-            type="button"
-            onClick={() => setVisibleRecipeCount((count) => count + 20)}
-            className="btn-secondary text-sm px-4 py-2"
-          >
-            Load {Math.min(20, remainingRecipeCount)} more recipes
-          </button>
-        </div>
-      )}
+      <InfiniteScrollSentinel sentinelRef={sentinelRef} loading={loadingMore} hasMore={hasMore} className="mt-4" />
     </div>
   );
 }
