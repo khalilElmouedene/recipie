@@ -1633,14 +1633,18 @@ export default function PinDesigner({
     if (!projectId) return;
     setWpBatchBusy(mode);
     try {
-      // 1. Save all pin designs into their recipes first (embed image in article after Conclusion)
-      if (frames && frames.length > 0) {
-        await saveAllFrames(false);
-      } else if (recipeId) {
-        // Single recipe mode — save current canvas pin into article
-        const data = getExportDataUrl();
-        if (data) {
-          await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe");
+      // 1. Save pin designs only if the user has actually done a design (template selected or prior design exists).
+      // If no template is selected and no saved design exists, skip straight to publish.
+      const hasDesign = selectedTemplate !== null || !!initialJson;
+      if (hasDesign) {
+        if (frames && frames.length > 0) {
+          await saveAllFrames(false);
+        } else if (recipeId) {
+          // Single recipe mode — save current canvas pin into article
+          const data = getExportDataUrl();
+          if (data) {
+            await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe");
+          }
         }
       }
       // 2. Open batch publish modal.

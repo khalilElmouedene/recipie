@@ -82,7 +82,7 @@ export default function JobActivityCenter() {
       <button
         type="button"
         onClick={toggle}
-        className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-gray-800 bg-gray-900/80 text-gray-300 transition hover:border-gray-700 hover:bg-gray-850 hover:text-white"
+        className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-gray-800 bg-gray-900 text-gray-300 transition hover:border-gray-700 hover:bg-gray-800 hover:text-white"
         aria-label="Open activity pipeline"
       >
         <Bell size={18} />
@@ -94,8 +94,9 @@ export default function JobActivityCenter() {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full z-[120] mt-3 w-[min(92vw,25rem)] overflow-hidden rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl">
-          <div className="border-b border-gray-800 bg-[radial-gradient(circle_at_top_right,_rgba(59,130,246,0.18),_transparent_40%)] px-4 py-4">
+        <div className="absolute right-0 top-full z-[120] mt-3 w-[min(92vw,25rem)] overflow-hidden rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl">
+          {/* Header */}
+          <div className="border-b border-gray-700 bg-gray-900 px-4 py-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.26em] text-gray-500">Pipeline</p>
@@ -108,7 +109,7 @@ export default function JobActivityCenter() {
                 <button
                   type="button"
                   onClick={clearFinished}
-                  className="rounded-lg border border-gray-800 px-2.5 py-1 text-[11px] font-medium text-gray-300 transition hover:border-gray-700 hover:bg-gray-900 hover:text-white"
+                  className="rounded-lg border border-gray-700 px-2.5 py-1 text-[11px] font-medium text-gray-300 transition hover:border-gray-600 hover:bg-gray-800 hover:text-white"
                 >
                   Clear finished
                 </button>
@@ -116,9 +117,10 @@ export default function JobActivityCenter() {
             </div>
           </div>
 
-          <div className="max-h-[70vh] overflow-y-auto px-3 py-3">
+          {/* Body */}
+          <div className="max-h-[70vh] overflow-y-auto bg-gray-900 px-3 py-3">
             {sortedItems.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-gray-800 bg-gray-900/70 px-4 py-8 text-center">
+              <div className="rounded-xl border border-dashed border-gray-700 bg-gray-800 px-4 py-8 text-center">
                 <p className="text-sm font-medium text-white">No background jobs yet</p>
                 <p className="mt-2 text-xs leading-5 text-gray-400">
                   Start a generation or publishing task and it will appear here.
@@ -141,7 +143,7 @@ export default function JobActivityCenter() {
                             close();
                             router.push(item.href);
                           }}
-                          className="group w-full rounded-2xl border border-gray-800 bg-gray-900/80 px-4 py-3 text-left transition hover:border-gray-700 hover:bg-gray-900"
+                          className="group w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-left transition hover:border-gray-600 hover:bg-gray-750"
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
@@ -164,7 +166,7 @@ export default function JobActivityCenter() {
                           </div>
                           {progressPct !== null && (
                             <div className="mt-3">
-                              <div className="h-1.5 overflow-hidden rounded-full bg-gray-800">
+                              <div className="h-1.5 overflow-hidden rounded-full bg-gray-700">
                                 <div
                                   className="h-full rounded-full bg-brand-600 transition-all duration-300"
                                   style={{ width: `${progressPct}%` }}
@@ -184,7 +186,7 @@ export default function JobActivityCenter() {
                     {recentItems.map((item) => (
                       <div
                         key={item.id}
-                        className="rounded-2xl border border-gray-800 bg-gray-900/70 px-4 py-3"
+                        className="rounded-xl border border-gray-700 bg-gray-800 px-4 py-3"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <button
@@ -215,7 +217,7 @@ export default function JobActivityCenter() {
                           <button
                             type="button"
                             onClick={() => dismissJob(item.id)}
-                            className="rounded-lg p-1.5 text-gray-500 transition hover:bg-gray-800 hover:text-gray-200"
+                            className="rounded-lg p-1.5 text-gray-500 transition hover:bg-gray-700 hover:text-gray-200"
                             aria-label="Dismiss job"
                           >
                             <Trash2 size={14} />

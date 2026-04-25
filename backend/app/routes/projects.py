@@ -546,6 +546,22 @@ async def publish_batch_to_wordpress(
             detail="A publish job is already running. Wait for it to finish.",
         )
 
+    # Preflight: make sure there is at least one publishable recipe in the requested scope.
+    site_scope = select(Site.id).where(Site.project_id == project_id)
+    preflight_filters = [Recipe.site_id.in_(site_scope), Recipe.status == RecipeStatus.generated]
+    if body.recipe_ids:
+        preflight_filters.append(Recipe.id.in_([uuid.UUID(str(r)) for r in body.recipe_ids]))
+    elif body.recipe_id:
+        preflight_filters.append(Recipe.id == body.recipe_id)
+    elif body.site_id:
+        preflight_filters.append(Recipe.site_id == body.site_id)
+    publishable_count = await db.scalar(select(func.count()).select_from(Recipe).where(*preflight_filters)) or 0
+    if publishable_count == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="No publishable recipes found. All recipes may already be published or are still generating.",
+        )
+
     sched_row = await db.execute(
         select(ProjectPublishSchedule).where(ProjectPublishSchedule.project_id == project_id)
     )
