@@ -6,9 +6,10 @@ import {
   ArrowLeft, Save, Download, Upload, Plus, Minus,
   Bold, Italic, Underline, Strikethrough,
   AlignLeft, AlignCenter, AlignRight,
-  Palette, PaintBucket, Loader2, Check, Copy, Trash2, Pencil,
+  Palette, PaintBucket, Loader2, Check, Copy, Trash2, Pencil, Send,
 } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, SharedRecipeInput } from "@/lib/api";
+import { useToast } from "@/contexts/ToastContext";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DEFAULT_ROWS = 50;
@@ -19,6 +20,32 @@ const COL_RESIZE_HITBOX = 10;
 const DEFAULT_ROW_HEIGHT = 26;
 const HEADER_WIDTH = 50;
 const HEADER_HEIGHT = 26;
+const FLOATING_CARD_WIDTH = 360;
+const FLOATING_CARD_HEIGHT = 320;
+const IMAGE_HEADER_HINTS = new Set([
+  "image",
+  "image_url",
+  "imageurl",
+  "img",
+  "img_url",
+  "photo",
+  "photo_url",
+  "picture",
+  "picture_url",
+  "source_image",
+  "source_image_url",
+  "url",
+]);
+const RECIPE_HEADER_HINTS = new Set([
+  "recipe",
+  "recipe_name",
+  "recipe_text",
+  "recipe_title",
+  "text",
+  "title",
+  "content",
+  "prompt",
+]);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Cell {
@@ -75,10 +102,33 @@ interface ColResizeState {
   startWidth: number;
 }
 
-interface CtxMenu {
+interface SheetCtxMenu {
   x: number;
   y: number;
   sheetId: string;
+}
+
+type SelectionGenerationPreview =
+  | {
+      ok: true;
+      rangeLabel: string;
+      items: SharedRecipeInput[];
+      sourceRows: number;
+      skippedRows: number;
+      imageCol: number;
+      recipeCol: number;
+      usedHeaderRow: boolean;
+    }
+  | {
+      ok: false;
+      rangeLabel: string;
+      message: string;
+    };
+
+interface SelectionCtxMenu {
+  x: number;
+  y: number;
+  preview: SelectionGenerationPreview;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -244,10 +294,173 @@ function rowsToSheetData(rows2d: string[][]): SheetData {
   return data;
 }
 
+const normalizeHeaderText = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+const isLikelyImageValue = (value: string): boolean => {
+  const v = value.trim().toLowerCase();
+  if (!v) return false;
+  return (
+    v.startsWith("http://") ||
+    v.startsWith("https://") ||
+    v.startsWith("/uploads/") ||
+    /^data:image\//.test(v) ||
+    /\.(png|jpe?g|webp|gif|avif|svg)(\?.*)?$/.test(v)
+  );
+};
+
+const scoreImageColumn = (values: string[]): number =>
+  values.reduce((sum, value) => {
+    const v = value.trim();
+    if (!v) return sum;
+    if (isLikelyImageValue(v)) return sum + 3;
+    if (v.includes("/")) return sum + 1;
+    return sum;
+  }, 0);
+
+const scoreRecipeColumn = (values: string[]): number =>
+  values.reduce((sum, value) => {
+    const v = value.trim();
+    if (!v) return sum;
+    if (isLikelyImageValue(v)) return sum;
+    if (v.length >= 20) return sum + 3;
+    if (v.includes(" ")) return sum + 2;
+    return sum + 1;
+  }, 0);
+
+function clampFloatingCardPosition(x: number, y: number) {
+  if (typeof window === "undefined") return { x, y };
+  return {
+    x: Math.max(12, Math.min(x, window.innerWidth - FLOATING_CARD_WIDTH - 12)),
+    y: Math.max(12, Math.min(y, window.innerHeight - FLOATING_CARD_HEIGHT - 12)),
+  };
+}
+
+function buildSelectionGenerationPreview(sheet: SheetData, range: CellRange): SelectionGenerationPreview {
+  const normalized = normalizeRange(range);
+  const rangeLabel = rangeToAddress(normalized);
+  const width = normalized.endCol - normalized.startCol + 1;
+
+  if (width < 2) {
+    return {
+      ok: false,
+      rangeLabel,
+      message: "Select at least two columns so Spy Sheet can map image_url and recipe_text.",
+    };
+  }
+
+  const selectedRows = Array.from({ length: normalized.endRow - normalized.startRow + 1 }, (_, rowOffset) => {
+    const row = normalized.startRow + rowOffset;
+    const values = Array.from({ length: width }, (_, colOffset) => {
+      const col = normalized.startCol + colOffset;
+      return sheet.cells[cellKey(row, col)]?.v?.trim() ?? "";
+    });
+    return { row, values };
+  }).filter((entry) => entry.values.some(Boolean));
+
+  if (!selectedRows.length) {
+    return {
+      ok: false,
+      rangeLabel,
+      message: "The selected range is empty. Pick rows that contain image URLs and recipe text first.",
+    };
+  }
+
+  const headerValues = selectedRows[0].values.map(normalizeHeaderText);
+  const imageHeaderIndex = headerValues.findIndex((value) => IMAGE_HEADER_HINTS.has(value));
+  const recipeHeaderIndex = headerValues.findIndex((value) => RECIPE_HEADER_HINTS.has(value));
+
+  let imageIndex = -1;
+  let recipeIndex = -1;
+  let usedHeaderRow = false;
+  let dataRows = selectedRows;
+
+  if (imageHeaderIndex !== -1 && recipeHeaderIndex !== -1 && imageHeaderIndex !== recipeHeaderIndex) {
+    imageIndex = imageHeaderIndex;
+    recipeIndex = recipeHeaderIndex;
+    usedHeaderRow = true;
+    dataRows = selectedRows.slice(1);
+  } else if (width === 2) {
+    const firstColumnValues = selectedRows.map((entry) => entry.values[0] ?? "");
+    const secondColumnValues = selectedRows.map((entry) => entry.values[1] ?? "");
+    const firstImageScore = scoreImageColumn(firstColumnValues);
+    const secondImageScore = scoreImageColumn(secondColumnValues);
+
+    if (secondImageScore > firstImageScore) {
+      imageIndex = 1;
+      recipeIndex = 0;
+    } else if (firstImageScore > secondImageScore) {
+      imageIndex = 0;
+      recipeIndex = 1;
+    } else {
+      const firstRecipeScore = scoreRecipeColumn(firstColumnValues);
+      const secondRecipeScore = scoreRecipeColumn(secondColumnValues);
+      if (firstRecipeScore > secondRecipeScore) {
+        imageIndex = 1;
+        recipeIndex = 0;
+      } else {
+        imageIndex = 0;
+        recipeIndex = 1;
+      }
+    }
+  } else {
+    return {
+      ok: false,
+      rangeLabel,
+      message:
+        "Select exactly two columns, or include header names like image_url and recipe_text in the selected block.",
+    };
+  }
+
+  if (!dataRows.length) {
+    return {
+      ok: false,
+      rangeLabel,
+      message: "I found the column mapping, but there are no data rows under that selection yet.",
+    };
+  }
+
+  let skippedRows = 0;
+  const items: SharedRecipeInput[] = [];
+  dataRows.forEach(({ values }) => {
+    const image_url = values[imageIndex]?.trim() ?? "";
+    const recipe_text = values[recipeIndex]?.trim() ?? "";
+    if (image_url && recipe_text) {
+      items.push({ image_url, recipe_text });
+      return;
+    }
+    if (values.some(Boolean)) skippedRows += 1;
+  });
+
+  if (!items.length) {
+    return {
+      ok: false,
+      rangeLabel,
+      message: "No valid rows were found. Each selected row needs both an image URL and recipe text.",
+    };
+  }
+
+  return {
+    ok: true,
+    rangeLabel,
+    items,
+    sourceRows: dataRows.length,
+    skippedRows,
+    imageCol: normalized.startCol + imageIndex,
+    recipeCol: normalized.startCol + recipeIndex,
+    usedHeaderRow,
+  };
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function SpySheetPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const toast = useToast();
 
   const [workbook, setWorkbook] = useState<Workbook>(emptyWorkbook());
   const [loading, setLoading] = useState(true);
@@ -266,7 +479,9 @@ export default function SpySheetPage() {
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   // Context menu
-  const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
+  const [tabCtxMenu, setTabCtxMenu] = useState<SheetCtxMenu | null>(null);
+  const [selectionCtxMenu, setSelectionCtxMenu] = useState<SelectionCtxMenu | null>(null);
+  const [startingGeneration, setStartingGeneration] = useState(false);
 
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -281,6 +496,7 @@ export default function SpySheetPage() {
     ?? workbook.sheets[0];
   const sheetRows = activeSheet?.data.rows ?? DEFAULT_ROWS;
   const sheetCols = activeSheet?.data.cols ?? DEFAULT_COLS;
+  const sheet = activeSheet?.data ?? emptySheetData();
 
   const clampToSheet = useCallback((row: number, col: number): Selection => ({
     row: clampIndex(row, 0, sheetRows - 1),
@@ -340,11 +556,14 @@ export default function SpySheetPage() {
 
   // ── Close context menu on outside click ──
   useEffect(() => {
-    if (!ctxMenu) return;
-    const close = () => setCtxMenu(null);
+    if (!tabCtxMenu && !selectionCtxMenu) return;
+    const close = () => {
+      setTabCtxMenu(null);
+      setSelectionCtxMenu(null);
+    };
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
-  }, [ctxMenu]);
+  }, [tabCtxMenu, selectionCtxMenu]);
 
   useEffect(() => {
     const stopDragSelection = () => {
@@ -787,6 +1006,87 @@ export default function SpySheetPage() {
   const addCol = () => updateActiveData((p) => ({ ...p, cols: p.cols + 1 }));
   const removeRow = () => updateActiveData((p) => ({ ...p, rows: Math.max(10, p.rows - 10) }));
 
+  const findSelectedRangeAt = useCallback((row: number, col: number): CellRange | null => {
+    const ranges = selectionRangesRef.current;
+    for (let i = ranges.length - 1; i >= 0; i -= 1) {
+      if (isCellInRange(row, col, ranges[i])) return normalizeRange(ranges[i]);
+    }
+    return null;
+  }, []);
+
+  const openSelectionGenerateMenu = useCallback((clientX: number, clientY: number, range: CellRange) => {
+    const { x, y } = clampFloatingCardPosition(clientX, clientY);
+    setTabCtxMenu(null);
+    setSelectionCtxMenu({
+      x,
+      y,
+      preview: buildSelectionGenerationPreview(sheet, range),
+    });
+  }, [sheet]);
+
+  const handleCellContextMenu = (e: React.MouseEvent<HTMLTableCellElement>, row: number, col: number) => {
+    e.preventDefault();
+    if (editKey !== null) commitEdit();
+    gridRef.current?.focus();
+
+    const bounded = clampToSheet(row, col);
+    const range = findSelectedRangeAt(bounded.row, bounded.col) ?? singleCellRange(bounded.row, bounded.col);
+    if (!findSelectedRangeAt(bounded.row, bounded.col)) {
+      setSel(bounded);
+      setSelectionAnchor(bounded);
+      setSelectionRanges([range]);
+    }
+    openSelectionGenerateMenu(e.clientX, e.clientY, range);
+  };
+
+  const handleRowHeaderContextMenu = (e: React.MouseEvent<HTMLTableCellElement>, row: number) => {
+    e.preventDefault();
+    if (editKey !== null) commitEdit();
+    gridRef.current?.focus();
+
+    const boundedRow = clampIndex(row, 0, sheetRows - 1);
+    const range = findSelectedRangeAt(boundedRow, 0) ?? buildRowSelectionRange(boundedRow, boundedRow);
+    if (!findSelectedRangeAt(boundedRow, 0)) {
+      setSel({ row: boundedRow, col: 0 });
+      setSelectionAnchor({ row: boundedRow, col: 0 });
+      setSelectionRanges([range]);
+    }
+    openSelectionGenerateMenu(e.clientX, e.clientY, range);
+  };
+
+  const handleColHeaderContextMenu = (e: React.MouseEvent<HTMLTableCellElement>, col: number) => {
+    e.preventDefault();
+    if (editKey !== null) commitEdit();
+    gridRef.current?.focus();
+
+    const boundedCol = clampIndex(col, 0, sheetCols - 1);
+    const range = findSelectedRangeAt(0, boundedCol) ?? buildColSelectionRange(boundedCol, boundedCol);
+    if (!findSelectedRangeAt(0, boundedCol)) {
+      setSel({ row: 0, col: boundedCol });
+      setSelectionAnchor({ row: 0, col: boundedCol });
+      setSelectionRanges([range]);
+    }
+    openSelectionGenerateMenu(e.clientX, e.clientY, range);
+  };
+
+  const handleGenerateFromSelection = useCallback(async () => {
+    if (!selectionCtxMenu?.preview.ok || startingGeneration) return;
+    setStartingGeneration(true);
+    try {
+      const job = await api.startJob(id, {
+        job_type: "articles_all_sites",
+        shared_recipes: selectionCtxMenu.preview.items,
+      });
+      setSelectionCtxMenu(null);
+      toast.success(`Started generation for ${selectionCtxMenu.preview.items.length} selected row(s).`);
+      router.push(`/jobs/${job.id}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to start generation from Spy Sheet");
+    } finally {
+      setStartingGeneration(false);
+    }
+  }, [id, router, selectionCtxMenu, startingGeneration, toast]);
+
   // ── Sheet tab operations ──
   const addSheet = () => {
     const existing = workbook.sheets.map((s) => s.name);
@@ -891,7 +1191,6 @@ export default function SpySheetPage() {
 
   const selCell = getCell(sel.row, sel.col);
   const selAddr = `${colLabel(sel.col)}${sel.row + 1}`;
-  const sheet = activeSheet?.data ?? emptySheetData();
   const tableMinWidth = HEADER_WIDTH + Array.from(
     { length: sheet.cols },
     (_, c) => sheet.colWidths[c] ?? DEFAULT_COL_WIDTH,
@@ -1055,6 +1354,7 @@ export default function SpySheetPage() {
                   className={`relative sticky top-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] font-semibold cursor-pointer ${isSelectedCol(c) ? "bg-purple-900/30 text-purple-300" : "text-gray-400"}`}
                   onMouseDown={(e) => handleColHeaderMouseDown(e, c)}
                   onMouseEnter={(e) => handleColHeaderMouseEnter(e, c)}
+                  onContextMenu={(e) => handleColHeaderContextMenu(e, c)}
                 >
                   {colLabel(c)}
                   <div
@@ -1073,6 +1373,7 @@ export default function SpySheetPage() {
                   className={`sticky left-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] text-gray-500 cursor-pointer ${isSelectedRow(r) ? "bg-purple-900/30 text-purple-300 font-semibold" : ""}`}
                   onMouseDown={(e) => handleRowHeaderMouseDown(e, r)}
                   onMouseEnter={(e) => handleRowHeaderMouseEnter(e, r)}
+                  onContextMenu={(e) => handleRowHeaderContextMenu(e, r)}
                 >
                   {r + 1}
                 </td>
@@ -1104,6 +1405,7 @@ export default function SpySheetPage() {
                       }`}
                       onMouseDown={(e) => handleCellMouseDown(e, r, c)}
                       onMouseEnter={(e) => handleCellMouseEnter(e, r, c)}
+                      onContextMenu={(e) => handleCellContextMenu(e, r, c)}
                       onDoubleClick={() => startEdit(r, c)}
                     >
                       {isEditing ? (
@@ -1146,7 +1448,11 @@ export default function SpySheetPage() {
                 style={{ minWidth: 80, maxWidth: 180 }}
                 onClick={() => !isRenaming && switchSheet(tab.id)}
                 onDoubleClick={() => startRename(tab.id)}
-                onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, sheetId: tab.id }); }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setSelectionCtxMenu(null);
+                  setTabCtxMenu({ x: e.clientX, y: e.clientY, sheetId: tab.id });
+                }}
               >
                 {isRenaming ? (
                   <input
@@ -1184,22 +1490,109 @@ export default function SpySheetPage() {
       </div>
 
       {/* ── Tab context menu ── */}
-      {ctxMenu && (
+      {tabCtxMenu && (
         <div
           className="fixed z-50 min-w-[160px] rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-2xl"
-          style={{ top: ctxMenu.y, left: ctxMenu.x }}
+          style={{ top: tabCtxMenu.y, left: tabCtxMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
-          <CtxItem icon={<Pencil size={13} />} label="Rename" onClick={() => { startRename(ctxMenu.sheetId); setCtxMenu(null); }} />
-          <CtxItem icon={<Copy size={13} />} label="Duplicate" onClick={() => { duplicateSheet(ctxMenu.sheetId); setCtxMenu(null); }} />
+          <CtxItem icon={<Pencil size={13} />} label="Rename" onClick={() => { startRename(tabCtxMenu.sheetId); setTabCtxMenu(null); }} />
+          <CtxItem icon={<Copy size={13} />} label="Duplicate" onClick={() => { duplicateSheet(tabCtxMenu.sheetId); setTabCtxMenu(null); }} />
           <div className="my-1 border-t border-gray-800" />
           <CtxItem
             icon={<Trash2 size={13} />}
             label="Delete"
             danger
             disabled={workbook.sheets.length === 1}
-            onClick={() => { deleteSheet(ctxMenu.sheetId); setCtxMenu(null); }}
+            onClick={() => { deleteSheet(tabCtxMenu.sheetId); setTabCtxMenu(null); }}
           />
+        </div>
+      )}
+
+      {selectionCtxMenu && (
+        <div
+          className="fixed z-50 w-[360px] max-w-[calc(100vw-24px)] rounded-xl border border-purple-800/40 bg-gray-900/95 p-4 shadow-2xl backdrop-blur-sm"
+          style={{ top: selectionCtxMenu.y, left: selectionCtxMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-white">Generate From Selection</div>
+              <div className="mt-1 text-[11px] text-gray-500">{selectionCtxMenu.preview.rangeLabel}</div>
+            </div>
+            <button
+              onClick={() => setSelectionCtxMenu(null)}
+              className="rounded-md px-2 py-1 text-[11px] text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition"
+            >
+              Close
+            </button>
+          </div>
+
+          {selectionCtxMenu.preview.ok ? (
+            <>
+              <div className="mt-3 space-y-2 rounded-lg border border-gray-800 bg-gray-950/60 p-3 text-xs text-gray-300">
+                <div className="flex items-center justify-between gap-3">
+                  <span>Ready rows</span>
+                  <span className="font-semibold text-white">{selectionCtxMenu.preview.items.length}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>Image column</span>
+                  <span className="font-mono text-purple-300">{colLabel(selectionCtxMenu.preview.imageCol)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>Recipe text column</span>
+                  <span className="font-mono text-purple-300">{colLabel(selectionCtxMenu.preview.recipeCol)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>Skipped incomplete rows</span>
+                  <span>{selectionCtxMenu.preview.skippedRows}</span>
+                </div>
+                <div className="text-[11px] text-gray-500">
+                  {selectionCtxMenu.preview.usedHeaderRow
+                    ? "Headers were detected in the selection, so generation will use the rows underneath them."
+                    : "This selection will start the same all-sites generation job used in the project workflow."}
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-lg border border-gray-800 bg-gray-950/60 p-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Preview</div>
+                <div className="mt-2 space-y-2">
+                  {selectionCtxMenu.preview.items.slice(0, 2).map((item, idx) => (
+                    <div key={`${item.image_url}-${idx}`} className="rounded-md border border-gray-800 bg-gray-900/60 p-2">
+                      <div className="truncate text-[11px] text-purple-300">{item.image_url}</div>
+                      <div className="mt-1 truncate text-xs text-gray-300">{item.recipe_text}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setSelectionCtxMenu(null)}
+                  className="rounded-md border border-gray-700 px-3 py-2 text-xs font-medium text-gray-300 hover:bg-gray-800 transition"
+                >
+                  Keep Editing
+                </button>
+                <button
+                  onClick={() => void handleGenerateFromSelection()}
+                  disabled={startingGeneration}
+                  className="flex items-center gap-2 rounded-md bg-purple-600 px-3 py-2 text-xs font-semibold text-white hover:bg-purple-500 disabled:opacity-60 transition"
+                >
+                  {startingGeneration ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                  {startingGeneration ? "Starting..." : "Generate On All Sites"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="mt-3 rounded-lg border border-amber-700/30 bg-amber-950/20 p-3 text-xs text-amber-100">
+                {selectionCtxMenu.preview.message}
+              </div>
+              <div className="mt-3 text-[11px] text-gray-500">
+                Tip: select the rows that contain your image URL and recipe text columns, then right-click again.
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
