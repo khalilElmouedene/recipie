@@ -135,6 +135,7 @@ async def list_recipes(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     summary: bool = Query(default=False, description="Return lightweight rows without heavy generated text fields"),
+    pin_designer: bool = Query(default=False, description="Return only the 8 fields needed by the pin designer"),
     limit: int | None = Query(default=None, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ):
@@ -144,6 +145,38 @@ async def list_recipes(
         raise HTTPException(status_code=404, detail="Site not found")
 
     await check_project_access(site.project_id, user, db)
+
+    if pin_designer:
+        stmt = (
+            select(
+                Recipe.id,
+                Recipe.recipe_text,
+                Recipe.status,
+                Recipe.generated_images,
+                Recipe.pin_design_image,
+                Recipe.pin_template_id,
+                Recipe.pin_title,
+                Recipe.pin_description,
+            )
+            .where(Recipe.site_id == site_id)
+            .order_by(Recipe.created_at.desc())
+        )
+        total = await count_rows(db, stmt)
+        set_total_count(response, total)
+        rows = await db.execute(apply_limit_offset(stmt, limit, offset))
+        return [
+            {
+                "id": row.id,
+                "recipe_text": row.recipe_text,
+                "status": row.status.value if hasattr(row.status, "value") else row.status,
+                "generated_images": row.generated_images,
+                "pin_design_image": row.pin_design_image,
+                "pin_template_id": row.pin_template_id,
+                "pin_title": row.pin_title,
+                "pin_description": row.pin_description,
+            }
+            for row in rows
+        ]
 
     if summary:
         stmt = (

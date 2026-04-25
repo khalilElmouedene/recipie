@@ -446,8 +446,8 @@ export const api = {
   },
 
   // -- Recipes --------------------------------------------
-  getRecipes: (siteId: string, summary = true) =>
-    request<RecipeOut[]>(`/api/sites/${siteId}/recipes${summary ? "?summary=true" : ""}`),
+  getRecipes: (siteId: string, mode: "full" | "summary" | "pin_designer" = "summary") =>
+    request<RecipeOut[]>(`/api/sites/${siteId}/recipes${mode === "summary" ? "?summary=true" : mode === "pin_designer" ? "?pin_designer=true" : ""}`),
   getRecipesPage: (siteId: string, params?: PaginationParams & { summary?: boolean }) =>
     requestPage<RecipeOut>(`/api/sites/${siteId}/recipes`, {
       ...params,

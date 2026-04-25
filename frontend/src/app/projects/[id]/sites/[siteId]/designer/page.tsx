@@ -78,7 +78,7 @@ export default function PinDesignerPage() {
     } else if (jobParam) {
       Promise.all([
         api.getJobGeneratedRecipes(jobParam, params.siteId),
-        api.getRecipes(params.siteId).catch(() => [] as RecipeOut[]),
+        api.getRecipes(params.siteId, "pin_designer").catch(() => [] as RecipeOut[]),
       ])
         .then(([list, siteRecipes]) => {
           const recipeById = new Map(siteRecipes.map((recipe) => [recipe.id, recipe]));
@@ -95,7 +95,7 @@ export default function PinDesignerPage() {
         .catch(() => {})
         .finally(() => setLoading(false));
     } else {
-      api.getRecipes(params.siteId)
+      api.getRecipes(params.siteId, "pin_designer")
         .then((all) => {
           const source = all.filter((r) => r.status === "generated");
           setFrames(source.map((r) => ({
