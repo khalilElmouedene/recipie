@@ -27,7 +27,9 @@ import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
-const IMAGE_RESOURCE_CACHE_MAX = 72;
+const IMAGE_RESOURCE_CACHE_BASE_MAX = 96;
+const IMAGE_RESOURCE_CACHE_BUFFER = 24;
+const IMAGE_RESOURCE_CACHE_HARD_MAX = 256;
 const PREVIEW_RENDER_CACHE_MAX = 48;
 const PREVIEW_EAGER_COUNT = 6;
 const PREVIEW_BACKGROUND_BATCH = 2;
@@ -109,15 +111,28 @@ function buildImageZoneGroupBounds(elements: TemplateElement[], imageCount: numb
 
 const imageElementCache = new Map<string, Promise<HTMLImageElement>>();
 const templateRenderSignatureCache = new WeakMap<PinTemplate, string>();
+let imageResourceCacheMax = IMAGE_RESOURCE_CACHE_BASE_MAX;
 
-function touchImageElementCache(cacheKey: string, entry: Promise<HTMLImageElement>): void {
-  if (imageElementCache.has(cacheKey)) imageElementCache.delete(cacheKey);
-  imageElementCache.set(cacheKey, entry);
-  while (imageElementCache.size > IMAGE_RESOURCE_CACHE_MAX) {
+function trimImageElementCache(): void {
+  while (imageElementCache.size > imageResourceCacheMax) {
     const oldest = imageElementCache.keys().next().value;
     if (!oldest) break;
     imageElementCache.delete(oldest);
   }
+}
+
+function setImageResourceCacheMax(next: number): void {
+  imageResourceCacheMax = Math.min(
+    IMAGE_RESOURCE_CACHE_HARD_MAX,
+    Math.max(IMAGE_RESOURCE_CACHE_BASE_MAX, Math.round(next)),
+  );
+  trimImageElementCache();
+}
+
+function touchImageElementCache(cacheKey: string, entry: Promise<HTMLImageElement>): void {
+  if (imageElementCache.has(cacheKey)) imageElementCache.delete(cacheKey);
+  imageElementCache.set(cacheKey, entry);
+  trimImageElementCache();
 }
 
 function normalizeDesignerImageUrl(url: string, proxyBase: string): string {
@@ -1213,6 +1228,31 @@ export default function PinDesigner({
   const myTemplates = customTemplates.filter((t) => t.owner_id === currentUserId);
   const sharedTemplates = customTemplates.filter((t) => t.owner_id !== currentUserId);
   const [pinName, setPinName] = useState(templateName);
+
+  useEffect(() => {
+    const proxyBase = getApiBaseUrl();
+    const uniqueImageUrls = new Set<string>();
+    const addImageUrl = (url?: string | null) => {
+      if (!url) return;
+      uniqueImageUrls.add(normalizeDesignerImageUrl(url, proxyBase));
+    };
+
+    recipeImages.forEach(addImageUrl);
+    frames?.forEach((frame) => frame.images.forEach(addImageUrl));
+    selectedTemplate?.elements.forEach((element) => {
+      if (element.type !== "image") return;
+      const src = (element as TemplateElement & { src?: string }).src;
+      addImageUrl(src);
+    });
+
+    setImageResourceCacheMax(uniqueImageUrls.size + IMAGE_RESOURCE_CACHE_BUFFER);
+  }, [frames, recipeImages, selectedTemplate]);
+
+  useEffect(() => {
+    return () => {
+      setImageResourceCacheMax(IMAGE_RESOURCE_CACHE_BASE_MAX);
+    };
+  }, []);
 
   // Pinterest
   const [pinterestConnected, setPinterestConnected] = useState(false);
