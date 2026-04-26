@@ -85,20 +85,6 @@ async def start_job(
                     detail="A generation job is already running for this site. Wait for it to finish.",
                 )
 
-    elif body.job_type == "publisher":
-        if body.site_id:
-            dup = await db.execute(
-                select(Job).where(
-                    Job.project_id == project_id,
-                    Job.job_type == JobType.publisher,
-                    Job.status.in_(_ACTIVE),
-                )
-            )
-            if dup.scalar_one_or_none():
-                raise HTTPException(
-                    status_code=409,
-                    detail="A publish job is already running. Wait for it to finish.",
-                )
     # ─────────────────────────────────────────────────────────────────────────
 
     job = Job(

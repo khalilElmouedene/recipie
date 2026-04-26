@@ -532,20 +532,6 @@ async def publish_batch_to_wordpress(
     """Queue a background WordPress publish job and return immediately."""
     await check_project_access(project_id, user, db, require_roles=[ProjectMemberRole.admin])
 
-    active_statuses = [JobStatus.pending, JobStatus.running]
-    dup = await db.execute(
-        select(Job).where(
-            Job.project_id == project_id,
-            Job.job_type == JobType.publisher,
-            Job.status.in_(active_statuses),
-        )
-    )
-    if dup.scalar_one_or_none():
-        raise HTTPException(
-            status_code=409,
-            detail="A publish job is already running. Wait for it to finish.",
-        )
-
     # Preflight: make sure there is at least one publishable recipe in the requested scope.
     site_scope = select(Site.id).where(Site.project_id == project_id)
     preflight_filters = [Recipe.site_id.in_(site_scope), Recipe.status == RecipeStatus.generated]
