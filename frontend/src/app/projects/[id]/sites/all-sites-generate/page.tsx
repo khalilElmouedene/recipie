@@ -394,6 +394,17 @@ export default function AllSitesGeneratePage() {
   const handleBatchModalClose = async (didPublish: boolean) => {
     setBatchModalData(null);
     setBatchPublishing(null);
+    // Re-sync active publisher jobs into the pipeline after any batch-publish modal closes.
+    // This catches jobs that were started while the context was in a transitional state.
+    api.getProjectJobsPage(projectId, { jobType: "publisher", limit: 5, offset: 0 })
+      .then(({ items: publishJobs }) => {
+        publishJobs.forEach((job) => {
+          if (job.status === "running" || job.status === "pending") {
+            trackJob(job, { title: "WordPress publishing" });
+          }
+        });
+      })
+      .catch(() => {});
     if (didPublish) {
       const { items } = await api.getProjectJobsPage(projectId, {
         jobType: "articles_all_sites",

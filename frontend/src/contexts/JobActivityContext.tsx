@@ -155,8 +155,11 @@ export function JobActivityProvider({ children }: { children: React.ReactNode })
     setItems((prev) => {
       const existing = prev.find((item) => item.id === job.id);
       const nextItem = mergeTrackedJob(existing, job, meta);
-      const next = [nextItem, ...prev.filter((item) => item.id !== job.id)];
-      return next.slice(0, MAX_ACTIVITY_ITEMS);
+      const next = [nextItem, ...prev.filter((item) => item.id !== job.id)].slice(0, MAX_ACTIVITY_ITEMS);
+      // Write immediately so the job survives any React re-mount that happens
+      // before the useEffect([items]) flush (which is where the normal write fires).
+      writeStoredItems(next);
+      return next;
     });
   }, []);
 
