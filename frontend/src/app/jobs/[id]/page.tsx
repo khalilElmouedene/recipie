@@ -228,6 +228,15 @@ export default function JobDetailPage() {
       ? `/projects/${job.project_id}/sites/all-sites-generate`
       : `/projects/${job?.project_id ?? ""}`;
 
+  const handleBack = () => {
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    if (document.referrer && document.referrer.startsWith(origin)) {
+      router.back();
+    } else {
+      router.push(backHref);
+    }
+  };
+
   const statusBadge: Record<string, string> = {
     pending: "bg-gray-700 text-gray-300",
     running: "bg-blue-600/20 text-blue-400",
@@ -256,8 +265,8 @@ export default function JobDetailPage() {
           </button>
         </div>
       )}
-      <button onClick={() => router.push(backHref)} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4">
-        <ArrowLeft size={16} /> {job.job_type === "articles_all_sites" ? "Back to Generate Articles For All Sites" : "Back"}
+      <button onClick={handleBack} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4">
+        <ArrowLeft size={16} /> Back
       </button>
 
       {/* Header */}
