@@ -84,7 +84,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               </button>
               <div className="hidden md:block">
                 <p className="text-[11px] uppercase tracking-[0.28em] text-gray-500">Workspace</p>
-                <p className="text-sm font-medium text-gray-200">Background pipeline stays available while you work</p>
+                <p className="text-sm font-medium text-gray-200">Background pipeline</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
