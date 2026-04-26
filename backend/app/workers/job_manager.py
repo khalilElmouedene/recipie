@@ -212,16 +212,27 @@ class JobManager:
                     return meta
         return None
 
-    async def _revert_publishing_claims(self, job_id: str) -> None:
+    async def _revert_publishing_claims(self, job_id: str, claimed_ids: list[str] | None = None) -> None:
         async with SessionLocal() as session:
-            await session.execute(
-                update(Recipe)
-                .where(
-                    Recipe.created_by_job_id == uuid.UUID(job_id),
-                    Recipe.status == RecipeStatus.publishing,
+            if claimed_ids:
+                await session.execute(
+                    update(Recipe)
+                    .where(
+                        Recipe.id.in_([uuid.UUID(r) for r in claimed_ids]),
+                        Recipe.status == RecipeStatus.publishing,
+                    )
+                    .values(status=RecipeStatus.generated)
                 )
-                .values(status=RecipeStatus.generated)
-            )
+            else:
+                # Backward compat: old jobs stored created_by_job_id = publisher job id
+                await session.execute(
+                    update(Recipe)
+                    .where(
+                        Recipe.created_by_job_id == uuid.UUID(job_id),
+                        Recipe.status == RecipeStatus.publishing,
+                    )
+                    .values(status=RecipeStatus.generated)
+                )
             await session.commit()
 
     async def _load_publisher_chunk_payloads(
@@ -232,15 +243,18 @@ class JobManager:
         limit: int = PUBLISH_CHUNK_SIZE,
         site_config_cache: dict[str, dict[str, Any]] | None = None,
         site_config_override: dict[str, Any] | None = None,
+        claimed_ids: list[uuid.UUID] | None = None,
     ) -> list[dict[str, Any]]:
         async with SessionLocal() as session:
+            id_filter = (
+                Recipe.id.in_(claimed_ids)
+                if claimed_ids
+                else Recipe.created_by_job_id == job_id  # backward compat for old jobs
+            )
             rows = await session.execute(
                 select(Recipe, Site)
                 .join(Site, Recipe.site_id == Site.id)
-                .where(
-                    Recipe.created_by_job_id == job_id,
-                    Recipe.status == RecipeStatus.publishing,
-                )
+                .where(id_filter, Recipe.status == RecipeStatus.publishing)
                 .order_by(Site.id.asc(), Recipe.created_at.asc())
                 .limit(limit)
             )
@@ -321,14 +335,15 @@ class JobManager:
             )
             .values(
                 status=RecipeStatus.publishing,
-                created_by_job_id=db_job.id,
                 error_message=None,
+                # created_by_job_id intentionally NOT changed — it must stay pointing
+                # to the original generation job so history display stays intact.
             )
         )
         claimed_rows = await db.execute(
             select(Recipe.id, Recipe.site_id)
             .where(
-                Recipe.created_by_job_id == db_job.id,
+                Recipe.id.in_(valid_ids),
                 Recipe.status == RecipeStatus.publishing,
             )
             .order_by(Recipe.site_id.asc(), Recipe.created_at.asc())
@@ -342,7 +357,9 @@ class JobManager:
             return
 
         await db.flush()
-        db.add(JobLog(job_id=db_job.id, message=_serialize_publish_meta(publish_meta)))
+        # Store claimed recipe IDs in metadata so resume/revert don't need created_by_job_id
+        meta_with_ids = {**publish_meta, "_claimed_recipe_ids": [str(r) for r, _ in claimed_pairs]}
+        db.add(JobLog(job_id=db_job.id, message=_serialize_publish_meta(meta_with_ids)))
         await db.commit()
 
         schedule_map = _build_publish_schedule_map(
@@ -431,6 +448,7 @@ class JobManager:
                             schedule_map,
                             limit=PUBLISH_CHUNK_SIZE,
                             site_config_cache=site_config_cache,
+                            claimed_ids=valid_ids,
                         ),
                         main_loop,
                     ).result()
@@ -453,7 +471,7 @@ class JobManager:
                 final_status = JobStatus.stopped if rj.should_stop() else JobStatus.completed
                 if rj.should_stop():
                     asyncio.run_coroutine_threadsafe(
-                        self._revert_publishing_claims(job_id_str),
+                        self._revert_publishing_claims(job_id_str, claimed_ids=[str(r) for r in valid_ids]),
                         main_loop,
                     ).result()
                 rj.log("Job completed successfully" if final_status == JobStatus.completed else "Job stopped")
@@ -461,7 +479,7 @@ class JobManager:
             except Exception as exc:
                 rj.log(f"Job failed: {exc}")
                 asyncio.run_coroutine_threadsafe(
-                    self._revert_publishing_claims(job_id_str),
+                    self._revert_publishing_claims(job_id_str, claimed_ids=[str(r) for r in valid_ids]),
                     main_loop,
                 ).result()
                 _finalize(JobStatus.failed, error=str(exc))
@@ -1179,9 +1197,20 @@ class JobManager:
 
             elif db_job.job_type == JobType.publisher:
                 publish_meta = await self._load_publish_meta(job_id)
+                # Use recipe IDs stored in metadata (new jobs); fall back to created_by_job_id for old jobs
+                stored_claimed_ids: list[uuid.UUID] | None = None
+                if publish_meta:
+                    raw_ids = publish_meta.get("_claimed_recipe_ids")
+                    if raw_ids:
+                        stored_claimed_ids = [uuid.UUID(r) for r in raw_ids]
+                id_filter = (
+                    Recipe.id.in_(stored_claimed_ids)
+                    if stored_claimed_ids
+                    else Recipe.created_by_job_id == db_job.id
+                )
                 claimed_rows = await db.execute(
                     select(Recipe.id, Recipe.site_id, Recipe.status)
-                    .where(Recipe.created_by_job_id == db_job.id)
+                    .where(id_filter)
                     .order_by(Recipe.site_id.asc(), Recipe.created_at.asc())
                 )
                 claimed_pairs = claimed_rows.all()
@@ -1349,6 +1378,7 @@ class JobManager:
                                     limit=PUBLISH_CHUNK_SIZE,
                                     site_config_cache=site_config_cache,
                                     site_config_override=site_config or None,
+                                    claimed_ids=stored_claimed_ids,
                                 ),
                                 main_loop,
                             ).result()
@@ -1468,7 +1498,10 @@ class JobManager:
                     rj.log("Job completed" if final_status == JobStatus.completed else "Job stopped")
                     if rj.should_stop() and db_job.job_type == JobType.publisher:
                         asyncio.run_coroutine_threadsafe(
-                            self._revert_publishing_claims(job_id_str),
+                            self._revert_publishing_claims(
+                                job_id_str,
+                                claimed_ids=[str(r) for r in stored_claimed_ids] if stored_claimed_ids else None,
+                            ),
                             main_loop,
                         ).result()
                     _finalize(final_status)
@@ -1476,7 +1509,10 @@ class JobManager:
                     rj.log(f"Job failed: {e}")
                     if db_job.job_type == JobType.publisher:
                         asyncio.run_coroutine_threadsafe(
-                            self._revert_publishing_claims(job_id_str),
+                            self._revert_publishing_claims(
+                                job_id_str,
+                                claimed_ids=[str(r) for r in stored_claimed_ids] if stored_claimed_ids else None,
+                            ),
                             main_loop,
                         ).result()
                     _finalize(JobStatus.failed, error=str(e))
@@ -1486,16 +1522,22 @@ class JobManager:
             done_statuses = [RecipeStatus.generated, RecipeStatus.published, RecipeStatus.failed]
             if db_job.job_type == JobType.publisher:
                 done_statuses = [RecipeStatus.published, RecipeStatus.failed]
+            # For publisher jobs use stored_claimed_ids (new) or created_by_job_id fallback (old)
+            pub_id_filter = (
+                Recipe.id.in_(stored_claimed_ids)
+                if db_job.job_type == JobType.publisher and stored_claimed_ids
+                else Recipe.created_by_job_id == db_job.id
+            )
             done_result = await db.execute(
                 select(func.count(Recipe.id)).where(
-                    Recipe.created_by_job_id == db_job.id,
+                    pub_id_filter,
                     Recipe.status.in_(done_statuses),
                 )
             )
             done_count: int = done_result.scalar() or 0
 
             total_result = await db.execute(
-                select(func.count(Recipe.id)).where(Recipe.created_by_job_id == db_job.id)
+                select(func.count(Recipe.id)).where(pub_id_filter)
             )
             total_count: int = total_result.scalar() or len(recipes_data)
 
