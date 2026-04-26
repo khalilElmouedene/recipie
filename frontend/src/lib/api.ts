@@ -514,6 +514,31 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ data }) },
     ),
 
+  // -- Auto Spy -------------------------------------------
+  getAutoSpySheet: (projectId: string) =>
+    request<{ project_id: string; data: string | null; updated_at: string | null }>(`/api/projects/${projectId}/auto-spy/sheet`),
+
+  saveAutoSpySheet: (projectId: string, data: string | null) =>
+    request<{ project_id: string; data: string | null; updated_at: string | null }>(
+      `/api/projects/${projectId}/auto-spy/sheet`,
+      { method: "PUT", body: JSON.stringify({ data }) },
+    ),
+
+  getAutoSpySources: (projectId: string) =>
+    request<AutoSpySourceOut[]>(`/api/projects/${projectId}/auto-spy/sources`),
+
+  addAutoSpySource: (projectId: string, url: string) =>
+    request<AutoSpySourceOut>(`/api/projects/${projectId}/auto-spy/sources`, {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
+
+  deleteAutoSpySource: (projectId: string, sourceId: string) =>
+    request<void>(`/api/projects/${projectId}/auto-spy/sources/${sourceId}`, { method: "DELETE" }),
+
+  triggerAutoSpyScan: (projectId: string, sourceId: string) =>
+    request<{ status: string }>(`/api/projects/${projectId}/auto-spy/sources/${sourceId}/scan`, { method: "POST" }),
+
   getAuditLogs: (params?: {
     limit?: number;
     offset?: number;
@@ -994,6 +1019,18 @@ export interface PinReusableElementOut {
 export interface JobLogOut {
   id: number;
   message: string;
+  created_at: string;
+}
+
+export interface AutoSpySourceOut {
+  id: string;
+  project_id: string;
+  created_by_user_id: string | null;
+  url: string;
+  site_name: string;
+  sheet_tab_id: string;
+  last_scanned_at: string | null;
+  next_scan_at: string | null;
   created_at: string;
 }
 

@@ -74,12 +74,14 @@ async def lifespan(app: FastAPI):
     from app.services.stale_job_reconciler import run_stale_job_reconciler
     from app.services.threads_scheduler import run_threads_scheduler
     from app.services.threads_media_cleanup_scheduler import run_threads_media_cleanup_scheduler
+    from app.services.auto_spy_scraper import run_auto_spy_scheduler
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(run_publish_scheduler(stop_event))
     retention_task = asyncio.create_task(run_image_retention_scheduler(stop_event))
     stale_task = asyncio.create_task(run_stale_job_reconciler(stop_event))
     threads_scheduler_task = asyncio.create_task(run_threads_scheduler(stop_event))
     threads_cleanup_task = asyncio.create_task(run_threads_media_cleanup_scheduler(stop_event))
+    auto_spy_task = asyncio.create_task(run_auto_spy_scheduler(stop_event))
     yield
     stop_event.set()
     await scheduler_task
@@ -87,6 +89,7 @@ async def lifespan(app: FastAPI):
     await stale_task
     await threads_scheduler_task
     await threads_cleanup_task
+    await auto_spy_task
 
 
 _debug = os.getenv("APP_ENV", "production").lower() != "production"
@@ -161,6 +164,7 @@ from app.routes.settings import router as settings_router
 from app.routes.pin_designer_templates import router as pin_designer_templates_router
 from app.routes.threads import router as threads_router
 from app.routes.spy_sheet import router as spy_sheet_router
+from app.routes.auto_spy import router as auto_spy_router
 from app.routes.audit_logs import router as audit_logs_router
 from app.ws.logs import router as ws_router
 
@@ -180,5 +184,6 @@ app.include_router(settings_router)
 app.include_router(pin_designer_templates_router)
 app.include_router(threads_router)
 app.include_router(spy_sheet_router)
+app.include_router(auto_spy_router)
 app.include_router(audit_logs_router)
 app.include_router(ws_router)

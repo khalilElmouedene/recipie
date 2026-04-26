@@ -34,6 +34,7 @@ class JobType(str, enum.Enum):
     articles = "articles"
     publisher = "publisher"
     articles_all_sites = "articles_all_sites"
+    auto_spy_generate = "auto_spy_generate"
 
 
 class JobStatus(str, enum.Enum):
@@ -152,6 +153,40 @@ class SpySheet(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
+class AutoSpySheet(Base):
+    """Per-project Auto Spy workbook stored as JSON (separate from SpySheet)."""
+    __tablename__ = "auto_spy_sheets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True,
+    )
+    data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class AutoSpySource(Base):
+    """A WordPress URL that Auto Spy monitors for new posts."""
+    __tablename__ = "auto_spy_sources"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    url: Mapped[str] = mapped_column(String(500), nullable=False)
+    site_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    sheet_tab_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -215,6 +250,8 @@ class Site(Base):
     image_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="featured_and_top")
     # When True, the pin designer image is embedded in the article HTML on save.
     embed_pin_in_article: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # UUID of the PinDesignerTemplate to use when auto-rendering pin images for this site.
+    pin_template_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     project: Mapped[Project] = relationship(back_populates="sites")

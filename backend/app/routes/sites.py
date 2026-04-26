@@ -106,6 +106,7 @@ async def _site_out(site: Site, db: AsyncSession) -> dict:
         "pinterest_url": site.pinterest_url or "",
         "image_mode": site.image_mode or "featured_and_top",
         "embed_pin_in_article": bool(site.embed_pin_in_article),
+        "pin_template_id": site.pin_template_id,
         "created_at": site.created_at,
         "recipe_count": recipe_count,
     }
@@ -208,11 +209,35 @@ async def update_site(
         site.image_mode = body.image_mode if body.image_mode in ("featured_only", "featured_and_top") else "featured_and_top"
     if body.embed_pin_in_article is not None:
         site.embed_pin_in_article = body.embed_pin_in_article
+    if "pin_template_id" in body.model_fields_set:
+        site.pin_template_id = body.pin_template_id
 
     await db.commit()
     row = await db.execute(select(Site).where(Site.id == site_id))
     updated = row.scalar_one()
     return await _site_out(updated, db)
+
+
+class SitePinTemplatePayload(BaseModel):
+    template_id: str | None = None
+
+
+@router.patch("/api/sites/{site_id}/pin-template", response_model=SiteOut)
+async def set_site_pin_template(
+    site_id: uuid.UUID,
+    body: SitePinTemplatePayload,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(select(Site).where(Site.id == site_id))
+    site = result.scalar_one_or_none()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    await check_project_access(site.project_id, user, db, require_roles=[ProjectMemberRole.admin])
+    site.pin_template_id = body.template_id
+    await db.commit()
+    row = await db.execute(select(Site).where(Site.id == site_id))
+    return await _site_out(row.scalar_one(), db)
 
 
 @router.delete("/api/sites/{site_id}", status_code=status.HTTP_204_NO_CONTENT)

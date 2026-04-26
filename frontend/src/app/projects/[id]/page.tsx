@@ -2,9 +2,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload, RotateCcw, AlertTriangle, Sheet } from "lucide-react";
+import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload, RotateCcw, AlertTriangle, Sheet, Radar } from "lucide-react";
 import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut } from "@/lib/api";
-import { getUserRole, getUserId } from "@/lib/auth";
+import { getUserRole, getUserId, getUserEmail } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
 import { useJobActivity } from "@/contexts/JobActivityContext";
@@ -19,6 +19,7 @@ export default function ProjectDetailPage() {
   const toast = useToast();
   const globalRole = getUserRole();
   const currentUserId = getUserId();
+  const canAutoSpy = (getUserEmail() || "").trim().toLowerCase() === "khalil@gmail.com";
   const { trackJob } = useJobActivity();
   const [project, setProject] = useState<ProjectOut | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -158,6 +159,15 @@ export default function ProjectDetailPage() {
           >
             <Sheet size={16} /> Spy Sheet
           </button>
+          {canAutoSpy && (
+            <button
+              onClick={() => router.push(`/projects/${id}/auto-spy`)}
+              className="btn-secondary flex items-center justify-center gap-2 border-teal-700 text-teal-400 hover:text-teal-300 w-full sm:w-auto"
+              title="Monitor WordPress blogs and auto-populate sheet"
+            >
+              <Radar size={16} /> Auto Spy
+            </button>
+          )}
           <button
             onClick={() => router.push(`/pinterest-gallery?project_id=${id}&from_project=1`)}
             className="btn-secondary flex items-center justify-center gap-2 w-full sm:w-auto"

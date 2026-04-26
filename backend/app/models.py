@@ -195,6 +195,7 @@ class SiteUpdate(BaseModel):
     pinterest_url: str | None = None
     image_mode: str | None = None
     embed_pin_in_article: bool | None = None
+    pin_template_id: str | None = None
 
 
 class WpUserOut(BaseModel):
@@ -233,6 +234,7 @@ class SiteOut(BaseModel):
     pinterest_url: str = ""
     image_mode: str = "featured_and_top"
     embed_pin_in_article: bool = False
+    pin_template_id: str | None = None
     created_at: datetime
     recipe_count: int = 0
 
