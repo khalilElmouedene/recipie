@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Square, CheckCircle, XCircle, Clock, Loader2, X } from "lucide-react";
+import { ArrowLeft, Square, CheckCircle, XCircle, Clock, Loader2, X, Play } from "lucide-react";
 import { api, JobOut, getWsUrl } from "@/lib/api";
 import { useJobActivity } from "@/contexts/JobActivityContext";
 
@@ -87,10 +87,26 @@ export default function JobDetailPage() {
   const { trackJob } = useJobActivity();
   const [job, setJob] = useState<JobOut | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [resuming, setResuming] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const prevStatusRef = useRef<string | undefined>(undefined);
   const notifiedTerminalStatesRef = useRef<Set<string>>(new Set());
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
+
+  const handleResume = async () => {
+    if (resuming) return;
+    setResuming(true);
+    try {
+      const updated = await api.resumeJob(id);
+      setJob(updated);
+      setLogs([]);
+    } catch (e: unknown) {
+      setToast({ message: e instanceof Error ? e.message : "Failed to resume job", type: "error" });
+      setTimeout(() => setToast(null), 6000);
+    } finally {
+      setResuming(false);
+    }
+  };
 
   // Request notification permission on mount
   useEffect(() => {
@@ -273,6 +289,16 @@ export default function JobDetailPage() {
               className="btn-secondary"
             >
               View Generated Recipes
+            </button>
+          )}
+          {(job.status === "stopped" || job.status === "failed") && job.job_type === "articles_all_sites" && (
+            <button
+              onClick={handleResume}
+              disabled={resuming}
+              className="btn-primary flex items-center gap-2"
+            >
+              {resuming ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+              {resuming ? "Resuming…" : "Continue Job"}
             </button>
           )}
           {job.status === "running" && (
