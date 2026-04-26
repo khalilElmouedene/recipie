@@ -22,7 +22,7 @@ const DEFAULT_ROW_HEIGHT = 26;
 const HEADER_WIDTH = 50;
 const HEADER_HEIGHT = 26;
 const FLOATING_CARD_WIDTH = 360;
-const FLOATING_CARD_HEIGHT = 320;
+const FLOATING_CARD_HEIGHT = 520;
 const IMAGE_HEADER_HINTS = new Set([
   "image",
   "image_url",
@@ -336,10 +336,13 @@ const scoreRecipeColumn = (values: string[]): number =>
 
 function clampFloatingCardPosition(x: number, y: number) {
   if (typeof window === "undefined") return { x, y };
-  return {
-    x: Math.max(12, Math.min(x, window.innerWidth - FLOATING_CARD_WIDTH - 12)),
-    y: Math.max(12, Math.min(y, window.innerHeight - FLOATING_CARD_HEIGHT - 12)),
-  };
+  const clampedX = Math.max(12, Math.min(x, window.innerWidth - FLOATING_CARD_WIDTH - 12));
+  // Prefer rendering below the cursor; flip above when there isn't enough room.
+  const fitsBelow = y + FLOATING_CARD_HEIGHT + 12 <= window.innerHeight;
+  const clampedY = fitsBelow
+    ? y
+    : Math.max(12, y - FLOATING_CARD_HEIGHT);
+  return { x: clampedX, y: clampedY };
 }
 
 function buildSelectionGenerationPreview(sheet: SheetData, range: CellRange): SelectionGenerationPreview {
@@ -1541,8 +1544,8 @@ export default function SpySheetPage() {
 
       {selectionCtxMenu && (
         <div
-          className="fixed z-50 w-[360px] max-w-[calc(100vw-24px)] rounded-xl border border-purple-800/40 bg-gray-900/95 p-4 shadow-2xl backdrop-blur-sm"
-          style={{ top: selectionCtxMenu.y, left: selectionCtxMenu.x }}
+          className="fixed z-50 w-[360px] max-w-[calc(100vw-24px)] rounded-xl border border-purple-800/40 bg-gray-900/95 p-4 shadow-2xl backdrop-blur-sm overflow-y-auto"
+          style={{ top: selectionCtxMenu.y, left: selectionCtxMenu.x, maxHeight: "calc(100vh - 24px)" }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-start justify-between gap-3">
