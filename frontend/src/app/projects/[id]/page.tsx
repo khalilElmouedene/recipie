@@ -19,6 +19,7 @@ export default function ProjectDetailPage() {
   const toast = useToast();
   const globalRole = getUserRole();
   const currentUserId = getUserId();
+  const { trackJob } = useJobActivity();
   const [project, setProject] = useState<ProjectOut | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [tab, setTab] = useState<Tab>("sites");
@@ -88,6 +89,27 @@ export default function ProjectDetailPage() {
       })
       .catch(() => {});
   }, [id, globalRole, currentUserId]);
+
+  // Always-active job discovery: keep pipeline in sync regardless of which tab is shown.
+  useEffect(() => {
+    const syncActiveJobs = () => {
+      api.getProjectJobsPage(id, { limit: 20, offset: 0 }).then(({ items }) => {
+        items.forEach((job) => {
+          if (job.status === "running" || job.status === "pending") {
+            const title =
+              job.job_type === "publisher" ? "WordPress publishing" :
+              job.job_type === "articles_all_sites" ? "All-sites generation" :
+              "Recipe generation";
+            trackJob(job, { title });
+          }
+        });
+      }).catch(() => {});
+    };
+
+    syncActiveJobs();
+    const timer = setInterval(syncActiveJobs, 10000);
+    return () => clearInterval(timer);
+  }, [id, trackJob]);
 
   if (notFound || !project) return null;
 
