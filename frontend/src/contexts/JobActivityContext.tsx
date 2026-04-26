@@ -165,7 +165,7 @@ export function JobActivityProvider({ children }: { children: React.ReactNode })
   }, []);
 
   const clearFinished = useCallback(() => {
-    setItems((prev) => prev.filter((item) => ACTIVE_JOB_STATUSES.has(item.status)));
+    setItems((prev) => prev.filter((item) => item.status !== "completed"));
   }, []);
 
   useEffect(() => {
