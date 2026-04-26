@@ -114,6 +114,7 @@ type SelectionGenerationPreview =
       ok: true;
       rangeLabel: string;
       items: SharedRecipeInput[];
+      rowIndices: number[];
       sourceRows: number;
       skippedRows: number;
       imageCol: number;
@@ -427,11 +428,13 @@ function buildSelectionGenerationPreview(sheet: SheetData, range: CellRange): Se
 
   let skippedRows = 0;
   const items: SharedRecipeInput[] = [];
-  dataRows.forEach(({ values }) => {
+  const rowIndices: number[] = [];
+  dataRows.forEach(({ row, values }) => {
     const image_url = values[imageIndex]?.trim() ?? "";
     const recipe_text = values[recipeIndex]?.trim() ?? "";
     if (image_url && recipe_text) {
       items.push({ image_url, recipe_text });
+      rowIndices.push(row);
       return;
     }
     if (values.some(Boolean)) skippedRows += 1;
@@ -449,12 +452,29 @@ function buildSelectionGenerationPreview(sheet: SheetData, range: CellRange): Se
     ok: true,
     rangeLabel,
     items,
+    rowIndices,
     sourceRows: dataRows.length,
     skippedRows,
     imageCol: normalized.startCol + imageIndex,
     recipeCol: normalized.startCol + recipeIndex,
     usedHeaderRow,
   };
+}
+
+function deleteSheetRows(data: SheetData, rowIndicesToDelete: number[]): SheetData {
+  if (!rowIndicesToDelete.length) return data;
+  const toDelete = new Set(rowIndicesToDelete);
+  const sortedDeletes = [...rowIndicesToDelete].sort((a, b) => a - b);
+  const nextCells: SheetData["cells"] = {};
+  for (const [key, cell] of Object.entries(data.cells)) {
+    const under = key.lastIndexOf("_");
+    const r = parseInt(key.slice(0, under), 10);
+    const c = parseInt(key.slice(under + 1), 10);
+    if (toDelete.has(r)) continue;
+    const shift = sortedDeletes.filter((dr) => dr < r).length;
+    nextCells[cellKey(r - shift, c)] = cell;
+  }
+  return { ...data, cells: nextCells, rows: Math.max(10, data.rows - rowIndicesToDelete.length) };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -484,6 +504,7 @@ export default function SpySheetPage() {
   const [tabCtxMenu, setTabCtxMenu] = useState<SheetCtxMenu | null>(null);
   const [selectionCtxMenu, setSelectionCtxMenu] = useState<SelectionCtxMenu | null>(null);
   const [startingGeneration, setStartingGeneration] = useState(false);
+  const [deleteAfterGeneration, setDeleteAfterGeneration] = useState(false);
 
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -1074,23 +1095,27 @@ export default function SpySheetPage() {
   const handleGenerateFromSelection = useCallback(async () => {
     if (!selectionCtxMenu?.preview.ok || startingGeneration) return;
     setStartingGeneration(true);
+    const preview = selectionCtxMenu.preview;
     try {
       const job = await api.startJob(id, {
         job_type: "articles_all_sites",
-        shared_recipes: selectionCtxMenu.preview.items,
+        shared_recipes: preview.items,
       });
       trackJob(job, {
         title: "Spy Sheet all-sites generation",
-        sourceLabel: `${selectionCtxMenu.preview.items.length} selected row(s)`,
+        sourceLabel: `${preview.items.length} selected row(s)`,
       });
+      if (deleteAfterGeneration) {
+        updateActiveData((prev) => deleteSheetRows(prev, preview.rowIndices));
+      }
       setSelectionCtxMenu(null);
-      toast.success(`Started generation for ${selectionCtxMenu.preview.items.length} selected row(s). Added to the pipeline.`);
+      toast.success(`Started generation for ${preview.items.length} selected row(s). Added to the pipeline.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to start generation from Spy Sheet");
     } finally {
       setStartingGeneration(false);
     }
-  }, [id, router, selectionCtxMenu, startingGeneration, toast]);
+  }, [id, router, selectionCtxMenu, startingGeneration, deleteAfterGeneration, updateActiveData, toast]);
 
   // ── Sheet tab operations ──
   const addSheet = () => {
@@ -1570,6 +1595,16 @@ export default function SpySheetPage() {
                   ))}
                 </div>
               </div>
+
+              <label className="mt-3 flex cursor-pointer items-center gap-2.5 rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={deleteAfterGeneration}
+                  onChange={(e) => setDeleteAfterGeneration(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-gray-600 accent-purple-500"
+                />
+                <span className="text-xs text-gray-300">Delete rows from sheet after generation</span>
+              </label>
 
               <div className="mt-4 flex items-center justify-end gap-2">
                 <button
