@@ -13,7 +13,7 @@ interface RecipeCard {
   name: string;
   index: number;
   total: number;
-  status: "running" | "completed" | "error" | "waiting";
+  status: "running" | "completed" | "error" | "waiting" | "stopped";
   currentStep: string;
   completedSteps: number;
   mjStatus?: "queued" | "generating";
@@ -219,7 +219,16 @@ export default function JobDetailPage() {
     return () => clearInterval(t);
   }, [job?.status, id]);
 
-  const recipeCards = useMemo(() => parseRecipeCards(logs), [logs]);
+  const recipeCards = useMemo(() => {
+    const cards = parseRecipeCards(logs);
+    if (job && job.status === "stopped") {
+      return cards.map((c) => c.status === "running" ? { ...c, status: "stopped" as const, currentStep: "Stopped mid-generation" } : c);
+    }
+    if (job && job.status === "failed") {
+      return cards.map((c) => c.status === "running" ? { ...c, status: "stopped" as const, currentStep: "Interrupted" } : c);
+    }
+    return cards;
+  }, [logs, job?.status]);
   const currentStatus = useMemo(() => currentStatusFromLogs(logs), [logs]);
   // Use DB-tracked current_row/total_rows as the primary progress source so that
   // already-completed recipes from previous runs are counted, and progress updates
@@ -343,6 +352,7 @@ export default function JobDetailPage() {
                 card.status === "completed" ? "bg-green-950/20 border-green-800/30" :
                 card.status === "error"     ? "bg-red-950/20 border-red-800/30" :
                 card.status === "running"   ? "bg-blue-950/20 border-blue-800/30" :
+                card.status === "stopped"   ? "bg-yellow-950/20 border-yellow-800/30" :
                                               "bg-gray-800/20 border-gray-700/30"
               }`}>
                 {/* Status icon */}
@@ -350,6 +360,7 @@ export default function JobDetailPage() {
                   {card.status === "completed" && <CheckCircle size={16} className="text-green-400" />}
                   {card.status === "error"     && <XCircle size={16} className="text-red-400" />}
                   {card.status === "running"   && <Loader2 size={16} className="text-blue-400 animate-spin" />}
+                  {card.status === "stopped"   && <Square size={16} className="text-yellow-400" />}
                   {card.status === "waiting"   && <Clock size={16} className="text-gray-500" />}
                 </div>
 
@@ -359,6 +370,7 @@ export default function JobDetailPage() {
                   <p className={`text-xs mt-0.5 ${
                     card.status === "completed"        ? "text-green-400" :
                     card.status === "error"            ? "text-red-400" :
+                    card.status === "stopped"          ? "text-yellow-400" :
                     card.mjStatus === "queued"         ? "text-yellow-400" :
                     card.mjStatus === "generating"     ? "text-orange-400" :
                                                          "text-blue-400"
@@ -369,9 +381,10 @@ export default function JobDetailPage() {
                 <div className="flex gap-1 flex-shrink-0" title={`${card.completedSteps}/${TOTAL_STEPS} steps`}>
                   {Array.from({ length: TOTAL_STEPS }).map((_, s) => (
                     <div key={s} className={`w-2 h-2 rounded-full ${
-                      s < card.completedSteps              ? "bg-green-500" :
-                      s === card.completedSteps && card.status === "running" ? "bg-blue-400 animate-pulse" :
-                                                             "bg-gray-700"
+                      s < card.completedSteps                                        ? "bg-green-500" :
+                      s === card.completedSteps && card.status === "running"         ? "bg-blue-400 animate-pulse" :
+                      s === card.completedSteps && card.status === "stopped"         ? "bg-yellow-500" :
+                                                                                       "bg-gray-700"
                     }`} />
                   ))}
                 </div>
