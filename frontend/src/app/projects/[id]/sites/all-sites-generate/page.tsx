@@ -192,6 +192,16 @@ export default function AllSitesGeneratePage() {
         setIntervalMinutes(s.interval_minutes || 240);
       })
       .catch(() => {});
+    // Discover active publisher jobs on mount (catches scheduler-started jobs).
+    api.getProjectJobsPage(projectId, { jobType: "publisher", limit: 10, offset: 0 })
+      .then(({ items }) => {
+        items.forEach((job) => {
+          if (job.status === "running" || job.status === "pending") {
+            trackJob(job, { title: "WordPress publishing" });
+          }
+        });
+      })
+      .catch(() => {});
   }, [projectId, loadHistory]);
 
   const historyJobIds = history.map((j) => j.id).join(",");

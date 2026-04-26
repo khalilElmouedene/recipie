@@ -679,6 +679,7 @@ function JobsTab({ projectId }: { projectId: string }) {
   const [totalJobs, setTotalJobs] = useState(0);
   const [loadingMoreJobs, setLoadingMoreJobs] = useState(false);
   const hasMoreJobs = jobs.length < totalJobs;
+  const { trackJob } = useJobActivity();
 
   const load = (limit = Math.max(jobs.length || 0, JOBS_PAGE_SIZE)) =>
     api.getProjectJobsPage(projectId, { limit, offset: 0 })
@@ -688,6 +689,20 @@ function JobsTab({ projectId }: { projectId: string }) {
       })
       .catch(() => {});
   useEffect(() => { load(); }, [projectId]);
+
+  // Sync any active jobs visible in this list into the pipeline.
+  // Catches jobs started by the backend scheduler or from other sessions/tabs.
+  useEffect(() => {
+    jobs.forEach((job) => {
+      if (job.status === "running" || job.status === "pending") {
+        const title =
+          job.job_type === "publisher" ? "WordPress publishing" :
+          job.job_type === "articles_all_sites" ? "All-sites generation" :
+          "Recipe generation";
+        trackJob(job, { title });
+      }
+    });
+  }, [jobs, trackJob]);
 
   const handleLoadMoreJobs = useCallback(async () => {
     if (loadingMoreJobs || !hasMoreJobs) return;
