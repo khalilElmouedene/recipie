@@ -42,50 +42,6 @@ async def start_job(
         if not body.shared_recipes:
             raise HTTPException(status_code=400, detail="shared_recipes is required for articles_all_sites")
 
-    # ── Concurrency guards ────────────────────────────────────────────────────
-    # Include BOTH running AND pending: when two requests arrive simultaneously,
-    # the first creates a job (status=pending) before the thread marks it running.
-    # Checking only running would let the second request through during that window.
-    _ACTIVE = [JobStatus.running, JobStatus.pending]
-
-    if body.job_type == "articles_all_sites":
-        dup = await db.execute(
-            select(Job).where(
-                Job.project_id == project_id,
-                Job.job_type == JobType.articles_all_sites,
-                Job.status.in_(_ACTIVE),
-            )
-        )
-        if dup.scalar_one_or_none():
-            raise HTTPException(
-                status_code=409,
-                detail="A generation job is already running for this project. Wait for it to finish before starting a new one.",
-            )
-
-    elif body.job_type == "articles":
-        if body.recipe_id:
-            rq = await db.execute(select(Recipe).where(Recipe.id == body.recipe_id))
-            rcp = rq.scalar_one_or_none()
-            if rcp and rcp.status == RecipeStatus.generating:
-                raise HTTPException(
-                    status_code=409,
-                    detail="This recipe is already being generated. Wait for it to complete.",
-                )
-        else:
-            dup = await db.execute(
-                select(Job).where(
-                    Job.project_id == project_id,
-                    Job.job_type == JobType.articles,
-                    Job.status.in_(_ACTIVE),
-                )
-            )
-            if dup.scalar_one_or_none():
-                raise HTTPException(
-                    status_code=409,
-                    detail="A generation job is already running for this site. Wait for it to finish.",
-                )
-
-    # ─────────────────────────────────────────────────────────────────────────
 
     job = Job(
         project_id=project_id,
