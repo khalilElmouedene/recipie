@@ -218,6 +218,7 @@ export default function JobDetailPage() {
   const recipeCards = useMemo(() => parseRecipeCards(logs), [logs]);
   const currentStatus = useMemo(() => currentStatusFromLogs(logs), [logs]);
   const totalRecipes = (job?.total_rows ?? 0) > 0 ? job!.total_rows! : recipeCards.length;
+  const completedCount = recipeCards.filter(c => c.status === "completed").length;
   const showErrorBanner = !!job?.error && TERMINAL_JOB_STATUSES.has(job.status) && job.status !== "completed";
   const backHref =
     job?.job_type === "articles_all_sites"
