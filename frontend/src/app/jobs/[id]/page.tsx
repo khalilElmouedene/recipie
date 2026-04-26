@@ -108,13 +108,6 @@ export default function JobDetailPage() {
     }
   };
 
-  // Request notification permission on mount
-  useEffect(() => {
-    if (typeof Notification !== "undefined" && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
-  }, []);
-
   // Fire browser notification + in-app toast when job finishes
   useEffect(() => {
     if (!job) return;
@@ -137,12 +130,6 @@ export default function JobDetailPage() {
     setToast({ message: msg, type: isSuccess ? "success" : job.status === "failed" ? "error" : "info" });
     setTimeout(() => setToast(null), 6000);
 
-    if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
-      new Notification(`Job ${job.status}`, {
-        body: msg,
-        icon: "/favicon.ico",
-      });
-    }
   }, [job?.id, job?.status]);
 
   useEffect(() => {
@@ -291,7 +278,7 @@ export default function JobDetailPage() {
               View Generated Recipes
             </button>
           )}
-          {(job.status === "stopped" || job.status === "failed") && job.job_type === "articles_all_sites" && (
+          {(job.status === "stopped" || job.status === "failed") && (
             <button
               onClick={handleResume}
               disabled={resuming}

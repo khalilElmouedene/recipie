@@ -105,6 +105,30 @@ function mergeTrackedJob(
   };
 }
 
+function fireJobNotification(job: JobOut, title: string) {
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  if (!document.hidden) return; // only notify when user is away from the app
+  let body = "";
+  let heading = title;
+  if (job.status === "completed") {
+    heading = `✓ ${title}`;
+    body = "Completed successfully.";
+  } else if (job.status === "failed") {
+    heading = `✗ ${title} failed`;
+    body = job.error ? job.error : "Check the job logs for details.";
+  } else if (job.status === "stopped") {
+    heading = `⏹ ${title} stopped`;
+    body = "The job was stopped. You can resume it from the job page.";
+  }
+  try {
+    const n = new Notification(heading, { body, icon: "/favicon.ico" });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch {
+    // ignore
+  }
+}
+
 export function JobActivityProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<JobActivityItem[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -114,6 +138,12 @@ export function JobActivityProvider({ children }: { children: React.ReactNode })
     const initialItems = readStoredItems();
     setItems(initialItems);
     itemsRef.current = initialItems;
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
   }, []);
 
   useEffect(() => {
@@ -148,6 +178,19 @@ export function JobActivityProvider({ children }: { children: React.ReactNode })
       const jobs = await Promise.all(
         activeIds.map((jobId) => api.getJob(jobId).catch(() => null))
       );
+
+      // Fire browser notifications for jobs that just reached a terminal state
+      for (const job of jobs) {
+        if (!job) continue;
+        const prevItem = itemsRef.current.find((i) => i.id === job.id);
+        if (
+          prevItem &&
+          ACTIVE_JOB_STATUSES.has(prevItem.status) &&
+          TERMINAL_JOB_STATUSES.has(job.status)
+        ) {
+          fireJobNotification(job, prevItem.title ?? defaultTitleForJob(job));
+        }
+      }
 
       setItems((prev) => {
         let changed = false;

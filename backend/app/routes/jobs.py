@@ -362,21 +362,22 @@ async def resume_job_endpoint(
         raise HTTPException(status_code=404, detail="Job not found")
     await check_project_access(job.project_id, user, db)
 
-    if job.job_type != JobType.articles_all_sites:
-        raise HTTPException(status_code=400, detail="Only articles_all_sites jobs can be resumed")
+    RESUMABLE_TYPES = {JobType.articles_all_sites, JobType.articles, JobType.publisher}
+    if job.job_type not in RESUMABLE_TYPES:
+        raise HTTPException(status_code=400, detail="This job type cannot be resumed.")
 
     if job.status not in (JobStatus.stopped, JobStatus.failed):
-        raise HTTPException(status_code=400, detail="Job must be stopped or failed to resume")
+        raise HTTPException(status_code=400, detail="Job must be stopped or failed to resume.")
 
     dup = await db.execute(
         select(Job).where(
             Job.project_id == job.project_id,
-            Job.job_type == JobType.articles_all_sites,
+            Job.job_type == job.job_type,
             Job.status.in_([JobStatus.running, JobStatus.pending]),
         )
     )
     if dup.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Another generation job is already running for this project.")
+        raise HTTPException(status_code=409, detail="Another job of the same type is already running for this project.")
 
     # Revert any recipes stuck in 'generating' back to 'pending'
     await db.execute(

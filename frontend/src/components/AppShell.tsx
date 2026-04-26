@@ -73,7 +73,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
         <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex h-14 items-center justify-between border-b border-gray-800 bg-gray-950/95 px-4 backdrop-blur md:px-6">
+          <div className="flex h-14 items-center justify-between border-b border-gray-800 bg-gray-950 px-4 md:px-6">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setSidebarOpen(true)}

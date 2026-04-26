@@ -233,13 +233,6 @@ export default function SiteDetailPage() {
     }
   }, []);
 
-  // Request notification permission
-  useEffect(() => {
-    if (typeof Notification !== "undefined" && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
-  }, []);
-
   // Fire notification when active job finishes
   useEffect(() => {
     if (!activeJob) return;
@@ -261,9 +254,6 @@ export default function SiteDetailPage() {
     setJobToast({ message: msg, type: isSuccess ? "success" : activeJob.status === "failed" ? "error" : "info" });
     setTimeout(() => setJobToast(null), 6000);
 
-    if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
-      new Notification(`Job ${activeJob.status}`, { body: msg, icon: "/favicon.ico" });
-    }
   }, [activeJob?.id, activeJob?.status]);
 
   // Sync pin design form when expanded recipe changes (auto-fill from generated data)
