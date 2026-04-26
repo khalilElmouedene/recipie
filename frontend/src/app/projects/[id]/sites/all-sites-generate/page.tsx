@@ -297,6 +297,18 @@ export default function AllSitesGeneratePage() {
     }, 15000);
     return () => clearInterval(t);
   }, [runningJob?.id, runningJob?.status, loadHistory]);
+
+  // Keep the pipeline in sync: whenever history changes, re-track any active jobs.
+  // This mirrors what the job detail page does and ensures the second (or Nth) job
+  // always appears in the bell-icon pipeline regardless of timing.
+  useEffect(() => {
+    history.forEach((job) => {
+      if (job.status === "running" || job.status === "pending") {
+        trackJob(job, { title: "All-sites recipe generation" });
+      }
+    });
+  }, [history, trackJob]);
+
   const hasAnyGeneratedRecipes = Object.values(jobRecipeMap).some((arr) =>
     arr.some((r) => r.status === "generated" || r.status === "published")
   );
@@ -331,6 +343,10 @@ export default function AllSitesGeneratePage() {
         title: "All-sites recipe generation",
         sourceLabel: `${valid.length} shared recipe input(s) across ${sites.length} site(s)`,
       });
+      setRows([{ image_url: "", recipe_text: "" }]);
+      setRowModes({});
+      setRowErrors({});
+      loadHistory();
       toast.success("All-sites generation added to the pipeline.");
     } catch (e: any) {
       toast.error(e.message || "Failed to start all-sites generation job");
