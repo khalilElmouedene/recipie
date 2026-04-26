@@ -94,9 +94,9 @@ export default function JobActivityCenter() {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full z-[120] mt-3 w-[min(92vw,25rem)] overflow-hidden rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl">
-          {/* Header */}
-          <div className="border-b border-gray-700 bg-gray-900 px-4 py-4">
+        <div className="absolute right-0 top-full z-[120] mt-3 w-[min(92vw,25rem)] flex flex-col rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl" style={{ maxHeight: "min(80vh, 560px)" }}>
+          {/* Header — fixed, never scrolls */}
+          <div className="flex-shrink-0 border-b border-gray-700 bg-gray-900 px-4 py-4 rounded-t-2xl">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.26em] text-gray-500">Pipeline</p>
@@ -117,8 +117,8 @@ export default function JobActivityCenter() {
             </div>
           </div>
 
-          {/* Body */}
-          <div className="max-h-[70vh] overflow-y-auto bg-gray-900 px-3 py-3">
+          {/* Body — scrollable */}
+          <div className="flex-1 overflow-y-auto bg-gray-900 px-3 py-3 rounded-b-2xl">
             {sortedItems.length === 0 ? (
               <div className="rounded-xl border border-dashed border-gray-700 bg-gray-800 px-4 py-8 text-center">
                 <p className="text-sm font-medium text-white">No background jobs yet</p>
