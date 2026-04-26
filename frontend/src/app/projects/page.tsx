@@ -5,9 +5,13 @@ import { Plus, FolderKanban, Globe, ChefHat, Copy, Trash2, Pencil, X } from "luc
 import { api, ProjectOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
 export default function ProjectsPage() {
+  const PROJECTS_PAGE_SIZE = 12;
   const [projects, setProjects] = useState<ProjectOut[]>([]);
+  const [totalProjects, setTotalProjects] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
@@ -20,13 +24,19 @@ export default function ProjectsPage() {
   const [renameName, setRenameName] = useState("");
   const [savingRename, setSavingRename] = useState(false);
   const toast = useToast();
+  const [loadingMore, setLoadingMore] = useState(false);
   const syncedOnceRef = useRef(false);
   const previousProjectsRef = useRef<Map<string, string>>(new Map());
+  const hasMore = projects.length < totalProjects;
 
-  const load = useCallback(async (opts?: { announceMembershipChanges?: boolean }) => {
+  const load = useCallback(async (opts?: { announceMembershipChanges?: boolean; limit?: number }) => {
     try {
-      const rows = await api.getProjects();
+      const { items: rows, total } = await api.getProjectsPage({
+        limit: opts?.limit ?? Math.max(projects.length || 0, PROJECTS_PAGE_SIZE),
+        offset: 0,
+      });
       setProjects(rows);
+      setTotalProjects(total);
 
       const nextMap = new Map(rows.map((p) => [p.id, p.name]));
       const prevMap = previousProjectsRef.current;
@@ -49,7 +59,7 @@ export default function ProjectsPage() {
     } catch {
       // Keep current UI state on transient API errors.
     }
-  }, [role, toast]);
+  }, [PROJECTS_PAGE_SIZE, projects.length, role, toast]);
 
   useEffect(() => {
     load({ announceMembershipChanges: false });
@@ -135,12 +145,34 @@ export default function ProjectsPage() {
     setLoading(false);
   };
 
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const { items, total } = await api.getProjectsPage({
+        limit: PROJECTS_PAGE_SIZE,
+        offset: projects.length,
+      });
+      setProjects((prev) => [...prev, ...items]);
+      setTotalProjects(total);
+    } catch {
+      // keep current state on error
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, projects.length, PROJECTS_PAGE_SIZE]);
+
+  const sentinelRef = useInfiniteScroll(handleLoadMore, { hasMore, loading: loadingMore });
+
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-white">Projects</h1>
-          <p className="text-sm text-gray-400 mt-1">{projects.length} project{projects.length !== 1 ? "s" : ""}</p>
+          <p className="text-sm text-gray-400 mt-1">
+            {totalProjects} project{totalProjects !== 1 ? "s" : ""}
+            {projects.length < totalProjects && <span> · {projects.length} loaded</span>}
+          </p>
         </div>
         {role === "owner" && (
           <button onClick={() => setShowCreate(!showCreate)} className="btn-primary flex items-center gap-2">
@@ -235,6 +267,9 @@ export default function ProjectsPage() {
             No projects yet. {role === "owner" ? "Create one to get started." : "Ask the owner to assign you to a project."}
           </div>
         )}
+        <div className="col-span-full">
+          <InfiniteScrollSentinel sentinelRef={sentinelRef} loading={loadingMore} hasMore={hasMore} />
+        </div>
       </div>
 
       {renameProject && (

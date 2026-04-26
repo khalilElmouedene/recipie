@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import {
@@ -36,6 +36,7 @@ import { getUserRole } from "@/lib/auth";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import { useJobActivity } from "@/contexts/JobActivityContext";
 import BatchPublishModal from "@/components/BatchPublishModal";
 import type { PublishBatchRequest } from "@/lib/api";
 
@@ -71,6 +72,7 @@ export default function AllSitesGeneratePage() {
   const canAdmin = role === "owner" || role === "admin";
   const toast = useToast();
   const openConfirm = useConfirm();
+  const { trackJob } = useJobActivity();
 
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [loading, setLoading] = useState(false);
@@ -90,9 +92,20 @@ export default function AllSitesGeneratePage() {
   const [importingExcel, setImportingExcel] = useState(false);
   const excelInputRef = useRef<HTMLInputElement>(null);
   const runStartingRef = useRef(false); // idempotency: blocks re-entry before React re-renders
+  const loadedJobIdsRef = useRef<Set<string>>(new Set()); // tracks which jobs have had recipes fetched
+  const hasInitializedRef = useRef(false);
 
   const [jobRecipeMap, setJobRecipeMap] = useState<Record<string, GeneratedJobRecipeOut[]>>({});
-  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [jobRecipeTotals, setJobRecipeTotals] = useState<Record<string, number>>({});
+  const [loadingDetail, setLoadingDetail] = useState<Record<string, boolean>>({});
+  const [showAllInputRows, setShowAllInputRows] = useState(false);
+  const [jobVisibleCounts, setJobVisibleCounts] = useState<Record<string, number>>({});
+  const [historyVisibleCount, setHistoryVisibleCount] = useState(10);
+  const [historyTotalCount, setHistoryTotalCount] = useState(0);
+
+  const INPUT_ROWS_PREVIEW = 10; // max rows shown before collapsing
+  const HISTORY_RECIPES_PAGE_SIZE = 10; // render recipe history in small batches to keep the UI responsive
+  const HISTORY_JOBS_PAGE_SIZE = 10;
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [deletingRecipeId, setDeletingRecipeId] = useState<string | null>(null);
 
@@ -106,10 +119,22 @@ export default function AllSitesGeneratePage() {
   const detailsLoadedRef = useRef<Set<string>>(new Set());
 
   const loadHistory = useCallback(() => {
-    api.getProjectJobs(projectId)
-      .then((jobs) => setHistory(jobs.filter((j) => j.job_type === "articles_all_sites")))
+    api.getProjectJobsPage(projectId, {
+      jobType: "articles_all_sites",
+      limit: historyVisibleCount,
+      offset: 0,
+    })
+      .then(({ items, total }) => {
+        setHistory(items);
+        setHistoryTotalCount(total);
+        setCollapsedJobs((prev) => {
+          const next = new Set(prev);
+          items.slice(1).forEach((job) => next.add(job.id));
+          return next;
+        });
+      })
       .catch(() => {});
-  }, [projectId]);
+  }, [historyVisibleCount, projectId]);
 
   const ensureRecipeFull = useCallback(async (recipeId: string) => {
     if (detailsLoadedRef.current.has(recipeId)) return;
@@ -171,36 +196,54 @@ export default function AllSitesGeneratePage() {
 
   const historyJobIds = history.map((j) => j.id).join(",");
 
+  const loadJobRecipes = useCallback((jobId: string, limitOverride?: number) => {
+    loadedJobIdsRef.current.add(jobId);
+    setLoadingDetail((prev) => ({ ...prev, [jobId]: true }));
+    api.getJobGeneratedRecipesPage(jobId, {
+      limit: limitOverride ?? jobVisibleCounts[jobId] ?? HISTORY_RECIPES_PAGE_SIZE,
+      offset: 0,
+    })
+      .then(({ items, total }) => {
+        setJobRecipeMap((m) => ({ ...m, [jobId]: items }));
+        setJobRecipeTotals((m) => ({ ...m, [jobId]: total }));
+      })
+      .catch(() => {})
+      .finally(() =>
+        setLoadingDetail((prev) => {
+          const next = { ...prev };
+          delete next[jobId];
+          return next;
+        })
+      );
+  }, [HISTORY_RECIPES_PAGE_SIZE, jobVisibleCounts]);
+
   useEffect(() => {
     if (history.length === 0) {
       setJobRecipeMap({});
-      setLoadingDetail(false);
+      setJobRecipeTotals({});
+      setJobVisibleCounts({});
+      setCollapsedJobs(new Set());
+      setHistoryTotalCount(0);
+      loadedJobIdsRef.current = new Set();
+      hasInitializedRef.current = false;
       return;
     }
-    let cancelled = false;
-    setLoadingDetail(true);
-    Promise.all(history.map((j) => api.getJobGeneratedRecipes(j.id).then((r) => [j.id, r] as const)))
-      .then((pairs) => {
-        if (!cancelled) {
-          const m: Record<string, GeneratedJobRecipeOut[]> = {};
-          pairs.forEach(([id, r]) => {
-            m[id] = r;
-          });
-          setJobRecipeMap(m);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setLoadingDetail(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [historyJobIds, history.length]);
+    if (hasInitializedRef.current) return;
+    hasInitializedRef.current = true;
+    // Collapse all jobs except the most recent; only load recipes for the visible one.
+    const [newest, ...older] = history;
+    setCollapsedJobs(new Set(older.map((j) => j.id)));
+    if (newest) loadJobRecipes(newest.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyJobIds]);
 
-  const validCount = rows
-    .map((r) => ({ image_url: r.image_url.trim(), recipe_text: r.recipe_text.trim() }))
-    .filter((r) => r.image_url && r.recipe_text).length;
+  const validCount = useMemo(
+    () =>
+      rows
+        .map((r) => ({ image_url: r.image_url.trim(), recipe_text: r.recipe_text.trim() }))
+        .filter((r) => r.image_url && r.recipe_text).length,
+    [rows]
+  );
   const hasRunningGeneration = history.some((j) => j.status === "running" || j.status === "pending");
 
   // Real-time: while any job is running, subscribe to its WS and reload history
@@ -244,11 +287,14 @@ export default function AllSitesGeneratePage() {
 
   // Cross-user discovery: if no local running job is visible yet, keep checking
   // so jobs started by another member appear without manual refresh.
+  // 15s interval (not 3s) — background discovery doesn't need to be instant.
+  // Skips the call when the tab is hidden to avoid unnecessary server load.
   useEffect(() => {
     if (runningJob) return;
     const t = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       loadHistory();
-    }, 3000);
+    }, 15000);
     return () => clearInterval(t);
   }, [runningJob?.id, runningJob?.status, loadHistory]);
   const hasAnyGeneratedRecipes = Object.values(jobRecipeMap).some((arr) =>
@@ -281,11 +327,15 @@ export default function AllSitesGeneratePage() {
         job_type: "articles_all_sites",
         shared_recipes: valid,
       });
-      router.push(`/jobs/${job.id}`);
+      trackJob(job, {
+        title: "All-sites recipe generation",
+        sourceLabel: `${valid.length} shared recipe input(s) across ${sites.length} site(s)`,
+      });
+      toast.success("All-sites generation added to the pipeline.");
     } catch (e: any) {
       toast.error(e.message || "Failed to start all-sites generation job");
-      setLoading(false);
     } finally {
+      setLoading(false);
       runStartingRef.current = false;
     }
   };
@@ -329,15 +379,32 @@ export default function AllSitesGeneratePage() {
     setBatchModalData(null);
     setBatchPublishing(null);
     if (didPublish) {
-      const jobs = await api.getProjectJobs(projectId);
-      const filtered = jobs.filter((j) => j.job_type === "articles_all_sites");
-      setHistory(filtered);
+      const { items } = await api.getProjectJobsPage(projectId, {
+        jobType: "articles_all_sites",
+        limit: historyVisibleCount,
+        offset: 0,
+      });
+      setHistory(items);
+      // Only reload recipes for jobs whose data was already fetched
+      const toReload = items.filter((j) => loadedJobIdsRef.current.has(j.id));
       const pairs = await Promise.all(
-        filtered.map((j) => api.getJobGeneratedRecipes(j.id).then((r) => [j.id, r] as const))
+        toReload.map((j) =>
+          api.getJobGeneratedRecipesPage(j.id, {
+            limit: jobVisibleCounts[j.id] ?? HISTORY_RECIPES_PAGE_SIZE,
+            offset: 0,
+          }).then(({ items: recipes, total }) => [j.id, recipes, total] as const)
+        )
       );
-      const m: Record<string, GeneratedJobRecipeOut[]> = {};
-      pairs.forEach(([jid, r]) => { m[jid] = r; });
-      setJobRecipeMap(m);
+      if (pairs.length) {
+        const m: Record<string, GeneratedJobRecipeOut[]> = {};
+        const totals: Record<string, number> = {};
+        pairs.forEach(([jid, recipes, total]) => {
+          m[jid] = recipes;
+          totals[jid] = total;
+        });
+        setJobRecipeMap((prev) => ({ ...prev, ...m }));
+        setJobRecipeTotals((prev) => ({ ...prev, ...totals }));
+      }
     }
   };
 
@@ -389,6 +456,7 @@ export default function AllSitesGeneratePage() {
       }
 
       setRows(imported);
+      setShowAllInputRows(false);
       toast.success(`Imported ${imported.length} recipe input(s) from Excel.`);
     } catch (e: any) {
       toast.error(e?.message || "Failed to import Excel file");
@@ -419,7 +487,13 @@ export default function AllSitesGeneratePage() {
     try {
       await api.deleteJob(jobId);
       setHistory((h) => h.filter((j) => j.id !== jobId));
+      setHistoryTotalCount((count) => Math.max(0, count - 1));
       setJobRecipeMap((m) => {
+        const next = { ...m };
+        delete next[jobId];
+        return next;
+      });
+      setJobRecipeTotals((m) => {
         const next = { ...m };
         delete next[jobId];
         return next;
@@ -436,9 +510,14 @@ export default function AllSitesGeneratePage() {
     setResumingJobId(jobId);
     try {
       const job = await api.resumeJob(jobId);
-      router.push(`/jobs/${job.id}`);
+      trackJob(job, {
+        title: "Resumed all-sites generation",
+        sourceLabel: "Open the pipeline icon to monitor logs and progress.",
+      });
+      toast.success("Resumed job added back to the pipeline.");
     } catch (e: any) {
       toast.error(e.message || "Failed to resume job");
+    } finally {
       setResumingJobId(null);
     }
   };
@@ -488,14 +567,35 @@ export default function AllSitesGeneratePage() {
     }
   };
 
-  const toggleCollapseJob = (jobId: string) => {
+  const toggleCollapseJob = useCallback((jobId: string) => {
     setCollapsedJobs((prev) => {
       const next = new Set(prev);
-      if (next.has(jobId)) next.delete(jobId);
-      else next.add(jobId);
+      if (next.has(jobId)) {
+        next.delete(jobId);
+        const nextCount = jobVisibleCounts[jobId] ?? HISTORY_RECIPES_PAGE_SIZE;
+        setJobVisibleCounts((counts) =>
+          counts[jobId] ? counts : { ...counts, [jobId]: nextCount }
+        );
+        loadJobRecipes(jobId, nextCount);
+      } else {
+        next.add(jobId);
+      }
       return next;
     });
-  };
+  }, [HISTORY_RECIPES_PAGE_SIZE, jobVisibleCounts, loadJobRecipes]);
+
+  const loadMoreJobRecipes = useCallback((jobId: string) => {
+    const nextCount = (jobVisibleCounts[jobId] ?? HISTORY_RECIPES_PAGE_SIZE) + HISTORY_RECIPES_PAGE_SIZE;
+    setJobVisibleCounts((prev) => ({
+      ...prev,
+      [jobId]: nextCount,
+    }));
+    loadJobRecipes(jobId, nextCount);
+  }, [HISTORY_RECIPES_PAGE_SIZE, jobVisibleCounts, loadJobRecipes]);
+
+  const loadMoreHistory = useCallback(() => {
+    setHistoryVisibleCount((count) => count + HISTORY_JOBS_PAGE_SIZE);
+  }, [HISTORY_JOBS_PAGE_SIZE]);
 
   const toggleExpand = (recipeId: string) => {
     const next = expandedRecipeId === recipeId ? null : recipeId;
@@ -575,7 +675,7 @@ export default function AllSitesGeneratePage() {
 
       {/* ── 1. Recipe Inputs ── */}
       <div className="space-y-3 mb-4">
-        {rows.map((r, idx) => (
+        {(showAllInputRows ? rows : rows.slice(0, INPUT_ROWS_PREVIEW)).map((r, idx) => (
           <div key={idx} className="card border border-gray-700">
             <div className="text-xs text-gray-500 mb-2">Recipe Input #{idx + 1}</div>
             <div className="space-y-2">
@@ -661,6 +761,17 @@ export default function AllSitesGeneratePage() {
             )}
           </div>
         ))}
+        {rows.length > INPUT_ROWS_PREVIEW && (
+          <button
+            type="button"
+            onClick={() => setShowAllInputRows((v) => !v)}
+            className="w-full py-2 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-xl bg-gray-800/50 hover:bg-gray-800 transition"
+          >
+            {showAllInputRows
+              ? "Show less"
+              : `Show all ${rows.length} recipe inputs (${rows.length - INPUT_ROWS_PREVIEW} more hidden)`}
+          </button>
+        )}
       </div>
 
       {/* ── 2. History ── */}
@@ -674,14 +785,17 @@ export default function AllSitesGeneratePage() {
 
         {history.length === 0 ? (
           <p className="text-sm text-gray-500">No previous all-sites jobs yet.</p>
-        ) : loadingDetail ? (
-          <p className="text-sm text-gray-500 py-4">Loading recipes…</p>
         ) : (
           <div className="space-y-8">
             {history.map((j) => {
               const recipes = jobRecipeMap[j.id] || [];
+              const totalJobRecipes = jobRecipeTotals[j.id] ?? recipes.length;
+              const isCollapsed = collapsedJobs.has(j.id);
+              const visibleRecipeCount = recipes.length;
+              const visibleRecipes = isCollapsed ? [] : recipes;
+              const remainingRecipes = Math.max(0, totalJobRecipes - recipes.length);
               const recipesBySite = Array.from(
-                recipes.reduce((acc, row) => {
+                visibleRecipes.reduce((acc, row) => {
                   const key = (row.site_domain || "").trim().toLowerCase() || row.site_id || "unknown-site";
                   if (!acc.has(key)) {
                     acc.set(key, {
@@ -747,29 +861,54 @@ export default function AllSitesGeneratePage() {
                           <button
                             onClick={() => toggleCollapseJob(j.id)}
                             className="text-xs px-2 py-1 rounded-lg border border-gray-700 text-gray-400 hover:bg-gray-800 flex items-center gap-1"
-                            title={collapsedJobs.has(j.id) ? "Expand recipes" : "Collapse recipes"}
+                            title={isCollapsed ? "Expand recipes" : "Collapse recipes"}
                           >
-                            {collapsedJobs.has(j.id) ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
-                            {collapsedJobs.has(j.id) ? `Show ${(jobRecipeMap[j.id] || []).length} recipes` : "Collapse"}
+                            {isCollapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+                            {isCollapsed
+                              ? jobRecipeMap[j.id] !== undefined
+                                ? `Show ${jobRecipeTotals[j.id] ?? jobRecipeMap[j.id].length} recipes`
+                                : "Show recipes"
+                              : "Collapse"}
                           </button>
                         </>
                       )}
                     </div>
                   </div>
-                  {!collapsedJobs.has(j.id) && (
+                  {!isCollapsed && (
                   <div className="p-2 sm:p-3 space-y-2">
-                    {recipes.length === 0 ? (
+                    {loadingDetail[j.id] ? (
+                      <p className="text-xs text-gray-500 py-2 flex items-center gap-2">
+                        <Loader2 size={12} className="animate-spin" /> Loading recipes…
+                      </p>
+                    ) : recipes.length === 0 ? (
                       <p className="text-xs text-gray-600 py-2">No recipes linked.</p>
                     ) : (
-                      recipesBySite.map((siteGroup) => (
-                        <div key={`${j.id}-${siteGroup.siteId || siteGroup.domain}`} className="space-y-2">
-                          <div className="px-2 pt-1">
-                            <div className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900/40 px-2.5 py-1">
-                              <span className="text-xs font-medium text-gray-200">{siteGroup.domain}</span>
-                              <span className="text-[11px] text-gray-500">{siteGroup.items.length} recipe(s)</span>
-                            </div>
+                      <>
+                        {totalJobRecipes > HISTORY_RECIPES_PAGE_SIZE && (
+                          <div className="flex flex-wrap items-center justify-between gap-2 px-2 pt-1">
+                            <p className="text-xs text-gray-500">
+                              Showing {visibleRecipeCount} of {totalJobRecipes} recipes in this run.
+                            </p>
+                            {remainingRecipes > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => loadMoreJobRecipes(j.id)}
+                                className="text-xs px-2.5 py-1 rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-800"
+                              >
+                                Load {Math.min(HISTORY_RECIPES_PAGE_SIZE, remainingRecipes)} more
+                              </button>
+                            )}
                           </div>
-                          {siteGroup.items.map((row) => {
+                        )}
+                        {recipesBySite.map((siteGroup) => (
+                          <div key={`${j.id}-${siteGroup.siteId || siteGroup.domain}`} className="space-y-2">
+                            <div className="px-2 pt-1">
+                              <div className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900/40 px-2.5 py-1">
+                                <span className="text-xs font-medium text-gray-200">{siteGroup.domain}</span>
+                                <span className="text-[11px] text-gray-500">{siteGroup.items.length} recipe(s)</span>
+                              </div>
+                            </div>
+                            {siteGroup.items.map((row) => {
                         const thumb = thumbUrl(row);
                         const title = row.recipe_text?.split("\n")[0]?.trim() || "Recipe";
                         const r = recipeFullById[row.id];
@@ -993,15 +1132,27 @@ export default function AllSitesGeneratePage() {
                             )}
                           </div>
                         );
-                          })}
-                        </div>
-                      ))
+                            })}
+                          </div>
+                        ))}
+                      </>
                     )}
                   </div>
                   )}
                 </div>
               );
             })}
+            {historyTotalCount > history.length && (
+              <div className="flex justify-center pt-2">
+                <button
+                  type="button"
+                  onClick={loadMoreHistory}
+                  className="btn-secondary text-sm px-4 py-2"
+                >
+                  Load {Math.min(HISTORY_JOBS_PAGE_SIZE, historyTotalCount - history.length)} more runs
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

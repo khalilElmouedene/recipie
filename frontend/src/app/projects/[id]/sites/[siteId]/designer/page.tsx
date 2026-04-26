@@ -76,13 +76,18 @@ export default function PinDesignerPage() {
         .catch(() => {})
         .finally(() => setLoading(false));
     } else if (jobParam) {
-      api.getJobGeneratedRecipes(jobParam, params.siteId)
-        .then((list) => {
+      Promise.all([
+        api.getJobGeneratedRecipes(jobParam, params.siteId),
+        api.getRecipes(params.siteId, "pin_designer").catch(() => [] as RecipeOut[]),
+      ])
+        .then(([list, siteRecipes]) => {
+          const recipeById = new Map(siteRecipes.map((recipe) => [recipe.id, recipe]));
           const generatedOnly = list.filter((r) => r.status === "generated");
           setFrames(
             generatedOnly.map((r) => ({
               recipeId: r.id,
               title: r.recipe_text?.split("\n")[0]?.trim() || "Recipe",
+              pinTitle: recipeById.get(r.id)?.pin_title?.trim() || r.pin_title?.trim() || undefined,
               images: imagesFromJobRecipe(r),
             }))
           );
@@ -90,12 +95,13 @@ export default function PinDesignerPage() {
         .catch(() => {})
         .finally(() => setLoading(false));
     } else {
-      api.getRecipes(params.siteId)
+      api.getRecipes(params.siteId, "pin_designer")
         .then((all) => {
           const source = all.filter((r) => r.status === "generated");
           setFrames(source.map((r) => ({
             recipeId: r.id,
             title: r.recipe_text?.split("\n")[0]?.trim() || "Recipe",
+            pinTitle: r.pin_title?.trim() || undefined,
             images: getRecipeImages(r),
           })));
         })

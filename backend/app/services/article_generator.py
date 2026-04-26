@@ -1,5 +1,7 @@
 from __future__ import annotations
+import hashlib
 import json
+import logging
 import mimetypes
 import re
 import threading
@@ -15,20 +17,29 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
+logger = logging.getLogger(__name__)
+
 from . import midjourney, openai_service
 from app.config import settings
 from ..midjourney_settings import (
     DEFAULT_GRID_WAIT_SECONDS,
+    MAX_CONCURRENT_MJ_PER_ACCOUNT,
     POST_UPSCALE_WAIT_SECONDS,
     UPSCALE_GAP_SECONDS,
     clamp_grid_wait,
 )
 
-# Per-channel locks - each Discord channel gets its own lock so different users
-# (with different channels) run Midjourney in parallel, while recipes on the
-# same channel are still serialized to avoid result cross-contamination.
+# Per-channel locks — serializes recipes on the same Discord channel to avoid
+# result cross-contamination (two /imagine commands racing on one channel).
 _midjourney_locks: dict[str, threading.Lock] = {}
 _midjourney_locks_mutex = threading.Lock()
+
+# Per-account semaphores — caps how many recipes can generate images at the
+# same time on the same Discord account across ALL channels. Without this, a
+# user with 200 recipes on 200 channels fires 200 concurrent /imagine commands
+# at one account, which triggers Discord/Midjourney bans immediately.
+_midjourney_account_semaphores: dict[str, threading.Semaphore] = {}
+_midjourney_semaphores_mutex = threading.Lock()
 
 
 def _get_mj_lock(channel_id: str) -> threading.Lock:
@@ -36,6 +47,14 @@ def _get_mj_lock(channel_id: str) -> threading.Lock:
         if channel_id not in _midjourney_locks:
             _midjourney_locks[channel_id] = threading.Lock()
         return _midjourney_locks[channel_id]
+
+
+def _get_mj_account_semaphore(discord_auth: str) -> threading.Semaphore:
+    key = hashlib.sha256(discord_auth.encode()).hexdigest() if discord_auth else "__no_auth__"
+    with _midjourney_semaphores_mutex:
+        if key not in _midjourney_account_semaphores:
+            _midjourney_account_semaphores[key] = threading.Semaphore(MAX_CONCURRENT_MJ_PER_ACCOUNT)
+        return _midjourney_account_semaphores[key]
 
 UPLOADS_DIR = Path("/app/uploads")
 
@@ -64,22 +83,32 @@ def _image_extension_from_response(url: str, response: requests.Response) -> str
     return ".bin"
 
 
-def _cache_image(url: str, log: Callable[[str], None] | None = None) -> str:
-    """Download a Discord CDN image and save it locally. Returns the permanent server URL."""
+def _cache_image(url: str, log: Callable[[str], None] | None = None, retries: int = 3) -> str:
+    """Download a Discord CDN image and save it locally. Returns the permanent server URL.
+
+    Raises RuntimeError if caching fails after all retries — never silently returns the
+    original Discord CDN URL, which expires after a few hours and would leave recipes
+    with permanently broken images.
+    """
     _log = log or print
-    try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
-        r.raise_for_status()
-        UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-        filename = f"{uuid.uuid4().hex}{_image_extension_from_response(url, r)}"
-        dest = UPLOADS_DIR / filename
-        dest.write_bytes(r.content)
-        permanent_url = f"{settings.server_base_url.rstrip('/')}/uploads/{filename}"
-        _log(f"Image cached locally: {filename}")
-        return permanent_url
-    except Exception as e:
-        _log(f"Image cache failed, keeping original URL: {e}")
-        return url
+    last_error: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+            r.raise_for_status()
+            UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+            filename = f"{uuid.uuid4().hex}{_image_extension_from_response(url, r)}"
+            dest = UPLOADS_DIR / filename
+            dest.write_bytes(r.content)
+            permanent_url = f"{settings.server_base_url.rstrip('/')}/uploads/{filename}"
+            _log(f"Image cached locally: {filename}")
+            return permanent_url
+        except Exception as e:
+            last_error = e
+            _log(f"Image cache attempt {attempt}/{retries} failed: {e}")
+            if attempt < retries:
+                time.sleep(3)
+    raise RuntimeError(f"Failed to cache Midjourney image after {retries} attempts: {last_error}")
 
 
 def clean_keyword(text: str) -> str:
@@ -341,28 +370,40 @@ def generate_for_recipe(
             if _stop():
                 return result
             channel_id = credentials.get("discord_channel", "")
-            _log("Waiting for Midjourney queue slot (one recipe at a time)...")
-            with _get_mj_lock(channel_id):
+            _log(f"Waiting for Midjourney account slot (max {MAX_CONCURRENT_MJ_PER_ACCOUNT} concurrent per account)...")
+            with _get_mj_account_semaphore(discord_auth):
                 if _stop():
                     return result
-                _log("Midjourney slot acquired - generating images...")
-                gw = _mj_grid_wait_from_credentials(credentials)
-                img_urls = midjourney.generate_images(
-                    recipe_title,
-                    image_url,
-                    credentials,
-                    prompts=prompts,
-                    wait_time=gw,
-                    upscale_gap_seconds=UPSCALE_GAP_SECONDS,
-                    post_upscale_wait_seconds=POST_UPSCALE_WAIT_SECONDS,
-                    log=_log,
-                    should_stop=_stop,
-                )
-                # Cache immediately - Discord CDN URLs expire after a few hours
-                cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
-                if not cached_urls:
-                    raise ValueError("Midjourney did not return any images")
-                result["generated_images"] = json.dumps(cached_urls)
+                _log("Waiting for Midjourney channel slot...")
+                with _get_mj_lock(channel_id):
+                    if _stop():
+                        return result
+                    _log("Midjourney slot acquired - generating images...")
+                    gw = _mj_grid_wait_from_credentials(credentials)
+                    img_urls = midjourney.generate_images(
+                        recipe_title,
+                        image_url,
+                        credentials,
+                        prompts=prompts,
+                        wait_time=gw,
+                        upscale_gap_seconds=UPSCALE_GAP_SECONDS,
+                        post_upscale_wait_seconds=POST_UPSCALE_WAIT_SECONDS,
+                        log=_log,
+                        should_stop=_stop,
+                    )
+                    # Cache immediately — Discord CDN URLs expire after a few hours.
+                    # Cache each image individually so one failure doesn't lose the rest.
+                    cached_urls = []
+                    for u in img_urls:
+                        if not u:
+                            continue
+                        try:
+                            cached_urls.append(_cache_image(u, log=_log))
+                        except Exception as cache_err:
+                            _log(f"Warning: failed to cache image, skipping: {cache_err}")
+                    if not cached_urls:
+                        raise ValueError("Midjourney did not return any images")
+                    result["generated_images"] = json.dumps(cached_urls)
         else:
             _log("Skipping Midjourney (no Discord credentials configured)")
 
@@ -485,25 +526,38 @@ def generate_images_only(
     if _stop():
         return None
     channel_id = credentials.get("discord_channel", "")
-    _log("Waiting for Midjourney queue slot (one recipe at a time)...")
-    with _get_mj_lock(channel_id):
+    _log(f"Waiting for Midjourney account slot (max {MAX_CONCURRENT_MJ_PER_ACCOUNT} concurrent per account)...")
+    with _get_mj_account_semaphore(discord_auth):
         if _stop():
             return None
-        _log("Midjourney slot acquired - generating images...")
-        gw = _mj_grid_wait_from_credentials(credentials)
-        img_urls = midjourney.generate_images(
-            recipe_title,
-            image_url,
-            credentials,
-            prompts=prompts,
-            wait_time=gw,
-            upscale_gap_seconds=UPSCALE_GAP_SECONDS,
-            post_upscale_wait_seconds=POST_UPSCALE_WAIT_SECONDS,
-            log=_log,
-            should_stop=_stop,
-        )
-        cached_urls = [_cache_image(u, log=_log) for u in img_urls if u]
-        return json.dumps(cached_urls)
+        _log("Waiting for Midjourney channel slot...")
+        with _get_mj_lock(channel_id):
+            if _stop():
+                return None
+            _log("Midjourney slot acquired - generating images...")
+            gw = _mj_grid_wait_from_credentials(credentials)
+            img_urls = midjourney.generate_images(
+                recipe_title,
+                image_url,
+                credentials,
+                prompts=prompts,
+                wait_time=gw,
+                upscale_gap_seconds=UPSCALE_GAP_SECONDS,
+                post_upscale_wait_seconds=POST_UPSCALE_WAIT_SECONDS,
+                log=_log,
+                should_stop=_stop,
+            )
+            cached_urls = []
+            for u in img_urls:
+                if not u:
+                    continue
+                try:
+                    cached_urls.append(_cache_image(u, log=_log))
+                except Exception as cache_err:
+                    _log(f"Warning: failed to cache image, skipping: {cache_err}")
+            if not cached_urls:
+                raise RuntimeError("All Midjourney images failed to cache")
+            return json.dumps(cached_urls)
 
 
 def process_recipes_from_db(

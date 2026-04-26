@@ -1,0 +1,52 @@
+ID,Epic,User_story_fr,Notes_perimetre,Heures
+US-01,Authentification,"En tant qu'utilisateur, je veux m'inscrire et me connecter (email/mot de passe) pour accéder au tableau de bord.",Inscription connexion JWT,10
+US-02,Authentification,"En tant qu'utilisateur, je veux me connecter avec Google.",OAuth Google URL + callback,14
+US-03,Authentification,"En tant qu'utilisateur invité, je veux définir mon mot de passe via un lien sécurisé.",Flux setup-password jetons,10
+US-04,Authentification,"En tant qu'utilisateur, je veux consulter et modifier mon profil.",PATCH /me + interface profil,6
+US-05,Utilisateurs,"En tant qu'administrateur plateforme, je veux créer modifier et supprimer des utilisateurs.",API utilisateurs + interface admin,16
+US-06,Utilisateurs,"En tant qu'administrateur plateforme, je veux renvoyer une invitation à un utilisateur.",resend-invite,4
+US-07,Projets,"En tant que propriétaire, je veux créer modifier et supprimer des projets.",CRUD projets,12
+US-08,Projets,"En tant que propriétaire, je veux dupliquer un projet pour répliquer la structure.",Endpoint duplicate,10
+US-09,Membres,"En tant que propriétaire, je veux ajouter et retirer des membres de projet avec des rôles.",ProjectMember admin/membre,14
+US-10,Contrôle d'accès,"En tant que système, je dois appliquer un accès par projet et un contrôle des rôles (RBAC).",check_project_access dépendances,18
+US-11,Identifiants,"En tant que propriétaire, je veux stocker les clés API par projet de façon chiffrée.",ProjectCredential + crypto,16
+US-12,Identifiants,"En tant qu'utilisateur, je veux des identifiants globaux avec repli sur le projet.",UserCredential + credentials_loader,12
+US-13,Prompts IA,"En tant que propriétaire, je veux éditer les prompts pour la génération IA.",Paramètres prompts + valeurs par défaut,20
+US-14,Sites,"En tant qu'éditeur, je veux gérer les sites (domaine URL WP IDs Sheets URL Pinterest).",CRUD sites,16
+US-15,Sites,"En tant qu'éditeur, je veux envoyer des médias vers WordPress depuis un fichier ou une URL.",upload-media upload-from-url,18
+US-16,Recettes,"En tant qu'éditeur, je veux un CRUD complet des recettes par site.",API recettes + interface,24
+US-17,Recettes,"En tant qu'éditeur, je veux publier un article généré sur WordPress.",publish-article,14
+US-18,Jobs,"En tant qu'éditeur, je veux lancer un job « articles » pour la génération IA en masse.",JobType articles thread worker,22
+US-19,Jobs,"En tant qu'éditeur, je veux lancer un job « publisher » pour pousser vers WordPress.",JobType publisher,18
+US-20,Jobs,"En tant qu'éditeur, je veux l'historique des jobs le détail et les journaux en temps réel.",REST jobs + WebSocket ws/logs,20
+US-21,Jobs,"En tant qu'éditeur, je veux arrêter un job et remettre les recettes « generating » en pending.",stop + revert_generating,12
+US-22,Génération IA,"En tant que système, je dois générer (OpenAI) recette complète JSON WPRM article HTML meta catégorie mot-clé.",article_generator openai_service,45
+US-23,Génération IA,"En tant que système, je dois enrichir l'article avec des liens internes depuis le sitemap du site.",get_sitemap_links,10
+US-24,Midjourney,"En tant que système, je dois générer des images via Discord/Midjourney avec sérialisation globale.",midjourney lock polling,40
+US-25,Midjourney,"En tant que système, je dois mettre en cache les images Discord CDN vers des fichiers locaux /uploads.",_cache_image,8
+US-26,Multi-sites,"En tant qu'éditeur, je veux une génération entrée partagée pour plusieurs sites.",articles_all_sites job_manager,35
+US-27,Planification,"En tant que propriétaire, je veux planifier la publication automatique et la rétention des images.",ProjectPublishSchedule planificateur,28
+US-28,Planification,"En tant que propriétaire, je veux déclencher immédiatement une exécution planifiée.",start-now,4
+US-29,Publication lot,"En tant que propriétaire, je veux une publication par lot contrôlée.",publish-batch,14
+US-30,WordPress,"En tant que système, je dois publier sur WordPress avec prise en charge multi-comptes.",publisher service wordpress,40
+US-31,Google Sheets,"En tant que système, je dois écrire le permalien dans la feuille Google lorsque c'est configuré.",gspread flux wordpress,12
+US-32,Pinterest,"En tant qu'éditeur, je veux connecter Pinterest (OAuth) et voir le statut.",routes pinterest + interface,22
+US-33,Pinterest,"En tant qu'éditeur, je veux créer des épingles depuis les recettes y compris en masse.",create-pin bulk,18
+US-34,Pinterest,"En tant qu'éditeur, je veux lister les tableaux Pinterest.",endpoints boards,8
+US-35,Pin designer,"En tant qu'éditeur, je veux générer une image Pin à partir d'un modèle et de champs.",generate-pin pin_generator,25
+US-36,Pin designer,"En tant qu'utilisateur, je veux créer modifier supprimer des modèles Pin (canvas Fabric JSON).",pin_designer_templates + interface designer,45
+US-37,Pin designer,"En tant qu'éditeur, je veux générer des Pins en masse pour un site ou un job.",pages bulk pins,20
+US-38,Export,"En tant que propriétaire, je veux exporter en Excel le projet le site ou les recettes.",routes excel_export,14
+US-39,Import tableaux,"En tant qu'utilisateur, je veux importer une liste de tableaux depuis un modèle Excel.",paramètres import boards,8
+US-40,Polices,"En tant qu'utilisateur, je veux gérer des polices personnalisées pour les visuels.",API polices + profil,10
+US-41,Rétention images,"En tant que propriétaire, je veux le nettoyage selon la rétention et une exécution manuelle.",planificateurs + image-cleanup,14
+US-42,Fiabilité,"En tant qu'exploitant, je veux réconcilier les jobs « bloqués » après redémarrage.",stale_job_reconciler,8
+US-43,Tableau de bord,"En tant qu'utilisateur, je veux un tableau de bord avec statistiques projets sites recettes jobs.",API dashboard + page d'accueil,10
+US-44,Interface,"En tant qu'utilisateur, je veux une navigation cohérente et une interface sombre type dashboard.",layout routage,25
+US-45,Légal,"En tant qu'entreprise, je veux des pages Conditions et Confidentialité.",pages statiques,4
+US-46,Threads,"En tant qu'utilisateur, je veux gérer des projets Threads et des comptes liés (OAuth).",threads_projects comptes,35
+US-47,Threads,"En tant qu'utilisateur, je veux créer planifier publier des posts Threads y compris par lot.",API posts Threads + planificateur,50
+US-48,Threads,"En tant que système, je dois uploader les médias Threads et nettoyer les médias expirés.",upload + planificateur nettoyage,18
+US-49,Infrastructure,"En tant qu'exploitant, je veux Docker Compose et une configuration par variables d'environnement.",docker-compose env,12
+US-50,Sécurité,"En tant que système, j'applique CORS en-têtes de sécurité et masque l'OpenAPI en production.",middleware FastAPI,6
+US-51,QA et finitions,"En tant que client, je veux recette manuelle corrections bugs et UX sur les flux critiques.",tests polish tampon,45

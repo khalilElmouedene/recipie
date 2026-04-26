@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Square, CheckCircle, XCircle, Clock, Loader2, X } from "lucide-react";
+import { ArrowLeft, Square, CheckCircle, XCircle, Clock, Loader2, X, Play } from "lucide-react";
 import { api, JobOut, getWsUrl } from "@/lib/api";
+import { useJobActivity } from "@/contexts/JobActivityContext";
 
 // ── Step definitions (7 steps per recipe) ───────────────────────────────────
 const TOTAL_STEPS = 7;
@@ -83,19 +84,29 @@ function currentStatusFromLogs(logs: string[]): string | null {
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { trackJob } = useJobActivity();
   const [job, setJob] = useState<JobOut | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [resuming, setResuming] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const prevStatusRef = useRef<string | undefined>(undefined);
   const notifiedTerminalStatesRef = useRef<Set<string>>(new Set());
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
 
-  // Request notification permission on mount
-  useEffect(() => {
-    if (typeof Notification !== "undefined" && Notification.permission === "default") {
-      Notification.requestPermission();
+  const handleResume = async () => {
+    if (resuming) return;
+    setResuming(true);
+    try {
+      const updated = await api.resumeJob(id);
+      setJob(updated);
+      setLogs([]);
+    } catch (e: unknown) {
+      setToast({ message: e instanceof Error ? e.message : "Failed to resume job", type: "error" });
+      setTimeout(() => setToast(null), 6000);
+    } finally {
+      setResuming(false);
     }
-  }, []);
+  };
 
   // Fire browser notification + in-app toast when job finishes
   useEffect(() => {
@@ -119,13 +130,25 @@ export default function JobDetailPage() {
     setToast({ message: msg, type: isSuccess ? "success" : job.status === "failed" ? "error" : "info" });
     setTimeout(() => setToast(null), 6000);
 
-    if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
-      new Notification(`Job ${job.status}`, {
-        body: msg,
-        icon: "/favicon.ico",
-      });
-    }
   }, [job?.id, job?.status]);
+
+  useEffect(() => {
+    if (job && !TERMINAL_JOB_STATUSES.has(job.status)) {
+      setToast(null);
+    }
+  }, [job]);
+
+  useEffect(() => {
+    if (!job) return;
+    trackJob(job, {
+      title:
+        job.job_type === "articles_all_sites"
+          ? "All-sites generation"
+          : job.job_type === "publisher"
+            ? "WordPress publishing"
+            : "Recipe generation",
+    });
+  }, [job, trackJob]);
 
   useEffect(() => {
     api.getJob(id).then(setJob).catch(() => router.push("/"));
@@ -195,18 +218,20 @@ export default function JobDetailPage() {
   const recipeCards = useMemo(() => parseRecipeCards(logs), [logs]);
   const currentStatus = useMemo(() => currentStatusFromLogs(logs), [logs]);
   const totalRecipes = (job?.total_rows ?? 0) > 0 ? job!.total_rows! : recipeCards.length;
-  const completedFromLogs = recipeCards.filter((c) => c.status === "completed").length;
-  const runningCardCount = recipeCards.filter((c) => c.status === "running").length;
-  // `current_row` is updated when a recipe starts, so during an in-flight recipe it is
-  // effectively the current recipe index, not the number of completed recipes.
-  // We therefore derive the visible "completed" counter from parsed recipe cards and
-  // only use the DB field as a conservative fallback after removing in-flight cards.
-  const persistedCompletedCount = Math.max(0, (job?.current_row ?? 0) - runningCardCount);
-  const completedCount = recipeCards.length > 0
-    ? Math.max(completedFromLogs, persistedCompletedCount)
-    : job?.status === "completed"
-      ? totalRecipes
-      : 0;
+  const showErrorBanner = !!job?.error && TERMINAL_JOB_STATUSES.has(job.status) && job.status !== "completed";
+  const backHref =
+    job?.job_type === "articles_all_sites"
+      ? `/projects/${job.project_id}/sites/all-sites-generate`
+      : `/projects/${job?.project_id ?? ""}`;
+
+  const handleBack = () => {
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    if (document.referrer && document.referrer.startsWith(origin)) {
+      router.back();
+    } else {
+      router.push(backHref);
+    }
+  };
 
   const statusBadge: Record<string, string> = {
     pending: "bg-gray-700 text-gray-300",
@@ -236,7 +261,7 @@ export default function JobDetailPage() {
           </button>
         </div>
       )}
-      <button onClick={() => router.back()} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4">
+      <button onClick={handleBack} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4">
         <ArrowLeft size={16} /> Back
       </button>
 
@@ -256,6 +281,16 @@ export default function JobDetailPage() {
               className="btn-secondary"
             >
               View Generated Recipes
+            </button>
+          )}
+          {(job.status === "stopped" || job.status === "failed") && (
+            <button
+              onClick={handleResume}
+              disabled={resuming}
+              className="btn-primary flex items-center gap-2"
+            >
+              {resuming ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+              {resuming ? "Resuming…" : "Continue Job"}
             </button>
           )}
           {job.status === "running" && (
@@ -341,7 +376,7 @@ export default function JobDetailPage() {
         </div>
       )}
 
-      {job.error && (
+      {showErrorBanner && (
         <div className="card mb-4 border-red-800 bg-red-950/30">
           <p className="text-sm text-red-400">{job.error}</p>
         </div>

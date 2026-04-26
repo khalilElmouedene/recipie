@@ -1,7 +1,10 @@
 "use client";
+
 import { useEffect, useRef, useState } from "react";
-import { X, CheckCircle, XCircle, Loader2 } from "lucide-react";
-import { api, BatchPublishEvent, PublishBatchRequest } from "@/lib/api";
+import { Bell, CheckCircle2, Loader2, X, XCircle } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { api, PublishBatchRequest } from "@/lib/api";
+import { useJobActivity } from "@/contexts/JobActivityContext";
 
 interface Props {
   projectId: string;
@@ -9,132 +12,140 @@ interface Props {
   onClose: (didPublish: boolean) => void;
 }
 
+function publishTitleFromRequest(data: PublishBatchRequest): string {
+  if (data.recipe_id) return "Publishing one recipe to WordPress";
+  if (data.recipe_ids) return `Publishing ${data.recipe_ids.length} recipe(s) to WordPress`;
+  if (data.site_id) return "Publishing site recipes to WordPress";
+  return "Publishing project recipes to WordPress";
+}
+
 export default function BatchPublishModal({ projectId, data, onClose }: Props) {
-  const [total, setTotal] = useState<number | null>(null);
-  const [done, setDone] = useState(0);
-  const [succeeded, setSucceeded] = useState(0);
-  const [failed, setFailed] = useState(0);
-  const [errors, setErrors] = useState<string[]>([]);
-  const [finished, setFinished] = useState(false);
-  const [lastRecipe, setLastRecipe] = useState("");
+  const router = useRouter();
+  const { trackJob } = useJobActivity();
+  const [phase, setPhase] = useState<"starting" | "success" | "error">("starting");
+  const [jobId, setJobId] = useState<string | null>(null);
   const [fatalError, setFatalError] = useState<string | null>(null);
   const startedRef = useRef(false);
 
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
+    let cancelled = false;
 
-    const handleEvent = (e: BatchPublishEvent) => {
-      if (e.type === "start") {
-        setTotal(e.total);
-      } else if (e.type === "progress") {
-        setDone(e.done);
-        setTotal(e.total);
-        setSucceeded(e.succeeded);
-        setFailed(e.failed);
-        setLastRecipe(e.recipe_name);
-      } else if (e.type === "done") {
-        setTotal(e.total);
-        setSucceeded(e.succeeded);
-        setFailed(e.failed);
-        setErrors(e.errors);
-        setDone(e.total);
-        setFinished(true);
+    const start = async () => {
+      try {
+        const job = await api.publishBatchToWordPress(projectId, data);
+        if (cancelled) return;
+        setJobId(job.id);
+        trackJob(job, {
+          title: publishTitleFromRequest(data),
+          sourceLabel: "Open the pipeline icon anytime to watch progress or jump to logs.",
+          href: `/jobs/${job.id}`,
+        });
+        setPhase("success");
+      } catch (err: unknown) {
+        if (cancelled) return;
+        setFatalError(err instanceof Error ? err.message : "Batch publish failed");
+        setPhase("error");
       }
     };
 
-    api.publishBatchStream(projectId, data, handleEvent).catch((err: unknown) => {
-      setFatalError(err instanceof Error ? err.message : "Batch publish failed");
-      setFinished(true);
-    });
-  }, [projectId, data]);
+    void start();
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const percent = total ? Math.round((done / total) * 100) : 0;
+  // Auto-close after 6 seconds on success
+  useEffect(() => {
+    if (phase !== "success") return;
+    const timer = setTimeout(() => onClose(false), 6000);
+    return () => clearTimeout(timer);
+  }, [phase, onClose]);
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4">
       <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-white">Publishing to WordPress</h3>
-          {finished && (
-            <button onClick={() => onClose(succeeded > 0)} className="text-gray-500 hover:text-gray-300">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold text-white">WordPress Publish</h3>
+            <p className="text-[11px] text-gray-500 mt-1">
+              The publish job runs in the background pipeline.
+            </p>
+          </div>
+          {(phase === "error" || phase === "success") && (
+            <button onClick={() => onClose(false)} className="text-gray-500 hover:text-gray-300">
               <X size={18} />
             </button>
           )}
         </div>
 
-        {fatalError ? (
-          <div className="flex items-start gap-2 text-red-400 text-sm">
-            <XCircle size={16} className="flex-shrink-0 mt-0.5" />
-            <span>{fatalError}</span>
-          </div>
-        ) : (
-          <>
-            {/* Progress bar */}
-            <div className="space-y-1">
-              <div className="flex justify-between text-xs text-gray-400">
-                <span>{total === null ? "Starting…" : `${done} / ${total}`}</span>
-                <span>{percent}%</span>
-              </div>
-              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-brand-500 rounded-full transition-all duration-300"
-                  style={{ width: `${percent}%` }}
-                />
-              </div>
-            </div>
-
-            {/* Counters */}
-            <div className="flex gap-4 text-sm">
-              <span className="flex items-center gap-1 text-green-400">
-                <CheckCircle size={14} /> {succeeded} succeeded
-              </span>
-              {failed > 0 && (
-                <span className="flex items-center gap-1 text-red-400">
-                  <XCircle size={14} /> {failed} failed
-                </span>
-              )}
-            </div>
-
-            {/* Current recipe */}
-            {!finished && lastRecipe && (
-              <p className="text-xs text-gray-400 truncate flex items-center gap-2">
-                <Loader2 size={12} className="animate-spin flex-shrink-0" />
-                {lastRecipe}
-              </p>
-            )}
-
-            {/* Error list */}
-            {finished && errors.length > 0 && (
-              <div className="max-h-32 overflow-y-auto space-y-1">
-                <p className="text-xs font-medium text-red-400">Errors:</p>
-                {errors.map((e, i) => (
-                  <p key={i} className="text-xs text-red-300 truncate">{e}</p>
-                ))}
-              </div>
-            )}
-
-            {/* Done state */}
-            {finished && (
-              <div className="flex items-center justify-between pt-1">
-                <p className="text-sm text-gray-300">
-                  {fatalError ? "" : errors.length === 0
-                    ? `All ${succeeded} recipes published successfully!`
-                    : `Finished: ${succeeded} published, ${failed} failed.`}
+        {phase === "starting" && (
+          <div className="rounded-2xl border border-blue-900/40 bg-blue-950/20 px-4 py-4">
+            <div className="flex items-start gap-3">
+              <Loader2 size={18} className="mt-0.5 flex-shrink-0 animate-spin text-blue-400" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-blue-100">
+                  Sending publish task to the background pipeline...
                 </p>
-                <button onClick={() => onClose(succeeded > 0)} className="btn-primary text-sm px-4 py-1.5">
-                  Close
-                </button>
+                <p className="mt-2 text-xs leading-5 text-blue-200/70">
+                  You will be able to open the job logs from the bell icon in the top bar.
+                </p>
               </div>
-            )}
+            </div>
+          </div>
+        )}
 
-            {/* Spinner while running */}
-            {!finished && (
-              <p className="text-xs text-gray-500 flex items-center gap-1">
-                <Loader2 size={11} className="animate-spin" /> Do not close this window while publishing…
-              </p>
-            )}
-          </>
+        {phase === "success" && (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-emerald-800/40 bg-emerald-950/20 px-4 py-5">
+              <div className="flex items-start gap-3">
+                <CheckCircle2 size={18} className="mt-0.5 flex-shrink-0 text-emerald-400" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-emerald-100">Publishing started!</p>
+                  <p className="mt-2 text-xs leading-5 text-emerald-200/70">
+                    Track progress anytime by clicking the{" "}
+                    <Bell size={11} className="inline relative -top-px" />{" "}
+                    <strong className="text-emerald-200">bell icon</strong> in the top bar. You&apos;ll
+                    receive a browser notification when the job completes or fails.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              {jobId && (
+                <button
+                  type="button"
+                  onClick={() => router.push(`/jobs/${jobId}`)}
+                  className="text-sm text-gray-400 hover:text-gray-200 transition"
+                >
+                  View job logs →
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onClose(false)}
+                className="ml-auto btn-primary text-sm px-4 py-1.5"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase === "error" && (
+          <div className="space-y-4">
+            <div className="flex items-start gap-2 text-red-400 text-sm">
+              <XCircle size={16} className="flex-shrink-0 mt-0.5" />
+              <span>{fatalError}</span>
+            </div>
+            <div className="flex justify-end">
+              <button onClick={() => onClose(false)} className="btn-primary text-sm px-4 py-1.5">
+                Close
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>

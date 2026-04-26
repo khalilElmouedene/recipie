@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, List
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel
@@ -27,6 +27,7 @@ from ..db_models import (
     User,
 )
 from ..dependencies import get_current_user
+from ..pagination import apply_limit_offset, count_rows, set_total_count
 from ..services import threads_api
 
 router = APIRouter(tags=["threads"])
@@ -176,14 +177,20 @@ async def _get_threads_post(
 
 @router.get("/api/threads-projects", response_model=list[ThreadsProjectOut])
 async def list_threads_projects(
+    response: Response,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
-    rows = await db.execute(
+    stmt = (
         select(ThreadsProject)
         .where(ThreadsProject.owner_id == user.id)
         .order_by(ThreadsProject.created_at.desc())
     )
+    total = await count_rows(db, stmt)
+    set_total_count(response, total)
+    rows = await db.execute(apply_limit_offset(stmt, limit, offset))
     return rows.scalars().all()
 
 
@@ -263,16 +270,22 @@ async def delete_threads_project(
     response_model=list[ThreadsAccountOut],
 )
 async def list_threads_accounts(
+    response: Response,
     project_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
     await _get_threads_project(project_id, user, db)
-    rows = await db.execute(
+    stmt = (
         select(ThreadsAccount)
         .where(ThreadsAccount.project_id == project_id)
         .order_by(ThreadsAccount.created_at.asc())
     )
+    total = await count_rows(db, stmt)
+    set_total_count(response, total)
+    rows = await db.execute(apply_limit_offset(stmt, limit, offset))
     return rows.scalars().all()
 
 
@@ -550,16 +563,22 @@ async def upload_threads_media(
     response_model=list[ThreadsPostOut],
 )
 async def list_threads_posts(
+    response: Response,
     project_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
     await _get_threads_project(project_id, user, db)
-    rows = await db.execute(
+    stmt = (
         select(ThreadsPost)
         .where(ThreadsPost.project_id == project_id)
         .order_by(ThreadsPost.created_at.desc())
     )
+    total = await count_rows(db, stmt)
+    set_total_count(response, total)
+    rows = await db.execute(apply_limit_offset(stmt, limit, offset))
     return [ThreadsPostOut.from_db(p) for p in rows.scalars().all()]
 
 

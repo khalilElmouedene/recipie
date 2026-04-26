@@ -321,6 +321,29 @@ class RecipeOut(BaseModel):
         from_attributes = True
 
 
+class SiteRecipeCardOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    list_image_url: str | None = None
+    status: str
+    has_generated_images: bool = False
+    focus_keyword: str | None = None
+    category: str | None = None
+    wp_permalink: str | None = None
+    error_message: str | None = None
+
+
+class SiteRecipeCardPageOut(BaseModel):
+    total: int
+    pending: int
+    generating: int
+    generated: int
+    published: int
+    failed: int
+    with_generated_images: int
+    items: list[SiteRecipeCardOut]
+
+
 class JobStart(BaseModel):
     job_type: str
     site_id: uuid.UUID | None = None
@@ -344,6 +367,14 @@ class JobOut(BaseModel):
         from_attributes = True
 
 
+class JobPublishSummaryOut(BaseModel):
+    total: int
+    processed: int
+    succeeded: int
+    failed: int
+    remaining: int
+
+
 class GeneratedJobRecipeOut(BaseModel):
     id: uuid.UUID
     site_id: uuid.UUID
@@ -354,8 +385,17 @@ class GeneratedJobRecipeOut(BaseModel):
     image_url: str = ""
     generated_images: str | None = None
     category: str | None = None
+    pin_title: str | None = None
+    pin_description: str | None = None
     pin_template_id: str | None = None
     created_at: datetime
+
+
+class GeneratedJobSiteSummaryOut(BaseModel):
+    site_id: uuid.UUID
+    site_domain: str
+    recipe_count: int
+    published_count: int
 
 
 class PublishScheduleOut(BaseModel):
@@ -380,6 +420,7 @@ class PublishBatchRequest(BaseModel):
     interval_minutes: int | None = None  # override project interval
     site_id: uuid.UUID | None = None  # if set, only publish recipes for this site
     recipe_id: uuid.UUID | None = None  # if set, publish only this single recipe
+    recipe_ids: list[uuid.UUID] | None = None  # if set, publish only these specific recipes
 
 
 class PublishBatchOut(BaseModel):

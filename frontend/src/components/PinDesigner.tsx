@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { api, getApiBaseUrl, type PinReusableElementOut } from "@/lib/api";
 import { appendPinImageToArticleHtml } from "@/lib/pinArticleEmbed";
+import { storePinterestGalleryContext } from "@/lib/pinterestGalleryContext";
 import { getUserRole, getUserId } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
@@ -27,6 +28,29 @@ import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
+const IMAGE_RESOURCE_CACHE_BASE_MAX = 96;
+const IMAGE_RESOURCE_CACHE_BUFFER = 24;
+const IMAGE_RESOURCE_CACHE_HARD_MAX = 256;
+const PREVIEW_RENDER_CACHE_MAX = 48;
+const PREVIEW_EAGER_COUNT = 6;
+const PREVIEW_BACKGROUND_BATCH = 2;
+const PREVIEW_MULTIPLIER = 0.35;
+type TextVariable = "" | "title" | "pinTitle" | "website";
+const DESIGNER_CUSTOM_KEYS = [
+  "__pinId",
+  "__pinLabel",
+  "__pinType",
+  "__isLabel",
+  "__forId",
+  "__strokeStyle",
+  "__flipX",
+  "__textTransform",
+  "__textVariable",
+  "__rawText",
+  "__pinLocked",
+  "__designerBorder",
+  "__forPinId",
+];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -84,6 +108,121 @@ function buildImageZoneGroupBounds(elements: TemplateElement[], imageCount: numb
   }
 
   return bounds;
+}
+
+const imageElementCache = new Map<string, Promise<HTMLImageElement>>();
+const templateRenderSignatureCache = new WeakMap<PinTemplate, string>();
+let imageResourceCacheMax = IMAGE_RESOURCE_CACHE_BASE_MAX;
+
+function trimImageElementCache(): void {
+  while (imageElementCache.size > imageResourceCacheMax) {
+    const oldest = imageElementCache.keys().next().value;
+    if (!oldest) break;
+    imageElementCache.delete(oldest);
+  }
+}
+
+function setImageResourceCacheMax(next: number): void {
+  imageResourceCacheMax = Math.min(
+    IMAGE_RESOURCE_CACHE_HARD_MAX,
+    Math.max(IMAGE_RESOURCE_CACHE_BASE_MAX, Math.round(next)),
+  );
+  trimImageElementCache();
+}
+
+function touchImageElementCache(cacheKey: string, entry: Promise<HTMLImageElement>): void {
+  if (imageElementCache.has(cacheKey)) imageElementCache.delete(cacheKey);
+  imageElementCache.set(cacheKey, entry);
+  trimImageElementCache();
+}
+
+function normalizeDesignerImageUrl(url: string, proxyBase: string): string {
+  if (!url) return url;
+  if (url.startsWith("data:") || url.startsWith("blob:")) return url;
+  if (url.startsWith("/")) return url;
+  if (proxyBase && url.startsWith(proxyBase)) return url;
+  try {
+    if (typeof window !== "undefined" && url.startsWith(window.location.origin)) return url;
+  } catch {
+    // Ignore access errors and fall back to the proxy path.
+  }
+  return proxyBase ? `${proxyBase}/api/image-proxy?url=${encodeURIComponent(url)}` : url;
+}
+
+async function loadCachedImageElement(url: string): Promise<HTMLImageElement> {
+  const cacheKey = url;
+  const cached = imageElementCache.get(cacheKey);
+  if (cached) {
+    touchImageElementCache(cacheKey, cached);
+    return cached;
+  }
+
+  const pending = new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    if (!url.startsWith("data:") && !url.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
+    img.decoding = "async";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Failed to load image: ${url}`));
+    img.src = url;
+  });
+
+  touchImageElementCache(cacheKey, pending);
+  try {
+    return await pending;
+  } catch (error) {
+    imageElementCache.delete(cacheKey);
+    throw error;
+  }
+}
+
+async function createCachedFabricImage(fabric: any, url: string, proxyBase: string): Promise<any> {
+  const resolvedUrl = normalizeDesignerImageUrl(url, proxyBase);
+  const imageEl = await loadCachedImageElement(resolvedUrl);
+  return new fabric.FabricImage(imageEl, { crossOrigin: "anonymous" });
+}
+
+function getTemplateRenderSignature(template: PinTemplate): string {
+  const cached = templateRenderSignatureCache.get(template);
+  if (cached) return cached;
+  const signature = JSON.stringify({
+    id: template.id,
+    bgColor: template.bgColor,
+    canvasWidth: template.canvasWidth || PIN_W,
+    canvasHeight: template.canvasHeight || PIN_H,
+    elements: template.elements,
+  });
+  templateRenderSignatureCache.set(template, signature);
+  return signature;
+}
+
+function touchPreviewCacheEntry(cache: Map<string, string>, cacheKey: string, preview: string): void {
+  if (cache.has(cacheKey)) cache.delete(cacheKey);
+  cache.set(cacheKey, preview);
+  while (cache.size > PREVIEW_RENDER_CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (!oldest) break;
+    cache.delete(oldest);
+  }
+}
+
+function readPreviewCacheEntry(cache: Map<string, string>, cacheKey: string): string | undefined {
+  const cached = cache.get(cacheKey);
+  if (!cached) return undefined;
+  touchPreviewCacheEntry(cache, cacheKey, cached);
+  return cached;
+}
+
+function getPreviewGenerationOrder(frameCount: number, activeIndex: number): number[] {
+  const ordered: number[] = [];
+  for (let distance = 1; ordered.length < frameCount - 1; distance += 1) {
+    const before = activeIndex - distance;
+    const after = activeIndex + distance;
+    if (before >= 0) ordered.push(before);
+    if (after < frameCount) ordered.push(after);
+  }
+  return ordered;
 }
 
 interface TemplateElement {
@@ -331,6 +470,7 @@ export interface BulkOverrides {
   fontWeight?: string;
   titleColor?: string;
   bandColor?: string;
+  pinTitleText?: string;
   websiteText?: string;
   bgColor?: string;
 }
@@ -342,6 +482,111 @@ export function applyTextTransform(text: string, transform: string): string {
   if (transform === "lowercase") return text.toLowerCase();
   if (transform === "capitalize") return text.replace(/\b\w/g, (c) => c.toUpperCase());
   return text;
+}
+
+function resolvePinTitleValue(pinTitle: string | null | undefined, title: string): string {
+  const trimmed = pinTitle?.trim();
+  return trimmed || title;
+}
+
+function resolveTemplateTextContent(
+  element: TemplateElement,
+  context: { title: string; pinTitle: string; website: string }
+): string {
+  const titleLines = (context.title || "")
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const firstLine = titleLines[0] || context.title || "";
+  const secondLine = titleLines[1] || "";
+  const thirdLine = titleLines[2] || "";
+  const tv = ((element as any).textVariable ?? "") as TextVariable;
+
+  if (tv === "pinTitle") {
+    return context.pinTitle || context.title || element.defaultText || "";
+  }
+  if (tv === "title" || element.id === "title") {
+    return context.title || element.defaultText || "";
+  }
+  if (element.id === "title1") {
+    return firstLine || element.defaultText || "";
+  }
+  if (element.id === "title2") {
+    return secondLine || element.defaultText || "";
+  }
+  if (element.id === "title3") {
+    return thirdLine || element.defaultText || "";
+  }
+  if (tv === "website" || element.id === "website") {
+    return context.website || element.defaultText || "";
+  }
+  return element.defaultText || "";
+}
+
+function restoreSerializedCanvasCustomProperties(canvas: any, serialized: string): void {
+  try {
+    const savedData = JSON.parse(serialized);
+    const savedObjs: any[] = savedData.objects || [];
+    const remaining = [...savedObjs];
+
+    (canvas.getObjects() as any[]).forEach((canvasObj) => {
+      const idx = remaining.findIndex((savedObj) =>
+        savedObj.type === canvasObj.type &&
+        Math.abs((savedObj.left ?? 0) - (canvasObj.left ?? 0)) < 1 &&
+        Math.abs((savedObj.top ?? 0) - (canvasObj.top ?? 0)) < 1
+      );
+      if (idx === -1) return;
+
+      DESIGNER_CUSTOM_KEYS.forEach((key) => {
+        if (remaining[idx][key] !== undefined) canvasObj[key] = remaining[idx][key];
+      });
+      remaining.splice(idx, 1);
+    });
+  } catch {
+    // Ignore malformed serialized canvas data.
+  }
+}
+
+function syncCanvasTextBindings(
+  canvas: any,
+  context: { title: string; pinTitle: string; website: string }
+): void {
+  (canvas.getObjects() as any[]).forEach((obj) => {
+    if (obj?.__pinType !== "text") return;
+
+    const textVariable = ((obj.__textVariable ?? "") as TextVariable);
+    const pinId = String(obj.__pinId ?? "");
+    const hasDynamicBinding =
+      textVariable !== "" ||
+      pinId === "title" ||
+      pinId === "title1" ||
+      pinId === "title2" ||
+      pinId === "title3" ||
+      pinId === "website";
+
+    if (!hasDynamicBinding) return;
+
+    const rawText = resolveTemplateTextContent(
+      {
+        id: pinId,
+        type: "text",
+        label: String(obj.__pinLabel || "Text"),
+        x: Number(obj.left ?? 0),
+        y: Number(obj.top ?? 0),
+        width: Number(obj.width ?? 0),
+        height: Number(obj.height ?? 0),
+        defaultText: typeof obj.__rawText === "string" ? obj.__rawText : obj.text ?? "",
+        textVariable,
+      },
+      context
+    );
+
+    const textTransform = obj.__textTransform ?? "none";
+    obj.set("text", applyTextTransform(rawText, textTransform));
+    obj.__rawText = rawText;
+    if (typeof obj.initDimensions === "function") obj.initDimensions();
+    if (typeof obj.setCoords === "function") obj.setCoords();
+  });
 }
 
 async function ensureGoogleFontLoaded(fontName: string): Promise<void> {
@@ -416,33 +661,12 @@ export async function buildTemplateOnCanvas(
   canvas.backgroundColor = overrides?.bgColor || template.bgColor;
   let imageIndex = 0;
 
-  const fetchAsDataUrl = async (url: string): Promise<string> => {
-    const proxyEndpoint = `${proxyBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
-    const res = await fetch(proxyEndpoint, { credentials: "include" });
-    if (!res.ok) throw new Error(`Proxy fetch failed: ${res.status}`);
-    const blob = await res.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  };
-
-  const resolveImageUrl = async (url: string): Promise<string> => {
-    if (!url) return url;
-    if (url.startsWith("data:") || url.startsWith("blob:")) return url;
-    if (url.startsWith("/")) return url;
-    if (proxyBase && url.startsWith(proxyBase)) return url;
-    try { if (typeof window !== "undefined" && url.startsWith(window.location.origin)) return url; } catch {}
-    return fetchAsDataUrl(url);
-  };
-
   const oFont = overrides?.fontFamily;
   const oSize = overrides?.fontSize;
   const oWeight = overrides?.fontWeight;
   const oTitleColor = overrides?.titleColor;
   const oBandColor = overrides?.bandColor;
+  const resolvedPinTitle = resolvePinTitleValue(overrides?.pinTitleText, title);
   const oWebsite = overrides?.websiteText;
   const imageGroupBounds = buildImageZoneGroupBounds(template.elements, Math.max(images.length, 1));
 
@@ -450,8 +674,7 @@ export async function buildTemplateOnCanvas(
   for (const el of template.elements) {
     if (el.type === "asset" && (el as any).imageUrl) {
       try {
-        const resolved = await resolveImageUrl(String((el as any).imageUrl));
-        const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
+        const img = await createCachedFabricImage(fabric, String((el as any).imageUrl), proxyBase);
         img.set({
           left: el.x ?? 0,
           top: el.y ?? 0,
@@ -480,8 +703,7 @@ export async function buildTemplateOnCanvas(
       imageIndex++;
       if (imageUrl) {
         try {
-          const resolved = await resolveImageUrl(imageUrl);
-          const img = await fabric.FabricImage.fromURL(resolved, { crossOrigin: "anonymous" });
+          const img = await createCachedFabricImage(fabric, imageUrl, proxyBase);
           const scale = getCoverScale(el.width, el.height, img.width || 1, img.height || 1);
           img.set({
             left: el.x + el.width / 2,
@@ -519,31 +741,15 @@ export async function buildTemplateOnCanvas(
       _applyTemplateLock(shape, el.locked);
       canvas.add(shape);
     } else if (el.type === "text") {
-      const titleLines = (title || "")
-        .split(/\r?\n/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const firstLine = titleLines[0] || title || "";
-      const secondLine = titleLines[1] || "";
-      const thirdLine = titleLines[2] || "";
-      const tv = (el as any).textVariable ?? "";
+      const tv = ((el as any).textVariable ?? "") as TextVariable;
       // Explicit textVariable wins. ID-based fallbacks only apply for built-in semantic IDs,
       // never for auto-generated IDs (text_*, website_*) — those must use textVariable.
-      let text: string;
-      if (tv === "title" || el.id === "title") {
-        text = title || el.defaultText || "";
-      } else if (el.id === "title1") {
-        text = firstLine || el.defaultText || "";
-      } else if (el.id === "title2") {
-        text = secondLine || el.defaultText || "";
-      } else if (el.id === "title3") {
-        text = thirdLine || el.defaultText || "";
-      } else if (tv === "website" || el.id === "website") {
-        text = oWebsite || website || el.defaultText || "";
-      } else {
-        text = el.defaultText || "";
-      }
-      const isTitle = tv === "title" || el.id === "title";
+      const text = resolveTemplateTextContent(el, {
+        title,
+        pinTitle: resolvedPinTitle,
+        website: oWebsite || website || "",
+      });
+      const isTitle = tv === "title" || tv === "pinTitle" || el.id === "title";
       const isWebsite = tv === "website" || el.id === "website";
       const fill = isTitle && oTitleColor ? oTitleColor : (el.fill || "#333333");
       const tt = (el as any).textTransform ?? "none";
@@ -754,6 +960,7 @@ export type PinDesignerApi = { getJson: () => string; exportPng: () => string | 
 export interface FrameInfo {
   recipeId: string;
   title: string;
+  pinTitle?: string;
   images: string[];
 }
 
@@ -816,6 +1023,13 @@ export default function PinDesigner({
   const [savingAll, setSavingAll] = useState(false);
   const [saveAllProgress, setSaveAllProgress] = useState(0);
   const [framePreviews, setFramePreviews] = useState<Record<number, string>>({});
+  const framePreviewsRef = useRef<Record<number, string>>({});
+  const [framePreviewPending, setFramePreviewPending] = useState<Record<number, boolean>>({});
+  const previewGenerationRunRef = useRef(0);
+  const previewCacheRef = useRef<Map<string, string>>(new Map());
+  const pendingPreviewCacheKeysRef = useRef<Set<string>>(new Set());
+  const scheduledPreviewTaskRef = useRef<number | null>(null);
+  const stableScrollAreaStyle: React.CSSProperties = { scrollbarGutter: "stable" as any };
 
   // ── Custom fonts (persisted to database) ─────────────────────────────
   const [customFonts, setCustomFonts] = useState<string[]>([]);
@@ -872,6 +1086,28 @@ export default function PinDesigner({
       .then((items) => setReusableElements(items))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (embedded || typeof document === "undefined") return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    const prevHtmlScrollbarGutter = (html.style as any).scrollbarGutter;
+    const prevBodyScrollbarGutter = (body.style as any).scrollbarGutter;
+
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    (html.style as any).scrollbarGutter = "stable";
+    (body.style as any).scrollbarGutter = "stable";
+
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+      (html.style as any).scrollbarGutter = prevHtmlScrollbarGutter;
+      (body.style as any).scrollbarGutter = prevBodyScrollbarGutter;
+    };
+  }, [embedded]);
 
   // Load user-created Pin Designer templates (filtered by project if available)
   useEffect(() => {
@@ -932,14 +1168,16 @@ export default function PinDesigner({
   const activeFrame = frames?.[activeFrameIdx];
   const effectiveImages = activeFrame ? activeFrame.images : recipeImages;
   const effectiveTitle = activeFrame ? activeFrame.title : initialTitle;
+  const effectivePinTitle = activeFrame
+    ? resolvePinTitleValue(activeFrame.pinTitle, activeFrame.title)
+    : resolvePinTitleValue(recipePinTitle, initialTitle);
+  useEffect(() => {
+    framePreviewsRef.current = framePreviews;
+  }, [framePreviews]);
+
   // Route external image URLs through backend proxy to avoid browser CORS restrictions
   const proxyUrl = (url: string) => {
-    if (!url) return url;
-    if (url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("/")) return url;
-    if (url.startsWith(window.location.origin)) return url;
-    const apiBase = getApiBaseUrl();
-    if (apiBase && url.startsWith(apiBase)) return url;
-    return `${apiBase}/api/image-proxy?url=${encodeURIComponent(url)}`;
+    return normalizeDesignerImageUrl(url, getApiBaseUrl());
   };
 
   // ── Canvas refs ──────────────────────────────────────────────────────────
@@ -981,6 +1219,7 @@ export default function PinDesigner({
   const openConfirm = useConfirm();
   const [mounted, setMounted] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState(false);
   const [imageEditModeId, setImageEditModeId] = useState<string | null>(null);
   const setEditMode = (id: string | null) => { imageEditModeIdRef.current = id; setImageEditModeId(id); };
   const [selectedTemplate, setSelectedTemplate] = useState<PinTemplate | null>(null);
@@ -991,14 +1230,39 @@ export default function PinDesigner({
   const sharedTemplates = customTemplates.filter((t) => t.owner_id !== currentUserId);
   const [pinName, setPinName] = useState(templateName);
 
+  useEffect(() => {
+    const proxyBase = getApiBaseUrl();
+    const uniqueImageUrls = new Set<string>();
+    const addImageUrl = (url?: string | null) => {
+      if (!url) return;
+      uniqueImageUrls.add(normalizeDesignerImageUrl(url, proxyBase));
+    };
+
+    recipeImages.forEach(addImageUrl);
+    frames?.forEach((frame) => frame.images.forEach(addImageUrl));
+    selectedTemplate?.elements.forEach((element) => {
+      if (element.type !== "image") return;
+      const src = (element as TemplateElement & { src?: string }).src;
+      addImageUrl(src);
+    });
+
+    setImageResourceCacheMax(uniqueImageUrls.size + IMAGE_RESOURCE_CACHE_BUFFER);
+  }, [frames, recipeImages, selectedTemplate]);
+
+  useEffect(() => {
+    return () => {
+      setImageResourceCacheMax(IMAGE_RESOURCE_CACHE_BASE_MAX);
+    };
+  }, []);
+
   // Pinterest
   const [pinterestConnected, setPinterestConnected] = useState(false);
   const [pinterestBoards, setPinterestBoards] = useState<{ id: string; name: string }[]>([]);
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [pinSuccessUrl, setPinSuccessUrl] = useState<string | null>(null);
   const [selectedBoard, setSelectedBoard] = useState("");
-  const [pinTitle, setPinTitle] = useState(initialTitle);
-  const [pinDescription, setPinDescription] = useState("");
+  const [pinTitle, setPinTitle] = useState(effectivePinTitle);
+  const [pinDescription, setPinDescription] = useState(recipePinDescription || "");
   const [pinLink, setPinLink] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [savingToRecipe, setSavingToRecipe] = useState(false);
@@ -1028,6 +1292,154 @@ export default function PinDesigner({
     );
 
   // ── Frame switching ──────────────────────────────────────────────────────
+  const cancelScheduledPreviewTask = () => {
+    if (scheduledPreviewTaskRef.current == null || typeof window === "undefined") return;
+    const win = window as any;
+    if (typeof win.cancelIdleCallback === "function") {
+      win.cancelIdleCallback(scheduledPreviewTaskRef.current);
+    } else {
+      window.clearTimeout(scheduledPreviewTaskRef.current);
+    }
+    scheduledPreviewTaskRef.current = null;
+  };
+
+  const schedulePreviewTask = (task: () => void) => {
+    if (typeof window === "undefined") return;
+    cancelScheduledPreviewTask();
+    const win = window as any;
+    if (typeof win.requestIdleCallback === "function") {
+      scheduledPreviewTaskRef.current = win.requestIdleCallback(() => {
+        scheduledPreviewTaskRef.current = null;
+        task();
+      }, { timeout: 250 });
+    } else {
+      scheduledPreviewTaskRef.current = window.setTimeout(() => {
+        scheduledPreviewTaskRef.current = null;
+        task();
+      }, 32);
+    }
+  };
+
+  const getFramePreviewCacheKey = (template: PinTemplate, frame: FrameInfo) =>
+    `${getTemplateRenderSignature(template)}::${frame.recipeId}::${frame.title}::${resolvePinTitleValue(frame.pinTitle, frame.title)}::${website}::${frame.images.join("|")}`;
+
+  const renderFramePreview = async (template: PinTemplate, frameIndex: number, runId: number) => {
+    if (!frames || frameIndex < 0 || frameIndex >= frames.length || frameIndex === activeFrameIdx) return;
+    const frame = frames[frameIndex];
+    const cacheKey = getFramePreviewCacheKey(template, frame);
+    const cachedPreview = readPreviewCacheEntry(previewCacheRef.current, cacheKey);
+    if (cachedPreview) {
+      if (runId === previewGenerationRunRef.current) {
+        setFramePreviews((prev) => {
+          const next = prev[frameIndex] === cachedPreview ? prev : { ...prev, [frameIndex]: cachedPreview };
+          framePreviewsRef.current = next;
+          return next;
+        });
+        setFramePreviewPending((prev) => {
+          if (!prev[frameIndex]) return prev;
+          const next = { ...prev };
+          delete next[frameIndex];
+          return next;
+        });
+      }
+      return;
+    }
+    if (framePreviewsRef.current[frameIndex] || pendingPreviewCacheKeysRef.current.has(cacheKey)) return;
+
+    pendingPreviewCacheKeysRef.current.add(cacheKey);
+    const fabricMod = await import("fabric");
+    const proxyBase = getApiBaseUrl();
+    const tmplW = template.canvasWidth || PIN_W;
+    const tmplH = template.canvasHeight || PIN_H;
+    const savedJson = frameJsonsRef.current[frameIndex];
+    const canvasEl = document.createElement("canvas");
+    canvasEl.width = tmplW;
+    canvasEl.height = tmplH;
+    canvasEl.style.display = "none";
+    document.body.appendChild(canvasEl);
+
+    try {
+      const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
+      const fc = new FC(canvasEl, { width: tmplW, height: tmplH, enableRetinaScaling: false });
+
+      if (savedJson && savedJson !== "{}") {
+        await fc.loadFromJSON(savedJson);
+        restoreSerializedCanvasCustomProperties(fc, savedJson);
+        syncCanvasTextBindings(fc, {
+          title: frame.title,
+          pinTitle: resolvePinTitleValue(frame.pinTitle, frame.title),
+          website,
+        });
+      } else {
+        await buildTemplateOnCanvas(fabricMod, fc, template, frame.images, proxyBase, frame.title, website, {
+          pinTitleText: frame.pinTitle,
+        });
+      }
+
+      fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
+      fc.renderAll();
+      const preview = fc.toDataURL({ format: "png", multiplier: PREVIEW_MULTIPLIER });
+      touchPreviewCacheEntry(previewCacheRef.current, cacheKey, preview);
+      if (runId === previewGenerationRunRef.current) {
+        setFramePreviews((prev) => {
+          const next = prev[frameIndex] === preview ? prev : { ...prev, [frameIndex]: preview };
+          framePreviewsRef.current = next;
+          return next;
+        });
+      }
+      fc.dispose();
+    } catch {
+      // Ignore preview failures; the page can still be opened directly.
+    } finally {
+      if (runId === previewGenerationRunRef.current) {
+        setFramePreviewPending((prev) => {
+          if (!prev[frameIndex]) return prev;
+          const next = { ...prev };
+          delete next[frameIndex];
+          return next;
+        });
+      }
+      pendingPreviewCacheKeysRef.current.delete(cacheKey);
+      document.body.removeChild(canvasEl);
+    }
+  };
+
+  const queueFramePreviewGeneration = (template: PinTemplate, resetExisting: boolean = false) => {
+    if (!frames || frames.length <= 1) return;
+    const runId = ++previewGenerationRunRef.current;
+    cancelScheduledPreviewTask();
+    if (resetExisting) {
+      framePreviewsRef.current = {};
+      setFramePreviews({});
+    }
+
+    const orderedIndices = getPreviewGenerationOrder(frames.length, activeFrameIdx);
+    setFramePreviewPending(() =>
+      Object.fromEntries(orderedIndices.map((index) => [index, true]))
+    );
+    let cursor = 0;
+
+    const runBatch = async (batchSize: number) => {
+      let remaining = batchSize;
+      while (cursor < orderedIndices.length && remaining > 0) {
+        if (runId !== previewGenerationRunRef.current) return;
+        const frameIndex = orderedIndices[cursor];
+        await renderFramePreview(template, frameIndex, runId);
+        cursor += 1;
+        remaining -= 1;
+        if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      if (cursor < orderedIndices.length && runId === previewGenerationRunRef.current) {
+        schedulePreviewTask(() => {
+          void runBatch(PREVIEW_BACKGROUND_BATCH);
+        });
+      }
+    };
+
+    void runBatch(PREVIEW_EAGER_COUNT);
+  };
+
   const switchToFrame = async (newIdx: number) => {
     if (!frames || newIdx === activeFrameIdx || newIdx < 0 || newIdx >= frames.length) return;
     const canvas = fabricCanvasRef.current;
@@ -1035,75 +1447,59 @@ export default function PinDesigner({
 
     // Save current frame JSON
     frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
-      canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId", "__flipX"])
+      canvas.toObject(DESIGNER_CUSTOM_KEYS)
     );
 
     // Generate preview of current frame before switching
     try {
       canvas.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
       canvas.renderAll();
-      const preview = canvas.toDataURL({ format: "png", multiplier: 0.5 });
+      const preview = canvas.toDataURL({ format: "png", multiplier: PREVIEW_MULTIPLIER });
       canvas.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", true));
       canvas.renderAll();
-      setFramePreviews((prev) => ({ ...prev, [activeFrameIdx]: preview }));
+      if (selectedTemplate) {
+        touchPreviewCacheEntry(
+          previewCacheRef.current,
+          getFramePreviewCacheKey(selectedTemplate, frames[activeFrameIdx]),
+          preview,
+        );
+      }
+      setFramePreviews((prev) => {
+        const next = { ...prev, [activeFrameIdx]: preview };
+        framePreviewsRef.current = next;
+        return next;
+      });
     } catch { /* skip */ }
 
     setActiveFrameIdx(newIdx);
     setPinName(frames[newIdx].title);
+    setPinTitle(resolvePinTitleValue(frames[newIdx].pinTitle, frames[newIdx].title));
 
     const savedJson = frameJsonsRef.current[newIdx];
     if (savedJson && savedJson !== "{}") {
       await canvas.loadFromJSON(savedJson);
+      restoreSerializedCanvasCustomProperties(canvas, savedJson);
       normalizeCanvasObjectMetadata();
+      syncCanvasTextBindings(canvas, {
+        title: frames[newIdx].title,
+        pinTitle: resolvePinTitleValue(frames[newIdx].pinTitle, frames[newIdx].title),
+        website,
+      });
       canvas.renderAll();
       updateLayers();
     } else if (selectedTemplate) {
-      await loadTemplate(selectedTemplate, frames[newIdx].images, frames[newIdx].title);
+      await loadTemplate(
+        selectedTemplate,
+        frames[newIdx].images,
+        frames[newIdx].title,
+        undefined,
+        frames[newIdx].pinTitle,
+      );
     } else {
       canvas.clear();
       canvas.renderAll();
       updateLayers();
     }
-  };
-
-  const generateAllFramePreviews = async (template: PinTemplate) => {
-    if (!frames || frames.length <= 1) return;
-    const fabricMod = await import("fabric");
-    const proxyBase = getApiBaseUrl();
-    const newPreviews: Record<number, string> = {};
-    const tmplW = template.canvasWidth || PIN_W;
-    const tmplH = template.canvasHeight || PIN_H;
-
-    for (let i = 0; i < frames.length; i++) {
-      if (i === activeFrameIdx) continue;
-      const frame = frames[i];
-      const savedJson = frameJsonsRef.current[i];
-      const canvasEl = document.createElement("canvas");
-      canvasEl.width = tmplW;
-      canvasEl.height = tmplH;
-      canvasEl.style.display = "none";
-      document.body.appendChild(canvasEl);
-
-      try {
-        const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
-        const fc = new FC(canvasEl, { width: tmplW, height: tmplH, enableRetinaScaling: false });
-
-        if (savedJson && savedJson !== "{}") {
-          await fc.loadFromJSON(savedJson);
-        } else {
-          await buildTemplateOnCanvas(fabricMod, fc, template, frame.images, proxyBase, frame.title, website);
-        }
-
-        fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
-        fc.renderAll();
-        newPreviews[i] = fc.toDataURL({ format: "png", multiplier: 0.5 });
-        fc.dispose();
-      } catch { /* skip */ } finally {
-        document.body.removeChild(canvasEl);
-      }
-    }
-
-    setFramePreviews((prev) => ({ ...prev, ...newPreviews }));
   };
 
   const savePinToRecipeWithArticleEmbed = useCallback(
@@ -1153,7 +1549,7 @@ export default function PinDesigner({
     const canvas = fabricCanvasRef.current;
     if (canvas) {
       frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
-        canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId", "__flipX"])
+        canvas.toObject(DESIGNER_CUSTOM_KEYS)
       );
     }
     setSavingAll(true);
@@ -1181,9 +1577,17 @@ export default function PinDesigner({
 
         if (savedJson && savedJson !== "{}") {
           await fc.loadFromJSON(savedJson);
+          restoreSerializedCanvasCustomProperties(fc, savedJson);
+          syncCanvasTextBindings(fc, {
+            title: frame.title,
+            pinTitle: resolvePinTitleValue(frame.pinTitle, frame.title),
+            website,
+          });
           fc.renderAll();
         } else if (selectedTemplate) {
-          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website);
+          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website, {
+            pinTitleText: frame.pinTitle,
+          });
         }
 
         fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
@@ -1198,7 +1602,11 @@ export default function PinDesigner({
         // Save pin image embedded in article HTML (after Conclusion, before WPRM recipe card)
         if (frame.recipeId) {
           try {
-            await savePinToRecipeWithArticleEmbed(frame.recipeId, dataUrl, frame.title);
+            await savePinToRecipeWithArticleEmbed(
+              frame.recipeId,
+              dataUrl,
+              resolvePinTitleValue(frame.pinTitle, frame.title),
+            );
           } catch { /* skip */ }
         }
         if (download) {
@@ -1225,23 +1633,29 @@ export default function PinDesigner({
     if (!projectId) return;
     setWpBatchBusy(mode);
     try {
-      // 1. Save all pin designs into their recipes first (embed image in article after Conclusion)
-      if (frames && frames.length > 0) {
-        await saveAllFrames(false);
-      } else if (recipeId) {
-        // Single recipe mode — save current canvas pin into article
-        const data = getExportDataUrl();
-        if (data) {
-          await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe");
+      // 1. Save pin designs only if the user has actually done a design (template selected or prior design exists).
+      // If no template is selected and no saved design exists, skip straight to publish.
+      const hasDesign = selectedTemplate !== null || !!initialJson;
+      if (hasDesign) {
+        if (frames && frames.length > 0) {
+          await saveAllFrames(false);
+        } else if (recipeId) {
+          // Single recipe mode — save current canvas pin into article
+          const data = getExportDataUrl();
+          if (data) {
+            await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe");
+          }
         }
       }
       // 2. Open batch publish modal.
-      // In single-recipe mode, scope to only that recipe so we don't publish others.
+      // Scope publish to exactly the recipes visible in this designer session.
       setWpBatchModalData({
         mode,
         ...opts,
         ...(siteId ? { site_id: siteId } : {}),
-        ...(!frames?.length && recipeId ? { recipe_id: recipeId } : {}),
+        ...(frames?.length
+          ? { recipe_ids: frames.map((f) => f.recipeId) }
+          : recipeId ? { recipe_id: recipeId } : {}),
       });
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Failed to save pins before publishing");
@@ -1254,6 +1668,29 @@ export default function PinDesigner({
     setWpBatchBusy(null);
     if (didPublish) setWpBatchDone(true);
   };
+
+  const handleOpenPinterestGallery = useCallback(() => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    if (siteId) params.set("site_id", siteId);
+
+    const galleryRecipeIds = Array.from(
+      new Set(
+        (frames?.map((frame) => frame.recipeId) ?? [])
+          .concat(recipeId ? [recipeId] : [])
+          .filter(Boolean),
+      ),
+    );
+    const contextId = storePinterestGalleryContext({
+      source: "pin_designer",
+      projectId,
+      siteId,
+      recipeIds: galleryRecipeIds,
+    });
+    if (contextId) params.set("pin_context", contextId);
+
+    router.push(`/pinterest-gallery${params.toString() ? `?${params.toString()}` : ""}`);
+  }, [frames, projectId, recipeId, router, siteId]);
 
   // ── Mount ────────────────────────────────────────────────────────────────
   useEffect(() => { setMounted(true); }, []);
@@ -1637,7 +2074,7 @@ export default function PinDesigner({
   const MAX_UNDO = 50;
 
   // Fabric v6: toJSON() ignores propertiesToInclude — must use toObject() to include custom keys
-  const UNDO_CUSTOM_KEYS = ["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__flipX", "__textTransform", "__rawText", "__pinLocked", "__designerBorder", "__forPinId"];
+  const UNDO_CUSTOM_KEYS = [...DESIGNER_CUSTOM_KEYS];
 
   const saveUndoState = () => {
     const canvas = fabricCanvasRef.current;
@@ -1662,27 +2099,12 @@ export default function PinDesigner({
 
     try {
       // Parse first so we have the saved custom props for post-load restoration
-      const savedData = JSON.parse(entry.json);
-      const savedObjs: any[] = savedData.objects || [];
-
       await canvas.loadFromJSON(entry.json);
-
-      // Post-load: restore custom properties by matching type + position.
-      // Needed because Fabric v6 toJSON() ignores propertiesToInclude — we use
-      // toObject() when saving, but loadFromJSON does not auto-restore unknown keys.
-      const remaining = [...savedObjs];
-      (canvas.getObjects() as any[]).forEach((canvasObj) => {
-        const idx = remaining.findIndex((s) =>
-          s.type === canvasObj.type &&
-          Math.abs((s.left ?? 0) - (canvasObj.left ?? 0)) < 1 &&
-          Math.abs((s.top ?? 0) - (canvasObj.top ?? 0)) < 1
-        );
-        if (idx !== -1) {
-          UNDO_CUSTOM_KEYS.forEach((k) => {
-            if (remaining[idx][k] !== undefined) canvasObj[k] = remaining[idx][k];
-          });
-          remaining.splice(idx, 1);
-        }
+      restoreSerializedCanvasCustomProperties(canvas, entry.json);
+      syncCanvasTextBindings(canvas, {
+        title: effectiveTitle,
+        pinTitle: effectivePinTitle,
+        website,
       });
 
       const objs = canvas.getObjects().filter((o: any) => o.__pinId && !o.__isLabel && !o.__designerBorder);
@@ -1936,7 +2358,13 @@ export default function PinDesigner({
 
   // ── Template loading ──────────────────────────────────────────────────────
 
-  const loadTemplate = async (template: PinTemplate, imagesOverride?: string[], titleOverride?: string, websiteOverride?: string) => {
+  const loadTemplate = async (
+    template: PinTemplate,
+    imagesOverride?: string[],
+    titleOverride?: string,
+    websiteOverride?: string,
+    pinTitleOverride?: string,
+  ) => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
     if (!fabric || !canvas) return;
@@ -1949,12 +2377,18 @@ export default function PinDesigner({
         .map((el) => (el as any).fontFamily as string)
     ));
     if (templateFonts.length > 0) {
+      setTemplateLoading(true);
       await Promise.all(templateFonts.map(injectFontStylesheet));
     }
 
     const imgs = imagesOverride ?? effectiveImages;
     const ttl = titleOverride ?? effectiveTitle;
     const siteWebsite = websiteOverride ?? website;
+    const proxyBase = getApiBaseUrl();
+    const boundPinTitle =
+      pinTitleOverride === undefined
+        ? effectivePinTitle
+        : resolvePinTitleValue(pinTitleOverride, ttl);
     const isCustomTemplateId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       String(template.id || "")
     );
@@ -1983,7 +2417,7 @@ export default function PinDesigner({
       if (el.type === "asset" && (el as any).imageUrl) {
         // Restore uploaded image asset
         try {
-          const img = await fabric.FabricImage.fromURL((el as any).imageUrl, { crossOrigin: "anonymous" });
+          const img = await createCachedFabricImage(fabric, String((el as any).imageUrl), proxyBase);
           img.set({
             left: el.x ?? 0,
             top: el.y ?? 0,
@@ -2014,7 +2448,7 @@ export default function PinDesigner({
 
         if (imageUrl) {
           try {
-            const img = await fabric.FabricImage.fromURL(proxyUrl(imageUrl), { crossOrigin: "anonymous" });
+            const img = await createCachedFabricImage(fabric, imageUrl, proxyBase);
             const imgW = img.width || 1;
             const imgH = img.height || 1;
             const scale = getCoverScale(el.width, el.height, imgW, imgH);
@@ -2159,28 +2593,12 @@ export default function PinDesigner({
         canvas.add(band);
         addDesignerBorder(fabric, canvas, el.x, el.y, el.width, el.height, el.id);
       } else if (el.type === "text") {
-        const titleLines = (ttl || "")
-          .split(/\r?\n/)
-          .map((s) => s.trim())
-          .filter(Boolean);
-        const firstLine = titleLines[0] || ttl || "";
-        const secondLine = titleLines[1] || "";
-        const thirdLine = titleLines[2] || "";
-        const tv = (el as any).textVariable ?? "";
-        let textContent: string;
-        if (tv === "title" || el.id === "title") {
-          textContent = ttl || el.defaultText || "Text";
-        } else if (el.id === "title1") {
-          textContent = firstLine || el.defaultText || "Text";
-        } else if (el.id === "title2") {
-          textContent = secondLine || el.defaultText || "";
-        } else if (el.id === "title3") {
-          textContent = thirdLine || el.defaultText || "";
-        } else if (tv === "website" || el.id === "website") {
-          textContent = siteWebsite || el.defaultText || "Text";
-        } else {
-          textContent = el.defaultText || "Text";
-        }
+        const tv = ((el as any).textVariable ?? "") as TextVariable;
+        const textContent = resolveTemplateTextContent(el, {
+          title: ttl,
+          pinTitle: boundPinTitle,
+          website: siteWebsite,
+        }) || "Text";
         const tt = (el as any).textTransform ?? el.textTransform ?? "none";
         const textbox = new fabric.Textbox(
           applyTextTransform(textContent, tt),
@@ -2204,6 +2622,7 @@ export default function PinDesigner({
         (textbox as any).__pinId = el.id;
         (textbox as any).__pinLabel = el.label;
         (textbox as any).__pinType = "text";
+        (textbox as any).__textVariable = tv;
         (textbox as any).__textTransform = tt;
         (textbox as any).__rawText = textContent;
         (textbox as any).__pinLocked = !!(el as any).locked;
@@ -2287,6 +2706,7 @@ export default function PinDesigner({
     canvas.renderAll();
     updateLayers();
     saveUndoState();
+    setTemplateLoading(false);
   };
 
   // ── Canvas initialization ─────────────────────────────────────────────────
@@ -2604,7 +3024,13 @@ export default function PinDesigner({
           await Promise.all(fontFamilies.map(injectFontStylesheet));
         }
         await canvas.loadFromJSON(initialJson);
+        restoreSerializedCanvasCustomProperties(canvas, initialJson);
         normalizeCanvasObjectMetadata();
+        syncCanvasTextBindings(canvas, {
+          title: effectiveTitle,
+          pinTitle: effectivePinTitle,
+          website,
+        });
         canvas.renderAll();
         updateLayers();
       } catch { /* ignore */ }
@@ -2626,7 +3052,7 @@ export default function PinDesigner({
       getJson: () => {
         const canvas = fabricCanvasRef.current;
         if (!canvas) return "{}";
-        return JSON.stringify(canvas.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId", "__flipX"]));
+        return JSON.stringify(canvas.toObject(DESIGNER_CUSTOM_KEYS));
       },
       exportPng: getExportDataUrl,
     });
@@ -2635,24 +3061,45 @@ export default function PinDesigner({
 
   // Load template when ready (skip if initialJson already loaded)
   useEffect(() => {
-    if (canvasReady && selectedTemplate && !initialJson) {
-      if (skipTemplateAutoApplyRef.current) {
-        skipTemplateAutoApplyRef.current = false;
-        return;
-      }
-      loadTemplate(selectedTemplate);
-      if (frames && frames.length > 1) generateAllFramePreviews(selectedTemplate);
+    if (!(canvasReady && selectedTemplate && !initialJson)) return;
+
+    if (skipTemplateAutoApplyRef.current) {
+      skipTemplateAutoApplyRef.current = false;
+      return;
     }
+
+    let cancelled = false;
+    const run = async () => {
+      cancelScheduledPreviewTask();
+      await loadTemplate(selectedTemplate);
+      if (cancelled) return;
+      if (frames && frames.length > 1) queueFramePreviewGeneration(selectedTemplate, true);
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+      previewGenerationRunRef.current += 1;
+      cancelScheduledPreviewTask();
+      setFramePreviewPending({});
+    };
   }, [selectedTemplate, canvasReady, initialJson]);
 
-  // Generate previews for other frames when frames arrive AFTER the template effect already ran
-  // (frames are loaded async from props, so they may not be available during the effect above)
+  // Refresh nearby previews when frames arrive later or when the active page changes.
   useEffect(() => {
     if (canvasReady && selectedTemplate && frames && frames.length > 1 && !initialJson) {
-      generateAllFramePreviews(selectedTemplate);
+      queueFramePreviewGeneration(selectedTemplate);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frames?.length]);
+  }, [frames?.length, activeFrameIdx]);
+
+  useEffect(() => {
+    return () => {
+      previewGenerationRunRef.current += 1;
+      cancelScheduledPreviewTask();
+      setFramePreviewPending({});
+    };
+  }, []);
 
   // ── Ctrl+wheel zoom ───────────────────────────────────────────────────────
 
@@ -2906,8 +3353,16 @@ export default function PinDesigner({
         const savedJson = refs[i];
         if (savedJson && savedJson !== "{}") {
           await fc.loadFromJSON(savedJson);
+          restoreSerializedCanvasCustomProperties(fc, savedJson);
+          syncCanvasTextBindings(fc, {
+            title: frame.title,
+            pinTitle: resolvePinTitleValue(frame.pinTitle, frame.title),
+            website,
+          });
         } else {
-          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website);
+          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website, {
+            pinTitleText: frame.pinTitle,
+          });
         }
 
         fc.getObjects().filter((o: any) => o.__pinType === "text" || o.type === "textbox").forEach((o: any) => {
@@ -2920,12 +3375,12 @@ export default function PinDesigner({
         fc.renderAll();
 
         refs[i] = JSON.stringify(
-          fc.toObject(["__pinId", "__pinLabel", "__pinType", "__isLabel", "__forId", "__strokeStyle", "__pinLocked", "__designerBorder", "__forPinId", "__flipX"])
+          fc.toObject(DESIGNER_CUSTOM_KEYS)
         );
 
         fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
         fc.renderAll();
-        newPreviews[i] = fc.toDataURL({ format: "png", multiplier: 0.5 });
+        newPreviews[i] = fc.toDataURL({ format: "png", multiplier: PREVIEW_MULTIPLIER });
         fc.dispose();
       } catch { /* skip */ } finally {
         document.body.removeChild(canvasEl);
@@ -3976,7 +4431,7 @@ export default function PinDesigner({
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className={`${embedded ? "absolute inset-0" : "fixed inset-0 z-50"} flex flex-col bg-gray-950 text-white`}>
+    <div className={`${embedded ? "absolute inset-0" : "fixed inset-0 z-50"} flex flex-col overflow-hidden bg-gray-950 text-white`}>
 
       {/* ── Floating Toolbar ──────────────────────────────────────────────── */}
       {toolbarPos && selectedId && (
@@ -4234,9 +4689,10 @@ export default function PinDesigner({
             <button
               onClick={() => {
                 frameJsonsRef.current = {};
+                framePreviewsRef.current = {};
                 setFramePreviews({});
                 loadTemplate(selectedTemplate, effectiveImages, effectiveTitle);
-                generateAllFramePreviews(selectedTemplate);
+                queueFramePreviewGeneration(selectedTemplate, true);
               }}
               className="btn-secondary flex items-center gap-1.5 px-2.5 py-1.5 text-sm border-brand-700 text-brand-400"
               title="Clear all edits and re-apply current template to all pages"
@@ -4297,14 +4753,9 @@ export default function PinDesigner({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  const params = new URLSearchParams();
-                  if (projectId) params.set("project_id", projectId);
-                  if (siteId) params.set("site_id", siteId);
-                  router.push(`/pinterest-gallery${params.toString() ? `?${params.toString()}` : ""}`);
-                }}
+                onClick={handleOpenPinterestGallery}
                 className="btn-secondary flex items-center gap-1.5 px-2 py-1.5 text-xs border-pink-800/50 text-pink-300"
-                title="Open Pinterest page for this project's published recipes"
+                title="Open Pinterest page scoped to the recipes in this Pin Designer"
               >
                 <ExternalLink size={14} />
                 <span className="hidden lg:inline">Pinterest Page</span>
@@ -4521,7 +4972,7 @@ export default function PinDesigner({
       )}
 
       {/* ── Body ──────────────────────────────────────────────────────────── */}
-      <div className="flex flex-1 min-h-0 relative">
+      <div className="flex flex-1 min-h-0 overflow-hidden relative">
 
         {/* Mobile backdrop for panels */}
         {(leftPanelOpen || rightPanelOpen) && (
@@ -4560,7 +5011,7 @@ export default function PinDesigner({
             </button>
           </div>
 
-          <div className="p-3 overflow-y-auto flex-1">
+          <div className="p-3 overflow-y-auto flex-1" style={stableScrollAreaStyle}>
 
             {/* Elements Tab */}
             {leftTab === "elements" && (
@@ -4739,7 +5190,6 @@ export default function PinDesigner({
                             if (frames && frames.length > 1) {
                               frameJsonsRef.current = {};
                               setFramePreviews({});
-                              generateAllFramePreviews(t);
                             }
                           }}
                           className={`text-xs px-3 py-1 rounded ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
@@ -4768,7 +5218,6 @@ export default function PinDesigner({
                             if (frames && frames.length > 1) {
                               frameJsonsRef.current = {};
                               setFramePreviews({});
-                              generateAllFramePreviews(t);
                             }
                           }}
                           className={`text-xs px-3 py-1 rounded mt-2 ${selectedTemplate?.id === t.id ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
@@ -4900,7 +5349,7 @@ export default function PinDesigner({
         </aside>
 
         {/* ── Canvas Area ─────────────────────────────────────────────────── */}
-        <main ref={canvasAreaRef} className="flex-1 overflow-auto bg-gray-900">
+        <main ref={canvasAreaRef} className="flex-1 overflow-auto bg-gray-900" style={stableScrollAreaStyle}>
           {/* Zoom bar */}
           <div className="sticky top-0 z-10 bg-gray-900/95 backdrop-blur border-b border-gray-800 px-4 py-2 flex items-center justify-center gap-2">
             <button onClick={() => setZoomPct(zoom - 10)} className="p-1.5 rounded bg-gray-800 hover:bg-gray-700">
@@ -4938,7 +5387,14 @@ export default function PinDesigner({
                         <img src={framePreviews[i]} alt={f.title} className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                          <p className="text-sm text-gray-600">Click to edit</p>
+                          {framePreviewPending[i] ? (
+                            <div className="flex flex-col items-center gap-2 text-gray-500">
+                              <Loader2 size={18} className="animate-spin" />
+                              <p className="text-xs uppercase tracking-wide">Rendering preview...</p>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-gray-600">Click to edit</p>
+                          )}
                         </div>
                       )}
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition flex items-center justify-center">
@@ -4962,6 +5418,14 @@ export default function PinDesigner({
                     className="shadow-2xl rounded-lg overflow-hidden border-2 border-brand-500"
                   >
                     <canvas ref={canvasRef} />
+                    {templateLoading && (
+                      <div className="absolute inset-0 z-20 flex items-center justify-center bg-gray-950/85 rounded-lg">
+                        <div className="flex flex-col items-center gap-3">
+                          <Loader2 size={28} className="animate-spin text-brand-400" />
+                          <span className="text-sm text-gray-300">Loading fonts…</span>
+                        </div>
+                      </div>
+                    )}
                     {!selectedTemplate && (
                       <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 rounded-lg">
                         <div className="text-center px-6 py-4">
@@ -4996,7 +5460,14 @@ export default function PinDesigner({
                           <img src={framePreviews[i]} alt={f.title} className="w-full h-full object-cover" />
                         ) : (
                           <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                            <p className="text-sm text-gray-600">Click to edit</p>
+                            {framePreviewPending[i] ? (
+                              <div className="flex flex-col items-center gap-2 text-gray-500">
+                                <Loader2 size={18} className="animate-spin" />
+                                <p className="text-xs uppercase tracking-wide">Rendering preview...</p>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-600">Click to edit</p>
+                            )}
                           </div>
                         )}
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition flex items-center justify-center">
@@ -5018,6 +5489,14 @@ export default function PinDesigner({
                   className="shadow-2xl rounded-lg overflow-hidden border-2 border-gray-600"
                 >
                   <canvas ref={canvasRef} />
+                  {templateLoading && (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-gray-950/85 rounded-lg">
+                      <div className="flex flex-col items-center gap-3">
+                        <Loader2 size={28} className="animate-spin text-brand-400" />
+                        <span className="text-sm text-gray-300">Loading fonts…</span>
+                      </div>
+                    </div>
+                  )}
                   {!selectedTemplate && (
                     <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 rounded-lg">
                       <div className="text-center px-6 py-4">
@@ -5039,7 +5518,7 @@ export default function PinDesigner({
           rightPanelOpen
             ? "fixed inset-y-0 right-0 z-[60] flex flex-col"
             : "hidden md:block",
-        ].join(" ")}>
+        ].join(" ")} style={stableScrollAreaStyle}>
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-xs font-semibold text-gray-400 uppercase">Properties</h4>
             <button

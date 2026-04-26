@@ -1,11 +1,15 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, MessageCircle, Trash2, X, Settings } from "lucide-react";
 import { api, ThreadsProjectOut } from "@/lib/api";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
 export default function ThreadsProjectsPage() {
+  const PROJECTS_PAGE_SIZE = 12;
   const [projects, setProjects] = useState<ThreadsProjectOut[]>([]);
+  const [totalProjects, setTotalProjects] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
@@ -22,16 +26,40 @@ export default function ThreadsProjectsPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const hasMore = projects.length < totalProjects;
 
   const load = () => {
     setLoading(true);
-    api.getThreadsProjects()
-      .then(setProjects)
+    api.getThreadsProjectsPage({ limit: Math.max(projects.length || 0, PROJECTS_PAGE_SIZE), offset: 0 })
+      .then(({ items, total }) => {
+        setProjects(items);
+        setTotalProjects(total);
+      })
       .catch(() => setError("Failed to load Threads projects"))
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, []);
+
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const { items, total } = await api.getThreadsProjectsPage({
+        limit: PROJECTS_PAGE_SIZE,
+        offset: projects.length,
+      });
+      setProjects((prev) => [...prev, ...items]);
+      setTotalProjects(total);
+    } catch {
+      setError("Failed to load more projects");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, projects.length, PROJECTS_PAGE_SIZE]);
+
+  const sentinelRef = useInfiniteScroll(handleLoadMore, { hasMore, loading: loadingMore });
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,7 +123,7 @@ export default function ThreadsProjectsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Threads Projects</h1>
           <p className="text-sm text-gray-400 mt-1">
-            {loading ? "Loading..." : `${projects.length} project${projects.length !== 1 ? "s" : ""}`}
+            {loading ? "Loading..." : `${totalProjects} project${totalProjects !== 1 ? "s" : ""}${projects.length < totalProjects ? ` · ${projects.length} loaded` : ""}`}
           </p>
         </div>
         <button
@@ -236,6 +264,9 @@ export default function ThreadsProjectsPage() {
               No Threads projects yet. Create one to get started.
             </div>
           )}
+          <div className="col-span-full">
+            <InfiniteScrollSentinel sentinelRef={sentinelRef} loading={loadingMore} hasMore={hasMore} />
+          </div>
         </div>
       )}
     </div>

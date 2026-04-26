@@ -91,7 +91,14 @@ async def set_user_credentials(
             )
         )
         cred = result.scalar_one_or_none()
-        enc = encrypt(item.value.strip())
+        value = item.value.strip()
+        if not value:
+            # Empty submission means "remove this key" — never store an encrypted empty string
+            # which would cause jobs to silently skip Midjourney with no error shown.
+            if cred:
+                await db.delete(cred)
+            continue
+        enc = encrypt(value)
         if cred:
             cred.encrypted_value = enc
         else:

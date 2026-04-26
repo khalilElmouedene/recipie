@@ -2,11 +2,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles, Globe, Square, CheckCircle, XCircle, Loader2 } from "lucide-react";
-import { api, getApiBaseUrl, SiteOut, RecipeOut, PinterestBoard, PinterestBulkResponse, PinTemplate, BulkGeneratePinsResponse, BulkPinItem, JobOut, getWsUrl } from "@/lib/api";
-import { getUserRole } from "@/lib/auth";
+import { api, getApiBaseUrl, SiteOut, RecipeOut, SiteRecipeCardOut, SiteRecipeCardPageOut, PinterestBoard, PinterestBulkResponse, PinTemplate, BulkGeneratePinsResponse, JobOut, getWsUrl } from "@/lib/api";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import { useJobActivity } from "@/contexts/JobActivityContext";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
 const API_URL = getApiBaseUrl();
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "stopped"]);
@@ -21,16 +23,63 @@ const DETAILED_PRESERVE_FIELDS: (keyof RecipeOut)[] = [
   "seo_title",
   "wp_tags",
 ];
+type RecipeListItem = SiteRecipeCardOut & Partial<RecipeOut>;
+type RecipeListStats = Omit<SiteRecipeCardPageOut, "items">;
+const EMPTY_RECIPE_LIST_STATS: RecipeListStats = {
+  total: 0,
+  pending: 0,
+  generating: 0,
+  generated: 0,
+  published: 0,
+  failed: 0,
+  with_generated_images: 0,
+};
+
+function getRecipeTitle(text?: string | null): string {
+  return (text || "").split("\n", 1)[0].trim();
+}
+
+function getRecipeListImageUrl(imageUrl?: string | null, generatedImages?: string | null): string | null {
+  if (generatedImages) {
+    try {
+      const parsed = JSON.parse(generatedImages);
+      if (Array.isArray(parsed)) {
+        const first = parsed.find((value) => typeof value === "string" && value.trim());
+        if (typeof first === "string") return first.trim();
+      }
+    } catch {
+      // Ignore malformed generated_images payloads and fall back to the source image.
+    }
+  }
+  return imageUrl || null;
+}
+
+function toRecipeListItem(recipe: RecipeOut): RecipeListItem {
+  return {
+    ...recipe,
+    title: getRecipeTitle(recipe.recipe_text),
+    list_image_url: getRecipeListImageUrl(recipe.image_url, recipe.generated_images),
+    has_generated_images: Boolean(recipe.generated_images),
+  };
+}
+
+function mergeRecipeTitle(existingText: string | null | undefined, nextTitle: string): string {
+  const trimmedTitle = nextTitle.trim();
+  const remaining = (existingText || "").split("\n").slice(1).join("\n").trim();
+  if (!remaining) return trimmedTitle;
+  return trimmedTitle ? `${trimmedTitle}\n${remaining}` : remaining;
+}
 
 export default function SiteDetailPage() {
   const { id: projectId, siteId } = useParams<{ id: string; siteId: string }>();
   const router = useRouter();
-  const role = getUserRole();
   const toast = useToast();
   const openConfirm = useConfirm();
+  const { trackJob } = useJobActivity();
 
   const [site, setSite] = useState<SiteOut | null>(null);
-  const [recipes, setRecipes] = useState<RecipeOut[]>([]);
+  const [recipes, setRecipes] = useState<RecipeListItem[]>([]);
+  const [recipeListStats, setRecipeListStats] = useState<RecipeListStats>(EMPTY_RECIPE_LIST_STATS);
   const [imageUrl, setImageUrl] = useState("");
   const [recipeText, setRecipeText] = useState("");
   const [imageSourceMode, setImageSourceMode] = useState<"url" | "upload">("url");
@@ -93,16 +142,29 @@ export default function SiteDetailPage() {
   const [jobToast, setJobToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const detailsLoadedRef = useRef<Set<string>>(new Set());
   const deletingIdsRef = useRef<Set<string>>(new Set());
-  const recentlyAddedRef = useRef<Map<string, RecipeOut>>(new Map());
+  const recentlyAddedRef = useRef<Map<string, RecipeListItem>>(new Map());
   const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
   // Idempotency refs: block re-entry between click and React re-render (same-frame double-clicks)
   const jobStartingRef = useRef(false);
   const generatingIdsRef = useRef<Set<string>>(new Set());
+  const RECIPES_PAGE_SIZE = 10;
+  const loadedServerCountRef = useRef(RECIPES_PAGE_SIZE);
 
   const loadRecipes = useCallback(
     () =>
-      api.getRecipes(siteId, true)
-        .then((rows) => {
+      api.getSiteRecipeCards(siteId, { limit: loadedServerCountRef.current, offset: 0 })
+        .then((data) => {
+          setRecipeListStats({
+            total: data.total,
+            pending: data.pending,
+            generating: data.generating,
+            generated: data.generated,
+            published: data.published,
+            failed: data.failed,
+            with_generated_images: data.with_generated_images,
+          });
+          const rows = data.items;
+          loadedServerCountRef.current = Math.max(RECIPES_PAGE_SIZE, rows.length || RECIPES_PAGE_SIZE);
           const serverIds = new Set(rows.map((r) => r.id));
           deletingIdsRef.current.forEach((id) => {
             if (!serverIds.has(id)) deletingIdsRef.current.delete(id);
@@ -119,9 +181,9 @@ export default function SiteDetailPage() {
               const previous = prevById.get(row.id);
               if (!previous || !detailsLoadedRef.current.has(row.id)) return row;
 
-              const merged: RecipeOut = { ...previous, ...row };
+              const merged: RecipeListItem = { ...previous, ...row };
               for (const field of DETAILED_PRESERVE_FIELDS) {
-                const incomingVal = row[field];
+                const incomingVal = merged[field];
                 const previousVal = previous[field];
                 if (incomingVal == null && previousVal != null) {
                   (merged as any)[field] = previousVal;
@@ -162,19 +224,12 @@ export default function SiteDetailPage() {
     setLoadingDetailId(recipeId);
     try {
       const full = await api.getRecipe(recipeId);
-      setRecipes((prev) => prev.map((r) => (r.id === recipeId ? full : r)));
+      setRecipes((prev) => prev.map((r) => (r.id === recipeId ? toRecipeListItem(full) : r)));
       detailsLoadedRef.current.add(recipeId);
     } catch {
       // Keep summary row if details fail
     } finally {
       setLoadingDetailId((cur) => (cur === recipeId ? null : cur));
-    }
-  }, []);
-
-  // Request notification permission
-  useEffect(() => {
-    if (typeof Notification !== "undefined" && Notification.permission === "default") {
-      Notification.requestPermission();
     }
   }, []);
 
@@ -199,9 +254,6 @@ export default function SiteDetailPage() {
     setJobToast({ message: msg, type: isSuccess ? "success" : activeJob.status === "failed" ? "error" : "info" });
     setTimeout(() => setJobToast(null), 6000);
 
-    if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
-      new Notification(`Job ${activeJob.status}`, { body: msg, icon: "/favicon.ico" });
-    }
   }, [activeJob?.id, activeJob?.status]);
 
   // Sync pin design form when expanded recipe changes (auto-fill from generated data)
@@ -226,33 +278,6 @@ export default function SiteDetailPage() {
     }).catch(() => router.replace("/"));
     loadRecipes();
   }, [projectId, siteId, router, loadRecipes]);
-
-  // Passive collaborative sync: keep recipe list fresh for add/delete/status changes
-  // made by other members, even when no generation job is currently active locally.
-  useEffect(() => {
-    const hasActiveJob = !!activeJob && (activeJob.status === "running" || activeJob.status === "pending");
-    if (hasActiveJob) return;
-
-    const syncNow = () => {
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      loadRecipes();
-    };
-
-    syncNow();
-    const t = setInterval(syncNow, 5000);
-    const onFocus = () => syncNow();
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") syncNow();
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      clearInterval(t);
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [activeJob?.status, loadRecipes]);
 
   // Load boards from pinterest_boards_list prompt setting (already stored per-project, no OAuth needed)
   const [pinterestNotConnected, setPinterestNotConnected] = useState(false);
@@ -338,8 +363,10 @@ export default function SiteDetailPage() {
       setRecipeText("");
       setImageSourceMode("url");
       setImageUploadError("");
-      recentlyAddedRef.current.set(newRecipe.id, newRecipe);
-      setRecipes((prev) => [newRecipe, ...prev]);
+      const nextRow = toRecipeListItem(newRecipe);
+      recentlyAddedRef.current.set(newRecipe.id, nextRow);
+      setRecipes((prev) => [nextRow, ...prev]);
+      setRecipeListStats((prev) => ({ ...prev, total: prev.total + 1, pending: prev.pending + 1 }));
     } catch (err: any) {
       toast.error(err.message || "Failed to add recipe");
     }
@@ -348,14 +375,44 @@ export default function SiteDetailPage() {
 
   const handleDelete = async (recipeId: string) => {
     if (!await openConfirm({ message: "Delete this recipe?", danger: true, confirmLabel: "Delete" })) return;
+    const recipeToDelete = recipes.find((r) => r.id === recipeId);
     deletingIdsRef.current.add(recipeId);
     setRecipes((prev) => prev.filter((r) => r.id !== recipeId));
+    setRecipeListStats((prev) => ({
+      ...prev,
+      total: Math.max(0, prev.total - 1),
+      pending: recipeToDelete?.status === "pending" ? Math.max(0, prev.pending - 1) : prev.pending,
+      generating: recipeToDelete?.status === "generating" ? Math.max(0, prev.generating - 1) : prev.generating,
+      generated: recipeToDelete?.status === "generated" ? Math.max(0, prev.generated - 1) : prev.generated,
+      published: recipeToDelete?.status === "published" ? Math.max(0, prev.published - 1) : prev.published,
+      failed: recipeToDelete?.status === "failed" ? Math.max(0, prev.failed - 1) : prev.failed,
+      with_generated_images:
+        recipeToDelete?.has_generated_images
+          ? Math.max(0, prev.with_generated_images - 1)
+          : prev.with_generated_images,
+    }));
     if (expandedId === recipeId) setExpandedId(null);
     try {
       await api.deleteRecipe(recipeId);
       // deletingIdsRef is cleared by loadRecipes once the server confirms the recipe is absent
     } catch (err: any) {
       deletingIdsRef.current.delete(recipeId);
+      if (recipeToDelete) {
+        setRecipes((prev) => [recipeToDelete, ...prev]);
+        setRecipeListStats((prev) => ({
+          ...prev,
+          total: prev.total + 1,
+          pending: recipeToDelete.status === "pending" ? prev.pending + 1 : prev.pending,
+          generating: recipeToDelete.status === "generating" ? prev.generating + 1 : prev.generating,
+          generated: recipeToDelete.status === "generated" ? prev.generated + 1 : prev.generated,
+          published: recipeToDelete.status === "published" ? prev.published + 1 : prev.published,
+          failed: recipeToDelete.status === "failed" ? prev.failed + 1 : prev.failed,
+          with_generated_images:
+            recipeToDelete.has_generated_images
+              ? prev.with_generated_images + 1
+              : prev.with_generated_images,
+        }));
+      }
       toast.error(err.message || "Failed to delete recipe");
     }
   };
@@ -369,7 +426,7 @@ export default function SiteDetailPage() {
       const interval = setInterval(async () => {
         try {
           const r = await api.getRecipe(recipeId);
-          setRecipes((prev) => prev.map((old) => (old.id === recipeId ? r : old)));
+          setRecipes((prev) => prev.map((old) => (old.id === recipeId ? toRecipeListItem(r) : old)));
           if (r.status !== "generating") {
             clearInterval(interval);
             return;
@@ -378,11 +435,13 @@ export default function SiteDetailPage() {
           if (successAttempts >= maxSuccessAttempts) {
             clearInterval(interval);
             try {
-              const jobs = projectId ? await api.getProjectJobs(projectId) : [];
+              const jobs = projectId
+                ? (await api.getProjectJobsPage(projectId, { limit: 20, offset: 0 })).items
+                : [];
               const stillRunning = jobs.some((j) => j.job_type === "articles" && j.status === "running");
               if (!stillRunning) {
                 const rr = await api.getRecipe(recipeId);
-                setRecipes((prev) => prev.map((old) => (old.id === recipeId ? rr : old)));
+                setRecipes((prev) => prev.map((old) => (old.id === recipeId ? toRecipeListItem(rr) : old)));
               } else {
                 loadRecipes();
               }
@@ -453,12 +512,14 @@ export default function SiteDetailPage() {
   // Cross-user real-time sync: discover active generation jobs started by other members.
   // This runs even when the local recipe list is stale (still "pending"), then the WS/poll
   // pipeline takes over and updates status/logs for everyone without page refresh.
+  // 15s interval — background discovery doesn't need to be instant, and skips hidden tabs.
   useEffect(() => {
     if (activeJob?.status === "running") return;
     let cancelled = false;
-    const syncExternal = () =>
-      api.getProjectJobs(projectId)
-        .then((jobs) => {
+    const syncExternal = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      api.getProjectJobsPage(projectId, { limit: 20, offset: 0 })
+        .then(({ items: jobs }) => {
           if (cancelled) return;
           const activeArticleJob = jobs.find(
             (j) => j.job_type === "articles" && (j.status === "running" || j.status === "pending")
@@ -479,9 +540,10 @@ export default function SiteDetailPage() {
           loadRecipes();
         })
         .catch(() => {});
+    };
 
     syncExternal();
-    const t = setInterval(syncExternal, 3000);
+    const t = setInterval(syncExternal, 15000);
 
     return () => {
       cancelled = true;
@@ -501,7 +563,7 @@ export default function SiteDetailPage() {
     }
 
     try {
-      const jobs = await api.getProjectJobs(projectId);
+      const jobs = (await api.getProjectJobsPage(projectId, { limit: 20, offset: 0 })).items;
       const latestArticleJob =
         jobs.find((j) => j.job_type === "articles" && (j.status === "running" || j.status === "pending")) ||
         jobs.find((j) => j.job_type === "articles");
@@ -519,11 +581,16 @@ export default function SiteDetailPage() {
     if (generatingIdsRef.current.has(recipeId)) return;
     generatingIdsRef.current.add(recipeId);
     setGeneratingId(recipeId);
+    const currentRecipe = recipes.find((r) => r.id === recipeId);
     try {
       const job = await api.startJob(projectId, {
         job_type: "articles",
         site_id: siteId,
         recipe_id: recipeId,
+      });
+      trackJob(job, {
+        title: `Generating recipe: ${currentRecipe?.title || "Recipe"}`,
+        sourceLabel: site?.domain || null,
       });
       setRecipeJobMap((prev) => ({ ...prev, [recipeId]: job.id }));
       setActiveJob(job);
@@ -536,6 +603,14 @@ export default function SiteDetailPage() {
       setRecipes((prev) =>
         prev.map((r) => (r.id === recipeId ? { ...r, status: "generating", error_message: null } : r))
       );
+      setRecipeListStats((prev) => {
+        return {
+          ...prev,
+          pending: currentRecipe?.status === "pending" ? Math.max(0, prev.pending - 1) : prev.pending,
+          failed: currentRecipe?.status === "failed" ? Math.max(0, prev.failed - 1) : prev.failed,
+          generating: prev.generating + 1,
+        };
+      });
       pollRecipeStatus(recipeId);
     } catch (err: any) {
       toast.error(err.message || "Failed to start generation");
@@ -552,8 +627,13 @@ export default function SiteDetailPage() {
     setStarting(true);
     try {
       const job = await api.startJob(projectId, { job_type: type, site_id: siteId });
+      trackJob(job, {
+        title: type === "articles" ? "Generating recipes for this site" : "Publishing this site to WordPress",
+        sourceLabel: site?.domain || null,
+      });
       setActiveJob(job);
       setActiveJobLastLog("");
+      toast.success(`${type === "articles" ? "Generation" : "Publish"} added to the pipeline.`);
     } catch (err: any) {
       toast.error(err.message || "Failed to start job");
     }
@@ -569,15 +649,23 @@ export default function SiteDetailPage() {
     api.downloadSiteExcel(siteId, site?.domain || siteId);
   };
 
-  const handleTitleEdit = (recipe: RecipeOut) => {
+  const handleTitleEdit = (recipe: RecipeListItem) => {
     setEditingTitleId(recipe.id);
-    setEditTitleValue(recipe.recipe_text);
+    setEditTitleValue(recipe.title);
   };
 
   const handleTitleSave = async (recipeId: string) => {
     setSavingTitle(true);
     try {
-      await api.updateRecipe(recipeId, { recipe_text: editTitleValue });
+      const currentRecipe = recipes.find((recipe) => recipe.id === recipeId);
+      let currentText = currentRecipe?.recipe_text ?? null;
+      if (!currentText) {
+        const full = await api.getRecipe(recipeId);
+        currentText = full.recipe_text;
+        setRecipes((prev) => prev.map((r) => (r.id === recipeId ? toRecipeListItem(full) : r)));
+        detailsLoadedRef.current.add(recipeId);
+      }
+      await api.updateRecipe(recipeId, { recipe_text: mergeRecipeTitle(currentText, editTitleValue) });
       setEditingTitleId(null);
       loadRecipes();
     } catch (err: any) {
@@ -586,7 +674,7 @@ export default function SiteDetailPage() {
     setSavingTitle(false);
   };
 
-  const handleImageReplace = async (recipeId: string, imageIdx: number, recipe: RecipeOut) => {
+  const handleImageReplace = async (recipeId: string, imageIdx: number, recipe: RecipeListItem) => {
     if (!newImageUrl.trim()) return;
     setSavingImage(true);
     try {
@@ -602,11 +690,12 @@ export default function SiteDetailPage() {
     setSavingImage(false);
   };
 
-  const handleOpenPinterest = async (recipe: RecipeOut) => {
+  const handleOpenPinterest = async (recipe: RecipeListItem) => {
     setPinterestOpen(recipe.id);
     setPinResult(null);
-    setPinTitle(recipe.recipe_text.split("\n")[0] || "");
-    setPinDescription(recipe.meta_description || recipe.recipe_text.split("\n")[0] || "");
+    const recipeTitle = getRecipeTitle(recipe.recipe_text) || recipe.title;
+    setPinTitle(recipeTitle);
+    setPinDescription(recipe.meta_description || recipeTitle || "");
     setPinLink(recipe.wp_permalink || "");
     setSelectedBoard("");
 
@@ -683,17 +772,7 @@ export default function SiteDetailPage() {
     });
   };
 
-  const getRecipeImageUrl = (r: RecipeOut): string | null => {
-    if (r.generated_images) {
-      try {
-        const imgs: string[] = JSON.parse(r.generated_images);
-        if (imgs?.[0]) return imgs[0];
-      } catch {}
-    }
-    return r.image_url || null;
-  };
-
-  const handlePublishArticleToWordPress = async (r: RecipeOut) => {
+  const handlePublishArticleToWordPress = async (r: RecipeListItem) => {
     if (!r.generated_article) {
       toast.warning("No article generated. Generate content first.");
       return;
@@ -764,10 +843,44 @@ export default function SiteDetailPage() {
     failed: "bg-red-600/20 text-red-400",
   };
 
-  const pendingCount = recipes.filter((r) => r.status === "pending").length;
-  const generatedCount = recipes.filter((r) => r.status === "generated").length;
-  const publishedCount = recipes.filter((r) => r.status === "published").length;
-  const failedCount = recipes.filter((r) => r.status === "failed").length;
+  const totalRecipeCount = recipeListStats.total;
+  const pendingCount = recipeListStats.pending;
+  const generatedCount = recipeListStats.generated;
+  const publishedCount = recipeListStats.published;
+  const failedCount = recipeListStats.failed;
+  const retryableGenerateCount = pendingCount + failedCount;
+  const visibleRecipes = recipes;
+  const hasMoreRecipes = recipes.length < totalRecipeCount;
+  const [loadingMoreRecipes, setLoadingMoreRecipes] = useState(false);
+
+  const handleLoadMoreRecipes = useCallback(async () => {
+    if (loadingMoreRecipes || !hasMoreRecipes) return;
+    setLoadingMoreRecipes(true);
+    try {
+      const data = await api.getSiteRecipeCards(siteId, {
+        limit: RECIPES_PAGE_SIZE,
+        offset: loadedServerCountRef.current,
+      });
+      setRecipeListStats((prev) => ({
+        ...prev,
+        total: data.total,
+        pending: data.pending,
+        generating: data.generating,
+        generated: data.generated,
+        published: data.published,
+        failed: data.failed,
+        with_generated_images: data.with_generated_images,
+      }));
+      setRecipes((prev) => [...prev, ...data.items]);
+      loadedServerCountRef.current += data.items.length;
+    } catch {
+      // keep current state on error
+    } finally {
+      setLoadingMoreRecipes(false);
+    }
+  }, [loadingMoreRecipes, hasMoreRecipes, siteId, recipes.length, RECIPES_PAGE_SIZE]);
+
+  const recipesSentinelRef = useInfiniteScroll(handleLoadMoreRecipes, { hasMore: hasMoreRecipes, loading: loadingMoreRecipes });
 
   if (!site) return null;
 
@@ -865,7 +978,9 @@ export default function SiteDetailPage() {
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-white truncate">{site.domain}</h1>
           <p className="text-sm text-gray-400 mt-1">
-            {recipes.length} recipes &middot; {pendingCount} pending &middot; {generatedCount} generated &middot; {publishedCount} published
+            {totalRecipeCount} recipes
+            {recipes.length < totalRecipeCount && <span> &middot; {recipes.length} loaded</span>}
+            &middot; {pendingCount} pending &middot; {generatedCount} generated &middot; {publishedCount} published
             {failedCount > 0 && <span className="text-red-400"> &middot; {failedCount} failed</span>}
           </p>
         </div>
@@ -881,10 +996,11 @@ export default function SiteDetailPage() {
           </button>
           <button
             onClick={() => handleRunJob("articles")}
-            disabled={starting || pendingCount === 0}
+            disabled={starting || retryableGenerateCount === 0}
             className="btn-primary flex items-center gap-2"
+            title={failedCount > 0 ? "Generate pending recipes and retry failed ones" : undefined}
           >
-            <Play size={16} /> Generate ({pendingCount})
+            <Play size={16} /> Generate ({retryableGenerateCount})
           </button>
           <button onClick={() => handleRunJob("publisher")} disabled={starting || generatedCount === 0} className="btn-secondary flex items-center gap-2">
             <Play size={16} /> Publish ({generatedCount})
@@ -1016,9 +1132,16 @@ export default function SiteDetailPage() {
         </form>
       </div>
 
-      <h2 className="text-lg font-semibold text-white mb-3">Recipes</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <h2 className="text-lg font-semibold text-white">Recipes</h2>
+        {totalRecipeCount > RECIPES_PAGE_SIZE && (
+          <p className="text-xs text-gray-500">
+            Showing {recipes.length} of {totalRecipeCount} recipes
+          </p>
+        )}
+      </div>
       <div className="space-y-2">
-        {recipes.map((r) => (
+        {visibleRecipes.map((r) => (
           <div key={r.id} className="card p-0 overflow-hidden">
             <div
               className="flex items-center gap-3 p-4 cursor-pointer hover:bg-gray-800/50 transition"
@@ -1029,8 +1152,14 @@ export default function SiteDetailPage() {
                 if (nextId) ensureRecipeDetails(nextId);
               }}
             >
-              {r.image_url && (
-                <img src={r.image_url} alt="" className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
+              {r.list_image_url && (
+                <img
+                  src={r.list_image_url}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
+                />
               )}
               <div className="flex-1 min-w-0">
                 {editingTitleId === r.id ? (
@@ -1051,7 +1180,7 @@ export default function SiteDetailPage() {
                   </div>
                 ) : (
                   <div className="flex items-center gap-1.5">
-                    <p className="text-sm text-white font-medium truncate">{r.recipe_text.split("\n")[0].slice(0, 60)}{r.recipe_text.split("\n")[0].length > 60 ? "…" : ""}</p>
+                    <p className="text-sm text-white font-medium truncate">{r.title.slice(0, 60)}{r.title.length > 60 ? "…" : ""}</p>
                     <button
                       onClick={(e) => { e.stopPropagation(); handleTitleEdit(r); }}
                       className="text-gray-600 hover:text-gray-300 p-0.5 flex-shrink-0"
@@ -1190,7 +1319,15 @@ export default function SiteDetailPage() {
                     <div>
                       <div className="mb-3">
                         <span className="text-xs font-semibold text-gray-400 uppercase">Source Image</span>
-                        {r.image_url && <img src={r.image_url} alt="Source" className="mt-2 max-w-xs rounded-lg" />}
+                                      {r.image_url && (
+                                        <img
+                                          src={r.image_url}
+                                          alt="Source"
+                                          loading="lazy"
+                                          decoding="async"
+                                          className="mt-2 max-w-xs rounded-lg"
+                                        />
+                                      )}
                       </div>
                       {r.generated_images ? (
                         <div>
@@ -1209,7 +1346,13 @@ export default function SiteDetailPage() {
                                 const imgs: string[] = JSON.parse(r.generated_images);
                                 return imgs.map((url: string, i: number) => (
                                   <div key={i} className="relative group">
-                                    <img src={url} alt={`Generated ${i + 1}`} className="rounded-lg w-full" />
+                                              <img
+                                                src={url}
+                                                alt={`Generated ${i + 1}`}
+                                                loading="lazy"
+                                                decoding="async"
+                                                className="rounded-lg w-full"
+                                              />
                                     {editingImageIdx?.recipeId === r.id && editingImageIdx?.idx === i ? (
                                       <div className="mt-2 space-y-2">
                                         <input
@@ -1329,7 +1472,13 @@ export default function SiteDetailPage() {
                                   </p>
                                   {pinResult.pins.map((pin, pi) => (
                                     <div key={pi} className="flex items-center gap-2 text-xs">
-                                      <img src={pin.image_url} alt="" className="w-8 h-8 rounded object-cover" />
+                                        <img
+                                          src={pin.image_url}
+                                          alt=""
+                                          loading="lazy"
+                                          decoding="async"
+                                          className="w-8 h-8 rounded object-cover"
+                                        />
                                       {pin.pin_url ? (
                                         <a href={pin.pin_url} target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:underline truncate">
                                           {pin.pin_url}
@@ -1360,7 +1509,13 @@ export default function SiteDetailPage() {
                         <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-4">
                           <div className="flex flex-col sm:flex-row gap-4">
                             <div className="flex-shrink-0 relative group">
-                              <img src={r.pin_design_image} alt="Saved pin" className="w-48 rounded-lg border border-gray-600 object-cover" />
+                              <img
+                                src={r.pin_design_image}
+                                alt="Saved pin"
+                                loading="lazy"
+                                decoding="async"
+                                className="w-48 rounded-lg border border-gray-600 object-cover"
+                              />
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1485,7 +1640,8 @@ export default function SiteDetailPage() {
             )}
           </div>
         ))}
-        {recipes.length === 0 && <p className="text-center py-8 text-gray-500">No recipes yet. Add one above.</p>}
+        {totalRecipeCount === 0 && <p className="text-center py-8 text-gray-500">No recipes yet. Add one above.</p>}
+        <InfiniteScrollSentinel sentinelRef={recipesSentinelRef} loading={loadingMoreRecipes} hasMore={hasMoreRecipes} className="pt-1" />
       </div>
 
       {/* Bulk Pin Generator */}
@@ -1543,7 +1699,7 @@ export default function SiteDetailPage() {
 
                 <div className="flex items-center justify-between pt-2">
                   <p className="text-sm text-gray-500">
-                    {recipes.filter((r) => r.generated_images).length} recipes with images will be processed
+                    {recipeListStats.with_generated_images} recipes with images will be processed
                   </p>
                   <button
                     onClick={handleBulkGenerate}
@@ -1577,7 +1733,13 @@ export default function SiteDetailPage() {
                     <div key={pi} className="rounded-lg overflow-hidden bg-gray-800">
                       {pin.image_base64 ? (
                         <>
-                          <img src={pin.image_base64} alt={pin.recipe_title} className="w-full" />
+                          <img
+                            src={pin.image_base64}
+                            alt={pin.recipe_title}
+                            loading="lazy"
+                            decoding="async"
+                            className="w-full"
+                          />
                           <div className="p-2">
                             <p className="text-[11px] text-gray-300 truncate">{pin.recipe_title}</p>
                             <button

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status, UploadFile, File, Query
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select, func, delete as sql_delete
@@ -19,6 +19,7 @@ from ..db_models import User, Site, Recipe, Project, ProjectMemberRole
 from ..dependencies import get_current_user, check_project_access
 from .recipes import _is_safe_url
 from ..models import SiteCreate, SiteUpdate, SiteOut
+from ..pagination import apply_limit_offset, count_rows, set_total_count
 from ..config import settings
 from ..services import wordpress as wp_service
 from ..site_credentials import get_random_wp_credentials
@@ -112,14 +113,18 @@ async def _site_out(site: Site, db: AsyncSession) -> dict:
 
 @router.get("/api/projects/{project_id}/sites", response_model=list[SiteOut])
 async def list_sites(
+    response: Response,
     project_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
     await check_project_access(project_id, user, db)
-    result = await db.execute(
-        select(Site).where(Site.project_id == project_id).order_by(Site.created_at.desc())
-    )
+    stmt = select(Site).where(Site.project_id == project_id).order_by(Site.created_at.desc())
+    total = await count_rows(db, stmt)
+    set_total_count(response, total)
+    result = await db.execute(apply_limit_offset(stmt, limit, offset))
     sites = result.scalars().all()
     return [await _site_out(s, db) for s in sites]
 

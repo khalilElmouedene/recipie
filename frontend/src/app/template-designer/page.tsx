@@ -47,6 +47,7 @@ function uid(prefix: string) {
 
 type SelType = "text" | "image" | "band" | "asset" | "frame" | null;
 type StrokeStyle = "solid" | "dashed" | "dotted";
+type TextVariable = "" | "title" | "pinTitle" | "website";
 
 const TEMPLATE_FONTS = [
   "Triumvirate Compressed",
@@ -80,6 +81,7 @@ function TemplateDesignerInner() {
 
   const [mounted, setMounted] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState(false);
   const [zoom, setZoom] = useState(38);
 
   // Template meta
@@ -98,7 +100,7 @@ function TemplateDesignerInner() {
   const [fontStyle, setFontStyle] = useState("normal");
   const [fontFamily, setFontFamily] = useState("Arial");
   const [textTransform, setTextTransform] = useState<"none" | "uppercase" | "lowercase" | "capitalize">("none");
-  const [textVariable, setTextVariable] = useState<"" | "title" | "website">("");
+  const [textVariable, setTextVariable] = useState<TextVariable>("");
   const [customFonts, setCustomFonts] = useState<string[]>([]);
   const [fontInput, setFontInput] = useState("");
   const [fontLoading, setFontLoading] = useState(false);
@@ -348,7 +350,7 @@ function TemplateDesignerInner() {
       setFontStyle(obj.fontStyle ?? "normal");
       setFontFamily(obj.fontFamily ?? "Arial");
       setTextTransform((obj.__textTransform as "none" | "uppercase" | "lowercase" | "capitalize") ?? "none");
-      setTextVariable((obj.__textVariable as "" | "title" | "website") ?? "");
+      setTextVariable((obj.__textVariable as TextVariable) ?? "");
     } else if (t === "band" || t === "image") {
       setElemColor(typeof obj.fill === "string" ? obj.fill : "#4a90d9");
       if (t === "image") setIsFlipZone(obj.__flipX === true);
@@ -482,6 +484,7 @@ function TemplateDesignerInner() {
       )
     );
     if (templateFonts.length > 0) {
+      setTemplateLoading(true);
       await Promise.all(templateFonts.map(injectFontStylesheet));
       setCustomFonts((prev) => {
         const extra = templateFonts.filter((f) => !prev.includes(f));
@@ -638,6 +641,7 @@ function TemplateDesignerInner() {
     undoHistoryRef.current = [];
     saveUndoState();
     syncLayers();
+    setTemplateLoading(false);
   }, [applySelectionVisuals, canvasH, canvasW, saveUndoState, injectFontStylesheet]);
 
   const loadExistingTemplate = useCallback(async () => {
@@ -1644,6 +1648,7 @@ function TemplateDesignerInner() {
           <div className="flex-1 overflow-auto p-8">
             <div
               style={{
+                position: "relative",
                 width: canvasW * zoomPct,
                 height: canvasH * zoomPct,
                 margin: "0 auto",
@@ -1664,6 +1669,17 @@ function TemplateDesignerInner() {
               >
                 {mounted && <canvas ref={canvasRef} />}
               </div>
+              {templateLoading && (
+                <div
+                  style={{ borderRadius: 4 }}
+                  className="absolute inset-0 z-20 flex items-center justify-center bg-gray-950/85"
+                >
+                  <div className="flex flex-col items-center gap-3">
+                    <Loader2 size={28} className="animate-spin text-brand-400" />
+                    <span className="text-sm text-gray-300">Loading fonts…</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </main>
@@ -1778,6 +1794,8 @@ function TemplateDesignerInner() {
                   placeholder={
                     textVariable === "title"
                       ? "Auto-filled from recipe title"
+                      : textVariable === "pinTitle"
+                      ? "Auto-filled from generated pin title"
                       : textVariable === "website"
                       ? "Auto-filled from site domain"
                       : undefined
@@ -1797,7 +1815,7 @@ function TemplateDesignerInner() {
                 <select
                   value={textVariable}
                   onChange={(e) => {
-                    const v = e.target.value as "" | "title" | "website";
+                    const v = e.target.value as TextVariable;
                     setTextVariable(v);
                     const obj = getActive();
                     if (obj && obj.__ttype === "text") {
@@ -1811,12 +1829,15 @@ function TemplateDesignerInner() {
                 >
                   <option value="">— None (static text) —</option>
                   <option value="title">Recipe Title</option>
+                  <option value="pinTitle">Pin Title</option>
                   <option value="website">Website URL</option>
                 </select>
                 {textVariable !== "" && (
                   <p className="text-[10px] text-brand-400 mt-1">
                     {textVariable === "title"
                       ? "Will show the recipe title when used in Pin Designer."
+                      : textVariable === "pinTitle"
+                      ? "Will show the generated pin title when used in Pin Designer."
                       : "Will show the site domain when used in Pin Designer."}
                   </p>
                 )}

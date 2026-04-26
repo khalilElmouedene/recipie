@@ -1,16 +1,75 @@
 from __future__ import annotations
+import base64
+import json
+import random
 import re
 import time
+import uuid
 import requests
 from typing import Callable
+
+_SUPER_PROPERTIES: str = base64.b64encode(
+    json.dumps(
+        {
+            "os": "Windows",
+            "browser": "Chrome",
+            "device": "",
+            "system_locale": "en-US",
+            "browser_user_agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "browser_version": "124.0.0.0",
+            "os_version": "10",
+            "referrer": "",
+            "referring_domain": "",
+            "referrer_current": "",
+            "referring_domain_current": "",
+            "release_channel": "stable",
+            "client_build_number": 294044,
+            "client_event_source": None,
+        },
+        separators=(",", ":"),
+    ).encode()
+).decode()
 
 from ..midjourney_settings import (
     DEFAULT_GRID_WAIT_SECONDS,
     DISCORD_HTTP_TIMEOUT_SECONDS,
+    GRID_GRACE_PERIOD_SECONDS,
     INITIAL_SEND_MAX_ATTEMPTS,
     POST_UPSCALE_WAIT_SECONDS,
     UPSCALE_GAP_SECONDS,
 )
+
+
+# ---------------------------------------------------------------------------
+# Prompt sanitizer — replaces words Midjourney's content filter commonly rejects
+# in food/recipe contexts. Plural forms must come before singulars so the shorter
+# pattern doesn't leave a stray "s" behind.
+# ---------------------------------------------------------------------------
+_MJ_SUBSTITUTIONS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bbreasts\b", re.IGNORECASE), "fillets"),
+    (re.compile(r"\bbreast\b",  re.IGNORECASE), "fillet"),
+    (re.compile(r"\bbutts\b",   re.IGNORECASE), "shoulders"),
+    (re.compile(r"\bbutt\b",    re.IGNORECASE), "shoulder"),
+    (re.compile(r"\bthighs\b",  re.IGNORECASE), "pieces"),
+    (re.compile(r"\bthigh\b",   re.IGNORECASE), "piece"),
+    (re.compile(r"\bnaked\b",   re.IGNORECASE), "plain"),
+    (re.compile(r"\bboners?\b", re.IGNORECASE), ""),
+]
+
+
+def _sanitize_mj_prompt(text: str, log: Callable[[str], None] = print) -> str:
+    """Replace flagged words with safe food synonyms before sending to Midjourney."""
+    for pattern, replacement in _MJ_SUBSTITUTIONS:
+        sanitized = pattern.sub(replacement, text)
+        if sanitized != text:
+            safe = replacement or "(removed)"
+            log(f"Prompt sanitized: '{pattern.pattern[2:-2]}' → '{safe}'")
+            text = sanitized
+    return re.sub(r" {2,}", " ", text).strip()
 
 
 class MidjourneyPermanentError(ValueError):
@@ -47,6 +106,7 @@ class MidjourneyApi:
         self.prompt = prompt
         self.wait_time = wait_time
         self.upscale_gap_seconds = max(1, min(120, upscale_gap_seconds))
+        self.session_id = str(uuid.uuid4())
         self.message_id = ""
         self.custom_ids: list[str] = []
         self._log = log or print
@@ -65,7 +125,26 @@ class MidjourneyApi:
         return {
             "Authorization": self.authorization,
             "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "X-Super-Properties": _SUPER_PROPERTIES,
+            "X-Discord-Locale": "en-US",
         }
+
+    @staticmethod
+    def _nonce() -> str:
+        return str(random.randint(100_000_000_000_000_000, 999_999_999_999_999_999))
+
+    def _check_rate_limit(self, response: requests.Response) -> bool:
+        """Sleep retry_after seconds if Discord returned 429. Returns True so callers can continue."""
+        if response.status_code == 429:
+            try:
+                retry_after = int(response.json().get("retry_after", 5)) + 1
+            except Exception:
+                retry_after = 6
+            self._log(f"Discord rate limit hit, sleeping {retry_after}s...")
+            self._interruptible_sleep(retry_after)
+            return True
+        return False
 
     def _message_text(self, msg: dict) -> str:
         parts: list[str] = [str(msg.get("content", ""))]
@@ -122,17 +201,21 @@ class MidjourneyApi:
 
     def _get_latest_message_id(self) -> str:
         """Return the ID of the most recent message in the channel (used as a baseline)."""
-        try:
-            r = requests.get(
-                f"https://discord.com/api/v9/channels/{self.channel_id}/messages?limit=1",
-                headers=self._headers(),
-                timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
-            )
-            msgs = r.json()
-            if msgs:
-                return msgs[0]["id"]
-        except Exception:
-            pass
+        for _ in range(2):
+            try:
+                r = requests.get(
+                    f"https://discord.com/api/v9/channels/{self.channel_id}/messages?limit=1",
+                    headers=self._headers(),
+                    timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
+                )
+                if self._check_rate_limit(r):
+                    continue
+                msgs = r.json()
+                if msgs:
+                    return msgs[0]["id"]
+                return "0"
+            except Exception:
+                pass
         return "0"
 
     def send_message(self) -> requests.Response:
@@ -144,7 +227,8 @@ class MidjourneyApi:
             "application_id": self.application_id,
             "guild_id": self.guild_id,
             "channel_id": self.channel_id,
-            "session_id": "cannot be empty",
+            "session_id": self.session_id,
+            "nonce": self._nonce(),
             "data": {
                 "version": self.version,
                 "id": self.id,
@@ -213,27 +297,65 @@ class MidjourneyApi:
         self.custom_ids = [b["custom_id"] for b in best_buttons]
         return True
 
-    def get_message(self, poll_interval: int = 15) -> None:
-        """Poll Discord every poll_interval seconds until the grid appears or wait_time expires."""
+    def _poll_grid_once(self) -> bool:
+        """Single Discord channel read to check for a grid message. Returns True if found."""
+        response = requests.get(
+            f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
+            headers=self._headers(),
+            params={"after": self.baseline_id, "limit": 50},
+            timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
+        )
+        if self._check_rate_limit(response):
+            return False
+        return self._find_grid_in_messages(response.json())
+
+    def get_message(self, poll_interval: int = 30, grace_seconds: int = GRID_GRACE_PERIOD_SECONDS) -> None:
+        """Poll Discord every poll_interval seconds until the grid appears or wait_time expires.
+        After wait_time, sleeps grace_seconds and makes one final attempt before giving up."""
         self._log(f"Waiting up to {self.wait_time}s for Midjourney grid...")
         elapsed = 0
         while elapsed < self.wait_time:
-            self._interruptible_sleep(min(poll_interval, self.wait_time - elapsed))
-            elapsed += poll_interval
+            step = min(poll_interval, self.wait_time - elapsed)
+            self._interruptible_sleep(step)
+            elapsed += step
             try:
-                response = requests.get(
-                    f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
-                    headers=self._headers(),
-                    params={"after": self.baseline_id, "limit": 50},
-                    timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
-                )
-                if self._find_grid_in_messages(response.json()):
+                if self._poll_grid_once():
                     self._log(f"Got grid message {self.message_id} after {elapsed}s")
                     return
                 self._log(f"Grid not ready yet ({elapsed}/{self.wait_time}s)...")
             except Exception as e:
                 self._log(f"Grid poll error (will retry): {e}")
-        raise ValueError(f"No Midjourney grid found after {self.wait_time}s")
+        # Grace period: one last attempt after a short extra wait
+        self._log(f"Grid not found after {self.wait_time}s — waiting {grace_seconds}s more for final check...")
+        self._interruptible_sleep(grace_seconds)
+        try:
+            if self._poll_grid_once():
+                self._log(f"Got grid message {self.message_id} after {elapsed + grace_seconds}s (grace period)")
+                return
+        except Exception as e:
+            self._log(f"Final grid poll error: {e}")
+        # Last-resort: fetch the most recent messages WITHOUT the after filter in case
+        # the baseline_id was wrong (e.g. captured "0") or messages exceed limit=50.
+        try:
+            response = requests.get(
+                f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
+                headers=self._headers(),
+                params={"limit": 10},
+                timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
+            )
+            if not self._check_rate_limit(response):
+                if self._find_grid_in_messages(response.json()):
+                    self._log(f"Got grid message {self.message_id} via fallback scan (baseline may have been off)")
+                    return
+        except Exception as e:
+            self._log(f"Fallback scan error: {e}")
+        self._log(
+            "Grid still not found. If you can see the Midjourney result in Discord but it shows "
+            "'Only you can see this', the channel is sending ephemeral responses — "
+            "grant the Midjourney bot 'Send Messages' + 'Attach Files' permissions on that channel "
+            "so results appear as public messages."
+        )
+        raise ValueError(f"No Midjourney grid found after {self.wait_time}s + {grace_seconds}s grace period")
 
     def choose_images(self, button_retries: int = 3) -> None:
         """Click U1–U4 to upscale all 4 grid images, retrying each button on failure."""
@@ -253,7 +375,8 @@ class MidjourneyApi:
                 "message_flags": 0,
                 "message_id": self.message_id,
                 "application_id": self.application_id,
-                "session_id": "cannot be empty",
+                "session_id": self.session_id,
+                "nonce": self._nonce(),
                 "data": {"component_type": 2, "custom_id": custom_id},
             }
             sent = False
@@ -267,6 +390,8 @@ class MidjourneyApi:
                 if response.status_code == 204:
                     sent = True
                     break
+                if self._check_rate_limit(response):
+                    continue
                 self._log(f"Upscale button attempt {attempt + 1}/{button_retries} failed (status {response.status_code})")
                 if attempt < button_retries - 1:
                     self._interruptible_sleep(5)
@@ -280,7 +405,7 @@ class MidjourneyApi:
             self._log(f"Warning: {failed}/4 upscale buttons failed — continuing with partial upscales")
         self._log(f"Upscale requests sent ({4 - failed}/4 succeeded)")
 
-    def download_image(self, post_upscale_wait: int = 120, poll_interval: int = 10) -> list[str]:
+    def download_image(self, post_upscale_wait: int = 120, poll_interval: int = 30) -> list[str]:
         """Poll Discord every poll_interval seconds until upscaled images appear or post_upscale_wait expires."""
         after_id = getattr(self, "upscale_baseline_id", self.message_id)
         elapsed = 0
@@ -294,6 +419,8 @@ class MidjourneyApi:
                     params={"after": after_id, "limit": 50},
                     timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
                 )
+                if self._check_rate_limit(response):
+                    continue
                 strict_urls: list[str] = []
                 fallback_urls: list[str] = []
                 for msg in response.json():
@@ -343,7 +470,8 @@ def generate_images(
     _should_stop = should_stop or (lambda: False)
     from .prompts import get_prompt
     tpl = get_prompt(prompts or {}, "midjourney_imagine")
-    prompt = tpl.format(recipe_name=recipe_name, img_url=img_url, source_img=img_url)
+    safe_recipe_name = _sanitize_mj_prompt(recipe_name, _log)
+    prompt = tpl.format(recipe_name=safe_recipe_name, img_url=img_url, source_img=img_url)
 
     retry_delay = max(1, min(300, int(retry_delay_seconds)))
     post_wait = max(10, min(600, post_upscale_wait_seconds))
@@ -367,7 +495,7 @@ def generate_images(
                 version=credentials.get("mj_version", ""),
                 mj_id=credentials.get("mj_id", ""),
                 authorization=credentials.get("discord_auth", ""),
-                recipe_name=recipe_name,
+                recipe_name=safe_recipe_name,
                 source_img_url=img_url,
                 wait_time=wait_time,
                 upscale_gap_seconds=upscale_gap_seconds,

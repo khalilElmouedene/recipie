@@ -14,6 +14,19 @@ export function getApiBaseUrl(): string {
 }
 const API_URL = getApiBaseUrl();
 
+function buildPathWithQuery(
+  path: string,
+  params: Record<string, string | number | boolean | null | undefined>,
+): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    query.set(key, String(value));
+  }
+  const suffix = query.toString();
+  return suffix ? `${path}${path.includes("?") ? "&" : "?"}${suffix}` : path;
+}
+
 async function downloadFile(path: string, filename: string): Promise<void> {
   const res = await fetch(`${API_URL}${path}`, { credentials: "include" });
   if (res.status === 401) {
@@ -68,6 +81,55 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
+async function requestPage<T>(
+  path: string,
+  params: PaginationParams = {},
+  options: RequestInit = {},
+): Promise<PaginatedResult<T>> {
+  const offset = params.offset ?? 0;
+  const limit = params.limit ?? 20;
+  const finalPath = buildPathWithQuery(path, {
+    ...params,
+    limit,
+    offset,
+  });
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options.headers as Record<string, string>),
+  };
+
+  const res = await fetch(`${API_URL}${finalPath}`, { ...options, headers, credentials: "include" });
+
+  if (res.status === 401) {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("auth_user");
+      window.location.href = "/login";
+    }
+    throw new Error("Unauthorized");
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    let msg = "Request failed";
+    if (typeof err.detail === "string") msg = err.detail;
+    else if (Array.isArray(err.detail) && err.detail.length > 0)
+      msg = err.detail[0].msg || msg;
+    throw new Error(msg);
+  }
+
+  const items = (await res.json()) as T[];
+  const totalHeader = Number(res.headers.get("X-Total-Count") ?? items.length);
+  const total = Number.isFinite(totalHeader) ? totalHeader : items.length;
+
+  return {
+    items,
+    total,
+    limit,
+    offset,
+    hasMore: offset + items.length < total,
+  };
+}
+
 // -- Auth ------------------------------------------------
 export const api = {
   register: (email: string, password: string, full_name: string) =>
@@ -112,6 +174,8 @@ export const api = {
 
   // -- Users (Owner) --------------------------------------
   getUsers: () => request<UserOut[]>("/api/users"),
+  getUsersPage: (params?: PaginationParams) =>
+    requestPage<UserOut>("/api/users", params),
 
   createUser: (data: { email: string; full_name: string; role: string }) =>
     request<UserOut>("/api/users", { method: "POST", body: JSON.stringify(data) }),
@@ -127,9 +191,24 @@ export const api = {
 
   // -- Projects -------------------------------------------
   getProjects: () => request<ProjectOut[]>("/api/projects"),
+  getProjectsPage: (params?: PaginationParams) =>
+    requestPage<ProjectOut>("/api/projects", params),
 
   getProjectPinterestRecipes: (projectId: string, siteId?: string, signal?: AbortSignal) =>
     request<PinterestRecipeOut[]>(`/api/projects/${projectId}/pinterest-recipes${siteId ? `?site_id=${siteId}` : ""}`, { signal }),
+  getProjectPinterestRecipesPage: (
+    projectId: string,
+    params?: PaginationParams & { siteId?: string; signal?: AbortSignal },
+  ) =>
+    requestPage<PinterestRecipeOut>(
+      `/api/projects/${projectId}/pinterest-recipes`,
+      {
+        limit: params?.limit,
+        offset: params?.offset,
+        site_id: params?.siteId,
+      },
+      { signal: params?.signal },
+    ),
 
   createProject: (name: string, description: string) =>
     request<ProjectOut>("/api/projects", { method: "POST", body: JSON.stringify({ name, description }) }),
@@ -162,44 +241,10 @@ export const api = {
     }),
 
   publishBatchToWordPress: (projectId: string, data: PublishBatchRequest) =>
-    request<PublishBatchOut>(`/api/projects/${projectId}/publish-batch`, {
+    request<JobOut>(`/api/projects/${projectId}/publish-batch`, {
       method: "POST",
       body: JSON.stringify(data),
     }),
-
-  publishBatchStream: async (
-    projectId: string,
-    data: PublishBatchRequest,
-    onEvent: (event: BatchPublishEvent) => void,
-  ): Promise<void> => {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const res = await fetch(`${API_URL}/api/projects/${projectId}/publish-batch`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(data),
-      credentials: "include",
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(typeof err.detail === "string" ? err.detail : "Batch publish failed");
-    }
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed) {
-          try { onEvent(JSON.parse(trimmed) as BatchPublishEvent); } catch { /* skip malformed */ }
-        }
-      }
-    }
-  },
 
   runProjectImageCleanup: (projectId: string, data: ImageCleanupRunRequest) =>
     request<ImageCleanupRunResult>(`/api/projects/${projectId}/image-cleanup/run`, {
@@ -209,6 +254,8 @@ export const api = {
 
   // -- Members --------------------------------------------
   getMembers: (projectId: string) => request<MemberOut[]>(`/api/projects/${projectId}/members`),
+  getMembersPage: (projectId: string, params?: PaginationParams) =>
+    requestPage<MemberOut>(`/api/projects/${projectId}/members`, params),
 
   addMember: (projectId: string, userId: string, role: string) =>
     request<MemberOut>(`/api/projects/${projectId}/members`, {
@@ -301,6 +348,8 @@ export const api = {
 
   // -- Sites ----------------------------------------------
   getSites: (projectId: string) => request<SiteOut[]>(`/api/projects/${projectId}/sites`),
+  getSitesPage: (projectId: string, params?: PaginationParams) =>
+    requestPage<SiteOut>(`/api/projects/${projectId}/sites`, params),
 
   getLastPublishDate: (siteId: string) =>
     request<{ last_publish_date: string | null }>(`/api/sites/${siteId}/last-publish-date`),
@@ -365,8 +414,15 @@ export const api = {
   },
 
   // -- Recipes --------------------------------------------
-  getRecipes: (siteId: string, summary = true) =>
-    request<RecipeOut[]>(`/api/sites/${siteId}/recipes${summary ? "?summary=true" : ""}`),
+  getRecipes: (siteId: string, mode: "full" | "summary" | "pin_designer" = "summary") =>
+    request<RecipeOut[]>(`/api/sites/${siteId}/recipes${mode === "summary" ? "?summary=true" : mode === "pin_designer" ? "?pin_designer=true" : ""}`),
+  getRecipesPage: (siteId: string, params?: PaginationParams & { summary?: boolean }) =>
+    requestPage<RecipeOut>(`/api/sites/${siteId}/recipes`, {
+      ...params,
+      summary: params?.summary ?? true,
+    }),
+  getSiteRecipeCards: (siteId: string, params?: PaginationParams) =>
+    request<SiteRecipeCardPageOut>(buildPathWithQuery(`/api/sites/${siteId}/recipe-cards`, params ?? {})),
 
   getRecipe: (recipeId: string) => request<RecipeOut>(`/api/recipes/${recipeId}`),
 
@@ -491,18 +547,37 @@ export const api = {
 
   // -- Jobs -----------------------------------------------
   getProjectJobs: (projectId: string) => request<JobOut[]>(`/api/projects/${projectId}/jobs`),
+  getProjectJobsPage: (projectId: string, params?: PaginationParams & { jobType?: string }) =>
+    requestPage<JobOut>(`/api/projects/${projectId}/jobs`, {
+      ...params,
+      job_type: params?.jobType,
+    }),
 
   startJob: (projectId: string, data: { job_type: string; site_id?: string; recipe_id?: string; shared_recipes?: SharedRecipeInput[] }) =>
     request<JobOut>(`/api/projects/${projectId}/jobs`, { method: "POST", body: JSON.stringify(data) }),
 
   getJob: (jobId: string) => request<JobOut>(`/api/jobs/${jobId}`),
+  getJobPublishSummary: (jobId: string) =>
+    request<JobPublishSummaryOut>(`/api/jobs/${jobId}/publish-summary`),
 
   getJobLogs: (jobId: string) => request<JobLogOut[]>(`/api/jobs/${jobId}/logs`),
+  getJobLogsPage: (jobId: string, params?: PaginationParams) =>
+    requestPage<JobLogOut>(`/api/jobs/${jobId}/logs`, params),
 
   getJobGeneratedRecipes: (jobId: string, siteId?: string) =>
     request<GeneratedJobRecipeOut[]>(
       `/api/jobs/${jobId}/generated-recipes${siteId ? `?site_id=${siteId}` : ""}`
     ),
+  getJobGeneratedSitesSummary: (jobId: string) =>
+    request<GeneratedJobSiteSummaryOut[]>(`/api/jobs/${jobId}/generated-sites-summary`),
+  getJobGeneratedRecipesPage: (
+    jobId: string,
+    params?: PaginationParams & { siteId?: string },
+  ) =>
+    requestPage<GeneratedJobRecipeOut>(`/api/jobs/${jobId}/generated-recipes`, {
+      ...params,
+      site_id: params?.siteId,
+    }),
 
   stopJob: (jobId: string) =>
     request<JobOut>(`/api/jobs/${jobId}/stop`, { method: "POST" }),
@@ -519,6 +594,8 @@ export const api = {
 
   // -- Threads Projects -----------------------------------
   getThreadsProjects: () => request<ThreadsProjectOut[]>("/api/threads-projects"),
+  getThreadsProjectsPage: (params?: PaginationParams) =>
+    requestPage<ThreadsProjectOut>("/api/threads-projects", params),
   createThreadsProject: (data: { name: string; description: string; app_id: string; app_secret: string }) =>
     request<ThreadsProjectOut>("/api/threads-projects", { method: "POST", body: JSON.stringify(data) }),
   updateThreadsProject: (id: string, data: { name?: string; description?: string; app_id?: string; app_secret?: string }) =>
@@ -529,6 +606,8 @@ export const api = {
   // -- Threads Accounts -----------------------------------
   getThreadsAccounts: (projectId: string) =>
     request<ThreadsAccountOut[]>(`/api/threads-projects/${projectId}/accounts`),
+  getThreadsAccountsPage: (projectId: string, params?: PaginationParams) =>
+    requestPage<ThreadsAccountOut>(`/api/threads-projects/${projectId}/accounts`, params),
   getThreadsOAuthUrl: (projectId: string) =>
     request<{ url: string }>(`/api/threads/oauth/url?project_id=${projectId}`),
   connectThreadsAccount: (data: { code: string; state: string }) =>
@@ -543,6 +622,8 @@ export const api = {
   // -- Threads Posts --------------------------------------
   getThreadsPosts: (projectId: string) =>
     request<ThreadsPostOut[]>(`/api/threads-projects/${projectId}/posts`),
+  getThreadsPostsPage: (projectId: string, params?: PaginationParams) =>
+    requestPage<ThreadsPostOut>(`/api/threads-projects/${projectId}/posts`, params),
   uploadThreadsMedia: async (files: File[]): Promise<{ urls: string[] }> => {
     const formData = new FormData();
     files.forEach((f) => formData.append("files", f));
@@ -593,6 +674,20 @@ export interface CleanupConfigOut {
   enabled: boolean;
   interval_days: number;
   last_run_at: string | null;
+}
+
+export interface PaginationParams {
+  limit?: number;
+  offset?: number;
+  [key: string]: string | number | boolean | null | undefined;
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
 }
 
 export interface UserOut {
@@ -725,6 +820,29 @@ export interface RecipeOut {
   created_at: string;
 }
 
+export interface SiteRecipeCardOut {
+  id: string;
+  title: string;
+  list_image_url: string | null;
+  status: string;
+  has_generated_images: boolean;
+  focus_keyword: string | null;
+  category: string | null;
+  wp_permalink: string | null;
+  error_message: string | null;
+}
+
+export interface SiteRecipeCardPageOut {
+  total: number;
+  pending: number;
+  generating: number;
+  generated: number;
+  published: number;
+  failed: number;
+  with_generated_images: number;
+  items: SiteRecipeCardOut[];
+}
+
 export interface JobOut {
   id: string;
   project_id: string;
@@ -753,8 +871,17 @@ export interface GeneratedJobRecipeOut {
   image_url?: string;
   generated_images?: string | null;
   category?: string | null;
+  pin_title?: string | null;
+  pin_description?: string | null;
   pin_template_id?: string | null;
   created_at: string;
+}
+
+export interface GeneratedJobSiteSummaryOut {
+  site_id: string;
+  site_domain: string;
+  recipe_count: number;
+  published_count: number;
 }
 
 export interface PublishScheduleOut {
@@ -778,6 +905,7 @@ export interface PublishBatchRequest {
   interval_minutes?: number; // override project interval
   site_id?: string; // if set, only publish recipes for this site
   recipe_id?: string; // if set, publish only this single recipe
+  recipe_ids?: string[]; // if set, publish only these specific recipes (takes priority over site_id)
 }
 
 export interface PublishBatchOut {
@@ -787,10 +915,13 @@ export interface PublishBatchOut {
   errors: string[];
 }
 
-export type BatchPublishEvent =
-  | { type: "start"; total: number; pre_failed: number }
-  | { type: "progress"; done: number; total: number; succeeded: number; failed: number; recipe_name: string; ok: boolean }
-  | { type: "done"; total: number; succeeded: number; failed: number; errors: string[] };
+export interface JobPublishSummaryOut {
+  total: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  remaining: number;
+}
 
 export interface ImageCleanupRunRequest {
   delete_all_published?: boolean;

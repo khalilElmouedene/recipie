@@ -7,6 +7,9 @@ import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, Pr
 import { getUserRole, getUserId } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import { useJobActivity } from "@/contexts/JobActivityContext";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
 type Tab = "sites" | "members" | "jobs" | "settings";
 
@@ -338,6 +341,7 @@ const emptyWpUser = () => ({ username: "", password: "" });
 function SitesTab({ projectId, canManage, router }: { projectId: string; canManage: boolean; router: ReturnType<typeof useRouter> }) {
   const toast = useToast();
   const openConfirm = useConfirm();
+  const { trackJob } = useJobActivity();
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
   const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
@@ -376,7 +380,12 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
     setPublishingSiteId(siteId);
     try {
       const job = await api.startJob(projectId, { job_type: "publisher", site_id: siteId });
-      router.push(`/jobs/${job.id}`);
+      const siteDomain = sites.find((site) => site.id === siteId)?.domain || null;
+      trackJob(job, {
+        title: "Publishing site to WordPress",
+        sourceLabel: siteDomain,
+      });
+      toast.success("Publish job added to the pipeline.");
     } catch (e: any) {
       toast.error(e.message || "Failed to start publish job");
     } finally {
@@ -724,13 +733,42 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
 }
 
 function MembersTab({ projectId, role }: { projectId: string; role: string | null }) {
+  const MEMBERS_PAGE_SIZE = 20;
   const openConfirm = useConfirm();
   const [members, setMembers] = useState<MemberOut[]>([]);
+  const [totalMembers, setTotalMembers] = useState(0);
   const [users, setUsers] = useState<UserOut[]>([]);
   const [selUser, setSelUser] = useState("");
   const [selRole, setSelRole] = useState("member");
+  const [loadingMore, setLoadingMore] = useState(false);
+  const hasMoreMembers = members.length < totalMembers;
 
-  const load = () => api.getMembers(projectId).then(setMembers).catch(() => {});
+  const load = (limit = Math.max(members.length || 0, MEMBERS_PAGE_SIZE)) =>
+    api.getMembersPage(projectId, { limit, offset: 0 })
+      .then(({ items, total }) => {
+        setMembers(items);
+        setTotalMembers(total);
+      })
+      .catch(() => {});
+
+  const handleLoadMoreMembers = useCallback(async () => {
+    if (loadingMore || !hasMoreMembers) return;
+    setLoadingMore(true);
+    try {
+      const { items, total } = await api.getMembersPage(projectId, {
+        limit: MEMBERS_PAGE_SIZE,
+        offset: members.length,
+      });
+      setMembers((prev) => [...prev, ...items]);
+      setTotalMembers(total);
+    } catch {
+      // keep current state on error
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMoreMembers, members.length, MEMBERS_PAGE_SIZE, projectId]);
+
+  const membersSentinelRef = useInfiniteScroll(handleLoadMoreMembers, { hasMore: hasMoreMembers, loading: loadingMore });
   useEffect(() => {
     load();
     if (role === "owner") api.getUsers().then(setUsers).catch(() => {});
@@ -791,14 +829,46 @@ function MembersTab({ projectId, role }: { projectId: string; role: string | nul
           </div>
         ))}
         {members.length === 0 && <p className="text-center py-8 text-gray-500">No members assigned yet.</p>}
+        <InfiniteScrollSentinel sentinelRef={membersSentinelRef} loading={loadingMore} hasMore={hasMoreMembers} />
       </div>
     </div>
   );
 }
 
 function JobsTab({ projectId }: { projectId: string }) {
+  const JOBS_PAGE_SIZE = 20;
   const [jobs, setJobs] = useState<JobOut[]>([]);
-  useEffect(() => { api.getProjectJobs(projectId).then(setJobs).catch(() => {}); }, [projectId]);
+  const [totalJobs, setTotalJobs] = useState(0);
+  const [loadingMoreJobs, setLoadingMoreJobs] = useState(false);
+  const hasMoreJobs = jobs.length < totalJobs;
+
+  const load = (limit = Math.max(jobs.length || 0, JOBS_PAGE_SIZE)) =>
+    api.getProjectJobsPage(projectId, { limit, offset: 0 })
+      .then(({ items, total }) => {
+        setJobs(items);
+        setTotalJobs(total);
+      })
+      .catch(() => {});
+  useEffect(() => { load(); }, [projectId]);
+
+  const handleLoadMoreJobs = useCallback(async () => {
+    if (loadingMoreJobs || !hasMoreJobs) return;
+    setLoadingMoreJobs(true);
+    try {
+      const { items, total } = await api.getProjectJobsPage(projectId, {
+        limit: JOBS_PAGE_SIZE,
+        offset: jobs.length,
+      });
+      setJobs((prev) => [...prev, ...items]);
+      setTotalJobs(total);
+    } catch {
+      // keep current state on error
+    } finally {
+      setLoadingMoreJobs(false);
+    }
+  }, [loadingMoreJobs, hasMoreJobs, jobs.length, JOBS_PAGE_SIZE, projectId]);
+
+  const jobsSentinelRef = useInfiniteScroll(handleLoadMoreJobs, { hasMore: hasMoreJobs, loading: loadingMoreJobs });
 
   const statusColor: Record<string, string> = {
     pending: "bg-gray-700 text-gray-300",
@@ -823,6 +893,7 @@ function JobsTab({ projectId }: { projectId: string }) {
         </Link>
       ))}
       {jobs.length === 0 && <p className="text-center py-8 text-gray-500">No jobs yet.</p>}
+      <InfiniteScrollSentinel sentinelRef={jobsSentinelRef} loading={loadingMoreJobs} hasMore={hasMoreJobs} />
     </div>
   );
 }

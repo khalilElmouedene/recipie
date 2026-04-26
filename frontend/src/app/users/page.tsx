@@ -1,35 +1,47 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2, MailCheck, RefreshCw } from "lucide-react";
 import { api, UserOut } from "@/lib/api";
 import { getUserRole } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
+import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
 
 export default function UsersPage() {
+  const USERS_PAGE_SIZE = 20;
   const router = useRouter();
   const role = getUserRole();
   const toast = useToast();
   const openConfirm = useConfirm();
   const [users, setUsers] = useState<UserOut[]>([]);
+  const [totalUsers, setTotalUsers] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ email: "", full_name: "", role: "member" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [resending, setResending] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const hasMore = users.length < totalUsers;
 
   useEffect(() => {
     if (role !== "owner") { router.push("/"); return; }
     load();
   }, [role, router]);
 
-  const load = () => api.getUsers().then(setUsers).catch(() => {});
+  const load = (limit = Math.max(users.length || 0, USERS_PAGE_SIZE)) =>
+    api.getUsersPage({ limit, offset: 0 })
+      .then(({ items, total }) => {
+        setUsers(items);
+        setTotalUsers(total);
+      })
+      .catch(() => {});
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await api.getUsers().then(setUsers).catch(() => {});
+    await load();
     setRefreshing(false);
   };
 
@@ -74,6 +86,25 @@ export default function UsersPage() {
     setResending(null);
   };
 
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const { items, total } = await api.getUsersPage({
+        limit: USERS_PAGE_SIZE,
+        offset: users.length,
+      });
+      setUsers((prev) => [...prev, ...items]);
+      setTotalUsers(total);
+    } catch {
+      // keep current state on error
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, users.length, USERS_PAGE_SIZE]);
+
+  const sentinelRef = useInfiniteScroll(handleLoadMore, { hasMore, loading: loadingMore });
+
   if (role !== "owner") return null;
 
   return (
@@ -81,7 +112,10 @@ export default function UsersPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">Users</h1>
-          <p className="text-sm text-gray-400 mt-1">{users.length} user{users.length !== 1 ? "s" : ""}</p>
+          <p className="text-sm text-gray-400 mt-1">
+            {totalUsers} user{totalUsers !== 1 ? "s" : ""}
+            {users.length < totalUsers && <span> · {users.length} loaded</span>}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={handleRefresh} disabled={refreshing} title="Refresh" className="btn-secondary flex items-center gap-2 disabled:opacity-50">
@@ -233,6 +267,7 @@ export default function UsersPage() {
           <p className="text-center py-8 text-gray-500 text-sm">No users yet.</p>
         )}
       </div>
+      <InfiniteScrollSentinel sentinelRef={sentinelRef} loading={loadingMore} hasMore={hasMore} />
     </div>
   );
 }
