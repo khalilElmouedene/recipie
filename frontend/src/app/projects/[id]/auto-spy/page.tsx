@@ -654,7 +654,7 @@ export default function AutoSpyPage() {
         .slice(0, 16);
       Promise.allSettled(
         publishingSites.map((site) =>
-          api.getAutoSpyLastPublished(id, site.id).then((res) => ({ siteId: site.id, res }))
+          api.getLastPublishDate(site.id).then((res) => ({ siteId: site.id, res }))
         )
       ).then((results) => {
         setSiteSchedules((prev) => {
@@ -664,10 +664,10 @@ export default function AutoSpyPage() {
             if (result.status === "fulfilled") {
               const { siteId, res } = result.value;
               const interval = next[siteId]?.intervalMinutes ?? defaultInterval;
-              // Pre-fill to last_date + interval so first new post publishes after the last existing one
-              const startAt = res.last_published_at
+              // Same parsing as pin designer: date_gmt from WP, append Z for UTC
+              const startAt = res.last_publish_date
                 ? new Date(
-                    new Date(res.last_published_at).getTime() +
+                    new Date(res.last_publish_date + "Z").getTime() +
                       interval * 60 * 1000 -
                       new Date().getTimezoneOffset() * 60000
                   )
