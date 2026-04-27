@@ -48,6 +48,12 @@ from ..db_models import (
 
 _FONT_CACHE_DIR = os.path.join(tempfile.gettempdir(), "pin_renderer_fonts")
 
+_NATIVE_FONTS = frozenset({
+    "arial", "helvetica", "sans-serif", "serif", "monospace",
+    "times new roman", "courier new", "georgia", "verdana",
+    "tahoma", "trebuchet ms", "impact", "comic sans ms",
+})
+
 
 def _download_google_font(family: str, bold: bool, italic: bool) -> str | None:
     """Fetch a Google Font TTF, cache to disk, return local path or None on failure."""
@@ -93,9 +99,7 @@ def _elem_font(elem: dict, log: Callable[[str], None]):
     bold = (weight.isdigit() and int(weight) >= 700) or (not weight.isdigit() and weight.lower() in ("bold", "bolder"))
     italic = "italic" in style
 
-    _NATIVE = {"arial", "helvetica", "sans-serif", "serif", "monospace",
-               "times new roman", "courier new", "georgia", "verdana", "tahoma", "trebuchet ms"}
-    if family and family.lower() not in _NATIVE:
+    if family and family.lower() not in _NATIVE_FONTS:
         for b, i in [(bold, italic), (bold, False), (False, False)]:
             path = _download_google_font(family, b, i)
             if path:
@@ -156,7 +160,11 @@ def _render_custom_template_sync(
     log: Callable[[str], None],
     main_loop: asyncio.AbstractEventLoop | None = None,
 ) -> str | None:
-    """Render a PinDesignerTemplate stored in the DB using PIL."""
+    """Render a PinDesignerTemplate from the DB.
+
+    Tries Playwright (headless Chromium, pixel-perfect) first, then
+    falls back to PIL for simpler templates or when Playwright is absent.
+    """
 
     async def _load():
         async with SessionLocal() as session:
@@ -188,11 +196,31 @@ def _render_custom_template_sync(
     except Exception:
         elements = []
 
+    bg_color = tmpl.bg_color or "#ffffff"
+    canvas_width = tmpl.canvas_width or 1000
+    canvas_height = tmpl.canvas_height or 1500
+
+    # Try Playwright first for pixel-perfect rendering
+    pw_result = _render_with_playwright_sync(
+        elements=elements,
+        bg_color=bg_color,
+        canvas_width=canvas_width,
+        canvas_height=canvas_height,
+        image_url=image_url,
+        title=title,
+        site_domain=site_domain,
+        log=log,
+    )
+    if pw_result:
+        return pw_result
+
+    # Fall back to PIL
+    log("  Playwright unavailable — falling back to PIL renderer")
     return _pil_render_elements(
         elements=elements,
-        bg_color=tmpl.bg_color or "#ffffff",
-        canvas_width=tmpl.canvas_width or 1000,
-        canvas_height=tmpl.canvas_height or 1500,
+        bg_color=bg_color,
+        canvas_width=canvas_width,
+        canvas_height=canvas_height,
         image_url=image_url,
         title=title,
         site_domain=site_domain,
@@ -219,6 +247,285 @@ def _parse_hex_color(color: str, opacity: float = 1.0) -> tuple:
     except Exception:
         pass
     return (136, 136, 136, a)
+
+
+def _url_to_data_uri(url: str, log: Callable[[str], None]) -> str | None:
+    """Download *url* and return it as a base64 data URI, or None on failure."""
+    try:
+        import requests as _req
+        r = _req.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        r.raise_for_status()
+        ctype = (r.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+                 or "image/jpeg")
+        return f"data:{ctype};base64,{base64.b64encode(r.content).decode()}"
+    except Exception as exc:
+        log(f"  Data URI fetch failed ({url[:60]}): {exc}")
+        return None
+
+
+def _build_pin_render_html(
+    elements: list[dict],
+    bg_color: str,
+    canvas_width: int,
+    canvas_height: int,
+    food_data_uri: str,
+    asset_data_uris: dict[str, str],
+    title: str,
+) -> str:
+    """Build a self-contained HTML page that renders the pin template on a <canvas>."""
+    # Google Fonts links for non-native families
+    font_families: set[str] = set()
+    for elem in elements:
+        if elem.get("type") == "text":
+            fam = str(elem.get("fontFamily") or "").strip()
+            if fam and fam.lower() not in _NATIVE_FONTS:
+                font_families.add(fam)
+
+    font_links = ""
+    if font_families:
+        font_links = (
+            '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
+            '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
+        )
+        for fam in sorted(font_families):
+            encoded = fam.replace(" ", "+")
+            font_links += (
+                f'<link href="https://fonts.googleapis.com/css2?family={encoded}'
+                f':ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">\n'
+            )
+
+    # Hidden <img> elements for asset images (data URIs avoid canvas CORS taint)
+    asset_id_map: dict[str, str] = {}
+    asset_imgs = ""
+    for elem in elements:
+        if elem.get("type") == "asset":
+            url = str(elem.get("imageUrl") or "")
+            if url and url in asset_data_uris and url not in asset_id_map:
+                eid = f"asset_{len(asset_id_map)}"
+                asset_id_map[url] = eid
+                asset_imgs += f'<img id="{eid}" src="{asset_data_uris[url]}" style="display:none">\n'
+
+    # Inject __assetId so JS can look up the <img> element
+    elements_tagged = []
+    for elem in elements:
+        e = dict(elem)
+        if e.get("type") == "asset":
+            e["__assetId"] = asset_id_map.get(str(e.get("imageUrl") or ""), "")
+        elements_tagged.append(e)
+
+    elems_json = json.dumps(elements_tagged, ensure_ascii=False)
+    title_json = json.dumps(title, ensure_ascii=False)
+    bg_json = json.dumps(bg_color)
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+{font_links}<style>
+* {{ margin: 0; padding: 0; }}
+body {{ background: #000; overflow: hidden; width: {canvas_width}px; height: {canvas_height}px; }}
+canvas {{ display: block; }}
+</style>
+</head>
+<body>
+<canvas id="c" width="{canvas_width}" height="{canvas_height}"></canvas>
+<img id="food" src="{food_data_uri}" style="display:none">
+{asset_imgs}
+<script>
+const ELEMENTS = {elems_json};
+const TITLE = {title_json};
+const BG = {bg_json};
+const W = {canvas_width};
+const H = {canvas_height};
+
+function drawCover(ctx, img, dx, dy, dw, dh, flipX) {{
+  if (!img || !img.naturalWidth) return;
+  const ratio = Math.max(dw / img.naturalWidth, dh / img.naturalHeight);
+  const sw = dw / ratio, sh = dh / ratio;
+  const sx = (img.naturalWidth - sw) / 2, sy = (img.naturalHeight - sh) / 2;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(dx, dy, dw, dh); ctx.clip();
+  if (flipX) {{
+    ctx.translate(dx + dw, dy); ctx.scale(-1, 1);
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
+  }} else {{
+    ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+  }}
+  ctx.restore();
+}}
+
+function wrapText(ctx, text, x, y, maxW, lh) {{
+  if (!text) return;
+  const words = text.split(' ');
+  const lines = [];
+  let line = '';
+  for (let i = 0; i < words.length; i++) {{
+    const test = line ? line + ' ' + words[i] : words[i];
+    if (ctx.measureText(test).width > maxW && line) {{
+      lines.push(line); line = words[i];
+    }} else {{ line = test; }}
+  }}
+  if (line) lines.push(line);
+  ctx.textBaseline = 'top';
+  for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x, y + i * lh);
+}}
+
+async function render() {{
+  await document.fonts.ready;
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const food = document.getElementById('food');
+
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+
+  for (const elem of ELEMENTS) {{
+    const t = elem.type || '';
+    const ex = elem.x || 0, ey = elem.y || 0;
+    const ew = elem.width || 100, eh = elem.height || 100;
+
+    if (t === 'band') {{
+      ctx.fillStyle = elem.bgColor || '#888';
+      ctx.fillRect(ex, ey, ew, eh);
+    }}
+    else if (t === 'frame') {{
+      ctx.save();
+      ctx.strokeStyle = elem.fill || '#fff';
+      ctx.lineWidth = elem.strokeWidth || 2;
+      if (elem.strokeStyle === 'dashed') ctx.setLineDash([10, 6]);
+      else if (elem.strokeStyle === 'dotted') ctx.setLineDash([3, 6]);
+      const r = elem.radius || 0;
+      ctx.beginPath();
+      if (r > 0 && typeof ctx.roundRect === 'function') ctx.roundRect(ex, ey, ew, eh, r);
+      else ctx.rect(ex, ey, ew, eh);
+      ctx.stroke();
+      ctx.restore();
+    }}
+    else if (t === 'image') {{
+      drawCover(ctx, food, ex, ey, ew, eh, !!elem.flipX);
+    }}
+    else if (t === 'asset') {{
+      const assetEl = elem.__assetId ? document.getElementById(elem.__assetId) : null;
+      if (assetEl && assetEl.naturalWidth) {{
+        ctx.save();
+        ctx.beginPath(); ctx.rect(ex, ey, ew, eh); ctx.clip();
+        if (elem.flipX || elem.flipY) {{
+          ctx.translate(ex + ew / 2, ey + eh / 2);
+          ctx.scale(elem.flipX ? -1 : 1, elem.flipY ? -1 : 1);
+          ctx.drawImage(assetEl, -ew / 2, -eh / 2, ew, eh);
+        }} else {{
+          ctx.drawImage(assetEl, ex, ey, ew, eh);
+        }}
+        ctx.restore();
+      }}
+    }}
+    else if (t === 'text') {{
+      // x,y are CENTER coords (getCenterPoint() saved them that way)
+      const lx = ex - ew / 2, ty = ey - eh / 2;
+      let display = (elem.textVariable || !elem.defaultText)
+        ? TITLE : (elem.defaultText || TITLE);
+      if (!display) continue;
+      const tt = (elem.textTransform || 'none').toLowerCase();
+      if (tt === 'uppercase') display = display.toUpperCase();
+      else if (tt === 'lowercase') display = display.toLowerCase();
+
+      const fs = elem.fontSize || 36;
+      const fam = elem.fontFamily || 'sans-serif';
+      const fw = elem.fontWeight || 'normal';
+      const fi = elem.fontStyle || 'normal';
+      ctx.font = fi + ' ' + fw + ' ' + fs + 'px "' + fam + '", sans-serif';
+      ctx.fillStyle = elem.fill || '#fff';
+      const lh = (elem.lineHeight || 1.3) * fs;
+      const align = (elem.textAlign || 'center').toLowerCase();
+      if (align === 'center') {{
+        ctx.textAlign = 'center';
+        wrapText(ctx, display, lx + ew / 2, ty, ew, lh);
+      }} else if (align === 'right') {{
+        ctx.textAlign = 'right';
+        wrapText(ctx, display, lx + ew, ty, ew, lh);
+      }} else {{
+        ctx.textAlign = 'left';
+        wrapText(ctx, display, lx, ty, ew, lh);
+      }}
+    }}
+  }}
+  window.__rendered = true;
+}}
+
+(function() {{
+  const food = document.getElementById('food');
+  if (food.complete && food.naturalWidth) {{ render(); }}
+  else {{ food.onload = render; food.onerror = render; }}
+}})();
+</script>
+</body>
+</html>"""
+
+
+def _render_with_playwright_sync(
+    elements: list[dict],
+    bg_color: str,
+    canvas_width: int,
+    canvas_height: int,
+    image_url: str,
+    title: str,
+    site_domain: str,
+    log: Callable[[str], None],
+) -> str | None:
+    """Render the pin template in headless Chromium via Playwright.
+
+    Returns a JPEG data URI, or None if Playwright is not installed or rendering fails.
+    Falls back transparently — callers should try PIL on None.
+    """
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: F401
+    except ImportError:
+        return None
+
+    log("  Rendering pin with Playwright (headless Chromium)…")
+
+    food_data_uri = _url_to_data_uri(image_url, log)
+    if not food_data_uri:
+        log("  Could not fetch food image — skipping Playwright render")
+        return None
+
+    asset_data_uris: dict[str, str] = {}
+    for elem in elements:
+        if elem.get("type") == "asset":
+            url = str(elem.get("imageUrl") or "")
+            if url and url not in asset_data_uris:
+                data = _url_to_data_uri(url, log)
+                if data:
+                    asset_data_uris[url] = data
+
+    html = _build_pin_render_html(
+        elements=elements,
+        bg_color=bg_color,
+        canvas_width=canvas_width,
+        canvas_height=canvas_height,
+        food_data_uri=food_data_uri,
+        asset_data_uris=asset_data_uris,
+        title=title,
+    )
+
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
+            page = browser.new_page(viewport={"width": canvas_width, "height": canvas_height})
+            page.set_content(html, wait_until="domcontentloaded")
+            page.wait_for_function("() => window.__rendered === true", timeout=30_000)
+            data_url: str = page.evaluate(
+                "() => document.getElementById('c').toDataURL('image/jpeg', 0.92)"
+            )
+            browser.close()
+        if data_url and data_url.startswith("data:"):
+            log("  Playwright render complete")
+            return data_url
+    except Exception as exc:
+        log(f"  Playwright render error: {exc}")
+
+    return None
 
 
 def _pil_render_elements(
