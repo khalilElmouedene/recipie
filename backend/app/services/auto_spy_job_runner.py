@@ -115,13 +115,13 @@ def _render_pin_for_recipe(
     pin_template_id: str | None,
     site_domain: str,
     log: Callable[[str], None],
+    main_loop: asyncio.AbstractEventLoop | None = None,
 ) -> str | None:
     """Return a base64 data-URI for the pin image, or None on failure."""
     from ..services.pin_generator import generate_pin_base64, TEMPLATES
 
     try:
         if pin_template_id and pin_template_id in TEMPLATES:
-            # Built-in template
             b64 = generate_pin_base64(
                 template_id=pin_template_id,
                 image_urls=[image_url],
@@ -131,8 +131,7 @@ def _render_pin_for_recipe(
             return b64
 
         if pin_template_id:
-            # Try to load as a custom DB template and render with PIL
-            b64 = _render_custom_template_sync(pin_template_id, image_url, title, site_domain, log)
+            b64 = _render_custom_template_sync(pin_template_id, image_url, title, site_domain, log, main_loop=main_loop)
             if b64:
                 return b64
 
@@ -155,9 +154,9 @@ def _render_custom_template_sync(
     title: str,
     site_domain: str,
     log: Callable[[str], None],
+    main_loop: asyncio.AbstractEventLoop | None = None,
 ) -> str | None:
     """Render a PinDesignerTemplate stored in the DB using PIL."""
-    import asyncio as _asyncio
 
     async def _load():
         async with SessionLocal() as session:
@@ -171,9 +170,13 @@ def _render_custom_template_sync(
             except Exception:
                 return None
 
-    # We're inside a background thread, so use asyncio.run for a one-shot DB lookup.
+    # Always run on the main event loop to avoid leaking asyncpg connections.
+    # asyncio.run() would create a new loop in this thread, corrupting the pool.
     try:
-        tmpl = _asyncio.run(_load())
+        if main_loop is not None and main_loop.is_running():
+            tmpl = asyncio.run_coroutine_threadsafe(_load(), main_loop).result(timeout=15)
+        else:
+            tmpl = asyncio.run(_load())
     except Exception:
         return None
 
@@ -662,19 +665,21 @@ async def start_auto_spy_generate_job(
                             pin_template_id=item.get("pin_template_id"),
                             site_domain=item["site_domain"],
                             log=rj.log,
+                            main_loop=main_loop,
                         )
                         if pin_img:
-                            generated["pin_design_image"] = pin_img
-                            generated["pin_template_id"] = item.get("pin_template_id")
                             rj.log("Pin image rendered successfully")
                         per_recipe_generated[item["id"]] = {
                             "id": item["id"],
                             "recipe_text": item["recipe_text"],
                             "image_url": item["image_url"],
+                            "pin_design_image": pin_img,
                             **generated,
                         }
 
-                    _on_recipe_done(item["id"], generated)
+                    # Save recipe without pin_design_image (large blob — kept in memory for WP publish only)
+                    db_fields = {k: v for k, v in generated.items() if k != "pin_design_image"}
+                    _on_recipe_done(item["id"], db_fields)
                     done += 1
                     _on_progress(done, total)
 
@@ -945,19 +950,20 @@ async def resume_auto_spy_generate_job(
                             pin_template_id=item.get("pin_template_id"),
                             site_domain=item["site_domain"],
                             log=rj.log,
+                            main_loop=main_loop,
                         )
                         if pin_img:
-                            generated["pin_design_image"] = pin_img
-                            generated["pin_template_id"] = item.get("pin_template_id")
                             rj.log("Pin image rendered successfully")
                         per_recipe_generated[item["id"]] = {
                             "id": item["id"],
                             "recipe_text": item["recipe_text"],
                             "image_url": item["image_url"],
+                            "pin_design_image": pin_img,
                             **generated,
                         }
 
-                    _on_recipe_done(item["id"], generated)
+                    db_fields = {k: v for k, v in generated.items() if k != "pin_design_image"}
+                    _on_recipe_done(item["id"], db_fields)
                     done += 1
                     _on_progress(done, total)
 
