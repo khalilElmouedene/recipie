@@ -20,7 +20,7 @@ import json
 import random
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Any, Callable
 
@@ -264,6 +264,18 @@ async def _db_update_recipe(recipe_id: str, fields: dict) -> None:
         await session.commit()
 
 
+async def _db_mark_recipe_published(recipe_id: str, wp_post_id: str | None, wp_permalink: str | None) -> None:
+    async with SessionLocal() as session:
+        row = await session.execute(select(Recipe).where(Recipe.id == uuid.UUID(recipe_id)))
+        recipe = row.scalar_one_or_none()
+        if recipe:
+            recipe.status = RecipeStatus.published
+            recipe.wp_post_id = str(wp_post_id) if wp_post_id else None
+            recipe.wp_permalink = wp_permalink
+            recipe.error_message = None
+            await session.commit()
+
+
 async def _db_set_job_status(
     job_id_str: str,
     status: JobStatus,
@@ -476,6 +488,9 @@ async def start_auto_spy_generate_job(
 
         rj.log(f"Auto Spy Generate — {total} recipe(s) across {len(sites)} site(s)")
 
+        # Track generated data for the WP publish step
+        per_recipe_generated: dict[str, dict] = {}
+
         try:
             for group in multi_site_groups:
                 if rj.should_stop():
@@ -564,6 +579,12 @@ async def start_auto_spy_generate_job(
                             generated["pin_design_image"] = pin_img
                             generated["pin_template_id"] = item.get("pin_template_id")
                             rj.log("Pin image rendered successfully")
+                        per_recipe_generated[item["id"]] = {
+                            "id": item["id"],
+                            "recipe_text": item["recipe_text"],
+                            "image_url": item["image_url"],
+                            **generated,
+                        }
 
                     _on_recipe_done(item["id"], generated)
                     done += 1
@@ -574,13 +595,68 @@ async def start_auto_spy_generate_job(
                 _finalize(JobStatus.stopped)
                 return
 
-            rj.log("All recipes generated. Enabling per-site publish schedules...")
+            # Persist schedule metadata so resume can reconstruct the date sequence
             asyncio.run_coroutine_threadsafe(
                 _db_upsert_site_schedules(site_schedules),
                 main_loop,
             ).result()
-            for ss in site_schedules:
-                rj.log(f"Site schedule: site={ss['site_id']} every {ss['interval_minutes']} min starting {ss['publish_start_at'].isoformat()}")
+
+            # ── Push to WordPress as scheduled posts (pin-designer pattern) ──────
+            from ..services.publisher import publish_recipe as _publish_recipe
+            from ..site_credentials import get_random_wp_credentials
+
+            site_obj_map = {str(s.id): s for s in sites}
+            site_sched_map = {str(ss["site_id"]): ss for ss in site_schedules}
+
+            # Group successfully generated recipes by site, preserving order
+            site_recipes: dict[str, list[dict]] = {}
+            for group in multi_site_groups:
+                for item in group["items"]:
+                    if item["id"] in per_recipe_generated:
+                        site_recipes.setdefault(item["site_id"], []).append(item)
+
+            rj.log("=" * 50)
+            rj.log("Publishing to WordPress as scheduled posts...")
+
+            for site_id_str, items in site_recipes.items():
+                if rj.should_stop():
+                    break
+                ss = site_sched_map.get(site_id_str)
+                site_obj = site_obj_map.get(site_id_str)
+                if not ss or not site_obj:
+                    continue
+                try:
+                    wp_user, wp_pass = get_random_wp_credentials(site_obj)
+                except Exception as e:
+                    rj.log(f"  [{site_obj.domain}] No WP credentials: {e}")
+                    continue
+                site_config = {
+                    "wp_url": site_obj.wp_url,
+                    "wp_username": wp_user,
+                    "wp_password": wp_pass,
+                    "domain": site_obj.domain if site_obj.domain.startswith("http") else f"https://{site_obj.domain}",
+                }
+                publish_start = ss["publish_start_at"]
+                step = timedelta(minutes=ss["interval_minutes"])
+                for idx, item in enumerate(items):
+                    recipe_data = per_recipe_generated.get(item["id"])
+                    if not recipe_data:
+                        continue
+                    post_date = publish_start + step * idx
+                    rj.log(f"  [{site_obj.domain}] #{idx + 1}: {recipe_data['recipe_text'][:50]} → {post_date.strftime('%Y-%m-%d %H:%M UTC')}")
+                    try:
+                        result = _publish_recipe(recipe_data, site_config, post_date_gmt=post_date, log=rj.log)
+                    except Exception as e:
+                        result = {"error_message": str(e)}
+                    if result.get("error_message"):
+                        rj.log(f"    Failed: {result['error_message'][:120]}")
+                    else:
+                        rj.log(f"    Scheduled: {result.get('wp_permalink', 'OK')}")
+                        asyncio.run_coroutine_threadsafe(
+                            _db_mark_recipe_published(item["id"], result.get("wp_post_id"), result.get("wp_permalink")),
+                            main_loop,
+                        ).result()
+
             rj.log("Auto Spy Generate completed successfully")
             _finalize(JobStatus.completed)
 
@@ -640,6 +716,7 @@ async def resume_auto_spy_generate_job(
                 groups[key] = []
             groups[key].append({
                 "id": str(recipe.id),
+                "site_id": str(site.id),
                 "site_domain": site.domain,
                 "pinterest_url": site.pinterest_url or "",
                 "pin_template_id": site.pin_template_id,
@@ -652,6 +729,28 @@ async def resume_auto_spy_generate_job(
             for i, ((rt, iu), items) in enumerate(groups.items())
         ]
         recipes_data = [{"id": str(r.id)} for r, _ in pending]
+
+        # Load site objects and their schedules for the WP publish step
+        site_ids = list({str(site.id) for _, site in pending})
+        site_rows = await db.execute(select(Site).where(Site.id.in_([uuid.UUID(s) for s in site_ids])))
+        resume_sites = {str(s.id): s for s in site_rows.scalars().all()}
+
+        sched_rows = await db.execute(
+            select(SitePublishSchedule).where(SitePublishSchedule.site_id.in_([uuid.UUID(s) for s in site_ids]))
+        )
+        resume_schedules = {str(ss.site_id): ss for ss in sched_rows.scalars().all()}
+
+        # Count already-published recipes per site for this job (to continue the date sequence)
+        from sqlalchemy import func as _func
+        pub_counts_rows = await db.execute(
+            select(Recipe.site_id, _func.count(Recipe.id))
+            .where(
+                Recipe.created_by_job_id == db_job.id,
+                Recipe.status == RecipeStatus.published,
+            )
+            .group_by(Recipe.site_id)
+        )
+        already_published = {str(sid): cnt for sid, cnt in pub_counts_rows.all()}
 
     await _db_set_job_status(job_id_str, JobStatus.running, total_rows=len(recipes_data))
 
@@ -677,6 +776,8 @@ async def resume_auto_spy_generate_job(
             asyncio.run_coroutine_threadsafe(_db_revert_generating([r["id"] for r in recipes_data]), main_loop).result()
 
         rj.log(f"Resuming Auto Spy Generate — {total} recipe(s) remaining")
+
+        per_recipe_generated: dict[str, dict] = {}
 
         try:
             for group in multi_site_groups:
@@ -761,6 +862,12 @@ async def resume_auto_spy_generate_job(
                             generated["pin_design_image"] = pin_img
                             generated["pin_template_id"] = item.get("pin_template_id")
                             rj.log("Pin image rendered successfully")
+                        per_recipe_generated[item["id"]] = {
+                            "id": item["id"],
+                            "recipe_text": item["recipe_text"],
+                            "image_url": item["image_url"],
+                            **generated,
+                        }
 
                     _on_recipe_done(item["id"], generated)
                     done += 1
@@ -770,6 +877,61 @@ async def resume_auto_spy_generate_job(
                 _revert()
                 _finalize(JobStatus.stopped)
                 return
+
+            # ── Push to WordPress as scheduled posts ─────────────────────────
+            from ..services.publisher import publish_recipe as _publish_recipe
+            from ..site_credentials import get_random_wp_credentials
+
+            site_resume_groups: dict[str, list[dict]] = {}
+            for group in multi_site_groups:
+                for item in group["items"]:
+                    if item["id"] in per_recipe_generated:
+                        site_resume_groups.setdefault(item["site_id"], []).append(item)
+
+            rj.log("=" * 50)
+            rj.log("Publishing to WordPress as scheduled posts...")
+
+            now = datetime.now(timezone.utc)
+            for site_id_str, items in site_resume_groups.items():
+                if rj.should_stop():
+                    break
+                site_obj = resume_sites.get(site_id_str)
+                ss = resume_schedules.get(site_id_str)
+                if not site_obj:
+                    continue
+                try:
+                    wp_user, wp_pass = get_random_wp_credentials(site_obj)
+                except Exception as e:
+                    rj.log(f"  [{site_obj.domain}] No WP credentials: {e}")
+                    continue
+                site_config = {
+                    "wp_url": site_obj.wp_url,
+                    "wp_username": wp_user,
+                    "wp_password": wp_pass,
+                    "domain": site_obj.domain if site_obj.domain.startswith("http") else f"https://{site_obj.domain}",
+                }
+                interval_min = ss.interval_minutes if ss else 240
+                step = timedelta(minutes=interval_min)
+                offset = already_published.get(site_id_str, 0)
+                publish_start = (ss.next_run_at if ss and ss.next_run_at else now)
+                for idx, item in enumerate(items):
+                    recipe_data = per_recipe_generated.get(item["id"])
+                    if not recipe_data:
+                        continue
+                    post_date = publish_start + step * (offset + idx)
+                    rj.log(f"  [{site_obj.domain}] #{offset + idx + 1}: {recipe_data['recipe_text'][:50]} → {post_date.strftime('%Y-%m-%d %H:%M UTC')}")
+                    try:
+                        result = _publish_recipe(recipe_data, site_config, post_date_gmt=post_date, log=rj.log)
+                    except Exception as e:
+                        result = {"error_message": str(e)}
+                    if result.get("error_message"):
+                        rj.log(f"    Failed: {result['error_message'][:120]}")
+                    else:
+                        rj.log(f"    Scheduled: {result.get('wp_permalink', 'OK')}")
+                        asyncio.run_coroutine_threadsafe(
+                            _db_mark_recipe_published(item["id"], result.get("wp_post_id"), result.get("wp_permalink")),
+                            main_loop,
+                        ).result()
 
             rj.log("Auto Spy Generate resumed and completed successfully")
             _finalize(JobStatus.completed)
