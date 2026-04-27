@@ -17,7 +17,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import random
+import re as _re
+import tempfile
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -39,6 +42,69 @@ from ..db_models import (
     Site,
     SitePublishSchedule,
 )
+
+
+# ── Google Fonts download & caching ───────────────────────────────────────────
+
+_FONT_CACHE_DIR = os.path.join(tempfile.gettempdir(), "pin_renderer_fonts")
+
+
+def _download_google_font(family: str, bold: bool, italic: bool) -> str | None:
+    """Fetch a Google Font TTF, cache to disk, return local path or None on failure."""
+    import requests as _req
+    try:
+        os.makedirs(_FONT_CACHE_DIR, exist_ok=True)
+        safe = _re.sub(r"[^a-z0-9]", "_", family.lower().strip())
+        tag = ("b" if bold else "") + ("i" if italic else "") or "r"
+        cache = os.path.join(_FONT_CACHE_DIR, f"{safe}_{tag}.ttf")
+        if os.path.exists(cache):
+            return cache
+        weight = "700" if bold else "400"
+        ital_str = "italic" if italic else ""
+        q = family.strip().replace(" ", "+")
+        url = f"https://fonts.googleapis.com/css?family={q}:{weight}{ital_str}"
+        # Old IE UA → Google returns legacy TTF (not WOFF2)
+        r = _req.get(url, headers={"User-Agent": "Mozilla/4.0 (compatible; MSIE 8.0)"}, timeout=8)
+        m = _re.search(r"url\(([^)]+\.ttf)\)", r.text)
+        if m:
+            font_url = m.group(1).strip("'\"")
+            r2 = _req.get(font_url, timeout=15)
+            r2.raise_for_status()
+            with open(cache, "wb") as fh:
+                fh.write(r2.content)
+            return cache
+    except Exception:
+        pass
+    return None
+
+
+def _elem_font(elem: dict, log: Callable[[str], None]):
+    """Return the closest available PIL font for a Fabric.js text element."""
+    from PIL import ImageFont
+    from ..services.pin_generator import _font as _sys_font
+
+    sx = float(elem.get("scaleX", 1.0))
+    sy = float(elem.get("scaleY", 1.0))
+    size = max(8, int(float(elem.get("fontSize", 36)) * min(sx, sy)))
+    family = str(elem.get("fontFamily") or "").strip()
+    weight = str(elem.get("fontWeight") or "normal")
+    style = str(elem.get("fontStyle") or "normal").lower()
+
+    bold = (weight.isdigit() and int(weight) >= 700) or (not weight.isdigit() and weight.lower() in ("bold", "bolder"))
+    italic = "italic" in style
+
+    _NATIVE = {"arial", "helvetica", "sans-serif", "serif", "monospace",
+               "times new roman", "courier new", "georgia", "verdana", "tahoma", "trebuchet ms"}
+    if family and family.lower() not in _NATIVE:
+        for b, i in [(bold, italic), (bold, False), (False, False)]:
+            path = _download_google_font(family, b, i)
+            if path:
+                try:
+                    return ImageFont.truetype(path, size)
+                except Exception:
+                    pass
+        log(f"  Font '{family}' unavailable, using system fallback")
+    return _sys_font(size, bold)
 
 
 # ── Pin image rendering ────────────────────────────────────────────────────────
@@ -164,19 +230,18 @@ def _pil_render_elements(
 ) -> str | None:
     try:
         from PIL import Image, ImageDraw
-        from ..services.pin_generator import _download, _fit_crop, _font, _wrap_draw, _placeholder
+        from ..services.pin_generator import _download, _fit_crop, _wrap_draw, _placeholder
     except Exception as exc:
         log(f"PIL import failed: {exc}")
         return None
 
     try:
         bg_rgba = _parse_hex_color(bg_color)
-        canvas = Image.new("RGBA", (canvas_width, canvas_height), bg_rgba[:3])
-        draw = ImageDraw.Draw(canvas)
+        canvas = Image.new("RGBA", (canvas_width, canvas_height), bg_rgba)
 
         food_img: Image.Image | None = None
 
-        def _get_food_img() -> Image.Image:
+        def _get_food() -> Image.Image:
             nonlocal food_img
             if food_img is None:
                 try:
@@ -185,27 +250,46 @@ def _pil_render_elements(
                     food_img = _placeholder(400, 600)
             return food_img
 
+        def _place(el_img: Image.Image, cx: int, cy: int, angle: float) -> None:
+            """Rotate el_img clockwise by `angle` degrees and alpha-composite at center (cx, cy)."""
+            if el_img.mode != "RGBA":
+                el_img = el_img.convert("RGBA")
+            if angle % 360 != 0:
+                el_img = el_img.rotate(-angle, expand=True, resample=Image.BICUBIC)
+            px = cx - el_img.width // 2
+            py = cy - el_img.height // 2
+            ox = max(0, -px)
+            oy = max(0, -py)
+            crop_w = min(el_img.width - ox, canvas_width - max(0, px))
+            crop_h = min(el_img.height - oy, canvas_height - max(0, py))
+            if crop_w <= 0 or crop_h <= 0:
+                return
+            piece = el_img.crop((ox, oy, ox + crop_w, oy + crop_h))
+            canvas.alpha_composite(piece, (max(0, px), max(0, py)))
+
         for elem in elements:
             pin_type = str(elem.get("__pinType") or elem.get("type") or "")
-            opacity = float(elem.get("opacity", 1.0))
+            opacity = max(0.0, min(1.0, float(elem.get("opacity", 1.0))))
             left = int(float(elem.get("left", 0)))
-            top = int(float(elem.get("top", 0)))
+            top_y = int(float(elem.get("top", 0)))
             sx = float(elem.get("scaleX", 1.0))
             sy = float(elem.get("scaleY", 1.0))
             w = max(1, int(float(elem.get("width", 100)) * sx))
             h = max(1, int(float(elem.get("height", 100)) * sy))
+            angle = float(elem.get("angle", 0))
+            cx = left + w // 2
+            cy = top_y + h // 2
 
             if pin_type in ("band", "rect"):
                 fill = _parse_hex_color(str(elem.get("fill") or "#888888"), opacity)
-                # Use a temporary RGBA image for proper opacity compositing
-                band = Image.new("RGBA", (w, h), fill)
-                canvas.paste(band, (left, top), band)
+                _place(Image.new("RGBA", (w, h), fill), cx, cy, angle)
 
             elif pin_type == "frame":
+                el = Image.new("RGBA", (w, h), (0, 0, 0, 0))
                 stroke = _parse_hex_color(str(elem.get("stroke") or "#ffffff"), opacity)
                 sw = max(1, int(float(elem.get("strokeWidth", 2))))
-                draw2 = ImageDraw.Draw(canvas)
-                draw2.rectangle([left, top, left + w, top + h], outline=stroke, width=sw)
+                ImageDraw.Draw(el).rectangle([0, 0, w - 1, h - 1], outline=stroke, width=sw)
+                _place(el, cx, cy, angle)
 
             elif pin_type == "image":
                 clip = elem.get("__clipZone")
@@ -213,32 +297,36 @@ def _pil_render_elements(
                     cw = max(1, int(float(clip.get("width", w))))
                     ch = max(1, int(float(clip.get("height", h))))
                     cl = left + int(float(clip.get("left", 0)))
-                    ct = top + int(float(clip.get("top", 0)))
+                    ct = top_y + int(float(clip.get("top", 0)))
                 else:
-                    cw, ch, cl, ct = w, h, left, top
-                cropped = _fit_crop(_get_food_img(), cw, ch).convert("RGBA")
-                canvas.paste(cropped, (cl, ct))
+                    cw, ch, cl, ct = w, h, left, top_y
+                cropped = _fit_crop(_get_food(), cw, ch).convert("RGBA")
+                if opacity < 1.0:
+                    r_, g_, b_, a_ = cropped.split()
+                    a_ = a_.point(lambda v: int(v * opacity))
+                    cropped = Image.merge("RGBA", (r_, g_, b_, a_))
+                _place(cropped, cl + cw // 2, ct + ch // 2, angle)
 
             elif pin_type == "text":
                 raw_text = str(elem.get("text") or "")
-                # If text looks like a placeholder/empty, substitute title
                 display = raw_text if raw_text and not raw_text.startswith("{{") else title
                 if not display:
                     continue
-                fill_color = str(elem.get("fill") or "#ffffff")
-                font_size = max(8, int(float(elem.get("fontSize", 36)) * min(sx, sy)))
-                bold = str(elem.get("fontWeight", "")).lower() == "bold"
+                fill_color = _parse_hex_color(str(elem.get("fill") or "#ffffff"), opacity)
+                font = _elem_font(elem, log)
                 align = str(elem.get("textAlign", "left")).lower()
                 if align not in ("left", "center", "right"):
                     align = "left"
-                _wrap_draw(draw, display, left, top, max(1, w), _font(font_size, bold), fill_color, align=align)
+                lh = float(elem.get("lineHeight", 1.3))
+                el = Image.new("RGBA", (max(1, w), max(1, h)), (0, 0, 0, 0))
+                _wrap_draw(ImageDraw.Draw(el), display, 0, 0, w, font, fill_color, spacing=lh, align=align)
+                _place(el, cx, cy, angle)
 
         buf = BytesIO()
-        canvas.convert("RGB").save(buf, format="JPEG", quality=88)
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        return f"data:image/jpeg;base64,{b64}"
+        canvas.convert("RGB").save(buf, format="JPEG", quality=90)
+        return f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode()}"
     except Exception as exc:
-        log(f"Custom template rendering error: {exc}")
+        log(f"Custom template render error: {exc}")
         return None
 
 
