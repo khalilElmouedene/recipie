@@ -1186,7 +1186,7 @@ export default function AutoSpyPage() {
 
       {selectionCtxMenu && (
         <div
-          className="fixed z-50 w-[360px] max-w-[calc(100vw-24px)] rounded-xl border border-teal-800/40 bg-gray-900/95 p-4 shadow-2xl backdrop-blur-sm overflow-y-auto"
+          className="fixed z-50 w-[420px] max-w-[calc(100vw-24px)] rounded-xl border border-teal-800/40 bg-gray-900/95 p-4 shadow-2xl backdrop-blur-sm overflow-y-auto"
           style={{ top: selectionCtxMenu.y, left: selectionCtxMenu.x, maxHeight: "calc(100vh - 24px)" }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -1233,46 +1233,45 @@ export default function AutoSpyPage() {
                   <p className="text-[11px] text-amber-400">No publishing sites configured. Add sites in the project settings.</p>
                 ) : (
                   <div className="space-y-2">
-                    {/* Column headers */}
-                    <div className="grid grid-cols-[1fr_auto_auto] gap-1.5 items-center">
-                      <span className="text-[10px] text-gray-500">Site</span>
-                      <span className="text-[10px] text-gray-500 text-center w-36">Start date</span>
-                      <span className="text-[10px] text-gray-500 text-center w-14">Interval</span>
-                    </div>
                     {publishingSites.map((site) => {
                       const sched = siteSchedules[site.id] ?? { publishStartAt: "", intervalMinutes: 240 };
                       return (
-                        <div key={site.id} className="grid grid-cols-[1fr_auto_auto] gap-1.5 items-center">
-                          <span className="truncate text-[11px] text-gray-300" title={site.domain}>{site.domain}</span>
-                          <input
-                            type="datetime-local"
-                            value={sched.publishStartAt}
-                            onChange={(e) => setSiteSchedules((prev) => ({
-                              ...prev,
-                              [site.id]: { ...sched, publishStartAt: e.target.value },
-                            }))}
-                            className="w-36 rounded-md border border-gray-700 bg-gray-900 px-1.5 py-1 text-[11px] text-white focus:border-teal-500 focus:outline-none"
-                          />
-                          <div className="flex items-center gap-0.5 w-14">
-                            <input
-                              type="number"
-                              min={1}
-                              value={sched.intervalMinutes}
-                              onChange={(e) => setSiteSchedules((prev) => ({
-                                ...prev,
-                                [site.id]: { ...sched, intervalMinutes: Math.max(1, parseInt(e.target.value) || 1) },
-                              }))}
-                              className="w-10 rounded-md border border-gray-700 bg-gray-900 px-1 py-1 text-[11px] text-white focus:border-teal-500 focus:outline-none"
-                            />
-                            <span className="text-[10px] text-gray-500">m</span>
+                        <div key={site.id} className="rounded-md border border-gray-700/60 bg-gray-900/60 p-2 space-y-1.5">
+                          <span className="block truncate text-[11px] font-medium text-teal-300" title={site.domain}>{site.domain}</span>
+                          <div className="flex gap-2">
+                            <div className="flex-1 min-w-0">
+                              <label className="block text-[10px] text-gray-500 mb-0.5">Start date</label>
+                              <input
+                                type="datetime-local"
+                                value={sched.publishStartAt}
+                                onChange={(e) => setSiteSchedules((prev) => ({
+                                  ...prev,
+                                  [site.id]: { ...sched, publishStartAt: e.target.value },
+                                }))}
+                                className="w-full rounded border border-gray-700 bg-gray-950 px-1.5 py-1 text-[11px] text-white focus:border-teal-500 focus:outline-none"
+                              />
+                            </div>
+                            <div className="w-20 flex-shrink-0">
+                              <label className="block text-[10px] text-gray-500 mb-0.5">Interval (min)</label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={sched.intervalMinutes}
+                                onChange={(e) => setSiteSchedules((prev) => ({
+                                  ...prev,
+                                  [site.id]: { ...sched, intervalMinutes: Math.max(1, parseInt(e.target.value) || 1) },
+                                }))}
+                                className="w-full rounded border border-gray-700 bg-gray-950 px-1.5 py-1 text-[11px] text-white focus:border-teal-500 focus:outline-none"
+                              />
+                            </div>
                           </div>
                         </div>
                       );
                     })}
                   </div>
                 )}
-                <p className="text-[10px] text-gray-500 pt-1">
-                  Each site publishes independently at its own date and interval. Pin images use the template assigned to each site.
+                <p className="text-[10px] text-gray-500 pt-0.5">
+                  Each site publishes independently. Pin images use the template assigned to each site.
                 </p>
               </div>
 
