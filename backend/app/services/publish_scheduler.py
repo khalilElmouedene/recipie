@@ -65,15 +65,18 @@ async def run_publish_scheduler(stop_event: asyncio.Event) -> None:
                         .limit(1)
                     )
                     pair = recipe_row.first()
+                    # Capture the scheduled time before advancing the pointer
+                    publish_at = ss.next_run_at
                     ss.last_run_at = now
                     ss.next_run_at = now + timedelta(minutes=max(1, ss.interval_minutes))
                     if not pair:
                         ss.last_error = "No generated recipe available to publish"
                         continue
                     recipe, site = pair
-                    six_months_sec = int(timedelta(days=183).total_seconds())
-                    backdate = datetime.now(timezone.utc) - timedelta(seconds=random.randint(1, six_months_sec))
-                    result = publish_recipe(_build_recipe_dict(recipe), _build_site_config(site), post_date_gmt=backdate)
+                    # Use the scheduled time as the WP post date — no backdating.
+                    # If publish_at is in the future WP creates it as "Scheduled";
+                    # if in the past WP publishes it immediately with that date.
+                    result = publish_recipe(_build_recipe_dict(recipe), _build_site_config(site), post_date_gmt=publish_at)
                     if result.get("error_message"):
                         recipe.status = RecipeStatus.failed
                         recipe.error_message = result["error_message"]

@@ -293,31 +293,55 @@ async def get_last_published(
     except Exception:
         pass
 
-    last_date: str | None = None
+    base_params = {"per_page": 1, "orderby": "date", "order": "desc", "_fields": "date_gmt"}
+
+    def _parse_date(posts: list) -> str | None:
+        if posts and isinstance(posts, list) and posts[0].get("date_gmt"):
+            return posts[0]["date_gmt"]
+        return None
+
+    published_date: str | None = None
+    future_date: str | None = None
+
     try:
         async with httpx.AsyncClient(headers=_WP_HEADERS, timeout=_WP_TIMEOUT, follow_redirects=True) as client:
-            # Authenticated request: fetch both published and scheduled (future) posts
-            params = {"per_page": 1, "orderby": "date", "order": "desc", "_fields": "date", "status": "publish,future"}
-            kwargs: dict = {"params": params}
+            # Call 1: latest published post (auth optional — public sites don't need it)
+            try:
+                pub_kwargs: dict = {"params": {**base_params, "status": "publish"}}
+                if auth:
+                    pub_kwargs["auth"] = auth
+                r = await client.get(f"{base}/wp-json/wp/v2/posts", **pub_kwargs)
+                if r.status_code == 200:
+                    published_date = _parse_date(r.json())
+                elif auth:
+                    # Try without auth as fallback
+                    r2 = await client.get(f"{base}/wp-json/wp/v2/posts", params={**base_params, "status": "publish"})
+                    if r2.status_code == 200:
+                        published_date = _parse_date(r2.json())
+            except Exception:
+                pass
+
+            # Call 2: latest scheduled (future) post — requires auth
             if auth:
-                kwargs["auth"] = auth
-            resp = await client.get(f"{base}/wp-json/wp/v2/posts", **kwargs)
-            if resp.status_code == 200:
-                posts = resp.json()
-                if posts and isinstance(posts, list) and posts[0].get("date"):
-                    last_date = posts[0]["date"]
-            elif auth and resp.status_code in (401, 403):
-                # Auth rejected — fall back to unauthenticated published-only
-                resp2 = await client.get(
-                    f"{base}/wp-json/wp/v2/posts",
-                    params={"per_page": 1, "orderby": "date", "order": "desc", "_fields": "date"},
-                )
-                if resp2.status_code == 200:
-                    posts = resp2.json()
-                    if posts and isinstance(posts, list) and posts[0].get("date"):
-                        last_date = posts[0]["date"]
+                try:
+                    r = await client.get(
+                        f"{base}/wp-json/wp/v2/posts",
+                        params={**base_params, "status": "future"},
+                        auth=auth,
+                    )
+                    if r.status_code == 200:
+                        future_date = _parse_date(r.json())
+                except Exception:
+                    pass
     except Exception:
         pass
+
+    # Return the later of published vs scheduled
+    last_date: str | None = None
+    if published_date and future_date:
+        last_date = future_date if future_date > published_date else published_date
+    else:
+        last_date = published_date or future_date
 
     return {"last_published_at": last_date}
 

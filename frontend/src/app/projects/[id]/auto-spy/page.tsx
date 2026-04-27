@@ -685,7 +685,7 @@ export default function AutoSpyPage() {
         });
       }).finally(() => setSchedulesLoading(false));
     }
-  }, [sheet]);
+  }, [sheet, publishingSites, id]);
 
   const handleCellContextMenu = (e: React.MouseEvent<HTMLTableCellElement>, row: number, col: number) => {
     e.preventDefault(); if (editKey !== null) commitEdit(); gridRef.current?.focus();
@@ -1051,7 +1051,7 @@ export default function AutoSpyPage() {
                 <th
                   key={c}
                   style={{ width: sheet.colWidths[c] ?? DEFAULT_COL_WIDTH, minWidth: MIN_COL_WIDTH }}
-                  className={`relative sticky top-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] font-semibold cursor-pointer ${isSelectedCol(c) ? "bg-teal-900/30 text-teal-300" : "text-gray-400"}`}
+                  className={`sticky top-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] font-semibold cursor-pointer ${isSelectedCol(c) ? "bg-teal-900/30 text-teal-300" : "text-gray-400"}`}
                   onMouseDown={(e) => handleColHeaderMouseDown(e, c)}
                   onMouseEnter={(e) => handleColHeaderMouseEnter(e, c)}
                   onContextMenu={(e) => handleColHeaderContextMenu(e, c)}
