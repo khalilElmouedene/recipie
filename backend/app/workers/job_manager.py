@@ -1195,6 +1195,19 @@ class JobManager:
                     })
                 recipes_data = [{"id": item["id"]} for g in multi_site_groups for item in g["items"]]
 
+            elif db_job.job_type == JobType.auto_spy_generate:
+                from ..services.auto_spy_job_runner import resume_auto_spy_generate_job
+                asyncio.create_task(
+                    resume_auto_spy_generate_job(
+                        db_job=db_job,
+                        credentials=credentials,
+                        prompts=prompts,
+                        running_jobs=self._running,
+                        main_loop=main_loop,
+                    )
+                )
+                return True
+
             elif db_job.job_type == JobType.publisher:
                 publish_meta = await self._load_publish_meta(job_id)
                 # Use recipe IDs stored in metadata (new jobs); fall back to created_by_job_id for old jobs

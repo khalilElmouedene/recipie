@@ -263,6 +263,25 @@ async def _db_update_recipe(recipe_id: str, fields: dict) -> None:
         await session.commit()
 
 
+async def _db_set_job_status(
+    job_id_str: str,
+    status: JobStatus,
+    total_rows: int | None = None,
+    error: str | None = None,
+) -> None:
+    async with SessionLocal() as session:
+        row = await session.execute(select(JobModel).where(JobModel.id == uuid.UUID(job_id_str)))
+        job = row.scalar_one_or_none()
+        if job:
+            job.status = status
+            if total_rows is not None:
+                job.total_rows = total_rows
+            if error is not None:
+                job.error = error
+                job.finished_at = datetime.now(timezone.utc)
+            await session.commit()
+
+
 async def _db_persist_progress(job_id_str: str, current: int, total: int) -> None:
     async with SessionLocal() as session:
         row = await session.execute(select(JobModel).where(JobModel.id == uuid.UUID(job_id_str)))
@@ -411,22 +430,16 @@ async def start_auto_spy_generate_job(
                     })
 
             if not multi_site_groups:
-                db_job.status = JobStatus.failed
-                db_job.error = "No valid shared recipes to process"
-                db_job.finished_at = datetime.now(timezone.utc)
                 await db.commit()
+                await _db_set_job_status(job_id_str, JobStatus.failed, error="No valid shared recipes to process")
                 return
 
             recipes_data = [{"id": str(rid)} for rid in created_recipe_ids]
-            db_job.status = JobStatus.running
-            db_job.total_rows = len(recipes_data)
             await db.commit()
+            await _db_set_job_status(job_id_str, JobStatus.running, total_rows=len(recipes_data))
         except Exception as exc:
             await db.rollback()
-            db_job.status = JobStatus.failed
-            db_job.error = f"Failed to create recipes: {exc}"
-            db_job.finished_at = datetime.now(timezone.utc)
-            await db.commit()
+            await _db_set_job_status(job_id_str, JobStatus.failed, error=f"Failed to create recipes: {exc}")
             return
 
     # ── Launch background thread ───────────────────────────────────────────────
@@ -531,6 +544,156 @@ async def start_auto_spy_generate_job(
 
         except Exception as exc:
             rj.log(f"Auto Spy Generate failed: {exc}")
+            _revert()
+            _finalize(JobStatus.failed, error=str(exc))
+
+    thread = threading.Thread(target=_run, daemon=True)
+    rj._thread = thread
+    thread.start()
+
+
+# ── Resume entry point ─────────────────────────────────────────────────────────
+
+async def resume_auto_spy_generate_job(
+    db_job: JobModel,
+    credentials: dict,
+    prompts: dict[str, str],
+    running_jobs: dict,
+    main_loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Re-process pending recipes from a stopped/failed auto_spy_generate job."""
+    from ..services.article_generator import generate_for_recipe
+
+    job_id_str = str(db_job.id)
+
+    # Load pending recipes with their sites
+    async with SessionLocal() as db:
+        pending_rows = await db.execute(
+            select(Recipe, Site)
+            .join(Site, Recipe.site_id == Site.id)
+            .where(
+                Recipe.created_by_job_id == db_job.id,
+                Recipe.status == RecipeStatus.pending,
+            )
+            .order_by(Recipe.recipe_text, Site.created_at)
+        )
+        pending = pending_rows.all()
+
+        if not pending:
+            await _db_set_job_status(job_id_str, JobStatus.completed)
+            return
+
+        recipe_ids = [r.id for r, _ in pending]
+        await db.execute(
+            update(Recipe)
+            .where(Recipe.id.in_(recipe_ids))
+            .values(status=RecipeStatus.generating)
+        )
+        await db.commit()
+
+        groups: dict[tuple, list[dict]] = {}
+        for recipe, site in pending:
+            key = (recipe.recipe_text, recipe.image_url)
+            if key not in groups:
+                groups[key] = []
+            groups[key].append({
+                "id": str(recipe.id),
+                "site_domain": site.domain,
+                "pinterest_url": site.pinterest_url or "",
+                "pin_template_id": site.pin_template_id,
+                "recipe_text": recipe.recipe_text,
+                "image_url": recipe.image_url,
+            })
+
+        multi_site_groups = [
+            {"idx": i + 1, "items": items, "recipe_text": rt, "image_url": iu}
+            for i, ((rt, iu), items) in enumerate(groups.items())
+        ]
+        recipes_data = [{"id": str(r.id)} for r, _ in pending]
+
+    await _db_set_job_status(job_id_str, JobStatus.running, total_rows=len(recipes_data))
+
+    rj = RunningJob(db_job.id)
+    running_jobs[job_id_str] = rj
+
+    def _run() -> None:
+        total = len(recipes_data)
+        done = 0
+
+        def _on_recipe_done(recipe_id: str, fields: dict) -> None:
+            asyncio.run_coroutine_threadsafe(_db_update_recipe(recipe_id, fields), main_loop).result()
+
+        def _on_progress(current: int, total_: int) -> None:
+            rj.set_progress(current, total_)
+            asyncio.run_coroutine_threadsafe(_db_persist_progress(job_id_str, current, total_), main_loop).result()
+
+        def _finalize(final_status: JobStatus, error: str | None = None) -> None:
+            asyncio.run_coroutine_threadsafe(_db_persist_final(job_id_str, final_status, rj._logs, error), main_loop).result()
+            running_jobs.pop(job_id_str, None)
+
+        def _revert() -> None:
+            asyncio.run_coroutine_threadsafe(_db_revert_generating([r["id"] for r in recipes_data]), main_loop).result()
+
+        rj.log(f"Resuming Auto Spy Generate — {total} recipe(s) remaining")
+
+        try:
+            for group in multi_site_groups:
+                if rj.should_stop():
+                    break
+                items = group["items"]
+                rj.log(f"Input recipe {group['idx']}: {group['recipe_text'][:60]}")
+
+                for item in items:
+                    if rj.should_stop():
+                        break
+                    rj.log("=" * 50)
+                    rj.log(f"RECIPE {done + 1}/{total}: {item['recipe_text'][:60]}")
+                    rj.log(f"  Site: {item['site_domain']}")
+                    rj.log("=" * 50)
+
+                    generated = generate_for_recipe(
+                        recipe_id=item["id"],
+                        recipe_text=item["recipe_text"],
+                        image_url=item["image_url"],
+                        site_domain=item["site_domain"],
+                        credentials=credentials,
+                        prompts=prompts,
+                        log=rj.log,
+                        should_stop=rj.should_stop,
+                        pinterest_url=item.get("pinterest_url", ""),
+                    )
+
+                    if rj.should_stop():
+                        break
+
+                    if not generated.get("error_message"):
+                        pin_title = generated.get("pin_title") or item["recipe_text"].splitlines()[0].strip()
+                        pin_img = _render_pin_for_recipe(
+                            image_url=item["image_url"],
+                            title=pin_title,
+                            pin_template_id=item.get("pin_template_id"),
+                            site_domain=item["site_domain"],
+                            log=rj.log,
+                        )
+                        if pin_img:
+                            generated["pin_design_image"] = pin_img
+                            generated["pin_template_id"] = item.get("pin_template_id")
+                            rj.log("Pin image rendered successfully")
+
+                    _on_recipe_done(item["id"], generated)
+                    done += 1
+                    _on_progress(done, total)
+
+            if rj.should_stop():
+                _revert()
+                _finalize(JobStatus.stopped)
+                return
+
+            rj.log("Auto Spy Generate resumed and completed successfully")
+            _finalize(JobStatus.completed)
+
+        except Exception as exc:
+            rj.log(f"Resume failed: {exc}")
             _revert()
             _finalize(JobStatus.failed, error=str(exc))
 

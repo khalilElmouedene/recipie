@@ -219,6 +219,15 @@ export default function JobDetailPage() {
     return () => clearInterval(t);
   }, [job?.status, id]);
 
+  // Poll every 2 s while pending to detect transition to running
+  useEffect(() => {
+    if (!job || job.status !== "pending") return;
+    const t = setInterval(() => {
+      api.getJob(id).then(setJob).catch(() => {});
+    }, 2000);
+    return () => clearInterval(t);
+  }, [job?.status, id]);
+
   const recipeCards = useMemo(() => {
     const cards = parseRecipeCards(logs);
     if (job && job.status === "stopped") {

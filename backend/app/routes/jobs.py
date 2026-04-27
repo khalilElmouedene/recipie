@@ -304,7 +304,7 @@ async def resume_job_endpoint(
         raise HTTPException(status_code=404, detail="Job not found")
     await check_project_access(job.project_id, user, db)
 
-    RESUMABLE_TYPES = {JobType.articles_all_sites, JobType.articles, JobType.publisher}
+    RESUMABLE_TYPES = {JobType.articles_all_sites, JobType.articles, JobType.publisher, JobType.auto_spy_generate}
     if job.job_type not in RESUMABLE_TYPES:
         raise HTTPException(status_code=400, detail="This job type cannot be resumed.")
 
