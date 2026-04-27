@@ -9,7 +9,7 @@ from slugify import slugify
 
 from .wordpress import (
     _parse_and_extract_title, inject_images_into_html, upload_pin_embed_images,
-    upload_image, add_recipe, validate_recipe_json, set_rank_math_meta,
+    upload_image, upload_base64_image, add_recipe, validate_recipe_json, set_rank_math_meta,
 )
 from wordpress_xmlrpc import Client as WPClient, WordPressPost
 from wordpress_xmlrpc.methods.posts import NewPost, GetPost, EditPost
@@ -96,8 +96,13 @@ def publish_recipe(
         category = recipe.get("category", "")
         image_url = recipe.get("image_url", "")
         generated_images_str = recipe.get("generated_images", "")
+        pin_design_image = recipe.get("pin_design_image", "")
         seo_title = (recipe.get("seo_title") or "").strip()
         wp_tags_raw = (recipe.get("wp_tags") or "").strip()
+
+        # Auto spy recipes carry a rendered pin image — use original image_url as featured image
+        # and place the pin image after the recipe card, not at the article top.
+        has_pin_image = bool(pin_design_image and isinstance(pin_design_image, str) and pin_design_image.startswith("data:image/"))
 
         # Parse HTML and strip title — keep soup object for proper image injection
         title_from_html, soup = _parse_and_extract_title(article_html)
@@ -105,9 +110,9 @@ def publish_recipe(
         wp_title = seo_title if seo_title else _wordpress_display_title(recipe, title_from_html)
         slug = slugify(focus_kw or wp_title)
 
-        # Resolve image source — use first generated image if available, fall back to image_url
+        # Resolve image source — for auto spy recipes use image_url directly (skip generated_images)
         img1_source = image_url
-        if generated_images_str:
+        if not has_pin_image and generated_images_str:
             try:
                 imgs = json.loads(generated_images_str)
                 if imgs and isinstance(imgs, list):
@@ -122,8 +127,6 @@ def publish_recipe(
             _log("Generated image failed, retrying with original image_url...")
             img1_id, img1_url = upload_image(image_url, wp, wp_title, focus_kw, log=_log)
 
-        img2_url = None
-
         # Normalize HTTP → HTTPS (XML-RPC sometimes returns http:// on https sites)
         def _to_https(url):
             if url and domain.startswith("https://") and url.startswith("http://"):
@@ -135,13 +138,15 @@ def publish_recipe(
         # Upload any pin embed base64 images to WordPress (replaces data: URL with real WP media URL)
         upload_pin_embed_images(soup, wp, wp_title, log=_log)
 
-        # Inject food photo at the top only when site is configured to show it.
-        # "featured_only" keeps the article body clean (pin image may already be embedded).
-        image_mode = site_config.get("image_mode", "featured_and_top")
-        if image_mode == "featured_and_top":
-            content = inject_images_into_html(soup, img1_url)
+        # Auto spy recipes: skip injecting the food photo at the top (pin image will appear after recipe card)
+        if has_pin_image:
+            content = str(soup.find("body").decode_contents() if soup.find("body") else soup)
         else:
-            content = str(soup)
+            image_mode = site_config.get("image_mode", "featured_and_top")
+            if image_mode == "featured_and_top":
+                content = inject_images_into_html(soup, img1_url)
+            else:
+                content = str(soup)
 
         # Recipe card shortcode
         wp_recipe_id = None
@@ -152,6 +157,12 @@ def publish_recipe(
 
         if wp_recipe_id:
             content += f"\n[wprm-recipe id={wp_recipe_id}]"
+
+        # Auto spy recipes: upload pin image and insert it after the recipe card
+        if has_pin_image:
+            pin_wp_url = upload_base64_image(pin_design_image, wp, wp_title, log=_log)
+            if pin_wp_url:
+                content += f'\n<img src="{pin_wp_url}" alt="{wp_title}" loading="lazy" decoding="async" />'
 
         post = WordPressPost()
         post.title = wp_title

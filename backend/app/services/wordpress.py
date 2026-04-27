@@ -46,6 +46,27 @@ def _parse_and_extract_title(html: str):
     return title, soup
 
 
+def upload_base64_image(data_uri: str, wp: WPClient, title: str, log: Callable[[str], None] | None = None) -> str | None:
+    """Upload a base64 data-URI image to the WordPress media library and return its URL."""
+    _log = log or print
+    try:
+        if "," not in data_uri:
+            return None
+        _header, b64data = data_uri.split(",", 1)
+        img_bytes = base64.b64decode(b64data)
+        webp_data = convert_to_webp(img_bytes) or img_bytes
+        filename = f"{slugify(title or 'pin')}-pin.webp"
+        data = {"name": filename, "type": "image/webp", "bits": webp_data, "overwrite": True}
+        res = wp.call(UploadFile(data))
+        wp_url = res.get("url", "")
+        if wp_url:
+            _log(f"Pin image uploaded to WordPress: {wp_url[:80]}")
+            return wp_url
+    except Exception as e:
+        _log(f"Pin image upload failed: {e}")
+    return None
+
+
 def upload_pin_embed_images(soup, wp: WPClient, title: str, log: Callable[[str], None] | None = None) -> None:
     """Find any pin-embed <figure> in the soup, upload their base64 images to WordPress,
     and replace data: src with the real WordPress media URL in-place."""

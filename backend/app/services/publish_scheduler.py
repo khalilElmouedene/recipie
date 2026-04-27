@@ -24,6 +24,7 @@ def _build_recipe_dict(recipe: Recipe) -> dict:
         "category": recipe.category,
         "image_url": recipe.image_url,
         "generated_images": recipe.generated_images,
+        "pin_design_image": recipe.pin_design_image,
     }
 
 
