@@ -546,7 +546,7 @@ export const api = {
 
   startAutoSpyGenerate: (
     projectId: string,
-    data: { shared_recipes: SharedRecipeInput[]; publish_start_at: string; interval_minutes: number }
+    data: { shared_recipes: SharedRecipeInput[]; site_schedules: { site_id: string; publish_start_at: string; interval_minutes: number }[] }
   ) =>
     request<JobOut>(`/api/projects/${projectId}/auto-spy/generate`, {
       method: "POST",

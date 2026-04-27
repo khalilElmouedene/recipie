@@ -9,7 +9,7 @@ import {
   Palette, PaintBucket, Loader2, Check, Copy, Trash2, Pencil, Send,
   Globe, RefreshCw, X,
 } from "lucide-react";
-import { api, AutoSpySourceOut, SharedRecipeInput } from "@/lib/api";
+import { api, AutoSpySourceOut, SharedRecipeInput, SiteOut } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
 import { useJobActivity } from "@/contexts/JobActivityContext";
 
@@ -260,12 +260,12 @@ export default function AutoSpyPage() {
   const [selectionCtxMenu, setSelectionCtxMenu] = useState<SelectionCtxMenu | null>(null);
   const [startingGeneration, setStartingGeneration] = useState(false);
   const [deleteAfterGeneration, setDeleteAfterGeneration] = useState(false);
-  const [publishStartAt, setPublishStartAt] = useState("");
-  const [intervalMinutes, setIntervalMinutes] = useState(240);
-  const [fetchingLastPublished, setFetchingLastPublished] = useState(false);
+  const [siteSchedules, setSiteSchedules] = useState<Record<string, { publishStartAt: string; intervalMinutes: number }>>({});
+  const [schedulesLoading, setSchedulesLoading] = useState(false);
 
   // Auto Spy source state
   const [sources, setSources] = useState<AutoSpySourceOut[]>([]);
+  const [publishingSites, setPublishingSites] = useState<SiteOut[]>([]);
   const [urlInput, setUrlInput] = useState("");
   const [addingSource, setAddingSource] = useState(false);
   const [scanningId, setScanningId] = useState<string | null>(null);
@@ -313,10 +313,12 @@ export default function AutoSpyPage() {
     Promise.all([
       api.getAutoSpySheet(id),
       api.getAutoSpySources(id),
-    ]).then(([sheetRes, sourcesRes]) => {
+      api.getSites(id),
+    ]).then(([sheetRes, sourcesRes, sitesRes]) => {
       if (sheetRes.data) setWorkbook(parseStored(sheetRes.data));
       if (sheetRes.updated_at) setSavedAt(sheetRes.updated_at);
       setSources(sourcesRes);
+      setPublishingSites(sitesRes);
     }).catch(() => {}).finally(() => setLoading(false));
   }, [id]);
 
@@ -644,30 +646,39 @@ export default function AutoSpyPage() {
     setTabCtxMenu(null);
     setSelectionCtxMenu({ x, y, preview: buildSelectionGenerationPreview(sheet, range) });
 
-    // Pre-fill publish date from the active tab's WordPress source
-    const activeTabId = workbook.activeId;
-    const activeSource = sources.find((s) => s.sheet_tab_id === activeTabId);
-    if (activeSource) {
-      setFetchingLastPublished(true);
-      api.getAutoSpyLastPublished(id, activeSource.url)
-        .then((res) => {
-          if (res.last_published_at) {
-            // Convert to local datetime-local format (YYYY-MM-DDTHH:mm)
-            const d = new Date(res.last_published_at);
-            const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-              .toISOString()
-              .slice(0, 16);
-            setPublishStartAt(local);
-          }
-        })
-        .catch(() => {})
-        .finally(() => setFetchingLastPublished(false));
-    } else if (!publishStartAt) {
-      // Default to now
-      const now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+    // Pre-fill publish dates from each publishing site's WordPress last post
+    if (publishingSites.length > 0) {
+      setSchedulesLoading(true);
+      const nowLocal = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
         .toISOString()
         .slice(0, 16);
-      setPublishStartAt(now);
+      Promise.allSettled(
+        publishingSites.map((site) =>
+          api.getAutoSpyLastPublished(id, site.wp_url).then((res) => ({ siteId: site.id, res }))
+        )
+      ).then((results) => {
+        setSiteSchedules((prev) => {
+          const next = { ...prev };
+          for (const result of results) {
+            if (result.status === "fulfilled") {
+              const { siteId, res } = result.value;
+              if (!next[siteId]) {
+                const lastPublished = res.last_published_at
+                  ? new Date(new Date(res.last_published_at).getTime() - new Date().getTimezoneOffset() * 60000)
+                      .toISOString()
+                      .slice(0, 16)
+                  : nowLocal;
+                next[siteId] = { publishStartAt: lastPublished, intervalMinutes: 240 };
+              }
+            }
+          }
+          // Ensure every site has an entry
+          for (const site of publishingSites) {
+            if (!next[site.id]) next[site.id] = { publishStartAt: nowLocal, intervalMinutes: 240 };
+          }
+          return next;
+        });
+      }).finally(() => setSchedulesLoading(false));
     }
   }, [sheet]);
 
@@ -697,16 +708,20 @@ export default function AutoSpyPage() {
 
   const handleGenerateFromSelection = useCallback(async () => {
     if (!selectionCtxMenu?.preview.ok || startingGeneration) return;
-    if (!publishStartAt) { toast.error("Please enter a publish start date."); return; }
+    const missingDate = publishingSites.find((s) => !siteSchedules[s.id]?.publishStartAt);
+    if (missingDate) { toast.error(`Please enter a publish date for ${missingDate.domain}.`); return; }
+    if (publishingSites.length === 0) { toast.error("No publishing sites configured for this project."); return; }
     setStartingGeneration(true);
     const preview = selectionCtxMenu.preview;
     try {
-      // Convert local datetime-local value to UTC ISO string
-      const startDate = new Date(publishStartAt).toISOString();
+      const site_schedules = publishingSites.map((site) => ({
+        site_id: site.id,
+        publish_start_at: new Date(siteSchedules[site.id].publishStartAt).toISOString(),
+        interval_minutes: Math.max(1, siteSchedules[site.id].intervalMinutes),
+      }));
       const job = await api.startAutoSpyGenerate(id, {
         shared_recipes: preview.items,
-        publish_start_at: startDate,
-        interval_minutes: Math.max(1, intervalMinutes),
+        site_schedules,
       });
       trackJob(job, { title: "Auto Spy Generate", sourceLabel: `${preview.items.length} row(s)` });
       if (deleteAfterGeneration) updateActiveData((prev) => deleteSheetRows(prev, preview.rowIndices));
@@ -715,7 +730,7 @@ export default function AutoSpyPage() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to start Auto Spy generation");
     } finally { setStartingGeneration(false); }
-  }, [id, selectionCtxMenu, startingGeneration, deleteAfterGeneration, publishStartAt, intervalMinutes, updateActiveData, toast, trackJob]);
+  }, [id, selectionCtxMenu, startingGeneration, deleteAfterGeneration, siteSchedules, publishingSites, updateActiveData, toast, trackJob]);
 
   const addSheet = () => {
     const existing = workbook.sheets.map((s) => s.name); let n = workbook.sheets.length + 1;
@@ -1209,34 +1224,55 @@ export default function AutoSpyPage() {
                 </div>
               </div>
 
-              <div className="mt-3 rounded-lg border border-teal-800/30 bg-teal-950/20 p-3 space-y-3">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-teal-400">Publish Settings</div>
-                <div>
-                  <label className="block text-[11px] text-gray-400 mb-1">
-                    Publish start date
-                    {fetchingLastPublished && <span className="ml-1 text-gray-500">(fetching from WordPress…)</span>}
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={publishStartAt}
-                    onChange={(e) => setPublishStartAt(e.target.value)}
-                    className="w-full rounded-md border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-white focus:border-teal-500 focus:outline-none"
-                  />
-                  <p className="mt-1 text-[10px] text-gray-500">Pre-filled from the last post on your WordPress site.</p>
+              <div className="mt-3 rounded-lg border border-teal-800/30 bg-teal-950/20 p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-teal-400">Publish Settings</div>
+                  {schedulesLoading && <span className="text-[10px] text-gray-500">Fetching from WordPress…</span>}
                 </div>
-                <div>
-                  <label className="block text-[11px] text-gray-400 mb-1">Interval between posts (minutes)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={intervalMinutes}
-                    onChange={(e) => setIntervalMinutes(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="w-full rounded-md border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-white focus:border-teal-500 focus:outline-none"
-                  />
-                </div>
-                <p className="text-[10px] text-gray-500">
-                  After generation, publishing will start automatically at the specified date and repeat every {intervalMinutes} min.
-                  Pin images will be rendered using the template assigned to each site.
+                {publishingSites.length === 0 ? (
+                  <p className="text-[11px] text-amber-400">No publishing sites configured. Add sites in the project settings.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {/* Column headers */}
+                    <div className="grid grid-cols-[1fr_auto_auto] gap-1.5 items-center">
+                      <span className="text-[10px] text-gray-500">Site</span>
+                      <span className="text-[10px] text-gray-500 text-center w-36">Start date</span>
+                      <span className="text-[10px] text-gray-500 text-center w-14">Interval</span>
+                    </div>
+                    {publishingSites.map((site) => {
+                      const sched = siteSchedules[site.id] ?? { publishStartAt: "", intervalMinutes: 240 };
+                      return (
+                        <div key={site.id} className="grid grid-cols-[1fr_auto_auto] gap-1.5 items-center">
+                          <span className="truncate text-[11px] text-gray-300" title={site.domain}>{site.domain}</span>
+                          <input
+                            type="datetime-local"
+                            value={sched.publishStartAt}
+                            onChange={(e) => setSiteSchedules((prev) => ({
+                              ...prev,
+                              [site.id]: { ...sched, publishStartAt: e.target.value },
+                            }))}
+                            className="w-36 rounded-md border border-gray-700 bg-gray-900 px-1.5 py-1 text-[11px] text-white focus:border-teal-500 focus:outline-none"
+                          />
+                          <div className="flex items-center gap-0.5 w-14">
+                            <input
+                              type="number"
+                              min={1}
+                              value={sched.intervalMinutes}
+                              onChange={(e) => setSiteSchedules((prev) => ({
+                                ...prev,
+                                [site.id]: { ...sched, intervalMinutes: Math.max(1, parseInt(e.target.value) || 1) },
+                              }))}
+                              className="w-10 rounded-md border border-gray-700 bg-gray-900 px-1 py-1 text-[11px] text-white focus:border-teal-500 focus:outline-none"
+                            />
+                            <span className="text-[10px] text-gray-500">m</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-[10px] text-gray-500 pt-1">
+                  Each site publishes independently at its own date and interval. Pin images use the template assigned to each site.
                 </p>
               </div>
 
@@ -1249,7 +1285,7 @@ export default function AutoSpyPage() {
                 <button onClick={() => setSelectionCtxMenu(null)} className="rounded-md border border-gray-700 px-3 py-2 text-xs font-medium text-gray-300 hover:bg-gray-800 transition">Keep Editing</button>
                 <button
                   onClick={() => void handleGenerateFromSelection()}
-                  disabled={startingGeneration || !publishStartAt}
+                  disabled={startingGeneration || publishingSites.length === 0 || publishingSites.some((s) => !siteSchedules[s.id]?.publishStartAt)}
                   className="flex items-center gap-2 rounded-md bg-teal-600 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-500 disabled:opacity-60 transition"
                 >
                   {startingGeneration ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}

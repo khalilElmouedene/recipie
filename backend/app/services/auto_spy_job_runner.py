@@ -36,6 +36,7 @@ from ..db_models import (
     Recipe,
     RecipeStatus,
     Site,
+    SitePublishSchedule,
 )
 
 
@@ -306,33 +307,33 @@ async def _db_revert_generating(recipe_ids: list[str]) -> None:
         await session.commit()
 
 
-async def _db_upsert_schedule(
-    project_id: uuid.UUID,
-    publish_start_at: datetime,
-    interval_minutes: int,
+async def _db_upsert_site_schedules(
+    site_schedules: list[dict],
 ) -> None:
+    """Upsert per-site publish schedules for auto_spy_generate jobs."""
+    now = datetime.now(timezone.utc)
     async with SessionLocal() as session:
-        row = await session.execute(
-            select(ProjectPublishSchedule).where(
-                ProjectPublishSchedule.project_id == project_id
+        for ss in site_schedules:
+            row = await session.execute(
+                select(SitePublishSchedule).where(
+                    SitePublishSchedule.site_id == ss["site_id"]
+                )
             )
-        )
-        schedule = row.scalar_one_or_none()
-        now = datetime.now(timezone.utc)
-        if schedule is None:
-            schedule = ProjectPublishSchedule(
-                project_id=project_id,
-                enabled=True,
-                interval_minutes=max(1, interval_minutes),
-                next_run_at=publish_start_at,
-                updated_at=now,
-            )
-            session.add(schedule)
-        else:
-            schedule.enabled = True
-            schedule.interval_minutes = max(1, interval_minutes)
-            schedule.next_run_at = publish_start_at
-            schedule.updated_at = now
+            schedule = row.scalar_one_or_none()
+            if schedule is None:
+                schedule = SitePublishSchedule(
+                    site_id=ss["site_id"],
+                    enabled=True,
+                    interval_minutes=ss["interval_minutes"],
+                    next_run_at=ss["publish_start_at"],
+                    updated_at=now,
+                )
+                session.add(schedule)
+            else:
+                schedule.enabled = True
+                schedule.interval_minutes = ss["interval_minutes"]
+                schedule.next_run_at = ss["publish_start_at"]
+                schedule.updated_at = now
         await session.commit()
 
 
@@ -341,8 +342,7 @@ async def _db_upsert_schedule(
 async def start_auto_spy_generate_job(
     db_job: JobModel,
     shared_recipes: list[Any],
-    publish_start_at: datetime,
-    interval_minutes: int,
+    site_schedules: list[dict],  # [{site_id, publish_start_at, interval_minutes}, ...]
     credentials: dict,
     prompts: dict[str, str],
     sites: list[Site],
@@ -351,7 +351,7 @@ async def start_auto_spy_generate_job(
 ) -> None:
     """
     Create Recipe rows, launch a background thread that generates articles + pin
-    images, then enable the publish schedule when done.
+    images, then enable per-site publish schedules when done.
 
     `running_jobs` is the shared dict from JobManager so the job is trackable
     (stop/log streaming) without modifying any existing code paths.
@@ -519,12 +519,13 @@ async def start_auto_spy_generate_job(
                 _finalize(JobStatus.stopped)
                 return
 
-            rj.log("All recipes generated. Enabling publish schedule...")
+            rj.log("All recipes generated. Enabling per-site publish schedules...")
             asyncio.run_coroutine_threadsafe(
-                _db_upsert_schedule(db_job.project_id, publish_start_at, interval_minutes),
+                _db_upsert_site_schedules(site_schedules),
                 main_loop,
             ).result()
-            rj.log(f"Publish schedule enabled: every {interval_minutes} min starting {publish_start_at.isoformat()}")
+            for ss in site_schedules:
+                rj.log(f"Site schedule: site={ss['site_id']} every {ss['interval_minutes']} min starting {ss['publish_start_at'].isoformat()}")
             rj.log("Auto Spy Generate completed successfully")
             _finalize(JobStatus.completed)
 

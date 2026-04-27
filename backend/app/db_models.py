@@ -256,6 +256,7 @@ class Site(Base):
 
     project: Mapped[Project] = relationship(back_populates="sites")
     recipes: Mapped[list[Recipe]] = relationship(back_populates="site", cascade="all, delete-orphan")
+    publish_schedule: Mapped["SitePublishSchedule | None"] = relationship(back_populates="site", cascade="all, delete-orphan")
 
 
 class Recipe(Base):
@@ -345,6 +346,23 @@ class ProjectPublishSchedule(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     project: Mapped[Project] = relationship(back_populates="publish_schedule")
+
+
+class SitePublishSchedule(Base):
+    __tablename__ = "site_publish_schedules"
+    __table_args__ = (UniqueConstraint("site_id", name="uq_site_publish_schedule"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False)
+    interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=240)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+    site: Mapped["Site"] = relationship(back_populates="publish_schedule")
 
 
 class PinDesignerTemplate(Base):

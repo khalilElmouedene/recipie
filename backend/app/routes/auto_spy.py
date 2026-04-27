@@ -300,10 +300,15 @@ async def get_last_published(
 
 # ── Auto-spy generate job ──────────────────────────────────────────────────────
 
+class SiteScheduleInput(BaseModel):
+    site_id: str
+    publish_start_at: str   # ISO-8601 datetime
+    interval_minutes: int = 240
+
+
 class AutoSpyGeneratePayload(BaseModel):
     shared_recipes: list[SharedRecipeInput]
-    publish_start_at: str       # ISO-8601 datetime
-    interval_minutes: int = 240
+    site_schedules: list[SiteScheduleInput]
 
 
 from ..models import JobOut  # noqa: E402 — avoid circular at module level
@@ -320,21 +325,35 @@ async def start_auto_spy_generate(
 
     if not body.shared_recipes:
         raise HTTPException(status_code=400, detail="shared_recipes is required")
+    if not body.site_schedules:
+        raise HTTPException(status_code=400, detail="site_schedules is required")
 
-    try:
-        publish_start_at = datetime.fromisoformat(body.publish_start_at.replace("Z", "+00:00"))
-        if publish_start_at.tzinfo is None:
-            publish_start_at = publish_start_at.replace(tzinfo=timezone.utc)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid publish_start_at datetime")
+    # Parse and validate per-site schedules
+    parsed_schedules: list[dict] = []
+    for ss in body.site_schedules:
+        try:
+            dt = datetime.fromisoformat(ss.publish_start_at.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid publish_start_at for site {ss.site_id}")
+        parsed_schedules.append({
+            "site_id": uuid.UUID(ss.site_id),
+            "publish_start_at": dt,
+            "interval_minutes": max(1, ss.interval_minutes),
+        })
 
-    # Load sites
+    # Load sites — only include sites that have a schedule entry
+    scheduled_site_ids = {ps["site_id"] for ps in parsed_schedules}
     site_rows = await db.execute(
-        select(Site).where(Site.project_id == project_id).order_by(Site.created_at.asc())
+        select(Site).where(
+            Site.project_id == project_id,
+            Site.id.in_(scheduled_site_ids),
+        ).order_by(Site.created_at.asc())
     )
     sites = site_rows.scalars().all()
     if not sites:
-        raise HTTPException(status_code=400, detail="No sites configured for this project")
+        raise HTTPException(status_code=400, detail="No matching sites found for the provided schedules")
 
     # Load credentials and prompts (reuse the loader from job_manager)
     from ..services.credentials_loader import load_credentials_for_job
@@ -383,8 +402,7 @@ async def start_auto_spy_generate(
         start_auto_spy_generate_job(
             db_job=db_job,
             shared_recipes=body.shared_recipes,
-            publish_start_at=publish_start_at,
-            interval_minutes=body.interval_minutes,
+            site_schedules=parsed_schedules,
             credentials=credentials,
             prompts=prompts,
             sites=list(sites),
