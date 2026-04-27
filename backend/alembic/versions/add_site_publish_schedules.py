@@ -16,22 +16,27 @@ depends_on = None
 
 
 def upgrade():
-    op.create_table(
-        "site_publish_schedules",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("site_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("interval_minutes", sa.Integer(), nullable=False, server_default="240"),
-        sa.Column("next_run_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("last_run_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("last_error", sa.Text(), nullable=True),
-        sa.Column("enabled", sa.Boolean(), nullable=False, server_default="true"),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["site_id"], ["sites.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("site_id", name="uq_site_publish_schedule"),
-    )
-    op.create_index("ix_site_publish_schedules_site_id", "site_publish_schedules", ["site_id"])
+    conn = op.get_bind()
+    exists = conn.execute(sa.text(
+        "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'site_publish_schedules')"
+    )).scalar()
+    if not exists:
+        op.create_table(
+            "site_publish_schedules",
+            sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+            sa.Column("site_id", postgresql.UUID(as_uuid=True), nullable=False),
+            sa.Column("interval_minutes", sa.Integer(), nullable=False, server_default="240"),
+            sa.Column("next_run_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("last_run_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("last_error", sa.Text(), nullable=True),
+            sa.Column("enabled", sa.Boolean(), nullable=False, server_default="true"),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.ForeignKeyConstraint(["site_id"], ["sites.id"], ondelete="CASCADE"),
+            sa.PrimaryKeyConstraint("id"),
+            sa.UniqueConstraint("site_id", name="uq_site_publish_schedule"),
+        )
+        op.create_index("ix_site_publish_schedules_site_id", "site_publish_schedules", ["site_id"])
 
 
 def downgrade():
