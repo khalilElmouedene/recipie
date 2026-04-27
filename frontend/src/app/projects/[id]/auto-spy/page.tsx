@@ -654,22 +654,27 @@ export default function AutoSpyPage() {
         .slice(0, 16);
       Promise.allSettled(
         publishingSites.map((site) =>
-          api.getAutoSpyLastPublished(id, site.wp_url).then((res) => ({ siteId: site.id, res }))
+          api.getAutoSpyLastPublished(id, site.id).then((res) => ({ siteId: site.id, res }))
         )
       ).then((results) => {
         setSiteSchedules((prev) => {
           const next = { ...prev };
+          const defaultInterval = 240;
           for (const result of results) {
             if (result.status === "fulfilled") {
               const { siteId, res } = result.value;
-              if (!next[siteId]) {
-                const lastPublished = res.last_published_at
-                  ? new Date(new Date(res.last_published_at).getTime() - new Date().getTimezoneOffset() * 60000)
-                      .toISOString()
-                      .slice(0, 16)
-                  : nowLocal;
-                next[siteId] = { publishStartAt: lastPublished, intervalMinutes: 240 };
-              }
+              const interval = next[siteId]?.intervalMinutes ?? defaultInterval;
+              // Pre-fill to last_date + interval so first new post publishes after the last existing one
+              const startAt = res.last_published_at
+                ? new Date(
+                    new Date(res.last_published_at).getTime() +
+                      interval * 60 * 1000 -
+                      new Date().getTimezoneOffset() * 60000
+                  )
+                    .toISOString()
+                    .slice(0, 16)
+                : nowLocal;
+              next[siteId] = { publishStartAt: startAt, intervalMinutes: interval };
             }
           }
           // Ensure every site has an entry

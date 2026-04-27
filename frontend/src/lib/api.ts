@@ -539,9 +539,9 @@ export const api = {
   triggerAutoSpyScan: (projectId: string, sourceId: string) =>
     request<{ status: string }>(`/api/projects/${projectId}/auto-spy/sources/${sourceId}/scan`, { method: "POST" }),
 
-  getAutoSpyLastPublished: (projectId: string, url: string) =>
+  getAutoSpyLastPublished: (projectId: string, siteId: string) =>
     request<{ last_published_at: string | null }>(
-      `/api/projects/${projectId}/auto-spy/last-published?url=${encodeURIComponent(url)}`
+      `/api/projects/${projectId}/auto-spy/last-published?site_id=${encodeURIComponent(siteId)}`
     ),
 
   startAutoSpyGenerate: (

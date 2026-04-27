@@ -271,27 +271,51 @@ _WP_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 @router.get("/api/projects/{project_id}/auto-spy/last-published")
 async def get_last_published(
     project_id: uuid.UUID,
-    url: str = Query(..., description="WordPress site URL"),
+    site_id: uuid.UUID = Query(..., description="Site ID"),
     current_user: Annotated[User, Depends(get_current_user)] = None,
     db: Annotated[AsyncSession, Depends(get_db)] = None,
 ):
     await check_project_access(project_id, current_user, db)
 
-    base = url.strip().rstrip("/")
+    result = await db.execute(select(Site).where(Site.id == site_id, Site.project_id == project_id))
+    site = result.scalar_one_or_none()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    base = site.wp_url.strip().rstrip("/")
     if not base.startswith(("http://", "https://")):
         base = "https://" + base
+
+    auth: tuple[str, str] | None = None
+    try:
+        from ..site_credentials import get_random_wp_credentials
+        auth = get_random_wp_credentials(site)
+    except Exception:
+        pass
 
     last_date: str | None = None
     try:
         async with httpx.AsyncClient(headers=_WP_HEADERS, timeout=_WP_TIMEOUT, follow_redirects=True) as client:
-            resp = await client.get(
-                f"{base}/wp-json/wp/v2/posts",
-                params={"per_page": 1, "orderby": "date", "order": "desc", "_fields": "date"},
-            )
+            # Authenticated request: fetch both published and scheduled (future) posts
+            params = {"per_page": 1, "orderby": "date", "order": "desc", "_fields": "date", "status": "publish,future"}
+            kwargs: dict = {"params": params}
+            if auth:
+                kwargs["auth"] = auth
+            resp = await client.get(f"{base}/wp-json/wp/v2/posts", **kwargs)
             if resp.status_code == 200:
                 posts = resp.json()
                 if posts and isinstance(posts, list) and posts[0].get("date"):
                     last_date = posts[0]["date"]
+            elif auth and resp.status_code in (401, 403):
+                # Auth rejected — fall back to unauthenticated published-only
+                resp2 = await client.get(
+                    f"{base}/wp-json/wp/v2/posts",
+                    params={"per_page": 1, "orderby": "date", "order": "desc", "_fields": "date"},
+                )
+                if resp2.status_code == 200:
+                    posts = resp2.json()
+                    if posts and isinstance(posts, list) and posts[0].get("date"):
+                        last_date = posts[0]["date"]
     except Exception:
         pass
 
