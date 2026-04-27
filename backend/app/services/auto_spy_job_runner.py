@@ -270,8 +270,26 @@ def _pil_render_elements(
             piece = el_img.crop((ox, oy, ox + crop_w, oy + crop_h))
             canvas.alpha_composite(piece, (max(0, px), max(0, py)))
 
+        def _resolve_color(raw, fallback: str = "#888888") -> str:
+            """Extract a usable hex/rgb string from a fill value that may be a gradient dict."""
+            if isinstance(raw, dict):
+                stops = raw.get("colorStops") or []
+                if stops:
+                    return str(stops[0].get("color") or fallback)
+                return fallback
+            return str(raw) if raw else fallback
+
         for elem in elements:
+            # Skip designer-only placeholder elements — not part of the visual output
+            if elem.get("__isFill") or elem.get("__isLabel"):
+                continue
+
+            # Resolve pin type from our custom tag first, then Fabric.js native type
             pin_type = str(elem.get("__pinType") or elem.get("type") or "")
+            # Map Fabric.js native text types to our "text" type
+            if pin_type in ("i-text", "textbox"):
+                pin_type = "text"
+
             opacity = max(0.0, min(1.0, float(elem.get("opacity", 1.0))))
             left = int(float(elem.get("left", 0)))
             top_y = int(float(elem.get("top", 0)))
@@ -283,15 +301,24 @@ def _pil_render_elements(
             cx = left + w // 2
             cy = top_y + h // 2
 
+            log(f"  elem type={pin_type} left={left} top={top_y} w={w} h={h}")
+
             if pin_type in ("band", "rect"):
-                fill = _parse_hex_color(str(elem.get("fill") or "#888888"), opacity)
+                fill_raw = _resolve_color(elem.get("fill"), "#888888")
+                fill = _parse_hex_color(fill_raw, opacity)
                 _place(Image.new("RGBA", (w, h), fill), cx, cy, angle)
 
             elif pin_type == "frame":
                 el = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-                stroke = _parse_hex_color(str(elem.get("stroke") or "#ffffff"), opacity)
+                stroke_raw = _resolve_color(elem.get("stroke"), "#ffffff")
+                stroke = _parse_hex_color(stroke_raw, opacity)
                 sw = max(1, int(float(elem.get("strokeWidth", 2))))
-                ImageDraw.Draw(el).rectangle([0, 0, w - 1, h - 1], outline=stroke, width=sw)
+                rx = int(float(elem.get("rx", 0)))
+                d = ImageDraw.Draw(el)
+                if rx > 0:
+                    d.rounded_rectangle([0, 0, w - 1, h - 1], radius=rx, outline=stroke, width=sw)
+                else:
+                    d.rectangle([0, 0, w - 1, h - 1], outline=stroke, width=sw)
                 _place(el, cx, cy, angle)
 
             elif pin_type == "image":
@@ -315,7 +342,8 @@ def _pil_render_elements(
                 display = raw_text if raw_text and not raw_text.startswith("{{") else title
                 if not display:
                     continue
-                fill_color = _parse_hex_color(str(elem.get("fill") or "#ffffff"), opacity)
+                fill_raw = _resolve_color(elem.get("fill"), "#ffffff")
+                fill_color = _parse_hex_color(fill_raw, opacity)
                 font = _elem_font(elem, log)
                 align = str(elem.get("textAlign", "left")).lower()
                 if align not in ("left", "center", "right"):
