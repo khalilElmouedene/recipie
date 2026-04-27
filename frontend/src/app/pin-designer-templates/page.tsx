@@ -114,7 +114,7 @@ export default function PinDesignerTemplatesPage() {
   const [sitesForProject, setSitesForProject] = useState<SiteOut[]>([]);
   const [loadingSites, setLoadingSites] = useState(false);
   const [siteAssignSaving, setSiteAssignSaving] = useState(false);
-  const [siteAssignTargetId, setSiteAssignTargetId] = useState<string | null>(null);
+  const [siteAssignTargetIds, setSiteAssignTargetIds] = useState<string[]>([]);
 
   useEffect(() => {
     setTemplatesLoading(true);
@@ -166,12 +166,12 @@ export default function PinDesignerTemplatesPage() {
     setSiteAssignTemplate(tmpl);
     setSiteAssignProjectId("");
     setSitesForProject([]);
-    setSiteAssignTargetId(null);
+    setSiteAssignTargetIds([]);
   };
 
   const handleSiteAssignProjectChange = async (projectId: string) => {
     setSiteAssignProjectId(projectId);
-    setSiteAssignTargetId(null);
+    setSiteAssignTargetIds([]);
     if (!projectId) { setSitesForProject([]); return; }
     setLoadingSites(true);
     try {
@@ -185,11 +185,12 @@ export default function PinDesignerTemplatesPage() {
   };
 
   const handleSaveSiteAssign = async () => {
-    if (!siteAssignTemplate || !siteAssignTargetId) return;
+    if (!siteAssignTemplate || siteAssignTargetIds.length === 0) return;
     setSiteAssignSaving(true);
     try {
-      await api.setSitePinTemplate(siteAssignTargetId, siteAssignTemplate.id);
-      toast.success(`Template "${siteAssignTemplate.name}" assigned to site.`);
+      await Promise.all(siteAssignTargetIds.map((siteId) => api.setSitePinTemplate(siteId, siteAssignTemplate.id)));
+      const count = siteAssignTargetIds.length;
+      toast.success(`Template "${siteAssignTemplate.name}" assigned to ${count} site${count > 1 ? "s" : ""}.`);
       setSiteAssignTemplate(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to assign template to site.");
@@ -459,19 +460,23 @@ export default function PinDesignerTemplatesPage() {
             {sitesForProject.length > 0 && (
               <div className="max-h-48 overflow-y-auto space-y-1 mb-4 pr-1">
                 {sitesForProject.map((site) => {
-                  const checked = siteAssignTargetId === site.id;
+                  const checked = siteAssignTargetIds.includes(site.id);
                   const hasTemplate = Boolean(site.pin_template_id);
                   return (
                     <button
                       key={site.id}
-                      onClick={() => setSiteAssignTargetId(site.id)}
+                      onClick={() =>
+                        setSiteAssignTargetIds((prev) =>
+                          prev.includes(site.id) ? prev.filter((id) => id !== site.id) : [...prev, site.id]
+                        )
+                      }
                       className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-sm transition ${
                         checked
                           ? "border-brand-500/50 bg-brand-500/10 text-white"
                           : "border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-200"
                       }`}
                     >
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${checked ? "border-brand-500 bg-brand-500" : "border-gray-600"}`}>
+                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${checked ? "border-brand-500 bg-brand-500" : "border-gray-600"}`}>
                         {checked && <Check size={10} className="text-white" />}
                       </div>
                       <div className="text-left flex-1 min-w-0">
@@ -492,10 +497,10 @@ export default function PinDesignerTemplatesPage() {
               </button>
               <button
                 onClick={() => void handleSaveSiteAssign()}
-                disabled={siteAssignSaving || !siteAssignTargetId}
+                disabled={siteAssignSaving || siteAssignTargetIds.length === 0}
                 className="flex-1 btn-primary text-sm disabled:opacity-50"
               >
-                {siteAssignSaving ? "Saving…" : "Assign"}
+                {siteAssignSaving ? "Saving…" : `Assign${siteAssignTargetIds.length > 1 ? ` (${siteAssignTargetIds.length})` : ""}`}
               </button>
             </div>
           </div>
