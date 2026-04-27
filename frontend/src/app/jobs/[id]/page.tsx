@@ -159,8 +159,12 @@ export default function JobDetailPage() {
     api.getJobLogs(id).then((l) => setLogs(l.map((x) => x.message))).catch(() => {});
   }, [id, router]);
 
+  // A "pending" job with progress is actually running — the DB status just wasn't
+  // updated (pre-fix jobs). Treat it as active so the WS connects and buttons appear.
+  const isActiveJob = job?.status === "running" || (job?.status === "pending" && (job.total_rows ?? 0) > 0);
+
   useEffect(() => {
-    if (!job || job.status !== "running") return;
+    if (!job || !isActiveJob) return;
 
     let cancelled = false;
     let currentWs: WebSocket | null = null;
@@ -190,7 +194,8 @@ export default function JobDetailPage() {
         api.getJob(id)
           .then((j) => {
             setJob(j);
-            if (j.status === "running") setTimeout(() => connect(true), 2000);
+            const stillActive = j.status === "running" || (j.status === "pending" && (j.total_rows ?? 0) > 0);
+            if (stillActive) setTimeout(() => connect(true), 2000);
           })
           .catch(() => {
             if (!cancelled) setTimeout(() => connect(true), 3000);
@@ -204,29 +209,29 @@ export default function JobDetailPage() {
       cancelled = true;
       currentWs?.close();
     };
-  }, [job?.status, id]);
+  }, [isActiveJob, id]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logs]);
 
-  // Poll job every 5 s while running so current_row / total_rows stay fresh
+  // Poll every 5 s while active so current_row / total_rows stay fresh
   useEffect(() => {
-    if (!job || job.status !== "running") return;
+    if (!isActiveJob) return;
     const t = setInterval(() => {
       api.getJob(id).then(setJob).catch(() => {});
     }, 5000);
     return () => clearInterval(t);
-  }, [job?.status, id]);
+  }, [isActiveJob, id]);
 
-  // Poll every 2 s while pending to detect transition to running
+  // Poll every 2 s while pending with no progress yet to detect start
   useEffect(() => {
-    if (!job || job.status !== "pending") return;
+    if (!job || job.status !== "pending" || (job.total_rows ?? 0) > 0) return;
     const t = setInterval(() => {
       api.getJob(id).then(setJob).catch(() => {});
     }, 2000);
     return () => clearInterval(t);
-  }, [job?.status, id]);
+  }, [job?.status, job?.total_rows, id]);
 
   const recipeCards = useMemo(() => {
     const cards = parseRecipeCards(logs);
@@ -319,7 +324,7 @@ export default function JobDetailPage() {
               {resuming ? "Resuming…" : "Continue Job"}
             </button>
           )}
-          {job.status === "running" && (
+          {isActiveJob && (
             <button onClick={() => api.stopJob(id).then(setJob)} className="btn-danger flex items-center gap-2">
               <Square size={16} /> Stop Job
             </button>
@@ -328,7 +333,7 @@ export default function JobDetailPage() {
       </div>
 
       {/* Current action banner */}
-      {job.status === "running" && currentStatus && (
+      {isActiveJob && currentStatus && (
         <div className="flex items-center gap-3 rounded-lg bg-blue-950/30 border border-blue-800/40 px-4 py-3 mb-4">
           <Loader2 size={15} className="text-blue-400 animate-spin flex-shrink-0" />
           <span className="text-sm text-blue-200">{currentStatus}</span>
