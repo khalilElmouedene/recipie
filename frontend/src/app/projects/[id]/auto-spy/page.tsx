@@ -1186,118 +1186,143 @@ export default function AutoSpyPage() {
 
       {selectionCtxMenu && (
         <div
-          className="fixed z-50 w-[420px] max-w-[calc(100vw-24px)] rounded-xl border border-teal-800/40 bg-gray-900/95 p-4 shadow-2xl backdrop-blur-sm overflow-y-auto"
-          style={{ top: selectionCtxMenu.y, left: selectionCtxMenu.x, maxHeight: "calc(100vh - 24px)" }}
-          onClick={(e) => e.stopPropagation()}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => setSelectionCtxMenu(null)}
         >
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-white">Generate From Selection</div>
-              <div className="mt-1 text-[11px] text-gray-500">{selectionCtxMenu.preview.rangeLabel}</div>
+          <div
+            className="flex flex-col w-full max-w-lg max-h-[90vh] rounded-xl border border-teal-800/40 bg-gray-900 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* ── Fixed header ── */}
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-gray-800 flex-shrink-0">
+              <div>
+                <div className="text-sm font-semibold text-white">Generate From Selection</div>
+                <div className="text-[11px] text-gray-500 mt-0.5">{selectionCtxMenu.preview.rangeLabel}</div>
+              </div>
+              <button
+                onClick={() => setSelectionCtxMenu(null)}
+                className="rounded-md px-2 py-1 text-[11px] text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition"
+              >
+                Close
+              </button>
             </div>
-            <button onClick={() => setSelectionCtxMenu(null)} className="rounded-md px-2 py-1 text-[11px] text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition">Close</button>
-          </div>
 
-          {selectionCtxMenu.preview.ok ? (
-            <>
-              <div className="mt-3 space-y-2 rounded-lg border border-gray-800 bg-gray-950/60 p-3 text-xs text-gray-300">
-                <div className="flex items-center justify-between gap-3"><span>Ready rows</span><span className="font-semibold text-white">{selectionCtxMenu.preview.items.length}</span></div>
-                <div className="flex items-center justify-between gap-3"><span>Image column</span><span className="font-mono text-teal-300">{colLabel(selectionCtxMenu.preview.imageCol)}</span></div>
-                <div className="flex items-center justify-between gap-3"><span>Recipe text column</span><span className="font-mono text-teal-300">{colLabel(selectionCtxMenu.preview.recipeCol)}</span></div>
-                <div className="flex items-center justify-between gap-3"><span>Skipped incomplete rows</span><span>{selectionCtxMenu.preview.skippedRows}</span></div>
-                <div className="text-[11px] text-gray-500">
-                  {selectionCtxMenu.preview.usedHeaderRow
-                    ? "Headers were detected in the selection, so generation will use the rows underneath them."
-                    : "This selection will start the same all-sites generation job used in the project workflow."}
-                </div>
-              </div>
-
-              <div className="mt-3 rounded-lg border border-gray-800 bg-gray-950/60 p-3">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Preview</div>
-                <div className="mt-2 space-y-2">
-                  {selectionCtxMenu.preview.items.slice(0, 2).map((item, idx) => (
-                    <div key={`${item.image_url}-${idx}`} className="rounded-md border border-gray-800 bg-gray-900/60 p-2">
-                      <div className="truncate text-[11px] text-teal-300">{item.image_url}</div>
-                      <div className="mt-1 truncate text-xs text-gray-300">{item.recipe_text}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-3 rounded-lg border border-teal-800/30 bg-teal-950/20 p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="text-[11px] font-semibold uppercase tracking-wide text-teal-400">Publish Settings</div>
-                  {schedulesLoading && <span className="text-[10px] text-gray-500">Fetching from WordPress…</span>}
-                </div>
-                {publishingSites.length === 0 ? (
-                  <p className="text-[11px] text-amber-400">No publishing sites configured. Add sites in the project settings.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {publishingSites.map((site) => {
-                      const sched = siteSchedules[site.id] ?? { publishStartAt: "", intervalMinutes: 240 };
-                      return (
-                        <div key={site.id} className="rounded-md border border-gray-700/60 bg-gray-900/60 p-2 space-y-1.5">
-                          <span className="block truncate text-[11px] font-medium text-teal-300" title={site.domain}>{site.domain}</span>
-                          <div className="flex gap-2">
-                            <div className="flex-1 min-w-0">
-                              <label className="block text-[10px] text-gray-500 mb-0.5">Start date</label>
-                              <input
-                                type="datetime-local"
-                                value={sched.publishStartAt}
-                                onChange={(e) => setSiteSchedules((prev) => ({
-                                  ...prev,
-                                  [site.id]: { ...sched, publishStartAt: e.target.value },
-                                }))}
-                                className="w-full rounded border border-gray-700 bg-gray-950 px-1.5 py-1 text-[11px] text-white focus:border-teal-500 focus:outline-none"
-                              />
-                            </div>
-                            <div className="w-20 flex-shrink-0">
-                              <label className="block text-[10px] text-gray-500 mb-0.5">Interval (min)</label>
-                              <input
-                                type="number"
-                                min={1}
-                                value={sched.intervalMinutes}
-                                onChange={(e) => setSiteSchedules((prev) => ({
-                                  ...prev,
-                                  [site.id]: { ...sched, intervalMinutes: Math.max(1, parseInt(e.target.value) || 1) },
-                                }))}
-                                className="w-full rounded border border-gray-700 bg-gray-950 px-1.5 py-1 text-[11px] text-white focus:border-teal-500 focus:outline-none"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+            {/* ── Scrollable body ── */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 min-h-0">
+              {selectionCtxMenu.preview.ok ? (
+                <>
+                  {/* Stats */}
+                  <div className="space-y-1.5 rounded-lg border border-gray-800 bg-gray-950/60 p-3 text-xs text-gray-300">
+                    <div className="flex items-center justify-between"><span>Ready rows</span><span className="font-semibold text-white">{selectionCtxMenu.preview.items.length}</span></div>
+                    <div className="flex items-center justify-between"><span>Image column</span><span className="font-mono text-teal-300">{colLabel(selectionCtxMenu.preview.imageCol)}</span></div>
+                    <div className="flex items-center justify-between"><span>Recipe text column</span><span className="font-mono text-teal-300">{colLabel(selectionCtxMenu.preview.recipeCol)}</span></div>
+                    {selectionCtxMenu.preview.skippedRows > 0 && (
+                      <div className="flex items-center justify-between"><span>Skipped incomplete rows</span><span>{selectionCtxMenu.preview.skippedRows}</span></div>
+                    )}
+                    {selectionCtxMenu.preview.usedHeaderRow && (
+                      <p className="text-[11px] text-gray-500 pt-0.5">Headers detected — generation uses rows below them.</p>
+                    )}
                   </div>
-                )}
-                <p className="text-[10px] text-gray-500 pt-0.5">
-                  Each site publishes independently. Pin images use the template assigned to each site.
-                </p>
-              </div>
 
-              <label className="mt-3 flex cursor-pointer items-center gap-2.5 rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2.5">
-                <input type="checkbox" checked={deleteAfterGeneration} onChange={(e) => setDeleteAfterGeneration(e.target.checked)} className="h-3.5 w-3.5 rounded border-gray-600 accent-teal-500" />
-                <span className="text-xs text-gray-300">Delete rows from sheet after generation</span>
-              </label>
+                  {/* Preview */}
+                  <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">Preview</div>
+                    <div className="space-y-2">
+                      {selectionCtxMenu.preview.items.slice(0, 2).map((item, idx) => (
+                        <div key={`${item.image_url}-${idx}`} className="rounded-md border border-gray-800 bg-gray-900/60 p-2">
+                          <div className="truncate text-[11px] text-teal-300">{item.image_url}</div>
+                          <div className="mt-0.5 truncate text-xs text-gray-300">{item.recipe_text}</div>
+                        </div>
+                      ))}
+                      {selectionCtxMenu.preview.items.length > 2 && (
+                        <p className="text-[11px] text-gray-500">+{selectionCtxMenu.preview.items.length - 2} more rows</p>
+                      )}
+                    </div>
+                  </div>
 
-              <div className="mt-4 flex items-center justify-end gap-2">
-                <button onClick={() => setSelectionCtxMenu(null)} className="rounded-md border border-gray-700 px-3 py-2 text-xs font-medium text-gray-300 hover:bg-gray-800 transition">Keep Editing</button>
+                  {/* Publish Settings */}
+                  <div className="rounded-lg border border-teal-800/30 bg-teal-950/20 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-teal-400">Publish Settings</span>
+                      {schedulesLoading && <span className="text-[11px] text-gray-500 animate-pulse">Fetching from WordPress…</span>}
+                    </div>
+
+                    {publishingSites.length === 0 ? (
+                      <p className="text-xs text-amber-400">No publishing sites configured. Add sites in project settings.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {publishingSites.map((site) => {
+                          const sched = siteSchedules[site.id] ?? { publishStartAt: "", intervalMinutes: 240 };
+                          return (
+                            <div key={site.id} className="rounded-lg border border-gray-700 bg-gray-900 p-3 space-y-2">
+                              <div className="text-xs font-medium text-teal-300 truncate" title={site.domain}>{site.domain}</div>
+                              <div>
+                                <label className="block text-[11px] text-gray-400 mb-1">Publish start date</label>
+                                <input
+                                  type="datetime-local"
+                                  value={sched.publishStartAt}
+                                  onChange={(e) => setSiteSchedules((prev) => ({
+                                    ...prev,
+                                    [site.id]: { ...sched, publishStartAt: e.target.value },
+                                  }))}
+                                  className="w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-1.5 text-sm text-white focus:border-teal-500 focus:outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] text-gray-400 mb-1">Interval between posts (minutes)</label>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={sched.intervalMinutes}
+                                  onChange={(e) => setSiteSchedules((prev) => ({
+                                    ...prev,
+                                    [site.id]: { ...sched, intervalMinutes: Math.max(1, parseInt(e.target.value) || 1) },
+                                  }))}
+                                  className="w-full rounded-md border border-gray-700 bg-gray-950 px-3 py-1.5 text-sm text-white focus:border-teal-500 focus:outline-none"
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <p className="text-[11px] text-gray-500">Each site publishes independently. Pin images use the template assigned to each site.</p>
+                  </div>
+
+                  {/* Delete checkbox */}
+                  <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2.5">
+                    <input type="checkbox" checked={deleteAfterGeneration} onChange={(e) => setDeleteAfterGeneration(e.target.checked)} className="h-3.5 w-3.5 rounded border-gray-600 accent-teal-500" />
+                    <span className="text-xs text-gray-300">Delete rows from sheet after generation</span>
+                  </label>
+                </>
+              ) : (
+                <>
+                  <div className="rounded-lg border border-amber-700/30 bg-amber-950/20 p-3 text-xs text-amber-100">{selectionCtxMenu.preview.message}</div>
+                  <p className="text-[11px] text-gray-500">Tip: select the rows that contain your image URL and recipe text columns, then right-click again.</p>
+                </>
+              )}
+            </div>
+
+            {/* ── Fixed footer ── */}
+            {selectionCtxMenu.preview.ok && (
+              <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-800 flex-shrink-0">
+                <button
+                  onClick={() => setSelectionCtxMenu(null)}
+                  className="rounded-md border border-gray-700 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-800 transition"
+                >
+                  Cancel
+                </button>
                 <button
                   onClick={() => void handleGenerateFromSelection()}
                   disabled={startingGeneration || publishingSites.length === 0 || publishingSites.some((s) => !siteSchedules[s.id]?.publishStartAt)}
-                  className="flex items-center gap-2 rounded-md bg-teal-600 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-500 disabled:opacity-60 transition"
+                  className="flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-500 disabled:opacity-60 transition"
                 >
-                  {startingGeneration ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                  {startingGeneration ? "Starting..." : "Generate + Schedule"}
+                  {startingGeneration ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+                  {startingGeneration ? "Starting…" : "Generate + Schedule"}
                 </button>
               </div>
-            </>
-          ) : (
-            <>
-              <div className="mt-3 rounded-lg border border-amber-700/30 bg-amber-950/20 p-3 text-xs text-amber-100">{selectionCtxMenu.preview.message}</div>
-              <div className="mt-3 text-[11px] text-gray-500">Tip: select the rows that contain your image URL and recipe text columns, then right-click again.</div>
-            </>
-          )}
+            )}
+          </div>
         </div>
       )}
     </div>
