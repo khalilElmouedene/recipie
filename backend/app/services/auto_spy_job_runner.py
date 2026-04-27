@@ -79,13 +79,13 @@ def _download_google_font(family: str, bold: bool, italic: bool) -> str | None:
 
 
 def _elem_font(elem: dict, log: Callable[[str], None]):
-    """Return the closest available PIL font for a Fabric.js text element."""
+    """Return the closest available PIL font for a template text element."""
     from PIL import ImageFont
     from ..services.pin_generator import _font as _sys_font
 
-    sx = float(elem.get("scaleX", 1.0))
-    sy = float(elem.get("scaleY", 1.0))
-    size = max(8, int(float(elem.get("fontSize", 36)) * min(sx, sy)))
+    # In the template's saved format, fontSize is already the correct pixel size
+    # (scaleX/scaleY are baked into width/height, not stored separately)
+    size = max(8, int(float(elem.get("fontSize", 36))))
     family = str(elem.get("fontFamily") or "").strip()
     weight = str(elem.get("fontWeight") or "normal")
     style = str(elem.get("fontStyle") or "normal").lower()
@@ -253,105 +253,110 @@ def _pil_render_elements(
                     food_img = _placeholder(400, 600)
             return food_img
 
-        def _place(el_img: Image.Image, cx: int, cy: int, angle: float) -> None:
-            """Rotate el_img clockwise by `angle` degrees and alpha-composite at center (cx, cy)."""
+        def _paste(el_img: Image.Image, lx: int, ty: int) -> None:
+            """Alpha-composite el_img onto canvas at (lx, ty), clamped to canvas bounds."""
             if el_img.mode != "RGBA":
                 el_img = el_img.convert("RGBA")
-            if angle % 360 != 0:
-                el_img = el_img.rotate(-angle, expand=True, resample=Image.BICUBIC)
-            px = cx - el_img.width // 2
-            py = cy - el_img.height // 2
-            ox = max(0, -px)
-            oy = max(0, -py)
-            crop_w = min(el_img.width - ox, canvas_width - max(0, px))
-            crop_h = min(el_img.height - oy, canvas_height - max(0, py))
-            if crop_w <= 0 or crop_h <= 0:
+            ox = max(0, -lx)
+            oy = max(0, -ty)
+            cw = min(el_img.width - ox, canvas_width - max(0, lx))
+            ch = min(el_img.height - oy, canvas_height - max(0, ty))
+            if cw <= 0 or ch <= 0:
                 return
-            piece = el_img.crop((ox, oy, ox + crop_w, oy + crop_h))
-            canvas.alpha_composite(piece, (max(0, px), max(0, py)))
-
-        def _resolve_color(raw, fallback: str = "#888888") -> str:
-            """Extract a usable hex/rgb string from a fill value that may be a gradient dict."""
-            if isinstance(raw, dict):
-                stops = raw.get("colorStops") or []
-                if stops:
-                    return str(stops[0].get("color") or fallback)
-                return fallback
-            return str(raw) if raw else fallback
+            canvas.alpha_composite(el_img.crop((ox, oy, ox + cw, oy + ch)), (max(0, lx), max(0, ty)))
 
         for elem in elements:
-            # Skip designer-only placeholder elements — not part of the visual output
-            if elem.get("__isFill") or elem.get("__isLabel"):
-                continue
+            # Template designer saves elements with a custom schema (not raw Fabric.js JSON):
+            #   type     → "band" | "image" | "frame" | "text" | "asset"
+            #   x, y     → top-left canvas coords for band/image/frame/asset
+            #              CENTER canvas coords for text (getCenterPoint() was used)
+            #   width, height → already scaled (no scaleX/scaleY needed)
+            #   band:    bgColor = fill color
+            #   frame:   fill = stroke color, strokeWidth, radius, strokeStyle
+            #   image:   image zone (render food photo here), flipX
+            #   asset:   static uploaded image, imageUrl, flipX, flipY
+            #   text:    defaultText, textVariable, fill, fontFamily/Size/Weight/Style,
+            #            textAlign, textTransform
 
-            # Resolve pin type from our custom tag first, then Fabric.js native type
-            pin_type = str(elem.get("__pinType") or elem.get("type") or "")
-            # Map Fabric.js native text types to our "text" type
-            if pin_type in ("i-text", "textbox"):
-                pin_type = "text"
+            etype = str(elem.get("type") or "")
+            ex = int(float(elem.get("x", 0)))
+            ey = int(float(elem.get("y", 0)))
+            w = max(1, int(float(elem.get("width", 100))))
+            h = max(1, int(float(elem.get("height", 100))))
 
-            opacity = max(0.0, min(1.0, float(elem.get("opacity", 1.0))))
-            left = int(float(elem.get("left", 0)))
-            top_y = int(float(elem.get("top", 0)))
-            sx = float(elem.get("scaleX", 1.0))
-            sy = float(elem.get("scaleY", 1.0))
-            w = max(1, int(float(elem.get("width", 100)) * sx))
-            h = max(1, int(float(elem.get("height", 100)) * sy))
-            angle = float(elem.get("angle", 0))
-            cx = left + w // 2
-            cy = top_y + h // 2
+            log(f"  elem type={etype} x={ex} y={ey} w={w} h={h}")
 
-            log(f"  elem type={pin_type} left={left} top={top_y} w={w} h={h}")
+            if etype == "band":
+                fill = _parse_hex_color(str(elem.get("bgColor") or "#888888"))
+                _paste(Image.new("RGBA", (w, h), fill), ex, ey)
 
-            if pin_type in ("band", "rect"):
-                fill_raw = _resolve_color(elem.get("fill"), "#888888")
-                fill = _parse_hex_color(fill_raw, opacity)
-                _place(Image.new("RGBA", (w, h), fill), cx, cy, angle)
-
-            elif pin_type == "frame":
+            elif etype == "frame":
                 el = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-                stroke_raw = _resolve_color(elem.get("stroke"), "#ffffff")
-                stroke = _parse_hex_color(stroke_raw, opacity)
+                # In the saved format, stroke color is stored as "fill"
+                stroke = _parse_hex_color(str(elem.get("fill") or "#ffffff"))
                 sw = max(1, int(float(elem.get("strokeWidth", 2))))
-                rx = int(float(elem.get("rx", 0)))
+                radius = int(float(elem.get("radius", 0)))
                 d = ImageDraw.Draw(el)
-                if rx > 0:
-                    d.rounded_rectangle([0, 0, w - 1, h - 1], radius=rx, outline=stroke, width=sw)
+                if radius > 0:
+                    d.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, outline=stroke, width=sw)
                 else:
                     d.rectangle([0, 0, w - 1, h - 1], outline=stroke, width=sw)
-                _place(el, cx, cy, angle)
+                _paste(el, ex, ey)
 
-            elif pin_type == "image":
-                clip = elem.get("__clipZone")
-                if clip and isinstance(clip, dict):
-                    cw = max(1, int(float(clip.get("width", w))))
-                    ch = max(1, int(float(clip.get("height", h))))
-                    cl = left + int(float(clip.get("left", 0)))
-                    ct = top_y + int(float(clip.get("top", 0)))
-                else:
-                    cw, ch, cl, ct = w, h, left, top_y
-                cropped = _fit_crop(_get_food(), cw, ch).convert("RGBA")
-                if opacity < 1.0:
-                    r_, g_, b_, a_ = cropped.split()
-                    a_ = a_.point(lambda v: int(v * opacity))
-                    cropped = Image.merge("RGBA", (r_, g_, b_, a_))
-                _place(cropped, cl + cw // 2, ct + ch // 2, angle)
+            elif etype == "image":
+                # Image zone — render the scraped food photo here
+                cropped = _fit_crop(_get_food(), w, h).convert("RGBA")
+                if elem.get("flipX"):
+                    cropped = cropped.transpose(Image.FLIP_LEFT_RIGHT)
+                _paste(cropped, ex, ey)
 
-            elif pin_type == "text":
-                raw_text = str(elem.get("text") or "")
-                display = raw_text if raw_text and not raw_text.startswith("{{") else title
+            elif etype == "asset":
+                # Static image uploaded by user into the template
+                asset_url = str(elem.get("imageUrl") or "")
+                if asset_url:
+                    try:
+                        import requests as _req2
+                        r2 = _req2.get(asset_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+                        r2.raise_for_status()
+                        asset_img = Image.open(BytesIO(r2.content)).convert("RGBA")
+                        asset_img = asset_img.resize((w, h), Image.LANCZOS)
+                        if elem.get("flipX"):
+                            asset_img = asset_img.transpose(Image.FLIP_LEFT_RIGHT)
+                        if elem.get("flipY"):
+                            asset_img = asset_img.transpose(Image.FLIP_TOP_BOTTOM)
+                        _paste(asset_img, ex, ey)
+                    except Exception as ae:
+                        log(f"  Asset image failed: {ae}")
+
+            elif etype == "text":
+                # x,y are CENTER coordinates (saved via getCenterPoint())
+                left_x = ex - w // 2
+                top_y = ey - h // 2
+
+                default_text = str(elem.get("defaultText") or "").strip()
+                text_var = str(elem.get("textVariable") or "").strip()
+                # Variable-bound or empty text → substitute recipe title
+                display = title if (text_var or not default_text) else default_text
                 if not display:
                     continue
-                fill_raw = _resolve_color(elem.get("fill"), "#ffffff")
-                fill_color = _parse_hex_color(fill_raw, opacity)
+
+                # Apply textTransform
+                tt = str(elem.get("textTransform") or "none").lower()
+                if tt == "uppercase":
+                    display = display.upper()
+                elif tt == "lowercase":
+                    display = display.lower()
+
+                fill_color = _parse_hex_color(str(elem.get("fill") or "#ffffff"))
                 font = _elem_font(elem, log)
-                align = str(elem.get("textAlign", "left")).lower()
+                align = str(elem.get("textAlign", "center")).lower()
                 if align not in ("left", "center", "right"):
-                    align = "left"
+                    align = "center"
                 lh = float(elem.get("lineHeight", 1.3))
-                el = Image.new("RGBA", (max(1, w), max(1, h)), (0, 0, 0, 0))
+                # Render into a taller image to avoid clipping tall text
+                el = Image.new("RGBA", (max(1, w), max(1, h * 2)), (0, 0, 0, 0))
                 _wrap_draw(ImageDraw.Draw(el), display, 0, 0, w, font, fill_color, spacing=lh, align=align)
-                _place(el, cx, cy, angle)
+                _paste(el, left_x, top_y)
 
         buf = BytesIO()
         canvas.convert("RGB").save(buf, format="JPEG", quality=90)
