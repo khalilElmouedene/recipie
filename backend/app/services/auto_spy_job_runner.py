@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import random
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -376,7 +377,7 @@ async def start_auto_spy_generate_job(
     (stop/log streaming) without modifying any existing code paths.
     """
     from ..workers.job_manager import RunningJob
-    from ..services.article_generator import generate_for_recipe
+    from ..services.article_generator import generate_for_recipe, generate_images_only
 
     job_id_str = str(db_job.id)
 
@@ -480,8 +481,49 @@ async def start_auto_spy_generate_job(
                 if rj.should_stop():
                     break
                 items = group["items"]
+                n_sites = len(items)
                 rj.log(f"Input recipe {group['idx']}: {group['recipe_text'][:60]}")
 
+                # ── Step 1: Generate Midjourney images ONCE for this recipe ──────
+                per_item_images: dict[str, str] = {}
+                discord_auth = credentials.get("discord_auth", "")
+                if discord_auth and group.get("image_url"):
+                    try:
+                        rj.log(f"  Generating images once for {n_sites} site(s)…")
+                        shared_images = generate_images_only(
+                            recipe_title=group["recipe_text"].splitlines()[0].strip(),
+                            image_url=group["image_url"],
+                            credentials=credentials,
+                            prompts=prompts,
+                            log=rj.log,
+                            should_stop=rj.should_stop,
+                        )
+                        if shared_images:
+                            img_list: list[str] = json.loads(shared_images)
+                            shuffled = list(img_list)
+                            random.shuffle(shuffled)
+                            # Distribute images across sites
+                            chunk_size = max(1, len(shuffled) // n_sites)
+                            for i, item in enumerate(items):
+                                start = i * chunk_size
+                                site_imgs = shuffled[start:start + chunk_size] or shuffled[:1]
+                                per_item_images[item["id"]] = json.dumps(site_imgs)
+                            rj.log(f"  Distributed {len(img_list)} image(s) across {n_sites} site(s)")
+                    except Exception as e:
+                        rj.log(f"  Midjourney failed for recipe {group['idx']}: {e} — continuing without images")
+                else:
+                    rj.log("  Midjourney skipped (no Discord credentials)")
+
+                # Strip Discord from per-site calls — images already generated above
+                run_creds = dict(credentials)
+                run_creds["discord_auth"] = ""
+                run_creds["discord_app_id"] = ""
+                run_creds["discord_guild"] = ""
+                run_creds["discord_channel"] = ""
+                run_creds["mj_version"] = ""
+                run_creds["mj_id"] = ""
+
+                # ── Step 2: Generate article content per site (no Midjourney) ───
                 for item in items:
                     if rj.should_stop():
                         break
@@ -495,7 +537,7 @@ async def start_auto_spy_generate_job(
                         recipe_text=item["recipe_text"],
                         image_url=item["image_url"],
                         site_domain=item["site_domain"],
-                        credentials=credentials,
+                        credentials=run_creds,
                         prompts=prompts,
                         log=rj.log,
                         should_stop=rj.should_stop,
@@ -505,12 +547,12 @@ async def start_auto_spy_generate_job(
                     if rj.should_stop():
                         break
 
-                    if "error_message" not in generated or not generated.get("error_message"):
-                        # Render pin image
-                        pin_title = (
-                            generated.get("pin_title")
-                            or item["recipe_text"].splitlines()[0].strip()
-                        )
+                    # Inject the shared images generated in step 1
+                    if item["id"] in per_item_images and not generated.get("error_message"):
+                        generated["generated_images"] = per_item_images[item["id"]]
+
+                    if not generated.get("error_message"):
+                        pin_title = generated.get("pin_title") or item["recipe_text"].splitlines()[0].strip()
                         pin_img = _render_pin_for_recipe(
                             image_url=item["image_url"],
                             title=pin_title,
@@ -562,7 +604,7 @@ async def resume_auto_spy_generate_job(
     main_loop: asyncio.AbstractEventLoop,
 ) -> None:
     """Re-process pending recipes from a stopped/failed auto_spy_generate job."""
-    from ..services.article_generator import generate_for_recipe
+    from ..services.article_generator import generate_for_recipe, generate_images_only
 
     job_id_str = str(db_job.id)
 
@@ -641,7 +683,44 @@ async def resume_auto_spy_generate_job(
                 if rj.should_stop():
                     break
                 items = group["items"]
+                n_sites = len(items)
                 rj.log(f"Input recipe {group['idx']}: {group['recipe_text'][:60]}")
+
+                per_item_images: dict[str, str] = {}
+                discord_auth = credentials.get("discord_auth", "")
+                if discord_auth and group.get("image_url"):
+                    try:
+                        rj.log(f"  Generating images once for {n_sites} site(s)…")
+                        shared_images = generate_images_only(
+                            recipe_title=group["recipe_text"].splitlines()[0].strip(),
+                            image_url=group["image_url"],
+                            credentials=credentials,
+                            prompts=prompts,
+                            log=rj.log,
+                            should_stop=rj.should_stop,
+                        )
+                        if shared_images:
+                            img_list: list[str] = json.loads(shared_images)
+                            shuffled = list(img_list)
+                            random.shuffle(shuffled)
+                            chunk_size = max(1, len(shuffled) // n_sites)
+                            for i, item in enumerate(items):
+                                start = i * chunk_size
+                                site_imgs = shuffled[start:start + chunk_size] or shuffled[:1]
+                                per_item_images[item["id"]] = json.dumps(site_imgs)
+                            rj.log(f"  Distributed {len(img_list)} image(s) across {n_sites} site(s)")
+                    except Exception as e:
+                        rj.log(f"  Midjourney failed: {e} — continuing without images")
+                else:
+                    rj.log("  Midjourney skipped (no Discord credentials)")
+
+                run_creds = dict(credentials)
+                run_creds["discord_auth"] = ""
+                run_creds["discord_app_id"] = ""
+                run_creds["discord_guild"] = ""
+                run_creds["discord_channel"] = ""
+                run_creds["mj_version"] = ""
+                run_creds["mj_id"] = ""
 
                 for item in items:
                     if rj.should_stop():
@@ -656,7 +735,7 @@ async def resume_auto_spy_generate_job(
                         recipe_text=item["recipe_text"],
                         image_url=item["image_url"],
                         site_domain=item["site_domain"],
-                        credentials=credentials,
+                        credentials=run_creds,
                         prompts=prompts,
                         log=rj.log,
                         should_stop=rj.should_stop,
@@ -665,6 +744,9 @@ async def resume_auto_spy_generate_job(
 
                     if rj.should_stop():
                         break
+
+                    if item["id"] in per_item_images and not generated.get("error_message"):
+                        generated["generated_images"] = per_item_images[item["id"]]
 
                     if not generated.get("error_message"):
                         pin_title = generated.get("pin_title") or item["recipe_text"].splitlines()[0].strip()
