@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useRef } from "react";
-import { LayoutTemplate, Plus, Trash2, Pencil, Copy, FolderOpen, X, Check, Download, Upload } from "lucide-react";
-import { api, PinDesignerTemplateOut, ProjectOut } from "@/lib/api";
+import { LayoutTemplate, Plus, Trash2, Pencil, Copy, FolderOpen, X, Check, Download, Upload, Globe, Loader2 } from "lucide-react";
+import { api, PinDesignerTemplateOut, ProjectOut, SiteOut } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
 
@@ -108,6 +108,14 @@ export default function PinDesignerTemplatesPage() {
   const [isGlobal, setIsGlobal] = useState(true);
   const [assignSaving, setAssignSaving] = useState(false);
 
+  // Assign to site state
+  const [siteAssignTemplate, setSiteAssignTemplate] = useState<PinDesignerTemplateOut | null>(null);
+  const [siteAssignProjectId, setSiteAssignProjectId] = useState("");
+  const [sitesForProject, setSitesForProject] = useState<SiteOut[]>([]);
+  const [loadingSites, setLoadingSites] = useState(false);
+  const [siteAssignSaving, setSiteAssignSaving] = useState(false);
+  const [siteAssignTargetId, setSiteAssignTargetId] = useState<string | null>(null);
+
   useEffect(() => {
     setTemplatesLoading(true);
     Promise.all([
@@ -151,6 +159,42 @@ export default function PinDesignerTemplatesPage() {
       toast.error(err instanceof Error ? err.message : "Failed to save assignment.");
     } finally {
       setAssignSaving(false);
+    }
+  };
+
+  const openSiteAssignModal = (tmpl: PinDesignerTemplateOut) => {
+    setSiteAssignTemplate(tmpl);
+    setSiteAssignProjectId("");
+    setSitesForProject([]);
+    setSiteAssignTargetId(null);
+  };
+
+  const handleSiteAssignProjectChange = async (projectId: string) => {
+    setSiteAssignProjectId(projectId);
+    setSiteAssignTargetId(null);
+    if (!projectId) { setSitesForProject([]); return; }
+    setLoadingSites(true);
+    try {
+      const sites = await api.getSites(projectId);
+      setSitesForProject(sites);
+    } catch {
+      setSitesForProject([]);
+    } finally {
+      setLoadingSites(false);
+    }
+  };
+
+  const handleSaveSiteAssign = async () => {
+    if (!siteAssignTemplate || !siteAssignTargetId) return;
+    setSiteAssignSaving(true);
+    try {
+      await api.setSitePinTemplate(siteAssignTargetId, siteAssignTemplate.id);
+      toast.success(`Template "${siteAssignTemplate.name}" assigned to site.`);
+      setSiteAssignTemplate(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to assign template to site.");
+    } finally {
+      setSiteAssignSaving(false);
     }
   };
 
@@ -377,6 +421,87 @@ export default function PinDesignerTemplatesPage() {
         </div>
       )}
 
+      {siteAssignTemplate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-white font-semibold text-base">Assign to Site</h3>
+              <button onClick={() => setSiteAssignTemplate(null)} className="text-gray-500 hover:text-white transition">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mb-4">
+              Choose the site that will use <span className="text-white font-medium">{siteAssignTemplate.name}</span> for auto-rendered pin images.
+            </p>
+
+            <label className="block text-[11px] text-gray-400 mb-1">Project</label>
+            <select
+              value={siteAssignProjectId}
+              onChange={(e) => void handleSiteAssignProjectChange(e.target.value)}
+              className="w-full mb-3 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none"
+            >
+              <option value="">Select a project…</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+
+            {loadingSites && (
+              <div className="flex items-center gap-2 text-xs text-gray-400 mb-3">
+                <Loader2 size={12} className="animate-spin" /> Loading sites…
+              </div>
+            )}
+
+            {!loadingSites && siteAssignProjectId && sitesForProject.length === 0 && (
+              <p className="text-xs text-gray-500 mb-3">No sites found for this project.</p>
+            )}
+
+            {sitesForProject.length > 0 && (
+              <div className="max-h-48 overflow-y-auto space-y-1 mb-4 pr-1">
+                {sitesForProject.map((site) => {
+                  const checked = siteAssignTargetId === site.id;
+                  const hasTemplate = Boolean(site.pin_template_id);
+                  return (
+                    <button
+                      key={site.id}
+                      onClick={() => setSiteAssignTargetId(site.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-sm transition ${
+                        checked
+                          ? "border-brand-500/50 bg-brand-500/10 text-white"
+                          : "border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-200"
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${checked ? "border-brand-500 bg-brand-500" : "border-gray-600"}`}>
+                        {checked && <Check size={10} className="text-white" />}
+                      </div>
+                      <div className="text-left flex-1 min-w-0">
+                        <span className="truncate block">{site.domain}</span>
+                        {hasTemplate && (
+                          <span className="text-[10px] text-brand-400">has template assigned</span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex gap-2 mt-2">
+              <button onClick={() => setSiteAssignTemplate(null)} className="flex-1 px-4 py-2 rounded-lg border border-gray-700 text-gray-400 hover:text-white text-sm transition">
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleSaveSiteAssign()}
+                disabled={siteAssignSaving || !siteAssignTargetId}
+                className="flex-1 btn-primary text-sm disabled:opacity-50"
+              >
+                {siteAssignSaving ? "Saving…" : "Assign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Pin Designer Templates</h1>
         <p className="text-sm text-gray-400 mt-1">Manage your own templates and edit them anytime.</p>
@@ -469,6 +594,13 @@ export default function PinDesignerTemplatesPage() {
                     }`}
                   >
                     <FolderOpen size={13} />
+                  </button>
+                  <button
+                    onClick={() => openSiteAssignModal(tmpl)}
+                    title="Assign to a specific website (for Auto Spy pin rendering)"
+                    className="p-1.5 rounded-lg text-gray-400 hover:bg-teal-900/60 hover:text-teal-300 transition"
+                  >
+                    <Globe size={13} />
                   </button>
                   <button
                     onClick={() => openCloneModal(tmpl)}

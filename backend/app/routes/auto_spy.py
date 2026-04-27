@@ -6,14 +6,16 @@ from datetime import datetime, timezone
 from typing import Annotated
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..db_models import AutoSpySheet, AutoSpySource, User
+from ..db_models import AutoSpySheet, AutoSpySource, Job, JobStatus, JobType, Site, User
 from ..dependencies import get_current_user, check_project_access
+from ..models import SharedRecipeInput
 from ..services.auto_spy_scraper import (
     _load_workbook,
     _make_sheet_tab,
@@ -258,3 +260,139 @@ async def trigger_scan(
 
     asyncio.create_task(scan_source(source_id))
     return {"status": "scan triggered"}
+
+
+# ── Auto-spy last-published date ───────────────────────────────────────────────
+
+_WP_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; AutoSpy/1.0)"}
+_WP_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
+
+
+@router.get("/api/projects/{project_id}/auto-spy/last-published")
+async def get_last_published(
+    project_id: uuid.UUID,
+    url: str = Query(..., description="WordPress site URL"),
+    current_user: Annotated[User, Depends(get_current_user)] = None,
+    db: Annotated[AsyncSession, Depends(get_db)] = None,
+):
+    await check_project_access(project_id, current_user, db)
+
+    base = url.strip().rstrip("/")
+    if not base.startswith(("http://", "https://")):
+        base = "https://" + base
+
+    last_date: str | None = None
+    try:
+        async with httpx.AsyncClient(headers=_WP_HEADERS, timeout=_WP_TIMEOUT, follow_redirects=True) as client:
+            resp = await client.get(
+                f"{base}/wp-json/wp/v2/posts",
+                params={"per_page": 1, "orderby": "date", "order": "desc", "_fields": "date"},
+            )
+            if resp.status_code == 200:
+                posts = resp.json()
+                if posts and isinstance(posts, list) and posts[0].get("date"):
+                    last_date = posts[0]["date"]
+    except Exception:
+        pass
+
+    return {"last_published_at": last_date}
+
+
+# ── Auto-spy generate job ──────────────────────────────────────────────────────
+
+class AutoSpyGeneratePayload(BaseModel):
+    shared_recipes: list[SharedRecipeInput]
+    publish_start_at: str       # ISO-8601 datetime
+    interval_minutes: int = 240
+
+
+from ..models import JobOut  # noqa: E402 — avoid circular at module level
+
+
+@router.post("/api/projects/{project_id}/auto-spy/generate", response_model=JobOut, status_code=201)
+async def start_auto_spy_generate(
+    project_id: uuid.UUID,
+    body: AutoSpyGeneratePayload,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    await check_project_access(project_id, current_user, db)
+
+    if not body.shared_recipes:
+        raise HTTPException(status_code=400, detail="shared_recipes is required")
+
+    try:
+        publish_start_at = datetime.fromisoformat(body.publish_start_at.replace("Z", "+00:00"))
+        if publish_start_at.tzinfo is None:
+            publish_start_at = publish_start_at.replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid publish_start_at datetime")
+
+    # Load sites
+    site_rows = await db.execute(
+        select(Site).where(Site.project_id == project_id).order_by(Site.created_at.asc())
+    )
+    sites = site_rows.scalars().all()
+    if not sites:
+        raise HTTPException(status_code=400, detail="No sites configured for this project")
+
+    # Load credentials and prompts (reuse the loader from job_manager)
+    from ..services.credentials_loader import load_credentials_for_job
+    from ..services.prompts import DEFAULT_PROMPTS
+    from ..db_models import Project, Prompt
+
+    credentials = await load_credentials_for_job(db, project_id, current_user.id)
+    if not credentials.get("openai"):
+        raise HTTPException(
+            status_code=400,
+            detail="OpenAI API key not found. Go to Settings → API Keys, paste your OpenAI key, and save.",
+        )
+
+    prompts: dict[str, str] = {}
+    prj_row = await db.execute(select(Project).where(Project.id == project_id))
+    prj = prj_row.scalar_one_or_none()
+    if prj:
+        fallback = await db.execute(
+            select(Prompt).where(Prompt.owner_id == prj.owner_id, Prompt.project_id.is_(None))
+        )
+        for p in fallback.scalars().all():
+            prompts[p.key] = p.value
+        project_prompts = await db.execute(
+            select(Prompt).where(Prompt.owner_id == prj.owner_id, Prompt.project_id == project_id)
+        )
+        for p in project_prompts.scalars().all():
+            prompts[p.key] = p.value
+
+    # Create job record
+    db_job = Job(
+        project_id=project_id,
+        created_by=current_user.id,
+        job_type=JobType.auto_spy_generate,
+        status=JobStatus.pending,
+    )
+    db.add(db_job)
+    await db.commit()
+    await db.refresh(db_job)
+
+    # Start the job (non-blocking)
+    from ..services.auto_spy_job_runner import start_auto_spy_generate_job
+    from ..workers.job_manager import job_manager
+
+    main_loop = asyncio.get_running_loop()
+    asyncio.create_task(
+        start_auto_spy_generate_job(
+            db_job=db_job,
+            shared_recipes=body.shared_recipes,
+            publish_start_at=publish_start_at,
+            interval_minutes=body.interval_minutes,
+            credentials=credentials,
+            prompts=prompts,
+            sites=list(sites),
+            running_jobs=job_manager._running,
+            main_loop=main_loop,
+        )
+    )
+
+    # Refresh to get updated status
+    row = await db.execute(select(Job).where(Job.id == db_job.id))
+    return row.scalar_one()

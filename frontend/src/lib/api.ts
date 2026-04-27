@@ -539,6 +539,26 @@ export const api = {
   triggerAutoSpyScan: (projectId: string, sourceId: string) =>
     request<{ status: string }>(`/api/projects/${projectId}/auto-spy/sources/${sourceId}/scan`, { method: "POST" }),
 
+  getAutoSpyLastPublished: (projectId: string, url: string) =>
+    request<{ last_published_at: string | null }>(
+      `/api/projects/${projectId}/auto-spy/last-published?url=${encodeURIComponent(url)}`
+    ),
+
+  startAutoSpyGenerate: (
+    projectId: string,
+    data: { shared_recipes: SharedRecipeInput[]; publish_start_at: string; interval_minutes: number }
+  ) =>
+    request<JobOut>(`/api/projects/${projectId}/auto-spy/generate`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  setSitePinTemplate: (siteId: string, templateId: string | null) =>
+    request<SiteOut>(`/api/sites/${siteId}/pin-template`, {
+      method: "PATCH",
+      body: JSON.stringify({ template_id: templateId }),
+    }),
+
   getAuditLogs: (params?: {
     limit?: number;
     offset?: number;
@@ -792,6 +812,7 @@ export interface SiteOut {
   pinterest_url: string;
   image_mode: string;
   embed_pin_in_article: boolean;
+  pin_template_id: string | null;
   created_at: string;
   recipe_count: number;
 }

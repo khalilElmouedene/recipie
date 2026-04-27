@@ -34,7 +34,7 @@ async def run_publish_scheduler(stop_event: asyncio.Event) -> None:
                         .where(
                             Site.project_id == s.project_id,
                             Recipe.status == RecipeStatus.generated,
-                            Job.job_type == JobType.articles_all_sites,
+                            Job.job_type.in_([JobType.articles_all_sites, JobType.auto_spy_generate]),
                         )
                         .order_by(Recipe.created_at.asc())
                         .limit(1)

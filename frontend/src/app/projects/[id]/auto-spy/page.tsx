@@ -260,6 +260,9 @@ export default function AutoSpyPage() {
   const [selectionCtxMenu, setSelectionCtxMenu] = useState<SelectionCtxMenu | null>(null);
   const [startingGeneration, setStartingGeneration] = useState(false);
   const [deleteAfterGeneration, setDeleteAfterGeneration] = useState(false);
+  const [publishStartAt, setPublishStartAt] = useState("");
+  const [intervalMinutes, setIntervalMinutes] = useState(240);
+  const [fetchingLastPublished, setFetchingLastPublished] = useState(false);
 
   // Auto Spy source state
   const [sources, setSources] = useState<AutoSpySourceOut[]>([]);
@@ -640,6 +643,32 @@ export default function AutoSpyPage() {
     const { x, y } = clampFloatingCardPosition(clientX, clientY);
     setTabCtxMenu(null);
     setSelectionCtxMenu({ x, y, preview: buildSelectionGenerationPreview(sheet, range) });
+
+    // Pre-fill publish date from the active tab's WordPress source
+    const activeTabId = workbook.activeId;
+    const activeSource = sources.find((s) => s.sheet_tab_id === activeTabId);
+    if (activeSource) {
+      setFetchingLastPublished(true);
+      api.getAutoSpyLastPublished(id, activeSource.url)
+        .then((res) => {
+          if (res.last_published_at) {
+            // Convert to local datetime-local format (YYYY-MM-DDTHH:mm)
+            const d = new Date(res.last_published_at);
+            const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+              .toISOString()
+              .slice(0, 16);
+            setPublishStartAt(local);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setFetchingLastPublished(false));
+    } else if (!publishStartAt) {
+      // Default to now
+      const now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+        .toISOString()
+        .slice(0, 16);
+      setPublishStartAt(now);
+    }
   }, [sheet]);
 
   const handleCellContextMenu = (e: React.MouseEvent<HTMLTableCellElement>, row: number, col: number) => {
@@ -668,18 +697,25 @@ export default function AutoSpyPage() {
 
   const handleGenerateFromSelection = useCallback(async () => {
     if (!selectionCtxMenu?.preview.ok || startingGeneration) return;
+    if (!publishStartAt) { toast.error("Please enter a publish start date."); return; }
     setStartingGeneration(true);
     const preview = selectionCtxMenu.preview;
     try {
-      const job = await api.startJob(id, { job_type: "articles_all_sites", shared_recipes: preview.items });
-      trackJob(job, { title: "Auto Spy all-sites generation", sourceLabel: `${preview.items.length} selected row(s)` });
+      // Convert local datetime-local value to UTC ISO string
+      const startDate = new Date(publishStartAt).toISOString();
+      const job = await api.startAutoSpyGenerate(id, {
+        shared_recipes: preview.items,
+        publish_start_at: startDate,
+        interval_minutes: Math.max(1, intervalMinutes),
+      });
+      trackJob(job, { title: "Auto Spy Generate", sourceLabel: `${preview.items.length} row(s)` });
       if (deleteAfterGeneration) updateActiveData((prev) => deleteSheetRows(prev, preview.rowIndices));
       setSelectionCtxMenu(null);
-      toast.success(`Started generation for ${preview.items.length} selected row(s). Added to the pipeline.`);
+      toast.success(`Generation started for ${preview.items.length} row(s). Publishing will begin at the scheduled time.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to start generation from Auto Spy");
+      toast.error(error instanceof Error ? error.message : "Failed to start Auto Spy generation");
     } finally { setStartingGeneration(false); }
-  }, [id, selectionCtxMenu, startingGeneration, deleteAfterGeneration, updateActiveData, toast, trackJob]);
+  }, [id, selectionCtxMenu, startingGeneration, deleteAfterGeneration, publishStartAt, intervalMinutes, updateActiveData, toast, trackJob]);
 
   const addSheet = () => {
     const existing = workbook.sheets.map((s) => s.name); let n = workbook.sheets.length + 1;
@@ -1173,6 +1209,37 @@ export default function AutoSpyPage() {
                 </div>
               </div>
 
+              <div className="mt-3 rounded-lg border border-teal-800/30 bg-teal-950/20 p-3 space-y-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-teal-400">Publish Settings</div>
+                <div>
+                  <label className="block text-[11px] text-gray-400 mb-1">
+                    Publish start date
+                    {fetchingLastPublished && <span className="ml-1 text-gray-500">(fetching from WordPress…)</span>}
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={publishStartAt}
+                    onChange={(e) => setPublishStartAt(e.target.value)}
+                    className="w-full rounded-md border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-white focus:border-teal-500 focus:outline-none"
+                  />
+                  <p className="mt-1 text-[10px] text-gray-500">Pre-filled from the last post on your WordPress site.</p>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-400 mb-1">Interval between posts (minutes)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={intervalMinutes}
+                    onChange={(e) => setIntervalMinutes(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-full rounded-md border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-white focus:border-teal-500 focus:outline-none"
+                  />
+                </div>
+                <p className="text-[10px] text-gray-500">
+                  After generation, publishing will start automatically at the specified date and repeat every {intervalMinutes} min.
+                  Pin images will be rendered using the template assigned to each site.
+                </p>
+              </div>
+
               <label className="mt-3 flex cursor-pointer items-center gap-2.5 rounded-lg border border-gray-800 bg-gray-950/60 px-3 py-2.5">
                 <input type="checkbox" checked={deleteAfterGeneration} onChange={(e) => setDeleteAfterGeneration(e.target.checked)} className="h-3.5 w-3.5 rounded border-gray-600 accent-teal-500" />
                 <span className="text-xs text-gray-300">Delete rows from sheet after generation</span>
@@ -1182,11 +1249,11 @@ export default function AutoSpyPage() {
                 <button onClick={() => setSelectionCtxMenu(null)} className="rounded-md border border-gray-700 px-3 py-2 text-xs font-medium text-gray-300 hover:bg-gray-800 transition">Keep Editing</button>
                 <button
                   onClick={() => void handleGenerateFromSelection()}
-                  disabled={startingGeneration}
+                  disabled={startingGeneration || !publishStartAt}
                   className="flex items-center gap-2 rounded-md bg-teal-600 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-500 disabled:opacity-60 transition"
                 >
                   {startingGeneration ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                  {startingGeneration ? "Starting..." : "Generate On All Sites"}
+                  {startingGeneration ? "Starting..." : "Generate + Schedule"}
                 </button>
               </div>
             </>
