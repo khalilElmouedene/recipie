@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..db_models import AutoSpySheet, AutoSpySource, Job, JobStatus, JobType, Site, User
+from ..db_models import AutoSpySheet, AutoSpySource, Job, JobStatus, JobType, Site, SitePublishSchedule, User
 from ..dependencies import get_current_user, check_project_access
 from ..models import SharedRecipeInput
 from ..services.auto_spy_scraper import (
@@ -282,6 +282,14 @@ async def get_last_published(
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
 
+    # ── 1. Check our own DB schedule first (always reliable) ─────────────────
+    sched_row = await db.execute(
+        select(SitePublishSchedule).where(SitePublishSchedule.site_id == site_id)
+    )
+    existing_schedule = sched_row.scalar_one_or_none()
+    db_date: datetime | None = existing_schedule.next_run_at if existing_schedule else None
+
+    # ── 2. Fetch from WordPress ────────────────────────────────────────────────
     base = site.wp_url.strip().rstrip("/")
     if not base.startswith(("http://", "https://")):
         base = "https://" + base
@@ -293,57 +301,63 @@ async def get_last_published(
     except Exception:
         pass
 
-    base_params = {"per_page": 1, "orderby": "date", "order": "desc", "_fields": "date_gmt"}
+    def _parse_wp_date(posts: list) -> datetime | None:
+        """Parse WP local `date` field — works for both publish and future statuses."""
+        if not posts or not isinstance(posts, list):
+            return None
+        raw = posts[0].get("date", "")
+        # Skip WP null sentinel
+        if not raw or raw.startswith("0000-"):
+            return None
+        try:
+            # WP returns local time without timezone; treat as UTC for comparison
+            return datetime.fromisoformat(raw).replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
 
-    def _parse_date(posts: list) -> str | None:
-        if posts and isinstance(posts, list) and posts[0].get("date_gmt"):
-            return posts[0]["date_gmt"]
-        return None
-
-    published_date: str | None = None
-    future_date: str | None = None
+    wp_published: datetime | None = None
+    wp_future: datetime | None = None
+    wp_params = {"per_page": 1, "orderby": "date", "order": "desc", "_fields": "date"}
 
     try:
         async with httpx.AsyncClient(headers=_WP_HEADERS, timeout=_WP_TIMEOUT, follow_redirects=True) as client:
-            # Call 1: latest published post (auth optional — public sites don't need it)
+            # Published posts — no auth needed for public sites
             try:
-                pub_kwargs: dict = {"params": {**base_params, "status": "publish"}}
+                kwargs: dict = {"params": {**wp_params, "status": "publish"}}
                 if auth:
-                    pub_kwargs["auth"] = auth
-                r = await client.get(f"{base}/wp-json/wp/v2/posts", **pub_kwargs)
+                    kwargs["auth"] = auth
+                r = await client.get(f"{base}/wp-json/wp/v2/posts", **kwargs)
                 if r.status_code == 200:
-                    published_date = _parse_date(r.json())
+                    wp_published = _parse_wp_date(r.json())
                 elif auth:
-                    # Try without auth as fallback
-                    r2 = await client.get(f"{base}/wp-json/wp/v2/posts", params={**base_params, "status": "publish"})
+                    r2 = await client.get(f"{base}/wp-json/wp/v2/posts", params={**wp_params, "status": "publish"})
                     if r2.status_code == 200:
-                        published_date = _parse_date(r2.json())
+                        wp_published = _parse_wp_date(r2.json())
             except Exception:
                 pass
 
-            # Call 2: latest scheduled (future) post — requires auth
+            # Scheduled (future) posts — requires auth
             if auth:
                 try:
                     r = await client.get(
                         f"{base}/wp-json/wp/v2/posts",
-                        params={**base_params, "status": "future"},
+                        params={**wp_params, "status": "future"},
                         auth=auth,
                     )
                     if r.status_code == 200:
-                        future_date = _parse_date(r.json())
+                        wp_future = _parse_wp_date(r.json())
                 except Exception:
                     pass
     except Exception:
         pass
 
-    # Return the later of published vs scheduled
-    last_date: str | None = None
-    if published_date and future_date:
-        last_date = future_date if future_date > published_date else published_date
-    else:
-        last_date = published_date or future_date
+    # ── 3. Pick the most recent date across all sources ───────────────────────
+    candidates: list[datetime] = [d for d in [db_date, wp_published, wp_future] if d is not None]
+    if candidates:
+        best = max(candidates)
+        return {"last_published_at": best.strftime("%Y-%m-%dT%H:%M:%S")}
 
-    return {"last_published_at": last_date}
+    return {"last_published_at": None}
 
 
 # ── Auto-spy generate job ──────────────────────────────────────────────────────
