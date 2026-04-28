@@ -56,7 +56,7 @@ _NATIVE_FONTS = frozenset({
 
 
 def _download_google_font(family: str, bold: bool, italic: bool) -> str | None:
-    """Fetch a Google Font TTF, cache to disk, return local path or None on failure."""
+    """Fetch a Google Font TTF (for PIL), cache to disk, return local path or None."""
     import requests as _req
     try:
         os.makedirs(_FONT_CACHE_DIR, exist_ok=True)
@@ -69,9 +69,46 @@ def _download_google_font(family: str, bold: bool, italic: bool) -> str | None:
         ital_str = "italic" if italic else ""
         q = family.strip().replace(" ", "+")
         url = f"https://fonts.googleapis.com/css?family={q}:{weight}{ital_str}"
-        # Old IE UA → Google returns legacy TTF (not WOFF2)
         r = _req.get(url, headers={"User-Agent": "Mozilla/4.0 (compatible; MSIE 8.0)"}, timeout=8)
         m = _re.search(r"url\(([^)]+\.ttf)\)", r.text)
+        if m:
+            font_url = m.group(1).strip("'\"")
+            r2 = _req.get(font_url, timeout=15)
+            r2.raise_for_status()
+            with open(cache, "wb") as fh:
+                fh.write(r2.content)
+            return cache
+    except Exception:
+        pass
+    return None
+
+
+def _download_google_font_woff2(family: str, bold: bool, italic: bool) -> str | None:
+    """Fetch a Google Font as WOFF2 (for Playwright/Chrome), cache to disk, return path or None."""
+    import requests as _req
+    try:
+        os.makedirs(_FONT_CACHE_DIR, exist_ok=True)
+        safe = _re.sub(r"[^a-z0-9]", "_", family.lower().strip())
+        tag = ("b" if bold else "") + ("i" if italic else "") or "r"
+        cache = os.path.join(_FONT_CACHE_DIR, f"{safe}_{tag}.woff2")
+        if os.path.exists(cache):
+            return cache
+        weight = "700" if bold else "400"
+        ital = "1" if italic else "0"
+        encoded = family.strip().replace(" ", "+")
+        # CSS2 API with modern Chrome UA → Google always serves WOFF2
+        css_url = (
+            f"https://fonts.googleapis.com/css2?family={encoded}"
+            f":ital,wght@{ital},{weight}&display=swap"
+        )
+        chrome_ua = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+        r = _req.get(css_url, headers={"User-Agent": chrome_ua}, timeout=10)
+        r.raise_for_status()
+        m = _re.search(r"url\(([^)]+\.woff2)\)", r.text)
         if m:
             font_url = m.group(1).strip("'\"")
             r2 = _req.get(font_url, timeout=15)
@@ -263,12 +300,21 @@ def _url_to_data_uri(url: str, log: Callable[[str], None]) -> str | None:
         return None
 
 
-def _font_to_data_uri(family: str, bold: bool, italic: bool) -> str | None:
-    """Return a base64 data URI for a Google Font TTF, using the disk cache."""
+def _font_to_data_uri(family: str, bold: bool, italic: bool) -> tuple[str, str] | None:
+    """Return (data_uri, format_hint) for the font, or None if unavailable.
+
+    Prefers WOFF2 (Chrome UA, always served by Google) over TTF (old IE UA).
+    """
+    # WOFF2 first — guaranteed from Google Fonts with a modern UA
+    path = _download_google_font_woff2(family, bold, italic)
+    if path and os.path.exists(path):
+        with open(path, "rb") as fh:
+            return f"data:font/woff2;base64,{base64.b64encode(fh.read()).decode()}", "woff2"
+    # TTF fallback (legacy IE UA download)
     path = _download_google_font(family, bold, italic)
     if path and os.path.exists(path):
         with open(path, "rb") as fh:
-            return f"data:font/truetype;base64,{base64.b64encode(fh.read()).decode()}"
+            return f"data:font/truetype;base64,{base64.b64encode(fh.read()).decode()}", "truetype"
     return None
 
 
@@ -280,8 +326,11 @@ def _build_pin_render_html(
     food_data_uri: str,
     asset_data_uris: dict[str, str],
     title: str,
+    log: Callable[[str], None] | None = None,
 ) -> str:
     """Build a self-contained HTML page that renders the pin template on a <canvas>."""
+    _log = log or (lambda _: None)
+
     # Collect non-native font families used by text elements
     font_families: set[str] = set()
     for elem in elements:
@@ -293,18 +342,23 @@ def _build_pin_render_html(
     # Embed fonts as @font-face data URIs so headless Chrome needs no network access
     font_face_css = ""
     for fam in sorted(font_families):
+        _log(f"  Embedding font: {fam}")
         for bold, italic, weight, style in [
             (False, False, "400", "normal"),
             (True,  False, "700", "normal"),
             (False, True,  "400", "italic"),
             (True,  True,  "700", "italic"),
         ]:
-            uri = _font_to_data_uri(fam, bold, italic)
-            if uri:
+            result = _font_to_data_uri(fam, bold, italic)
+            if result:
+                uri, fmt = result
                 font_face_css += (
                     f'@font-face {{font-family:"{fam}";font-weight:{weight};'
-                    f'font-style:{style};src:url("{uri}") format("truetype");}}\n'
+                    f'font-style:{style};src:url("{uri}") format("{fmt}");}}\n'
                 )
+                _log(f"    {weight} {style} → {fmt} embedded ({len(uri)//1024}KB)")
+            else:
+                _log(f"    {weight} {style} → FAILED to download")
 
     # Hidden <img> elements for asset images (data URIs avoid canvas CORS taint)
     asset_id_map: dict[str, str] = {}
@@ -494,7 +548,7 @@ def _render_with_playwright_sync(
     except ImportError:
         return None
 
-    log("  Rendering pin with Playwright (headless Chromium)…")
+    log(f"  Rendering pin with Playwright — canvas {canvas_width}×{canvas_height}, bg={bg_color}")
 
     food_data_uri = _url_to_data_uri(image_url, log)
     if not food_data_uri:
@@ -518,6 +572,7 @@ def _render_with_playwright_sync(
         food_data_uri=food_data_uri,
         asset_data_uris=asset_data_uris,
         title=title,
+        log=log,
     )
 
     try:
