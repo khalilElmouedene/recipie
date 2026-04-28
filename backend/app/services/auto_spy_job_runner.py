@@ -108,9 +108,12 @@ def _download_google_font_woff2(family: str, bold: bool, italic: bool) -> str | 
         )
         r = _req.get(css_url, headers={"User-Agent": chrome_ua}, timeout=10)
         r.raise_for_status()
-        m = _re.search(r"url\(([^)]+\.woff2)\)", r.text)
-        if m:
-            font_url = m.group(1).strip("'\"")
+        # Google returns multiple @font-face blocks (one per unicode range subset).
+        # The LAST block is always the Latin subset (U+0000-00FF) which covers English.
+        # Using the first match would give Cyrillic/CJK — wrong for English text.
+        matches = _re.findall(r"url\(([^)]+\.woff2)\)", r.text)
+        if matches:
+            font_url = matches[-1].strip("'\"")
             r2 = _req.get(font_url, timeout=15)
             r2.raise_for_status()
             with open(cache, "wb") as fh:
