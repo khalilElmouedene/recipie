@@ -1321,25 +1321,26 @@ async def start_auto_spy_generate_job(
                 site_obj = site_obj_map.get(site_id_str)
                 if not ss or not site_obj:
                     continue
-                try:
-                    wp_user, wp_pass = get_random_wp_credentials(site_obj)
-                except Exception as e:
-                    rj.log(f"  [{site_obj.domain}] No WP credentials: {e}")
-                    continue
-                site_config = {
-                    "wp_url": site_obj.wp_url,
-                    "wp_username": wp_user,
-                    "wp_password": wp_pass,
-                    "domain": site_obj.domain if site_obj.domain.startswith("http") else f"https://{site_obj.domain}",
-                }
                 publish_start = ss["publish_start_at"]
                 step = timedelta(minutes=ss["interval_minutes"])
                 for idx, item in enumerate(items):
                     recipe_data = per_recipe_generated.get(item["id"])
                     if not recipe_data:
                         continue
+                    # Pick a random publisher for each post individually
+                    try:
+                        wp_user, wp_pass = get_random_wp_credentials(site_obj)
+                    except Exception as e:
+                        rj.log(f"  [{site_obj.domain}] No WP credentials: {e}")
+                        continue
+                    site_config = {
+                        "wp_url": site_obj.wp_url,
+                        "wp_username": wp_user,
+                        "wp_password": wp_pass,
+                        "domain": site_obj.domain if site_obj.domain.startswith("http") else f"https://{site_obj.domain}",
+                    }
                     post_date = publish_start + step * idx
-                    rj.log(f"  [{site_obj.domain}] #{idx + 1}: {recipe_data['recipe_text'][:50]} → {post_date.strftime('%Y-%m-%d %H:%M UTC')}")
+                    rj.log(f"  [{site_obj.domain}] #{idx + 1} (user: {wp_user}): {recipe_data['recipe_text'][:50]} → {post_date.strftime('%Y-%m-%d %H:%M UTC')}")
                     try:
                         result = _publish_recipe(recipe_data, site_config, post_date_gmt=post_date, log=rj.log)
                     except Exception as e:
@@ -1596,17 +1597,6 @@ async def resume_auto_spy_generate_job(
                 ss = resume_schedules.get(site_id_str)
                 if not site_obj:
                     continue
-                try:
-                    wp_user, wp_pass = get_random_wp_credentials(site_obj)
-                except Exception as e:
-                    rj.log(f"  [{site_obj.domain}] No WP credentials: {e}")
-                    continue
-                site_config = {
-                    "wp_url": site_obj.wp_url,
-                    "wp_username": wp_user,
-                    "wp_password": wp_pass,
-                    "domain": site_obj.domain if site_obj.domain.startswith("http") else f"https://{site_obj.domain}",
-                }
                 interval_min = ss.interval_minutes if ss else 240
                 step = timedelta(minutes=interval_min)
                 offset = already_published.get(site_id_str, 0)
@@ -1615,8 +1605,20 @@ async def resume_auto_spy_generate_job(
                     recipe_data = per_recipe_generated.get(item["id"])
                     if not recipe_data:
                         continue
+                    # Pick a random publisher for each post individually
+                    try:
+                        wp_user, wp_pass = get_random_wp_credentials(site_obj)
+                    except Exception as e:
+                        rj.log(f"  [{site_obj.domain}] No WP credentials: {e}")
+                        continue
+                    site_config = {
+                        "wp_url": site_obj.wp_url,
+                        "wp_username": wp_user,
+                        "wp_password": wp_pass,
+                        "domain": site_obj.domain if site_obj.domain.startswith("http") else f"https://{site_obj.domain}",
+                    }
                     post_date = publish_start + step * (offset + idx)
-                    rj.log(f"  [{site_obj.domain}] #{offset + idx + 1}: {recipe_data['recipe_text'][:50]} → {post_date.strftime('%Y-%m-%d %H:%M UTC')}")
+                    rj.log(f"  [{site_obj.domain}] #{offset + idx + 1} (user: {wp_user}): {recipe_data['recipe_text'][:50]} → {post_date.strftime('%Y-%m-%d %H:%M UTC')}")
                     try:
                         result = _publish_recipe(recipe_data, site_config, post_date_gmt=post_date, log=rj.log)
                     except Exception as e:
