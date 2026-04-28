@@ -12,7 +12,7 @@ import httpx
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.db_models import AutoSpySheet, AutoSpySource
+from app.db_models import AutoSpySheet, AutoSpySource, Project
 
 
 _HEADERS = {
@@ -316,6 +316,88 @@ def _append_rows_to_tab(workbook: dict, tab_id: str, rows: list[dict]) -> int:
     return added
 
 
+_VISION_PROMPT = (
+    "Look at this image and answer YES or NO.\n"
+    "Answer YES only if ALL of the following are true:\n"
+    "  1. The image shows food, a dish, a drink, an ingredient, a dessert, a snack, "
+    "or anything edible.\n"
+    "  2. There are NO people, faces, or human body parts visible.\n"
+    "  3. There is NO significant text, title, watermark, or graphic overlay on the image.\n"
+    "Reply with only the single word YES or NO."
+)
+
+
+async def _is_food_image(image_url: str, openai_key: str) -> bool:
+    """Return True if the image passes all food/people/text checks via GPT-4o-mini vision.
+
+    On any error (network, API, unexpected response) returns True so that
+    we never silently drop a row due to a transient failure.
+    """
+    try:
+        payload = {
+            "model": "gpt-4o-mini",
+            "max_tokens": 5,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": image_url, "detail": "low"},
+                        },
+                        {"type": "text", "text": _VISION_PROMPT},
+                    ],
+                }
+            ],
+        }
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            resp = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {openai_key}"},
+                json=payload,
+            )
+            resp.raise_for_status()
+        answer = resp.json()["choices"][0]["message"]["content"].strip().upper()
+        return answer.startswith("YES")
+    except Exception:
+        return True  # keep on error — never silently drop
+
+
+async def _filter_food_rows(
+    rows: list[dict],
+    openai_key: str,
+    max_concurrent: int = 5,
+) -> list[dict]:
+    """Filter *rows* keeping only those whose image passes AI food checks."""
+    if not rows or not openai_key:
+        return rows
+
+    sem = asyncio.Semaphore(max_concurrent)
+
+    async def _check(row: dict) -> tuple[dict, bool]:
+        async with sem:
+            ok = await _is_food_image(row["image_url"], openai_key)
+            return row, ok
+
+    results = await asyncio.gather(*[_check(r) for r in rows])
+    return [row for row, ok in results if ok]
+
+
+async def _get_project_openai_key(project_id: uuid.UUID, created_by_user_id: uuid.UUID | None) -> str | None:
+    """Load the OpenAI key for the project from the DB, or None if unavailable."""
+    try:
+        from .credentials_loader import load_credentials_for_job
+        async with SessionLocal() as db:
+            # Use project owner if no specific user
+            if created_by_user_id is None:
+                prj = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+                created_by_user_id = prj.owner_id if prj else uuid.uuid4()
+            creds = await load_credentials_for_job(db, project_id, created_by_user_id)
+            return creds.get("openai") or None
+    except Exception:
+        return None
+
+
 async def scan_source(source_id: uuid.UUID, force: bool = False) -> None:
     """Scrape a source and append new rows to its sheet tab.
 
@@ -334,6 +416,15 @@ async def scan_source(source_id: uuid.UUID, force: bool = False) -> None:
         after = None if force else source.last_scanned_at
 
         rows = await scrape_source_rows(source.url, after)
+
+        # AI image filtering — keep only real food images with no people/text.
+        # Runs concurrently (up to 5 at once). Falls through gracefully if no key.
+        if rows:
+            openai_key = await _get_project_openai_key(
+                source.project_id, source.created_by_user_id
+            )
+            if openai_key:
+                rows = await _filter_food_rows(rows, openai_key)
 
         sheet_result = await db.execute(
             select(AutoSpySheet).where(AutoSpySheet.project_id == source.project_id)
