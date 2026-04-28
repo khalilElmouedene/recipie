@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -274,3 +277,86 @@ async def update_pin_designer_template(
     await db.refresh(tmpl)
     return _template_out(tmpl)
 
+
+# ── Quick preview-render (test without full pipeline) ─────────────────────────
+
+class _PreviewRenderRequest(BaseModel):
+    image_url: str
+    title: str = "Sample Recipe Title"
+
+
+@router.post("/api/pin-designer-templates/{template_id}/preview-render")
+async def preview_render_template(
+    template_id: str,
+    body: _PreviewRenderRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Render a pin image instantly and return it as JPEG — no article generation needed.
+
+    Send any food image URL + a title to preview exactly what the renderer will produce.
+    """
+    try:
+        tid = uuid.UUID(template_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid template id")
+
+    row = await db.execute(
+        select(PinDesignerTemplate).where(
+            PinDesignerTemplate.id == tid,
+            PinDesignerTemplate.owner_id == user.id,
+        )
+    )
+    tmpl = row.scalar_one_or_none()
+    if tmpl is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    try:
+        elements = json.loads(tmpl.elements_json) if tmpl.elements_json else []
+    except Exception:
+        elements = []
+
+    logs: list[str] = []
+
+    from ..services.auto_spy_job_runner import _render_with_playwright_sync, _pil_render_elements
+
+    loop = asyncio.get_event_loop()
+    data_uri: str | None = await loop.run_in_executor(
+        None,
+        lambda: _render_with_playwright_sync(
+            elements=elements,
+            bg_color=tmpl.bg_color or "#ffffff",
+            canvas_width=tmpl.canvas_width or 1000,
+            canvas_height=tmpl.canvas_height or 1500,
+            image_url=body.image_url,
+            title=body.title,
+            site_domain="",
+            log=logs.append,
+        ),
+    )
+
+    if not data_uri:
+        data_uri = await loop.run_in_executor(
+            None,
+            lambda: _pil_render_elements(
+                elements=elements,
+                bg_color=tmpl.bg_color or "#ffffff",
+                canvas_width=tmpl.canvas_width or 1000,
+                canvas_height=tmpl.canvas_height or 1500,
+                image_url=body.image_url,
+                title=body.title,
+                site_domain="",
+                log=logs.append,
+            ),
+        )
+
+    if not data_uri:
+        raise HTTPException(status_code=500, detail={"error": "Render failed", "logs": logs})
+
+    _header, b64 = data_uri.split(",", 1)
+    img_bytes = base64.b64decode(b64)
+    return Response(
+        content=img_bytes,
+        media_type="image/jpeg",
+        headers={"X-Render-Logs": " | ".join(logs[-10:])},
+    )

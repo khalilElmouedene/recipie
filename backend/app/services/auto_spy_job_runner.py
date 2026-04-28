@@ -437,6 +437,22 @@ function wrapText(ctx, text, x, y, maxW, lh) {{
 }}
 
 async function render() {{
+  // Explicitly trigger loading for each embedded @font-face.
+  // Browsers lazy-load data-URI fonts — they won't load until explicitly requested.
+  try {{
+    const loads = [];
+    for (const elem of ELEMENTS) {{
+      if (elem.type === 'text' && elem.fontFamily) {{
+        const fs = elem.fontSize || 36;
+        const fam = elem.fontFamily;
+        loads.push(document.fonts.load(`normal 400 ${{fs}}px "${{fam}}"`));
+        loads.push(document.fonts.load(`normal 700 ${{fs}}px "${{fam}}"`));
+        loads.push(document.fonts.load(`italic 400 ${{fs}}px "${{fam}}"`));
+        loads.push(document.fonts.load(`italic 700 ${{fs}}px "${{fam}}"`));
+      }}
+    }}
+    await Promise.allSettled(loads);
+  }} catch(e) {{}}
   await document.fonts.ready;
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
