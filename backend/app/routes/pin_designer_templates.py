@@ -311,44 +311,53 @@ async def preview_render_template(
     if tmpl is None:
         raise HTTPException(status_code=404, detail="Template not found")
 
+    # Extract plain Python values now (SQLAlchemy ORM objects are not thread-safe)
     try:
         elements = json.loads(tmpl.elements_json) if tmpl.elements_json else []
     except Exception:
         elements = []
+    bg_color     = tmpl.bg_color or "#ffffff"
+    canvas_width  = tmpl.canvas_width or 1000
+    canvas_height = tmpl.canvas_height or 1500
 
     logs: list[str] = []
 
     from ..services.auto_spy_job_runner import _render_with_playwright_sync, _pil_render_elements
 
-    loop = asyncio.get_event_loop()
-    data_uri: str | None = await loop.run_in_executor(
-        None,
-        lambda: _render_with_playwright_sync(
-            elements=elements,
-            bg_color=tmpl.bg_color or "#ffffff",
-            canvas_width=tmpl.canvas_width or 1000,
-            canvas_height=tmpl.canvas_height or 1500,
-            image_url=body.image_url,
-            title=body.title,
-            site_domain="",
-            log=logs.append,
-        ),
-    )
+    loop = asyncio.get_running_loop()
 
-    if not data_uri:
-        data_uri = await loop.run_in_executor(
-            None,
-            lambda: _pil_render_elements(
+    def _do_render() -> str | None:
+        try:
+            result = _render_with_playwright_sync(
                 elements=elements,
-                bg_color=tmpl.bg_color or "#ffffff",
-                canvas_width=tmpl.canvas_width or 1000,
-                canvas_height=tmpl.canvas_height or 1500,
+                bg_color=bg_color,
+                canvas_width=canvas_width,
+                canvas_height=canvas_height,
                 image_url=body.image_url,
                 title=body.title,
                 site_domain="",
                 log=logs.append,
-            ),
-        )
+            )
+            if result:
+                return result
+        except Exception as exc:
+            logs.append(f"Playwright error: {exc}")
+        try:
+            return _pil_render_elements(
+                elements=elements,
+                bg_color=bg_color,
+                canvas_width=canvas_width,
+                canvas_height=canvas_height,
+                image_url=body.image_url,
+                title=body.title,
+                site_domain="",
+                log=logs.append,
+            )
+        except Exception as exc:
+            logs.append(f"PIL error: {exc}")
+        return None
+
+    data_uri = await loop.run_in_executor(None, _do_render)
 
     if not data_uri:
         raise HTTPException(status_code=500, detail={"error": "Render failed", "logs": logs})
@@ -358,5 +367,5 @@ async def preview_render_template(
     return Response(
         content=img_bytes,
         media_type="image/jpeg",
-        headers={"X-Render-Logs": " | ".join(logs[-10:])},
+        headers={"X-Render-Logs": " | ".join(logs[-15:])},
     )
