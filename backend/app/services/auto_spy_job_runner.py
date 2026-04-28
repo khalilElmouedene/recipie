@@ -263,6 +263,15 @@ def _url_to_data_uri(url: str, log: Callable[[str], None]) -> str | None:
         return None
 
 
+def _font_to_data_uri(family: str, bold: bool, italic: bool) -> str | None:
+    """Return a base64 data URI for a Google Font TTF, using the disk cache."""
+    path = _download_google_font(family, bold, italic)
+    if path and os.path.exists(path):
+        with open(path, "rb") as fh:
+            return f"data:font/truetype;base64,{base64.b64encode(fh.read()).decode()}"
+    return None
+
+
 def _build_pin_render_html(
     elements: list[dict],
     bg_color: str,
@@ -273,7 +282,7 @@ def _build_pin_render_html(
     title: str,
 ) -> str:
     """Build a self-contained HTML page that renders the pin template on a <canvas>."""
-    # Google Fonts links for non-native families
+    # Collect non-native font families used by text elements
     font_families: set[str] = set()
     for elem in elements:
         if elem.get("type") == "text":
@@ -281,18 +290,21 @@ def _build_pin_render_html(
             if fam and fam.lower() not in _NATIVE_FONTS:
                 font_families.add(fam)
 
-    font_links = ""
-    if font_families:
-        font_links = (
-            '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
-            '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
-        )
-        for fam in sorted(font_families):
-            encoded = fam.replace(" ", "+")
-            font_links += (
-                f'<link href="https://fonts.googleapis.com/css2?family={encoded}'
-                f':ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">\n'
-            )
+    # Embed fonts as @font-face data URIs so headless Chrome needs no network access
+    font_face_css = ""
+    for fam in sorted(font_families):
+        for bold, italic, weight, style in [
+            (False, False, "400", "normal"),
+            (True,  False, "700", "normal"),
+            (False, True,  "400", "italic"),
+            (True,  True,  "700", "italic"),
+        ]:
+            uri = _font_to_data_uri(fam, bold, italic)
+            if uri:
+                font_face_css += (
+                    f'@font-face {{font-family:"{fam}";font-weight:{weight};'
+                    f'font-style:{style};src:url("{uri}") format("truetype");}}\n'
+                )
 
     # Hidden <img> elements for asset images (data URIs avoid canvas CORS taint)
     asset_id_map: dict[str, str] = {}
@@ -321,8 +333,8 @@ def _build_pin_render_html(
 <html>
 <head>
 <meta charset="utf-8">
-{font_links}<style>
-* {{ margin: 0; padding: 0; }}
+<style>
+{font_face_css}* {{ margin: 0; padding: 0; }}
 body {{ background: #000; overflow: hidden; width: {canvas_width}px; height: {canvas_height}px; }}
 canvas {{ display: block; }}
 </style>
