@@ -26,12 +26,17 @@ _HEADERS = {
 }
 _TIMEOUT = httpx.Timeout(25.0, connect=8.0)
 
-# Image URLs containing these substrings are unlikely to be recipe photos
+# Image URLs containing these substrings are not recipe photos
 _IMAGE_SKIP_PATTERNS = re.compile(
     r"(1x1|pixel|tracking|gravatar|avatar|logo|icon|spinner|blank|placeholder"
-    r"|\.gif|smiley|emoji|star\.png|rating)",
+    r"|\.gif|smiley|emoji|star\.png|rating"
+    r"|youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|wistia\.com"
+    r"|brightcove|jwplayer|twitch\.tv|tiktok\.com)",
     re.IGNORECASE,
 )
+
+# Matches a single <img ...> tag (self-closing or not)
+_IMG_TAG_RE = re.compile(r"<img\b[^>]+>", re.IGNORECASE | re.DOTALL)
 
 
 def _normalize_url(raw: str) -> str:
@@ -48,27 +53,39 @@ def _domain_from_url(url: str) -> str:
 
 
 def _extract_image_from_html(html_str: str) -> str:
-    """Return the first plausible photo URL found in an HTML string."""
+    """Return the first plausible photo URL from an HTML string.
+
+    Only looks inside <img> tags — never picks up <iframe src> or other
+    elements, which would give video embed URLs instead of images.
+    """
     if not html_str:
         return ""
-    # Try <img src> or <img data-src> (lazy-loaded)
-    for attr in ("src", "data-src", "data-lazy-src", "data-original"):
-        for m in re.finditer(
-            rf'{attr}=["\']([^"\']+)["\']', html_str, re.IGNORECASE
-        ):
+
+    full_size: str = ""
+    any_size: str = ""
+
+    for img_tag in _IMG_TAG_RE.finditer(html_str):
+        tag = img_tag.group(0)
+        for attr in ("src", "data-src", "data-lazy-src", "data-original", "data-lazy"):
+            m = re.search(rf'{attr}=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+            if not m:
+                continue
             url = m.group(1).strip()
-            if url.startswith("http") and not _IMAGE_SKIP_PATTERNS.search(url):
-                # Prefer large images — skip anything that looks like a thumbnail
-                if not re.search(r"-\d+x\d+\.", url):
-                    return url
-        # Second pass: accept thumbnails too if nothing else found
-        for m in re.finditer(
-            rf'{attr}=["\']([^"\']+)["\']', html_str, re.IGNORECASE
-        ):
-            url = m.group(1).strip()
-            if url.startswith("http") and not _IMAGE_SKIP_PATTERNS.search(url):
-                return url
-    return ""
+            if not url.startswith("http"):
+                continue
+            if _IMAGE_SKIP_PATTERNS.search(url):
+                continue
+            if not any_size:
+                any_size = url
+            # Prefer images that aren't WordPress-resized thumbnails (-300x200.jpg)
+            if not full_size and not re.search(r"-\d{2,4}x\d{2,4}\.", url):
+                full_size = url
+            if full_size:
+                break
+        if full_size:
+            break
+
+    return full_size or any_size
 
 
 def _best_image_from_media_list(media_list: list) -> str:
