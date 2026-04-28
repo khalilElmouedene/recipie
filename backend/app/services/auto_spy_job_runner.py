@@ -290,7 +290,11 @@ def _parse_hex_color(color: str, opacity: float = 1.0) -> tuple:
 
 
 def _url_to_data_uri(url: str, log: Callable[[str], None]) -> str | None:
-    """Download *url* and return it as a base64 data URI, or None on failure."""
+    """Download *url* and return it as a base64 data URI, or None on failure.
+    If the URL is already a data URI it is returned as-is.
+    """
+    if url.startswith("data:"):
+        return url  # already a data URI — pass through directly
     try:
         import requests as _req
         r = _req.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
