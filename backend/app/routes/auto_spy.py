@@ -196,9 +196,9 @@ async def add_auto_spy_source(
     await db.commit()
     await db.refresh(source)
 
-    # Kick off an immediate background scan
+    # Kick off an immediate background scan (force=True: no date filter on first run)
     source_id = source.id
-    asyncio.create_task(scan_source(source_id))
+    asyncio.create_task(scan_source(source_id, force=True))
 
     return _source_out(source)
 
@@ -258,7 +258,7 @@ async def trigger_scan(
     if source is None:
         raise HTTPException(status_code=404, detail="Source not found")
 
-    asyncio.create_task(scan_source(source_id))
+    asyncio.create_task(scan_source(source_id, force=True))
     return {"status": "scan triggered"}
 
 
