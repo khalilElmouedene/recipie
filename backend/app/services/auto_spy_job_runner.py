@@ -52,7 +52,161 @@ _NATIVE_FONTS = frozenset({
     "arial", "helvetica", "sans-serif", "serif", "monospace",
     "times new roman", "courier new", "georgia", "verdana",
     "tahoma", "trebuchet ms", "impact", "comic sans ms",
+    # Linux/Docker system fonts installed in image
+    "liberation sans", "liberation serif", "liberation mono",
+    "dejavu sans", "dejavu serif", "dejavu sans mono",
+    "freesans", "freeserif", "freemono",
+    "nimbus sans", "nimbus roman", "urw bookman",
 })
+
+# Commercial / platform-only fonts → visually similar Google Fonts substitute.
+# The key is lowercase(family name). The value is the Google Fonts family to
+# embed instead so the renderer still produces a nice result.
+_FONT_SIMILARITY_MAP: dict[str, str] = {
+    # ── Adobe fonts ──────────────────────────────────────────────────────────
+    "penumbra sans std":        "Raleway",
+    "penumbra serif std":       "Cormorant Garamond",
+    "penumbra half serif std":  "Cormorant",
+    "myriad pro":               "Source Sans 3",
+    "myriad":                   "Source Sans 3",
+    "minion pro":               "Merriweather",
+    "minion":                   "Merriweather",
+    "adobe garamond pro":       "Cormorant Garamond",
+    "adobe garamond":           "Cormorant Garamond",
+    "adobe caslon pro":         "EB Garamond",
+    "adobe caslon":             "EB Garamond",
+    "trajan pro":               "Cinzel",
+    "trajan":                   "Cinzel",
+    "warnock pro":              "Playfair Display",
+    "cronos pro":               "Lato",
+    "arno pro":                 "EB Garamond",
+    "kepler std":               "Playfair Display",
+    "chaparral pro":            "Merriweather",
+    "hypatia sans pro":         "Josefin Sans",
+    "itc avant garde":          "Josefin Sans",
+    "itc garamond":             "Cormorant Garamond",
+    "itc franklin gothic":      "Barlow",
+    "ff meta":                  "Nunito Sans",
+    "ff din":                   "Barlow",
+    "din":                      "Barlow",
+    "din condensed":            "Barlow Condensed",
+    "din next":                 "Barlow",
+    # ── Windows-only fonts ───────────────────────────────────────────────────
+    "segoe ui":                 "Inter",
+    "segoe ui light":           "Inter",
+    "segoe ui semibold":        "Inter",
+    "calibri":                  "Carlito",
+    "cambria":                  "Caladea",
+    "candara":                  "Nunito",
+    "corbel":                   "Cabin",
+    "consolas":                 "Inconsolata",
+    "constantia":               "Libre Baskerville",
+    "franklin gothic medium":   "Barlow",
+    "century gothic":           "Josefin Sans",
+    "palatino linotype":        "IM Fell English",
+    "book antiqua":             "IM Fell English",
+    "garamond":                 "Cormorant Garamond",
+    "perpetua":                 "Cormorant",
+    # ── macOS-only fonts ─────────────────────────────────────────────────────
+    "sf pro":                   "Inter",
+    "sf pro display":           "Inter",
+    "sf pro text":              "Inter",
+    "sf compact":               "Inter",
+    "new york":                 "Playfair Display",
+    "helvetica neue":           "Inter",
+    "helvetica":                "Inter",
+    "gill sans":                "Raleway",
+    "gill sans mt":             "Raleway",
+    "optima":                   "Questrial",
+    "avenir":                   "Nunito",
+    "avenir next":              "Nunito",
+    "avenir next condensed":    "Nunito",
+    "futura":                   "Josefin Sans",
+    "futura pt":                "Josefin Sans",
+    "baskerville":              "Libre Baskerville",
+    "hoefler text":             "EB Garamond",
+    "american typewriter":      "Zilla Slab",
+    "didot":                    "Playfair Display",
+    "bodoni 72":                "Bodoni Moda",
+    "bodoni":                   "Bodoni Moda",
+    "zapf chancery":            "Great Vibes",
+    # ── Common licensed web fonts ────────────────────────────────────────────
+    "gotham":                   "Montserrat",
+    "gotham bold":              "Montserrat",
+    "gotham narrow":            "Barlow Condensed",
+    "proxima nova":             "Nunito Sans",
+    "proxima nova alt":         "Nunito Sans",
+    "brandon grotesque":        "Raleway",
+    "brandon text":             "Lato",
+    "neutraface":               "Josefin Sans",
+    "neutraface condensed":     "Josefin Sans",
+    "freight sans":             "Source Sans 3",
+    "freight text":             "Source Serif 4",
+    "freight display":          "Playfair Display",
+    "museo sans":               "Nunito",
+    "museo slab":               "Zilla Slab",
+    "circular":                 "Nunito",
+    "circular std":             "Nunito",
+    "apercu":                   "DM Sans",
+    "maison neue":              "DM Sans",
+    "aktiv grotesk":            "Inter",
+    "knockout":                 "Bebas Neue",
+    "tungsten":                 "Bebas Neue",
+    "miller display":           "Playfair Display",
+    "chronicle display":        "Playfair Display",
+    "chronicle text":           "Merriweather",
+    "mercury":                  "EB Garamond",
+    "archer":                   "Arvo",
+    "sentinel":                 "Arvo",
+    "ideal sans":               "Nunito",
+    "verlag":                   "Josefin Sans",
+    "operator mono":            "JetBrains Mono",
+    "calibre":                  "Nunito Sans",
+    "national":                 "Nunito",
+    "tiempos":                  "Lora",
+    "tiempos text":             "Lora",
+    "graphik":                  "Inter",
+    "canela":                   "Cormorant",
+    "domaine display":          "Playfair Display",
+    "founders grotesk":         "Barlow",
+    "styrene":                  "Barlow",
+    "atlas grotesk":            "DM Sans",
+    "druk":                     "Bebas Neue",
+    "druk wide":                "Bebas Neue",
+    "portrait":                 "Playfair Display",
+    "publico":                  "Lora",
+    "le monde":                 "Lora",
+    "exchange":                 "Merriweather",
+    "scala sans":               "Source Sans 3",
+    "scala":                    "Source Serif 4",
+    "frutiger":                 "Nunito Sans",
+    "univers":                  "Source Sans 3",
+    "trade gothic":             "Barlow",
+    "trade gothic next":        "Barlow",
+    "helvetica world":          "Inter",
+    "neue helvetica":           "Inter",
+    "akzidenz grotesk":         "Inter",
+    "folio":                    "Barlow",
+    "eurostile":                "Rajdhani",
+    "ocr a":                    "Share Tech Mono",
+    "lucida grande":            "Nunito",
+    "lucida sans":              "Nunito",
+}
+
+
+def _resolve_font_family(family: str) -> tuple[str, bool]:
+    """Return (resolved_family, was_substituted).
+
+    If *family* is a known commercial / platform-only font that can't be
+    downloaded freely, return a visually similar Google Fonts alternative.
+    Otherwise return *family* unchanged.
+    """
+    if not family:
+        return family, False
+    sub = _FONT_SIMILARITY_MAP.get(family.lower().strip())
+    if sub:
+        return sub, True
+    return family, False
 
 
 def _download_google_font(family: str, bold: bool, italic: bool) -> str | None:
@@ -140,13 +294,17 @@ def _elem_font(elem: dict, log: Callable[[str], None]):
     italic = "italic" in style
 
     if family and family.lower() not in _NATIVE_FONTS:
-        for b, i in [(bold, italic), (bold, False), (False, False)]:
-            path = _download_google_font(family, b, i)
-            if path:
-                try:
-                    return ImageFont.truetype(path, size)
-                except Exception:
-                    pass
+        resolved, substituted = _resolve_font_family(family)
+        if substituted:
+            log(f"  Font '{family}' → substituting '{resolved}'")
+        for candidate in ([resolved] if substituted else [family]):
+            for b, i in [(bold, italic), (bold, False), (False, False)]:
+                path = _download_google_font(candidate, b, i)
+                if path:
+                    try:
+                        return ImageFont.truetype(path, size)
+                    except Exception:
+                        pass
         log(f"  Font '{family}' unavailable, using system fallback")
     return _sys_font(size, bold)
 
@@ -338,7 +496,28 @@ def _build_pin_render_html(
     """Build a self-contained HTML page that renders the pin template on a <canvas>."""
     _log = log or (lambda _: None)
 
-    # Collect non-native font families used by text elements
+    # Build a font-family substitution map: original → resolved (free) name.
+    # This must happen BEFORE building the elements JSON so the JavaScript
+    # ctx.font string and the FontFace loader use the same resolved name.
+    family_map: dict[str, str] = {}
+    for elem in elements:
+        if elem.get("type") == "text":
+            fam = str(elem.get("fontFamily") or "").strip()
+            if fam and fam not in family_map:
+                resolved, substituted = _resolve_font_family(fam)
+                family_map[fam] = resolved
+                if substituted:
+                    _log(f"  Font substitution: '{fam}' → '{resolved}'")
+
+    # Rewrite elements so the JS sees the resolved font name in elem.fontFamily
+    elements = [
+        {**e, "fontFamily": family_map.get(str(e.get("fontFamily") or "").strip(),
+                                           str(e.get("fontFamily") or "").strip())}
+        if e.get("type") == "text" else e
+        for e in elements
+    ]
+
+    # Collect non-native font families (resolved names) used by text elements
     font_families: set[str] = set()
     for elem in elements:
         if elem.get("type") == "text":
