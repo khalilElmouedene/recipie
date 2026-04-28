@@ -339,11 +339,13 @@ def _build_pin_render_html(
             if fam and fam.lower() not in _NATIVE_FONTS:
                 font_families.add(fam)
 
-    # Embed fonts as @font-face data URIs so headless Chrome needs no network access
-    font_face_css = ""
+    # Build JS FontFace loading code — more reliable than CSS @font-face in headless Chrome.
+    # The FontFace API lets us explicitly await each font before drawing anything.
+    font_load_js = ""
     for fam in sorted(font_families):
         _log(f"  Embedding font: {fam}")
-        for bold, italic, weight, style in [
+        fam_esc = fam.replace("\\", "\\\\").replace('"', '\\"')
+        for bold, italic, weight, css_style in [
             (False, False, "400", "normal"),
             (True,  False, "700", "normal"),
             (False, True,  "400", "italic"),
@@ -352,13 +354,18 @@ def _build_pin_render_html(
             result = _font_to_data_uri(fam, bold, italic)
             if result:
                 uri, fmt = result
-                font_face_css += (
-                    f'@font-face {{font-family:"{fam}";font-weight:{weight};'
-                    f'font-style:{style};src:url("{uri}") format("{fmt}");}}\n'
+                # Use single quotes around the data URI so it doesn't need escaping
+                font_load_js += (
+                    f"  try {{\n"
+                    f"    const _ff = new FontFace(\"{fam_esc}\", \"url('{uri}')\","
+                    f" {{weight:\"{weight}\",style:\"{css_style}\"}});\n"
+                    f"    document.fonts.add(_ff);\n"
+                    f"    await _ff.load();\n"
+                    f"  }} catch(_e) {{}}\n"
                 )
-                _log(f"    {weight} {style} → {fmt} embedded ({len(uri)//1024}KB)")
+                _log(f"    {weight} {css_style} → {fmt} embedded ({len(uri)//1024}KB)")
             else:
-                _log(f"    {weight} {style} → FAILED to download")
+                _log(f"    {weight} {css_style} → FAILED to download")
 
     # Hidden <img> elements for asset images (data URIs avoid canvas CORS taint)
     asset_id_map: dict[str, str] = {}
@@ -388,7 +395,7 @@ def _build_pin_render_html(
 <head>
 <meta charset="utf-8">
 <style>
-{font_face_css}* {{ margin: 0; padding: 0; }}
+* {{ margin: 0; padding: 0; }}
 body {{ background: #000; overflow: hidden; width: {canvas_width}px; height: {canvas_height}px; }}
 canvas {{ display: block; }}
 </style>
@@ -437,22 +444,9 @@ function wrapText(ctx, text, x, y, maxW, lh) {{
 }}
 
 async function render() {{
-  // Explicitly trigger loading for each embedded @font-face.
-  // Browsers lazy-load data-URI fonts — they won't load until explicitly requested.
-  try {{
-    const loads = [];
-    for (const elem of ELEMENTS) {{
-      if (elem.type === 'text' && elem.fontFamily) {{
-        const fs = elem.fontSize || 36;
-        const fam = elem.fontFamily;
-        loads.push(document.fonts.load(`normal 400 ${{fs}}px "${{fam}}"`));
-        loads.push(document.fonts.load(`normal 700 ${{fs}}px "${{fam}}"`));
-        loads.push(document.fonts.load(`italic 400 ${{fs}}px "${{fam}}"`));
-        loads.push(document.fonts.load(`italic 700 ${{fs}}px "${{fam}}"`));
-      }}
-    }}
-    await Promise.allSettled(loads);
-  }} catch(e) {{}}
+  // Load each font via the FontFace API — awaited before drawing.
+  // This is the only reliable way to use custom fonts in headless Chrome canvas.
+{font_load_js}
   await document.fonts.ready;
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
