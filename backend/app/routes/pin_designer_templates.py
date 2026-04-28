@@ -367,5 +367,5 @@ async def preview_render_template(
     return Response(
         content=img_bytes,
         media_type="image/jpeg",
-        headers={"X-Render-Logs": " | ".join(logs[-15:])},
+        headers={"X-Render-Logs": " | ".join(logs[-15:]).encode("latin-1", errors="replace").decode("latin-1")},
     )
