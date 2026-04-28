@@ -51,6 +51,26 @@ async function downloadFile(path: string, filename: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+async function requestRaw(path: string, options: RequestInit = {}): Promise<Response> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options.headers as Record<string, string>),
+  };
+  const res = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
+  if (res.status === 401) {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("auth_user");
+      window.location.href = "/login";
+    }
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(typeof err.detail === "string" ? err.detail : "Request failed");
+  }
+  return res;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -491,6 +511,11 @@ export const api = {
     }),
   deletePinDesignerTemplate: (templateId: string) =>
     request<void>(`/api/pin-designer-templates/${templateId}`, { method: "DELETE" }),
+  previewRenderTemplate: (templateId: string, imageUrl: string, title: string) =>
+    requestRaw(`/api/pin-designer-templates/${templateId}/preview-render`, {
+      method: "POST",
+      body: JSON.stringify({ image_url: imageUrl, title }),
+    }),
 
   generatePin: (recipeId: string, data: GeneratePinRequest) =>
     request<GeneratePinResponse>(`/api/recipes/${recipeId}/generate-pin`, {
