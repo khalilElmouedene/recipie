@@ -317,50 +317,95 @@ def _append_rows_to_tab(workbook: dict, tab_id: str, rows: list[dict]) -> int:
 
 
 _VISION_PROMPT = (
-    "Look at this image and answer YES or NO.\n"
-    "Answer YES only if ALL of the following are true:\n"
-    "  1. The image shows food, a dish, a drink, an ingredient, a dessert, a snack, "
-    "or anything edible.\n"
-    "  2. There are NO people, faces, or human body parts visible.\n"
-    "  3. There is NO significant text, title, watermark, or graphic overlay on the image.\n"
+    "Look at this image carefully and answer YES or NO.\n"
+    "Answer YES only if ALL THREE conditions are met:\n"
+    "  1. FOOD: The image is primarily a photo of food, a dish, a drink, a dessert, "
+    "a snack, or an ingredient — it must be a food/recipe photo.\n"
+    "  2. NO HUMANS: There are absolutely NO people, faces, hands, arms, legs, "
+    "fingers, or any human body part visible anywhere in the image.\n"
+    "  3. NO TEXT: There is NO text, words, letters, numbers, title, caption, "
+    "watermark, logo, or graphic overlay of any kind anywhere on the image — "
+    "even small or partial text means NO.\n"
+    "If any one condition fails, answer NO.\n"
     "Reply with only the single word YES or NO."
 )
+
+
+async def _image_url_to_b64(url: str) -> str | None:
+    """Download an image and return it as a base64 data URI for OpenAI Vision.
+
+    Needed when OpenAI's servers cannot reach the image URL directly
+    (private CDN, Cloudflare-protected, etc.).
+    """
+    if url.startswith("data:"):
+        return url  # already inline
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0),
+            headers={"User-Agent": "Mozilla/5.0"},
+            follow_redirects=True,
+        ) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            ctype = r.headers.get("content-type", "image/jpeg").split(";")[0].strip() or "image/jpeg"
+            import base64 as _b64
+            return f"data:{ctype};base64,{_b64.b64encode(r.content).decode()}"
+    except Exception:
+        return None
 
 
 async def _is_food_image(image_url: str, openai_key: str) -> bool:
     """Return True if the image passes all food/people/text checks via GPT-4o-mini vision.
 
-    On any error (network, API, unexpected response) returns True so that
-    we never silently drop a row due to a transient failure.
+    First tries passing the URL directly to OpenAI. If that fails (unreachable URL,
+    CDN block, etc.) it downloads the image itself and sends it as a base64 data URI.
+    Returns False on persistent failure so bad images are never silently kept.
     """
-    try:
-        payload = {
-            "model": "gpt-4o-mini",
-            "max_tokens": 5,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": image_url, "detail": "low"},
-                        },
-                        {"type": "text", "text": _VISION_PROMPT},
-                    ],
-                }
-            ],
-        }
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            resp = await client.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {openai_key}"},
-                json=payload,
-            )
-            resp.raise_for_status()
-        answer = resp.json()["choices"][0]["message"]["content"].strip().upper()
-        return answer.startswith("YES")
-    except Exception:
-        return True  # keep on error — never silently drop
+    async def _call(url_or_data: str) -> bool | None:
+        """Make one OpenAI vision call. Returns None on error."""
+        try:
+            payload = {
+                "model": "gpt-4o-mini",
+                "max_tokens": 5,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": url_or_data, "detail": "low"},
+                            },
+                            {"type": "text", "text": _VISION_PROMPT},
+                        ],
+                    }
+                ],
+            }
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+                resp = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {openai_key}"},
+                    json=payload,
+                )
+                resp.raise_for_status()
+            answer = resp.json()["choices"][0]["message"]["content"].strip().upper()
+            return answer.startswith("YES")
+        except Exception:
+            return None
+
+    # Try direct URL first
+    result = await _call(image_url)
+    if result is not None:
+        return result
+
+    # OpenAI couldn't fetch the URL — download it ourselves and send inline
+    data_uri = await _image_url_to_b64(image_url)
+    if data_uri:
+        result = await _call(data_uri)
+        if result is not None:
+            return result
+
+    # Both attempts failed — reject the image (filter is active, don't let it through)
+    return False
 
 
 async def _filter_food_rows(
@@ -401,9 +446,9 @@ async def _get_project_openai_key(project_id: uuid.UUID, created_by_user_id: uui
 async def scan_source(source_id: uuid.UUID, force: bool = False) -> None:
     """Scrape a source and append new rows to its sheet tab.
 
-    *force=True* (used by manual "Scan Now") ignores the ``after`` date filter
-    so all recent posts are fetched regardless of when the last scan ran.
-    Deduplication by image URL prevents duplicate rows in either mode.
+    Only articles published within the last 7 days are fetched.
+    *force=True* (manual "Scan Now") uses the same 7-day window so repeated
+    clicks are safe — deduplication by image URL prevents duplicate rows.
     """
     async with SessionLocal() as db:
         result = await db.execute(select(AutoSpySource).where(AutoSpySource.id == source_id))
@@ -411,9 +456,14 @@ async def scan_source(source_id: uuid.UUID, force: bool = False) -> None:
         if source is None:
             return
 
-        # Manual scan: always fetch all recent posts (no date filter) so the
-        # user gets results even when clicking "Scan Now" repeatedly.
-        after = None if force else source.last_scanned_at
+        one_week_ago = datetime.now(timezone.utc) - timedelta(weeks=1)
+
+        if force:
+            # Manual scan: always look back exactly 7 days
+            after = one_week_ago
+        else:
+            # Scheduler: use last_scanned_at but never go further back than 7 days
+            after = max(source.last_scanned_at, one_week_ago) if source.last_scanned_at else one_week_ago
 
         rows = await scrape_source_rows(source.url, after)
 
