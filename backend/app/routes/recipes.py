@@ -520,6 +520,30 @@ async def delete_recipe(
     await db.commit()
 
 
+@router.delete("/api/sites/{site_id}/recipes", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_all_site_recipes(
+    site_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    recipe_status: str | None = Query(None, alias="status"),
+):
+    """Bulk-delete all recipes for a site, optionally filtered by status."""
+    site_result = await db.execute(select(Site).where(Site.id == site_id))
+    site_obj = site_result.scalar_one_or_none()
+    if not site_obj:
+        raise HTTPException(status_code=404, detail="Site not found")
+    await check_project_access(site_obj.project_id, user, db)
+
+    stmt = sql_delete(Recipe).where(Recipe.site_id == site_id)
+    if recipe_status:
+        try:
+            stmt = stmt.where(Recipe.status == RecipeStatus(recipe_status))
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"Invalid status: {recipe_status}")
+    await db.execute(stmt)
+    await db.commit()
+
+
 @router.post("/api/recipes/{recipe_id}/publish-article", response_model=dict)
 @limiter.limit("10/minute")
 async def publish_recipe_article(

@@ -467,6 +467,9 @@ export const api = {
   deleteRecipe: (recipeId: string) =>
     request<void>(`/api/recipes/${recipeId}`, { method: "DELETE" }),
 
+  deleteAllSiteRecipes: (siteId: string, recipeStatus?: string) =>
+    request<void>(buildPathWithQuery(`/api/sites/${siteId}/recipes`, { status: recipeStatus }), { method: "DELETE" }),
+
   publishRecipeArticle: (recipeId: string) =>
     request<{ wp_post_id: string; wp_permalink: string }>(`/api/recipes/${recipeId}/publish-article`, {
       method: "POST",

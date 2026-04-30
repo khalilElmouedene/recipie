@@ -477,7 +477,7 @@ function deleteSheetRows(data: SheetData, rowIndicesToDelete: number[]): SheetDa
     const shift = sortedDeletes.filter((dr) => dr < r).length;
     nextCells[cellKey(r - shift, c)] = cell;
   }
-  return { ...data, cells: nextCells, rows: Math.max(10, data.rows - rowIndicesToDelete.length) };
+  return { ...data, cells: nextCells };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -592,11 +592,52 @@ export default function SpySheetPage() {
   }, [tabCtxMenu, selectionCtxMenu]);
 
   useEffect(() => {
-    const stopDragSelection = () => {
-      dragSelectionRef.current = null;
-    };
+    const stopDragSelection = () => { dragSelectionRef.current = null; };
     window.addEventListener("mouseup", stopDragSelection);
-    return () => window.removeEventListener("mouseup", stopDragSelection);
+    window.addEventListener("touchend", stopDragSelection);
+    return () => {
+      window.removeEventListener("mouseup", stopDragSelection);
+      window.removeEventListener("touchend", stopDragSelection);
+    };
+  }, []);
+
+  // ── Auto-scroll during drag selection ──
+  useEffect(() => {
+    const ZONE = 60;
+    const MAX_SPEED = 18;
+    let rafId: number | null = null;
+    let mouseX = 0;
+    let mouseY = 0;
+
+    const scroll = () => {
+      if (!dragSelectionRef.current && !colResizeRef.current) { rafId = null; return; }
+      const el = gridRef.current;
+      if (!el) { rafId = null; return; }
+      const rect = el.getBoundingClientRect();
+      let dx = 0, dy = 0;
+      if (mouseY < rect.top + ZONE) dy = -MAX_SPEED * ((rect.top + ZONE - mouseY) / ZONE);
+      else if (mouseY > rect.bottom - ZONE) dy = MAX_SPEED * ((mouseY - (rect.bottom - ZONE)) / ZONE);
+      if (mouseX < rect.left + ZONE) dx = -MAX_SPEED * ((rect.left + ZONE - mouseX) / ZONE);
+      else if (mouseX > rect.right - ZONE) dx = MAX_SPEED * ((mouseX - (rect.right - ZONE)) / ZONE);
+      if (dx !== 0 || dy !== 0) { el.scrollLeft += dx; el.scrollTop += dy; }
+      rafId = requestAnimationFrame(scroll);
+    };
+
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      const pt = "touches" in e ? e.touches[0] : e;
+      mouseX = pt.clientX; mouseY = pt.clientY;
+      if ((dragSelectionRef.current || colResizeRef.current) && rafId === null) {
+        rafId = requestAnimationFrame(scroll);
+      }
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("touchmove", onMove, { passive: true });
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("touchmove", onMove);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, []);
 
   // ── Auto-save ──
@@ -1027,6 +1068,63 @@ export default function SpySheetPage() {
     else if (e.key === "ArrowDown") { commitEdit(1, 0); }
   };
 
+  // ── Touch helpers (mobile selection) ──
+  const getCellFromPoint = useCallback((clientX: number, clientY: number): { row: number; col: number; isRowHeader: boolean } | null => {
+    const el = document.elementFromPoint(clientX, clientY);
+    if (!el) return null;
+    const td = el.closest("[data-row]") as HTMLElement | null;
+    if (!td) return null;
+    const row = parseInt(td.dataset.row ?? "", 10);
+    const col = parseInt(td.dataset.col ?? "", 10);
+    const isRowHeader = td.dataset.rowheader === "1";
+    if (isNaN(row)) return null;
+    return { row, col: isNaN(col) ? 0 : col, isRowHeader };
+  }, []);
+
+  const handleGridTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const hit = getCellFromPoint(t.clientX, t.clientY);
+    if (!hit) return;
+    if (editKey !== null) commitEdit();
+    gridRef.current?.focus();
+    if (hit.isRowHeader) {
+      const boundedRow = clampIndex(hit.row, 0, sheetRows - 1);
+      const nextRange = buildRowSelectionRange(boundedRow, boundedRow);
+      setSel({ row: boundedRow, col: 0 });
+      setSelectionAnchor({ row: boundedRow, col: 0 });
+      setSelectionRanges([nextRange]);
+      dragSelectionRef.current = { mode: "rows", originRow: boundedRow, additive: false, baseRanges: [] };
+    } else {
+      const cell = clampToSheet(hit.row, hit.col);
+      const nextRange = buildRange(cell, cell);
+      setSel(cell);
+      setSelectionAnchor(cell);
+      setSelectionRanges([nextRange]);
+      dragSelectionRef.current = { mode: "cells", origin: cell, additive: false, baseRanges: [] };
+    }
+    e.preventDefault();
+  }, [editKey, commitEdit, clampToSheet, sheetRows, buildRange, buildRowSelectionRange, getCellFromPoint]);
+
+  const handleGridTouchMove = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    const drag = dragSelectionRef.current;
+    if (!drag) return;
+    const t = e.touches[0];
+    const hit = getCellFromPoint(t.clientX, t.clientY);
+    if (!hit) return;
+    if (drag.mode === "cells") {
+      const cell = clampToSheet(hit.row, hit.col);
+      setSel(cell);
+      setSelectionRanges([buildRange(drag.origin, cell)]);
+    } else if (drag.mode === "rows") {
+      const boundedRow = clampIndex(hit.row, 0, sheetRows - 1);
+      setSel({ row: boundedRow, col: 0 });
+      setSelectionRanges([buildRowSelectionRange(drag.originRow, boundedRow)]);
+    }
+    e.preventDefault();
+  }, [clampToSheet, sheetRows, buildRange, buildRowSelectionRange, getCellFromPoint]);
+
   // ── Rows / cols ──
   const addRow = () => updateActiveData((p) => ({ ...p, rows: p.rows + 10 }));
   const addCol = () => updateActiveData((p) => ({ ...p, cols: p.cols + 1 }));
@@ -1364,7 +1462,9 @@ export default function SpySheetPage() {
           e.preventDefault();
           pasteTextAtSelection(text);
         }}
-        style={{ fontFamily: "Inter, system-ui, sans-serif" }}
+        onTouchStart={handleGridTouchStart}
+        onTouchMove={handleGridTouchMove}
+        style={{ fontFamily: "Inter, system-ui, sans-serif", touchAction: "none" }}
       >
         <table className="border-collapse" style={{ tableLayout: "fixed", minWidth: tableMinWidth }}>
           <thead>
@@ -1403,6 +1503,8 @@ export default function SpySheetPage() {
             {Array.from({ length: sheet.rows }, (_, r) => (
               <tr key={r} style={{ height: sheet.rowHeights[r] ?? DEFAULT_ROW_HEIGHT }}>
                 <td
+                  data-row={r}
+                  data-rowheader="1"
                   className={`sticky left-0 z-10 border-b border-r border-gray-700 bg-gray-800 text-center text-[11px] text-gray-500 cursor-pointer ${isSelectedRow(r) ? "bg-purple-900/30 text-purple-300 font-semibold" : ""}`}
                   onMouseDown={(e) => handleRowHeaderMouseDown(e, r)}
                   onMouseEnter={(e) => handleRowHeaderMouseEnter(e, r)}
@@ -1428,6 +1530,8 @@ export default function SpySheetPage() {
                   return (
                     <td
                       key={c}
+                      data-row={r}
+                      data-col={c}
                       style={cellStyle}
                       className={`relative border-b border-r border-gray-800 px-1.5 overflow-hidden whitespace-nowrap text-gray-100 cursor-default transition-colors ${
                         isActiveCell

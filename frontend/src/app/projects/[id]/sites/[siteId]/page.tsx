@@ -417,6 +417,37 @@ export default function SiteDetailPage() {
     }
   };
 
+  const [deletingAll, setDeletingAll] = useState(false);
+
+  const handleDeleteAll = async (filterStatus?: string) => {
+    const label = filterStatus ? `all ${filterStatus} recipes` : "ALL recipes";
+    const count = filterStatus
+      ? filterStatus === "failed" ? recipeListStats.failed
+      : filterStatus === "pending" ? recipeListStats.pending
+      : filterStatus === "published" ? recipeListStats.published
+      : recipeListStats.total
+      : recipeListStats.total;
+    if (count === 0) { toast.error(`No ${filterStatus ?? ""} recipes to delete`.trim()); return; }
+    if (!await openConfirm({
+      message: `Delete ${label}? This will permanently remove ${count} recipe${count !== 1 ? "s" : ""} and cannot be undone.`,
+      danger: true,
+      confirmLabel: `Delete ${count} recipe${count !== 1 ? "s" : ""}`,
+    })) return;
+    setDeletingAll(true);
+    try {
+      await api.deleteAllSiteRecipes(siteId, filterStatus);
+      setRecipes([]);
+      setRecipeListStats(EMPTY_RECIPE_LIST_STATS);
+      setExpandedId(null);
+      toast.success(`Deleted ${label}`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete recipes");
+    } finally {
+      setDeletingAll(false);
+      await loadRecipes();
+    }
+  };
+
   const [generatingId, setGeneratingId] = useState<string | null>(null);
 
   const pollRecipeStatus = useCallback(
@@ -1134,11 +1165,57 @@ export default function SiteDetailPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <h2 className="text-lg font-semibold text-white">Recipes</h2>
-        {totalRecipeCount > RECIPES_PAGE_SIZE && (
-          <p className="text-xs text-gray-500">
-            Showing {recipes.length} of {totalRecipeCount} recipes
-          </p>
-        )}
+        <div className="flex items-center gap-3">
+          {totalRecipeCount > RECIPES_PAGE_SIZE && (
+            <p className="text-xs text-gray-500">
+              Showing {recipes.length} of {totalRecipeCount} recipes
+            </p>
+          )}
+          {totalRecipeCount > 0 && (
+            <div className="relative group">
+              <button
+                disabled={deletingAll}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-900/40 hover:bg-red-950/40 hover:border-red-700/60 transition disabled:opacity-50"
+              >
+                {deletingAll ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                Delete All
+                <ChevronDown size={12} />
+              </button>
+              <div className="absolute right-0 top-full mt-1 z-20 hidden group-hover:flex flex-col w-52 rounded-xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
+                {recipeListStats.failed > 0 && (
+                  <button
+                    onClick={() => handleDeleteAll("failed")}
+                    className="px-4 py-2.5 text-left text-xs text-red-400 hover:bg-gray-800 transition"
+                  >
+                    Delete failed ({recipeListStats.failed})
+                  </button>
+                )}
+                {recipeListStats.pending > 0 && (
+                  <button
+                    onClick={() => handleDeleteAll("pending")}
+                    className="px-4 py-2.5 text-left text-xs text-gray-300 hover:bg-gray-800 transition"
+                  >
+                    Delete pending ({recipeListStats.pending})
+                  </button>
+                )}
+                {recipeListStats.published > 0 && (
+                  <button
+                    onClick={() => handleDeleteAll("published")}
+                    className="px-4 py-2.5 text-left text-xs text-gray-300 hover:bg-gray-800 transition"
+                  >
+                    Delete published ({recipeListStats.published})
+                  </button>
+                )}
+                <button
+                  onClick={() => handleDeleteAll()}
+                  className="px-4 py-2.5 text-left text-xs text-red-500 font-semibold hover:bg-red-950/30 border-t border-gray-800 transition"
+                >
+                  Delete all ({totalRecipeCount})
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
       <div className="space-y-2">
         {visibleRecipes.map((r) => (
