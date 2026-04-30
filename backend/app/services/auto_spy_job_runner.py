@@ -970,6 +970,53 @@ async def _db_mark_recipe_published(recipe_id: str, wp_post_id: str | None, wp_p
             await session.commit()
 
 
+def _publish_with_retry(
+    recipe_data: dict,
+    site_config: dict,
+    post_date_gmt,
+    log,
+    site_obj,
+    max_attempts: int = 3,
+    retry_delay: float = 8.0,
+) -> dict:
+    """Call publish_recipe up to max_attempts times, rotating WP user on 401."""
+    import time as _time
+    from ..services.publisher import publish_recipe as _pub
+    from ..site_credentials import get_random_wp_credentials as _get_creds
+
+    result: dict = {"error_message": "No attempts made"}
+    current_config = site_config
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = _pub(recipe_data, current_config, post_date_gmt=post_date_gmt, log=log)
+        except Exception as exc:
+            result = {"error_message": str(exc)}
+        if not result.get("error_message"):
+            return result
+        err = str(result["error_message"])
+        if attempt < max_attempts:
+            log(f"    Attempt {attempt}/{max_attempts} failed: {err[:120]} — retrying in {retry_delay:.0f}s…")
+            if "401" in err or "not allowed to post" in err.lower():
+                try:
+                    wp_user, wp_pass = _get_creds(site_obj)
+                    current_config = {**current_config, "wp_username": wp_user, "wp_password": wp_pass}
+                    log(f"    Switching WP user to: {wp_user}")
+                except Exception:
+                    pass
+            _time.sleep(retry_delay)
+    return result
+
+
+async def _db_mark_recipe_failed(recipe_id: str, error_message: str) -> None:
+    async with SessionLocal() as session:
+        row = await session.execute(select(Recipe).where(Recipe.id == uuid.UUID(recipe_id)))
+        recipe = row.scalar_one_or_none()
+        if recipe:
+            recipe.status = RecipeStatus.failed
+            recipe.error_message = error_message
+            await session.commit()
+
+
 async def _db_set_job_status(
     job_id_str: str,
     status: JobStatus,
@@ -1298,7 +1345,6 @@ async def start_auto_spy_generate_job(
             ).result()
 
             # ── Push to WordPress as scheduled posts (pin-designer pattern) ──────
-            from ..services.publisher import publish_recipe as _publish_recipe
             from ..site_credentials import get_random_wp_credentials
 
             site_obj_map = {str(s.id): s for s in sites}
@@ -1314,6 +1360,10 @@ async def start_auto_spy_generate_job(
             rj.log("=" * 50)
             rj.log("Publishing to WordPress as scheduled posts...")
 
+            pub_total = sum(len(v) for v in site_recipes.values())
+            pub_succeeded = 0
+            pub_failed: list[tuple[str, str]] = []
+
             for site_id_str, items in site_recipes.items():
                 if rj.should_stop():
                     break
@@ -1327,11 +1377,11 @@ async def start_auto_spy_generate_job(
                     recipe_data = per_recipe_generated.get(item["id"])
                     if not recipe_data:
                         continue
-                    # Pick a random publisher for each post individually
                     try:
                         wp_user, wp_pass = get_random_wp_credentials(site_obj)
                     except Exception as e:
                         rj.log(f"  [{site_obj.domain}] No WP credentials: {e}")
+                        pub_failed.append((recipe_data.get("recipe_text", "")[:50], str(e)))
                         continue
                     site_config = {
                         "wp_url": site_obj.wp_url,
@@ -1341,18 +1391,32 @@ async def start_auto_spy_generate_job(
                     }
                     post_date = publish_start + step * idx
                     rj.log(f"  [{site_obj.domain}] #{idx + 1} (user: {wp_user}): {recipe_data['recipe_text'][:50]} → {post_date.strftime('%Y-%m-%d %H:%M UTC')}")
-                    try:
-                        result = _publish_recipe(recipe_data, site_config, post_date_gmt=post_date, log=rj.log)
-                    except Exception as e:
-                        result = {"error_message": str(e)}
+                    result = _publish_with_retry(recipe_data, site_config, post_date, rj.log, site_obj)
                     if result.get("error_message"):
-                        rj.log(f"    Failed: {result['error_message'][:120]}")
+                        reason = str(result["error_message"])
+                        rj.log(f"    Permanently failed: {reason[:120]}")
+                        pub_failed.append((recipe_data.get("recipe_text", "")[:50], reason))
+                        asyncio.run_coroutine_threadsafe(
+                            _db_mark_recipe_failed(item["id"], reason),
+                            main_loop,
+                        ).result()
                     else:
+                        pub_succeeded += 1
                         rj.log(f"    Scheduled: {result.get('wp_permalink', 'OK')}")
                         asyncio.run_coroutine_threadsafe(
                             _db_mark_recipe_published(item["id"], result.get("wp_post_id"), result.get("wp_permalink")),
                             main_loop,
                         ).result()
+
+            # ── Publishing summary ────────────────────────────────────────────────
+            sep = "=" * 55
+            rj.log(f"\n{sep}")
+            rj.log(f"PUBLISHING SUMMARY: {pub_total} attempted — {pub_succeeded} published, {len(pub_failed)} failed")
+            rj.log(sep)
+            if pub_failed:
+                rj.log("Failed recipes:")
+                for t, reason in pub_failed:
+                    rj.log(f"  • {t} — {reason[:100]}")
 
             rj.log("Auto Spy Generate completed successfully")
             _finalize(JobStatus.completed)
@@ -1577,7 +1641,6 @@ async def resume_auto_spy_generate_job(
                 return
 
             # ── Push to WordPress as scheduled posts ─────────────────────────
-            from ..services.publisher import publish_recipe as _publish_recipe
             from ..site_credentials import get_random_wp_credentials
 
             site_resume_groups: dict[str, list[dict]] = {}
@@ -1588,6 +1651,10 @@ async def resume_auto_spy_generate_job(
 
             rj.log("=" * 50)
             rj.log("Publishing to WordPress as scheduled posts...")
+
+            pub_total = sum(len(v) for v in site_resume_groups.values())
+            pub_succeeded = 0
+            pub_failed: list[tuple[str, str]] = []
 
             now = datetime.now(timezone.utc)
             for site_id_str, items in site_resume_groups.items():
@@ -1605,11 +1672,11 @@ async def resume_auto_spy_generate_job(
                     recipe_data = per_recipe_generated.get(item["id"])
                     if not recipe_data:
                         continue
-                    # Pick a random publisher for each post individually
                     try:
                         wp_user, wp_pass = get_random_wp_credentials(site_obj)
                     except Exception as e:
                         rj.log(f"  [{site_obj.domain}] No WP credentials: {e}")
+                        pub_failed.append((recipe_data.get("recipe_text", "")[:50], str(e)))
                         continue
                     site_config = {
                         "wp_url": site_obj.wp_url,
@@ -1619,18 +1686,32 @@ async def resume_auto_spy_generate_job(
                     }
                     post_date = publish_start + step * (offset + idx)
                     rj.log(f"  [{site_obj.domain}] #{offset + idx + 1} (user: {wp_user}): {recipe_data['recipe_text'][:50]} → {post_date.strftime('%Y-%m-%d %H:%M UTC')}")
-                    try:
-                        result = _publish_recipe(recipe_data, site_config, post_date_gmt=post_date, log=rj.log)
-                    except Exception as e:
-                        result = {"error_message": str(e)}
+                    result = _publish_with_retry(recipe_data, site_config, post_date, rj.log, site_obj)
                     if result.get("error_message"):
-                        rj.log(f"    Failed: {result['error_message'][:120]}")
+                        reason = str(result["error_message"])
+                        rj.log(f"    Permanently failed: {reason[:120]}")
+                        pub_failed.append((recipe_data.get("recipe_text", "")[:50], reason))
+                        asyncio.run_coroutine_threadsafe(
+                            _db_mark_recipe_failed(item["id"], reason),
+                            main_loop,
+                        ).result()
                     else:
+                        pub_succeeded += 1
                         rj.log(f"    Scheduled: {result.get('wp_permalink', 'OK')}")
                         asyncio.run_coroutine_threadsafe(
                             _db_mark_recipe_published(item["id"], result.get("wp_post_id"), result.get("wp_permalink")),
                             main_loop,
                         ).result()
+
+            # ── Publishing summary ────────────────────────────────────────────────
+            sep = "=" * 55
+            rj.log(f"\n{sep}")
+            rj.log(f"PUBLISHING SUMMARY: {pub_total} attempted — {pub_succeeded} published, {len(pub_failed)} failed")
+            rj.log(sep)
+            if pub_failed:
+                rj.log("Failed recipes:")
+                for t, reason in pub_failed:
+                    rj.log(f"  • {t} — {reason[:100]}")
 
             rj.log("Auto Spy Generate resumed and completed successfully")
             _finalize(JobStatus.completed)

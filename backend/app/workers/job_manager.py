@@ -439,6 +439,9 @@ class JobManager:
 
             site_config_cache: dict[str, dict[str, Any]] = {}
             processed = 0
+            total_succeeded = 0
+            total_failed = 0
+            failed_details: list[tuple[str, str]] = []
             rj.log(f"Starting publisher job - {len(recipes_data)} recipes")
             try:
                 while not rj.should_stop():
@@ -454,7 +457,7 @@ class JobManager:
                     ).result()
                     if not chunk:
                         break
-                    chunk_processed = publish_recipes_from_db(
+                    chunk_processed, chunk_ok, chunk_fail = publish_recipes_from_db(
                         recipes=chunk,
                         site_config=None,
                         log=rj.log,
@@ -466,6 +469,8 @@ class JobManager:
                         emit_summary_logs=False,
                     )
                     processed += chunk_processed
+                    total_succeeded += chunk_ok
+                    total_failed += chunk_fail
                     if chunk_processed == 0:
                         break
                 final_status = JobStatus.stopped if rj.should_stop() else JobStatus.completed
@@ -474,6 +479,11 @@ class JobManager:
                         self._revert_publishing_claims(job_id_str, claimed_ids=[str(r) for r in valid_ids]),
                         main_loop,
                     ).result()
+                if final_status == JobStatus.completed:
+                    sep = "=" * 55
+                    rj.log(f"\n{sep}")
+                    rj.log(f"PUBLISHING SUMMARY: {processed} attempted — {total_succeeded} published, {total_failed} failed")
+                    rj.log(sep)
                 rj.log("Job completed successfully" if final_status == JobStatus.completed else "Job stopped")
                 _finalize(final_status)
             except Exception as exc:
@@ -840,6 +850,8 @@ class JobManager:
                     )
                 elif db_job.job_type == JobType.publisher:
                     processed = 0
+                    total_succeeded = 0
+                    total_failed = 0
                     while not rj.should_stop():
                         chunk = asyncio.run_coroutine_threadsafe(
                             self._load_publisher_chunk_payloads(
@@ -852,7 +864,7 @@ class JobManager:
                         ).result()
                         if not chunk:
                             break
-                        chunk_processed = publish_recipes_from_db(
+                        chunk_processed, chunk_ok, chunk_fail = publish_recipes_from_db(
                             recipes=chunk,
                             site_config=site_config or None,
                             log=rj.log,
@@ -864,8 +876,15 @@ class JobManager:
                             emit_summary_logs=False,
                         )
                         processed += chunk_processed
+                        total_succeeded += chunk_ok
+                        total_failed += chunk_fail
                         if chunk_processed == 0:
                             break
+                    if not rj.should_stop():
+                        sep = "=" * 55
+                        rj.log(f"\n{sep}")
+                        rj.log(f"PUBLISHING SUMMARY: {processed} attempted — {total_succeeded} published, {total_failed} failed")
+                        rj.log(sep)
                 else:
                     if not credentials.get("openai"):
                         raise ValueError(
