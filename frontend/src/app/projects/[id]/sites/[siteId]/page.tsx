@@ -526,24 +526,25 @@ export default function SiteDetailPage() {
   }, [activeJob?.id, activeJob?.status]);
 
   // Poll active job status every 3s while pending/running.
+  // Also refresh recipe stats on every tick so counters (published/failed) stay live.
   useEffect(() => {
     if (!activeJob || (activeJob.status !== "running" && activeJob.status !== "pending")) return;
     const trackedJobId = activeJob.id;
+    let tick = 0;
     const t = setInterval(() => {
+      tick++;
       api.getJob(trackedJobId).then((j) => {
         setActiveJob((prev) => (prev && prev.id === trackedJobId ? j : prev));
-        if (j.status !== "running" && j.status !== "pending") {
-          loadRecipes();
-        }
+        const done = j.status !== "running" && j.status !== "pending";
+        // Refresh stats every 3rd tick (~9s) while running, and always on completion.
+        if (done || tick % 3 === 0) loadRecipes();
       }).catch(() => {});
     }, 3000);
     return () => clearInterval(t);
   }, [activeJob?.id, activeJob?.status, loadRecipes]);
 
-  // Cross-user real-time sync: discover active generation jobs started by other members.
-  // This runs even when the local recipe list is stale (still "pending"), then the WS/poll
-  // pipeline takes over and updates status/logs for everyone without page refresh.
-  // 15s interval — background discovery doesn't need to be instant, and skips hidden tabs.
+  // Cross-user real-time sync: discover active jobs started by other members
+  // (both articles and publisher job types). 15s interval, skips hidden tabs.
   useEffect(() => {
     if (activeJob?.status === "running") return;
     let cancelled = false;
@@ -552,23 +553,26 @@ export default function SiteDetailPage() {
       api.getProjectJobsPage(projectId, { limit: 20, offset: 0 })
         .then(({ items: jobs }) => {
           if (cancelled) return;
-          const activeArticleJob = jobs.find(
-            (j) => j.job_type === "articles" && (j.status === "running" || j.status === "pending")
+          const activeAnyJob = jobs.find(
+            (j) =>
+              (j.job_type === "articles" || j.job_type === "publisher") &&
+              (j.status === "running" || j.status === "pending")
           );
-          if (!activeArticleJob) return;
-          if (!activeJob || activeJob.id !== activeArticleJob.id) {
+          // Always refresh stats so counters stay current even without a running job.
+          loadRecipes();
+          if (!activeAnyJob) return;
+          if (!activeJob || activeJob.id !== activeAnyJob.id) {
             setActiveJobLastLog("");
           }
           setActiveJob((prev) => {
-            if (!prev) return activeArticleJob;
-            if (prev.id !== activeArticleJob.id) return activeArticleJob;
-            if (prev.status !== activeArticleJob.status) return activeArticleJob;
-            if (prev.current_row !== activeArticleJob.current_row) return activeArticleJob;
-            if (prev.total_rows !== activeArticleJob.total_rows) return activeArticleJob;
-            if (prev.error !== activeArticleJob.error) return activeArticleJob;
+            if (!prev) return activeAnyJob;
+            if (prev.id !== activeAnyJob.id) return activeAnyJob;
+            if (prev.status !== activeAnyJob.status) return activeAnyJob;
+            if (prev.current_row !== activeAnyJob.current_row) return activeAnyJob;
+            if (prev.total_rows !== activeAnyJob.total_rows) return activeAnyJob;
+            if (prev.error !== activeAnyJob.error) return activeAnyJob;
             return prev;
           });
-          loadRecipes();
         })
         .catch(() => {});
     };

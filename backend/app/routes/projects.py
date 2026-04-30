@@ -23,7 +23,7 @@ from ..database import get_db
 from ..db_models import (
     User, UserRole, Project, ProjectMember, ProjectMemberRole,
     Site, Recipe, Job, JobStatus, JobType, ProjectPublishSchedule, RecipeStatus,
-    ProjectCredential, Prompt,
+    ProjectCredential, Prompt, UserCredential,
 )
 from ..dependencies import get_current_user, require_owner, check_project_access
 from ..pagination import apply_limit_offset, count_rows, set_total_count
@@ -379,13 +379,20 @@ async def duplicate_project(
             wp_password_enc=s.wp_password_enc,
         ))
 
-    # Copy API keys (encrypted values are already encrypted, safe to copy as-is)
-    creds_result = await db.execute(select(ProjectCredential).where(ProjectCredential.project_id == project_id))
-    for c in creds_result.scalars().all():
+    # Copy API keys — project-level takes priority; fall back to user-level global keys
+    # so the cloned project is fully self-contained and its settings page shows as configured.
+    proj_creds_result = await db.execute(select(ProjectCredential).where(ProjectCredential.project_id == project_id))
+    proj_creds = {c.key_type: c.encrypted_value for c in proj_creds_result.scalars().all()}
+
+    user_creds_result = await db.execute(select(UserCredential).where(UserCredential.user_id == owner.id))
+    user_creds = {c.key_type: c.encrypted_value for c in user_creds_result.scalars().all()}
+
+    merged_creds = {**user_creds, **proj_creds}  # project-level overrides user-level
+    for key_type, encrypted_value in merged_creds.items():
         db.add(ProjectCredential(
             project_id=new_project.id,
-            key_type=c.key_type,
-            encrypted_value=c.encrypted_value,
+            key_type=key_type,
+            encrypted_value=encrypted_value,
         ))
 
     # Copy project-level AI prompts (owner_id must match new owner)
