@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.db_models import Job, JobType, ProjectPublishSchedule, Recipe, RecipeStatus, Site, SitePublishSchedule
+from app.db_models import Job, JobStatus, JobType, ProjectPublishSchedule, Recipe, RecipeStatus, Site, SitePublishSchedule
 from app.services.publisher import publish_recipe
 from app.site_credentials import get_random_wp_credentials
 
@@ -28,14 +28,55 @@ def _build_recipe_dict(recipe: Recipe) -> dict:
     }
 
 
-def _build_site_config(site: Site) -> dict:
-    wp_username, wp_password = get_random_wp_credentials(site)
+def _build_site_config(site: Site, wp_username: str | None = None, wp_password: str | None = None) -> dict:
+    if not wp_username or not wp_password:
+        wp_username, wp_password = get_random_wp_credentials(site)
     return {
         "wp_url": site.wp_url,
         "wp_username": wp_username,
         "wp_password": wp_password,
         "domain": site.domain if site.domain.startswith("http") else f"https://{site.domain}",
     }
+
+
+def _publish_with_user_retry(
+    recipe_dict: dict,
+    site: Site,
+    post_date_gmt: datetime | None = None,
+    log=None,
+    max_attempts: int = 3,
+) -> dict:
+    """Try publish_recipe up to max_attempts times, rotating WP users on 401 errors.
+
+    If all configured users fail, returns the last error result. This prevents a
+    single low-privilege user in the list from permanently blocking publish.
+    """
+    import json as _json
+    tried: set[str] = set()
+    last_result: dict = {"error_message": "No WP credentials configured"}
+
+    for _ in range(max_attempts):
+        try:
+            user, pwd = get_random_wp_credentials(site)
+        except Exception as e:
+            return {"error_message": str(e)}
+
+        if user in tried:
+            # We've tried all unique users — stop
+            break
+        tried.add(user)
+
+        site_config = _build_site_config(site, user, pwd)
+        last_result = publish_recipe(recipe_dict, site_config, log=log, post_date_gmt=post_date_gmt)
+
+        err = last_result.get("error_message", "")
+        # 401 = wrong WP role — try a different user
+        if err and ("401" in str(err) or "not allowed to post" in str(err).lower()):
+            continue
+        # Any other result (success or different error) — stop retrying
+        return last_result
+
+    return last_result
 
 
 async def run_publish_scheduler(stop_event: asyncio.Event) -> None:
@@ -61,6 +102,9 @@ async def run_publish_scheduler(stop_event: asyncio.Event) -> None:
                             Recipe.site_id == ss.site_id,
                             Recipe.status == RecipeStatus.generated,
                             Job.job_type == JobType.auto_spy_generate,
+                            # Never touch recipes whose parent job is still running —
+                            # the job's own publish step is handling them.
+                            Job.status.in_([JobStatus.completed, JobStatus.failed, JobStatus.stopped]),
                         )
                         .order_by(Recipe.created_at.asc())
                         .limit(1)
@@ -77,7 +121,7 @@ async def run_publish_scheduler(stop_event: asyncio.Event) -> None:
                     # Use the scheduled time as the WP post date — no backdating.
                     # If publish_at is in the future WP creates it as "Scheduled";
                     # if in the past WP publishes it immediately with that date.
-                    result = publish_recipe(_build_recipe_dict(recipe), _build_site_config(site), post_date_gmt=publish_at)
+                    result = _publish_with_user_retry(_build_recipe_dict(recipe), site, post_date_gmt=publish_at)
                     if result.get("error_message"):
                         recipe.status = RecipeStatus.failed
                         recipe.error_message = result["error_message"]
@@ -116,6 +160,9 @@ async def run_publish_scheduler(stop_event: asyncio.Event) -> None:
                             Site.project_id == s.project_id,
                             Recipe.status == RecipeStatus.generated,
                             Job.job_type.in_([JobType.articles_all_sites, JobType.auto_spy_generate]),
+                            # Never touch recipes whose parent job is still running —
+                            # the job's own publish step is handling them.
+                            Job.status.in_([JobStatus.completed, JobStatus.failed, JobStatus.stopped]),
                             ~Recipe.site_id.in_(sites_with_own_schedule),
                         )
                         .order_by(Recipe.created_at.asc())
@@ -130,7 +177,7 @@ async def run_publish_scheduler(stop_event: asyncio.Event) -> None:
                     recipe, site = pair
                     six_months_sec = int(timedelta(days=183).total_seconds())
                     backdate = datetime.now(timezone.utc) - timedelta(seconds=random.randint(1, six_months_sec))
-                    result = publish_recipe(_build_recipe_dict(recipe), _build_site_config(site), post_date_gmt=backdate)
+                    result = _publish_with_user_retry(_build_recipe_dict(recipe), site, post_date_gmt=backdate)
                     if result.get("error_message"):
                         recipe.status = RecipeStatus.failed
                         recipe.error_message = result["error_message"]
