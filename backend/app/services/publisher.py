@@ -253,13 +253,13 @@ def publish_recipes_from_db(
     max_attempts: int = 3,
     retry_delay: float = 8.0,
 ) -> tuple[int, int, int]:
-    “””Publish a list of generated recipes to WordPress.
+    """Publish a list of generated recipes to WordPress.
 
     Each recipe is attempted up to *max_attempts* times before being marked
     permanently failed. The job always continues with the next recipe regardless
     of individual failures, and a summary is logged at the end.
     Returns (attempted, succeeded, failed) counts.
-    “””
+    """
     _log = log or print
     _stop = should_stop or (lambda: False)
     total = len(recipes)
@@ -270,51 +270,51 @@ def publish_recipes_from_db(
 
     if emit_summary_logs:
         domains = {
-            str((recipe.get(“__site_config”) or site_config or {}).get(“domain”, “unknown”))
+            str((recipe.get("__site_config") or site_config or {}).get("domain", "unknown"))
             for recipe in recipes
         }
         if len(domains) == 1:
-            _log(f”=== PUBLISHING {total} RECIPES TO {next(iter(domains))} ===”)
+            _log(f"=== PUBLISHING {total} RECIPES TO {next(iter(domains))} ===")
         else:
-            _log(f”=== PUBLISHING {total} RECIPES ACROSS {len(domains)} SITE(S) ===”)
+            _log(f"=== PUBLISHING {total} RECIPES ACROSS {len(domains)} SITE(S) ===")
 
     for idx, recipe in enumerate(recipes):
         if _stop():
-            _log(“STOP REQUESTED — aborting”)
+            _log("STOP REQUESTED — aborting")
             break
 
-        recipe_id = recipe[“id”]
-        title = (recipe.get(“recipe_text”, “”) or “”).splitlines()[0][:60]
-        _log(f”\nPublishing {idx + 1}/{total}: {title}”)
+        recipe_id = recipe["id"]
+        title = (recipe.get("recipe_text", "") or "").splitlines()[0][:60]
+        _log(f"\nPublishing {idx + 1}/{total}: {title}")
         processed = idx + 1
 
         if on_progress:
             on_progress(progress_offset + processed, effective_total)
 
-        effective_site_config = recipe.get(“__site_config”) or site_config
+        effective_site_config = recipe.get("__site_config") or site_config
         if not effective_site_config:
-            raise ValueError(“Missing WordPress site configuration for publish batch”)
+            raise ValueError("Missing WordPress site configuration for publish batch")
 
         # ── Retry loop ──────────────────────────────────────────────────────────
-        result: dict = {“error_message”: “No attempts made”}
+        result: dict = {"error_message": "No attempts made"}
         for attempt in range(1, max_attempts + 1):
             result = publish_recipe(
                 recipe,
                 effective_site_config,
                 log=_log,
-                post_date_gmt=recipe.get(“__post_date_gmt”),
+                post_date_gmt=recipe.get("__post_date_gmt"),
             )
-            if not result.get(“error_message”):
+            if not result.get("error_message"):
                 break
             if attempt < max_attempts:
-                err_preview = str(result[“error_message”])[:120]
-                _log(f”  Attempt {attempt}/{max_attempts} failed: {err_preview} — retrying in {retry_delay:.0f}s…”)
+                err_preview = str(result["error_message"])[:120]
+                _log(f"  Attempt {attempt}/{max_attempts} failed: {err_preview} — retrying in {retry_delay:.0f}s…")
                 time.sleep(retry_delay)
 
-        if result.get(“error_message”):
-            reason = str(result[“error_message”])
+        if result.get("error_message"):
+            reason = str(result["error_message"])
             failed_items.append((title[:50], reason))
-            _log(f”  Permanently failed after {max_attempts} attempt(s): {reason[:120]}”)
+            _log(f"  Permanently failed after {max_attempts} attempt(s): {reason[:120]}")
         else:
             succeeded += 1
 
@@ -327,13 +327,13 @@ def publish_recipes_from_db(
     # ── Summary ─────────────────────────────────────────────────────────────────
     n_failed = len(failed_items)
     if emit_summary_logs:
-        sep = “=” * 55
-        _log(f”\n{sep}”)
-        _log(f”PUBLISHING SUMMARY: {processed} attempted — {succeeded} published, {n_failed} failed”)
+        sep = "=" * 55
+        _log(f"\n{sep}")
+        _log(f"PUBLISHING SUMMARY: {processed} attempted — {succeeded} published, {n_failed} failed")
         _log(sep)
         if failed_items:
-            _log(“Failed recipes:”)
+            _log("Failed recipes:")
             for t, reason in failed_items:
-                _log(f”  • {t} — {reason[:100]}”)
-        _log(“\n=== ALL RECIPES PUBLISHED ===”)
+                _log(f"  • {t} — {reason[:100]}")
+        _log("\n=== ALL RECIPES PUBLISHED ===")
     return processed, succeeded, n_failed

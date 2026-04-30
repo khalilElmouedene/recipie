@@ -1401,6 +1401,8 @@ class JobManager:
                         )
                     elif db_job.job_type == JobType.publisher:
                         processed = done_count
+                        total_succeeded = 0
+                        total_failed = 0
                         site_config_cache: dict[str, dict[str, Any]] = {}
                         while not rj.should_stop():
                             chunk = asyncio.run_coroutine_threadsafe(
@@ -1416,7 +1418,7 @@ class JobManager:
                             ).result()
                             if not chunk:
                                 break
-                            chunk_processed = publish_recipes_from_db(
+                            chunk_processed, chunk_ok, chunk_fail = publish_recipes_from_db(
                                 recipes=chunk,
                                 site_config=site_config or None,
                                 log=rj.log,
@@ -1428,8 +1430,15 @@ class JobManager:
                                 emit_summary_logs=False,
                             )
                             processed += chunk_processed
+                            total_succeeded += chunk_ok
+                            total_failed += chunk_fail
                             if chunk_processed == 0:
                                 break
+                        if not rj.should_stop():
+                            sep = "=" * 55
+                            rj.log(f"\n{sep}")
+                            rj.log(f"PUBLISHING SUMMARY: {processed} attempted — {total_succeeded} published, {total_failed} failed")
+                            rj.log(sep)
                     else:  # articles_all_sites
                         total = total_count
                         done = done_count
