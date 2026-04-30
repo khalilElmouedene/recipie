@@ -23,6 +23,7 @@ from ..database import get_db
 from ..db_models import (
     User, UserRole, Project, ProjectMember, ProjectMemberRole,
     Site, Recipe, Job, JobStatus, JobType, ProjectPublishSchedule, RecipeStatus,
+    ProjectCredential, Prompt,
 )
 from ..dependencies import get_current_user, require_owner, check_project_access
 from ..pagination import apply_limit_offset, count_rows, set_total_count
@@ -376,6 +377,28 @@ async def duplicate_project(
             wp_users_enc=s.wp_users_enc,
             wp_username=s.wp_username,
             wp_password_enc=s.wp_password_enc,
+        ))
+
+    # Copy API keys (encrypted values are already encrypted, safe to copy as-is)
+    creds_result = await db.execute(select(ProjectCredential).where(ProjectCredential.project_id == project_id))
+    for c in creds_result.scalars().all():
+        db.add(ProjectCredential(
+            project_id=new_project.id,
+            key_type=c.key_type,
+            encrypted_value=c.encrypted_value,
+        ))
+
+    # Copy project-level AI prompts (owner_id must match new owner)
+    prompts_result = await db.execute(
+        select(Prompt).where(Prompt.project_id == project_id)
+    )
+    for p in prompts_result.scalars().all():
+        db.add(Prompt(
+            owner_id=owner.id,
+            project_id=new_project.id,
+            key=p.key,
+            value=p.value,
+            description=p.description,
         ))
 
     # Add owner as admin member
