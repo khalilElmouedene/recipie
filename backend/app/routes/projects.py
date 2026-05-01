@@ -625,6 +625,9 @@ def _append_work(work: list, recipe: "Recipe", site: "Site", post_dt: datetime) 
         "category": recipe.category,
         "image_url": recipe.image_url,
         "generated_images": recipe.generated_images,
+        "pin_design_image": recipe.pin_design_image,
+        "seo_title": recipe.seo_title,
+        "wp_tags": recipe.wp_tags,
     }
     work.append((recipe_dict, site_config, post_dt))
 

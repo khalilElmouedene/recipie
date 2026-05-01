@@ -4720,8 +4720,12 @@ export default function PinDesigner({
                     setLastPublishDateLoading(true);
                     api.getLastPublishDate(siteId).then(({ last_publish_date }) => {
                       if (last_publish_date) {
-                        const d = new Date(last_publish_date + "Z");
-                        setWpScheduleFirstAt(d.toISOString().slice(0, 16));
+                        const last = new Date(last_publish_date + "Z");
+                        // Suggest: last post date + interval (so posts stay evenly spaced)
+                        const suggested = new Date(last.getTime() + wpScheduleInterval * 60_000);
+                        // Never pre-fill a past date — ensure at least 5 min from now
+                        const earliest = new Date(Date.now() + 5 * 60_000);
+                        setWpScheduleFirstAt((suggested > earliest ? suggested : earliest).toISOString().slice(0, 16));
                       }
                     }).catch(() => {}).finally(() => setLastPublishDateLoading(false));
                   }
@@ -4841,6 +4845,7 @@ export default function PinDesigner({
                   <input
                     type="datetime-local"
                     value={wpScheduleFirstAt}
+                    min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
                     onChange={(e) => setWpScheduleFirstAt(e.target.value)}
                     disabled={lastPublishDateLoading}
                     className={`input-field w-full ${lastPublishDateLoading ? "opacity-50 cursor-not-allowed" : ""}`}
