@@ -294,7 +294,8 @@ def publish_recipes_from_db(
 
         recipe_id = recipe["id"]
         title = (recipe.get("recipe_text", "") or "").splitlines()[0][:60]
-        _log(f"\nPublishing {idx + 1}/{total}: {title}")
+        display_current = progress_offset + idx + 1
+        _log(f"\nPublishing {display_current}/{effective_total}: {title}")
         processed = idx + 1
 
         if on_progress:

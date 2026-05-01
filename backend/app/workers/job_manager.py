@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 from typing import Any
 
 PUBLISH_META_PREFIX = "__PUBLISH_BATCH_META__:"
-PUBLISH_CHUNK_SIZE = 20
 
 
 def _ensure_utc(dt: datetime | None) -> datetime | None:
@@ -241,7 +240,7 @@ class JobManager:
         job_id: uuid.UUID,
         schedule_map: dict[str, datetime | None],
         *,
-        limit: int = PUBLISH_CHUNK_SIZE,
+        limit: int | None = None,
         site_config_cache: dict[str, dict[str, Any]] | None = None,
         site_config_override: dict[str, Any] | None = None,
         claimed_ids: list[uuid.UUID] | None = None,
@@ -252,13 +251,15 @@ class JobManager:
                 if claimed_ids
                 else Recipe.created_by_job_id == job_id  # backward compat for old jobs
             )
-            rows = await session.execute(
+            stmt = (
                 select(Recipe, Site)
                 .join(Site, Recipe.site_id == Site.id)
                 .where(id_filter, Recipe.status == RecipeStatus.publishing)
                 .order_by(Site.id.asc(), Recipe.created_at.asc())
-                .limit(limit)
             )
+            if limit is not None:
+                stmt = stmt.limit(limit)
+            rows = await session.execute(stmt)
             cache = site_config_cache if site_config_cache is not None else {}
             payloads: list[dict[str, Any]] = []
             for recipe, site in rows.all():
@@ -451,7 +452,6 @@ class JobManager:
                         self._load_publisher_chunk_payloads(
                             db_job.id,
                             schedule_map,
-                            limit=PUBLISH_CHUNK_SIZE,
                             site_config_cache=site_config_cache,
                             claimed_ids=valid_ids,
                         ),
@@ -860,7 +860,6 @@ class JobManager:
                             self._load_publisher_chunk_payloads(
                                 db_job.id,
                                 {},
-                                limit=PUBLISH_CHUNK_SIZE,
                                 site_config_override=site_config or None,
                             ),
                             main_loop,
@@ -1409,7 +1408,6 @@ class JobManager:
                                 self._load_publisher_chunk_payloads(
                                     db_job.id,
                                     schedule_map,
-                                    limit=PUBLISH_CHUNK_SIZE,
                                     site_config_cache=site_config_cache,
                                     site_config_override=site_config or None,
                                     claimed_ids=stored_claimed_ids,
