@@ -1186,6 +1186,8 @@ export default function PinDesigner({
   const canvasAreaRef = useRef<HTMLDivElement>(null);     // scroll container
   const fabricCanvasRef = useRef<any>(null);
   const fabricLibRef = useRef<any>(null);
+  const pendingCanvasScrollRef = useRef<{ top: number; left: number } | null>(null);
+  const canvasScrollRestoreFrameRef = useRef<number | null>(null);
 
   // ── Undo ────────────────────────────────────────────────────────────────
   const undoHistoryRef = useRef<{ json: string; selectedId: string | null }[]>([]);
@@ -1440,10 +1442,29 @@ export default function PinDesigner({
     void runBatch(PREVIEW_EAGER_COUNT);
   };
 
-  const switchToFrame = async (newIdx: number) => {
+  const keepPageAnchoredAfterFrameSwitch = useCallback((frameIndex: number, previousTop: number | null) => {
+    if (previousTop === null || typeof window === "undefined") return;
+
+    const restore = () => {
+      const area = canvasAreaRef.current;
+      const page = area?.querySelector(`[data-pin-page-index="${frameIndex}"]`) as HTMLElement | null;
+      if (!area || !page) return;
+
+      area.scrollTop += page.getBoundingClientRect().top - previousTop;
+    };
+
+    window.requestAnimationFrame(() => {
+      restore();
+      window.requestAnimationFrame(restore);
+    });
+  }, []);
+
+  const switchToFrame = async (newIdx: number, clickedPageEl?: HTMLElement) => {
     if (!frames || newIdx === activeFrameIdx || newIdx < 0 || newIdx >= frames.length) return;
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
+    const clickedPageTop = clickedPageEl?.getBoundingClientRect().top ?? null;
+    pendingCanvasScrollRef.current = null;
 
     // Save current frame JSON
     frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
@@ -1474,6 +1495,7 @@ export default function PinDesigner({
     setActiveFrameIdx(newIdx);
     setPinName(frames[newIdx].title);
     setPinTitle(resolvePinTitleValue(frames[newIdx].pinTitle, frames[newIdx].title));
+    keepPageAnchoredAfterFrameSwitch(newIdx, clickedPageTop);
 
     const savedJson = frameJsonsRef.current[newIdx];
     if (savedJson && savedJson !== "{}") {
@@ -1500,6 +1522,7 @@ export default function PinDesigner({
       canvas.renderAll();
       updateLayers();
     }
+    keepPageAnchoredAfterFrameSwitch(newIdx, clickedPageTop);
   };
 
   const savePinToRecipeWithArticleEmbed = useCallback(
@@ -2006,6 +2029,34 @@ export default function PinDesigner({
 
   // ── Toolbar position (floating toolbar above selected object) ────────────
 
+  const rememberCanvasScrollPosition = useCallback(() => {
+    const area = canvasAreaRef.current;
+    if (!area) return;
+    pendingCanvasScrollRef.current = { top: area.scrollTop, left: area.scrollLeft };
+  }, []);
+
+  const restoreRememberedCanvasScroll = useCallback(() => {
+    const pending = pendingCanvasScrollRef.current;
+    if (!pending || typeof window === "undefined") return;
+
+    if (canvasScrollRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(canvasScrollRestoreFrameRef.current);
+    }
+
+    canvasScrollRestoreFrameRef.current = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const area = canvasAreaRef.current;
+        const latest = pendingCanvasScrollRef.current;
+        if (area && latest) {
+          area.scrollTop = latest.top;
+          area.scrollLeft = latest.left;
+        }
+        pendingCanvasScrollRef.current = null;
+        canvasScrollRestoreFrameRef.current = null;
+      });
+    });
+  }, []);
+
   const recalcToolbarPos = useCallback((obj?: any) => {
     const wrapper = canvasWrapperRef.current;
     const canvas = fabricCanvasRef.current;
@@ -2073,7 +2124,8 @@ export default function PinDesigner({
     }
 
     recalcToolbarPos(obj);
-  }, [setSelectedId, setTextProps, setBandProps, setFrameProps, setImageProps, setShapeProps, recalcToolbarPos]);
+    restoreRememberedCanvasScroll();
+  }, [setSelectedId, setTextProps, setBandProps, setFrameProps, setImageProps, setShapeProps, recalcToolbarPos, restoreRememberedCanvasScroll]);
 
   // ── Undo ─────────────────────────────────────────────────────────────────
 
@@ -3007,6 +3059,10 @@ export default function PinDesigner({
       fabricLibRef.current = null;
       undoHistoryRef.current = [];
       isRestoringRef.current = false;
+      if (canvasScrollRestoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(canvasScrollRestoreFrameRef.current);
+        canvasScrollRestoreFrameRef.current = null;
+      }
       resetStore();
     };
   }, [mounted]);
@@ -5390,7 +5446,15 @@ export default function PinDesigner({
         </aside>
 
         {/* ── Canvas Area ─────────────────────────────────────────────────── */}
-        <main ref={canvasAreaRef} className="flex-1 overflow-auto bg-gray-900" style={stableScrollAreaStyle}>
+        <main
+          ref={canvasAreaRef}
+          className="flex-1 overflow-auto bg-gray-900"
+          style={stableScrollAreaStyle}
+          onMouseDownCapture={(e) => {
+            if ((e.target as HTMLElement)?.closest?.("[data-pin-ui]")) return;
+            rememberCanvasScrollPosition();
+          }}
+        >
           {/* Zoom bar */}
           <div className="sticky top-0 z-10 bg-gray-900/95 backdrop-blur border-b border-gray-800 px-4 py-2 flex items-center justify-center gap-2">
             <button onClick={() => setZoomPct(zoom - 10)} className="p-1.5 rounded bg-gray-800 hover:bg-gray-700">
@@ -5411,14 +5475,14 @@ export default function PinDesigner({
             <div className="p-4 sm:p-6 flex flex-col items-center gap-4">
               {/* Preview pages BEFORE active */}
               {frames.slice(0, activeFrameIdx).map((f, i) => (
-                <div key={f.recipeId} className="flex flex-col items-center">
+                <div key={f.recipeId} className="flex flex-col items-center" data-pin-page-index={i}>
                   <div className="flex items-center gap-2 mb-1 text-gray-500" style={{ width: `${canvasW * zoom / 100}px` }}>
                     <span className="text-xs font-semibold">Page {i + 1}</span>
                     <span className="text-xs truncate flex-1">{f.title}</span>
                     {frameJsonsRef.current[i] && <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" title="Edited" />}
                   </div>
                   <div
-                    onClick={() => switchToFrame(i)}
+                    onClick={(e) => switchToFrame(i, e.currentTarget.closest("[data-pin-page-index]") as HTMLElement)}
                     className="cursor-pointer group relative"
                     style={{ width: `${canvasW * zoom / 100}px`, height: `${canvasH * zoom / 100}px` }}
                   >
@@ -5447,7 +5511,7 @@ export default function PinDesigner({
               ))}
 
               {/* ── Active page: live canvas (stable DOM position) ────────── */}
-              <div className="flex flex-col items-center">
+              <div className="flex flex-col items-center" data-pin-page-index={activeFrameIdx}>
                 <div className="flex items-center gap-2 mb-1 text-brand-400" style={{ width: `${canvasW * zoom / 100}px` }}>
                   <span className="text-xs font-semibold">Page {activeFrameIdx + 1}</span>
                   <span className="text-xs truncate flex-1">{effectiveTitle}</span>
@@ -5484,14 +5548,14 @@ export default function PinDesigner({
               {frames.slice(activeFrameIdx + 1).map((f, sliceI) => {
                 const i = activeFrameIdx + 1 + sliceI;
                 return (
-                  <div key={f.recipeId} className="flex flex-col items-center">
+                  <div key={f.recipeId} className="flex flex-col items-center" data-pin-page-index={i}>
                     <div className="flex items-center gap-2 mb-1 text-gray-500" style={{ width: `${canvasW * zoom / 100}px` }}>
                       <span className="text-xs font-semibold">Page {i + 1}</span>
                       <span className="text-xs truncate flex-1">{f.title}</span>
                       {frameJsonsRef.current[i] && <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" title="Edited" />}
                     </div>
                     <div
-                      onClick={() => switchToFrame(i)}
+                      onClick={(e) => switchToFrame(i, e.currentTarget.closest("[data-pin-page-index]") as HTMLElement)}
                       className="cursor-pointer group relative"
                       style={{ width: `${canvasW * zoom / 100}px`, height: `${canvasH * zoom / 100}px` }}
                     >
