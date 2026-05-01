@@ -593,6 +593,9 @@ async def publish_recipe_article(
         "category": recipe.category,
         "image_url": recipe.image_url,
         "generated_images": recipe.generated_images,
+        "pin_design_image": recipe.pin_design_image,
+        "seo_title": recipe.seo_title,
+        "wp_tags": recipe.wp_tags,
     }
 
     from ..services.publisher import publish_recipe
