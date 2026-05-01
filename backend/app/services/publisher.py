@@ -96,13 +96,17 @@ def publish_recipe(
         category = recipe.get("category", "")
         image_url = recipe.get("image_url", "")
         generated_images_str = recipe.get("generated_images", "")
-        pin_design_image = recipe.get("pin_design_image", "")
+        pin_design_image = recipe.get("pin_design_image", "") or ""
         seo_title = (recipe.get("seo_title") or "").strip()
         wp_tags_raw = (recipe.get("wp_tags") or "").strip()
 
-        # Auto spy recipes carry a rendered pin image — use original image_url as featured image
-        # and place the pin image after the recipe card, not at the article top.
-        has_pin_image = bool(pin_design_image and isinstance(pin_design_image, str) and pin_design_image.startswith("data:image/"))
+        # Pin design image can be a base64 data URI (freshly rendered) or a hosted URL
+        # (already uploaded to the server via api.uploadPinImageToServer).
+        # Both are valid — accept either form.
+        _pin_is_base64 = isinstance(pin_design_image, str) and pin_design_image.startswith("data:image/")
+        _pin_is_url = isinstance(pin_design_image, str) and pin_design_image.startswith("http")
+        has_pin_image = bool(pin_design_image and (_pin_is_base64 or _pin_is_url))
+        _log(f"Pin design image: {'base64' if _pin_is_base64 else 'url' if _pin_is_url else 'none'} — has_pin_image={has_pin_image}")
 
         # Parse HTML and strip title — keep soup object for proper image injection
         title_from_html, soup = _parse_and_extract_title(article_html)
@@ -158,9 +162,14 @@ def publish_recipe(
         if wp_recipe_id:
             content += f"\n[wprm-recipe id={wp_recipe_id}]"
 
-        # Auto spy recipes: upload pin image and insert it after the recipe card
+        # Upload pin design image and insert it after the recipe card.
+        # Handles both base64 data URIs and hosted https:// URLs.
         if has_pin_image:
-            pin_wp_url = upload_base64_image(pin_design_image, wp, wp_title, log=_log)
+            if _pin_is_base64:
+                pin_wp_url = upload_base64_image(pin_design_image, wp, wp_title, log=_log)
+            else:
+                _, pin_wp_url = upload_image(pin_design_image, wp, wp_title, focus_kw, log=_log)
+            _log(f"Pin image uploaded to WP: {pin_wp_url or 'FAILED'}")
             if pin_wp_url:
                 content += f'\n<img src="{pin_wp_url}" alt="{wp_title}" loading="lazy" decoding="async" />'
 
