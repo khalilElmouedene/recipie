@@ -1633,9 +1633,15 @@ export default function PinDesigner({
     if (!projectId) return;
     setWpBatchBusy(mode);
     try {
-      // 1. Save pin designs only if the user has actually done a design (template selected or prior design exists).
-      // If no template is selected and no saved design exists, skip straight to publish.
-      const hasDesign = selectedTemplate !== null || !!initialJson;
+      // 1. Save pin designs before publishing.
+      // hasDesign is true when a template is active, a prior JSON is loaded, OR the canvas
+      // already has real objects (covers the race where selectedTemplate is still null while
+      // the canvas was restored from initialTemplateId before allTemplates finished loading).
+      const canvasHasObjects = (() => {
+        const c = fabricCanvasRef.current;
+        return c ? c.getObjects().some((o: any) => !o.__isLabel && !o.__isFill && !o.__designerBorder) : false;
+      })();
+      const hasDesign = selectedTemplate !== null || !!initialJson || canvasHasObjects;
       if (hasDesign) {
         if (frames && frames.length > 0) {
           await saveAllFrames(false);
