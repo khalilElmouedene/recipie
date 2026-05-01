@@ -1240,7 +1240,7 @@ class JobManager:
                     else Recipe.created_by_job_id == db_job.id
                 )
                 claimed_rows = await db.execute(
-                    select(Recipe.id, Recipe.site_id, Recipe.status)
+                    select(Recipe.id, Recipe.site_id, Recipe.status, Recipe.generated_article)
                     .where(id_filter)
                     .order_by(Recipe.site_id.asc(), Recipe.created_at.asc())
                 )
@@ -1251,10 +1251,15 @@ class JobManager:
                     await db.commit()
                     return False
 
+                resumable_publish_statuses = {
+                    RecipeStatus.publishing,
+                    RecipeStatus.generated,
+                    RecipeStatus.failed,
+                }
                 remaining_pairs = [
                     (recipe_id_value, site_id_value)
-                    for recipe_id_value, site_id_value, recipe_status in claimed_pairs
-                    if recipe_status == RecipeStatus.publishing
+                    for recipe_id_value, site_id_value, recipe_status, generated_article in claimed_pairs
+                    if recipe_status in resumable_publish_statuses and bool(generated_article)
                 ]
                 if not remaining_pairs:
                     db_job.status = JobStatus.completed
@@ -1262,12 +1267,22 @@ class JobManager:
                     await db.commit()
                     return False
 
+                await db.execute(
+                    update(Recipe)
+                    .where(
+                        Recipe.id.in_([recipe_id_value for recipe_id_value, _site_id_value in remaining_pairs]),
+                        Recipe.status.in_([RecipeStatus.generated, RecipeStatus.failed]),
+                    )
+                    .values(status=RecipeStatus.publishing, error_message=None)
+                )
+                await db.flush()
+
                 schedule_map = _build_publish_schedule_map(
                     db_job.id,
-                    [{"id": str(recipe_id_value), "site_id": str(site_id_value)} for recipe_id_value, site_id_value, _status in claimed_pairs],
+                    [{"id": str(recipe_id_value), "site_id": str(site_id_value)} for recipe_id_value, site_id_value, _status, _article in claimed_pairs],
                     publish_meta,
                 )
-                site_ids = {str(site_id_value) for _recipe_id_value, site_id_value, _status in claimed_pairs}
+                site_ids = {str(site_id_value) for _recipe_id_value, site_id_value, _status, _article in claimed_pairs}
                 if len(site_ids) == 1:
                     site_row = await db.execute(select(Site).where(Site.id == remaining_pairs[0][1]))
                     site_obj = site_row.scalar_one_or_none()
