@@ -70,6 +70,7 @@ def _publisher_recipe_payload(
         "seo_title": recipe.seo_title or "",
         "wp_tags": recipe.wp_tags or "",
         "pin_blog_link": recipe.pin_blog_link or "",
+        "pin_design_image": recipe.pin_design_image or "",
     }
     if site_config is not None:
         payload["__site_config"] = site_config
