@@ -22,6 +22,7 @@ import random
 import re as _re
 import tempfile
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -1407,6 +1408,8 @@ async def start_auto_spy_generate_job(
                             _db_mark_recipe_published(item["id"], result.get("wp_post_id"), result.get("wp_permalink")),
                             main_loop,
                         ).result()
+                    if idx < len(items) - 1 and not rj.should_stop():
+                        time.sleep(30)
 
             # ── Publishing summary ────────────────────────────────────────────────
             sep = "=" * 55
@@ -1702,6 +1705,8 @@ async def resume_auto_spy_generate_job(
                             _db_mark_recipe_published(item["id"], result.get("wp_post_id"), result.get("wp_permalink")),
                             main_loop,
                         ).result()
+                    if idx < len(items) - 1 and not rj.should_stop():
+                        time.sleep(30)
 
             # ── Publishing summary ────────────────────────────────────────────────
             sep = "=" * 55

@@ -3211,6 +3211,24 @@ export default function PinDesigner({
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
+  const dismissSelectedElement = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    canvas.getObjects().forEach((o: any) => {
+      if (o.__pinType === "imageFrame") o.set({ selectable: true, evented: true });
+      else if (o.__pinType === "imageContent") o.set({ selectable: false, evented: false, hasControls: false, hasBorders: false });
+    });
+    canvas.discardActiveObject();
+    canvas.renderAll();
+    selectedIdRef.current = null;
+    activeObjRef.current = null;
+    setSelectedId(null);
+    setTextProps({ editText: "" });
+    setToolbarPos(null);
+    setEditMode(null);
+  };
+
   const deleteSelectedElement = () => {
     const canvas = fabricCanvasRef.current;
     const obj = getSelectedObject();
@@ -4635,6 +4653,18 @@ export default function PinDesigner({
             className="p-1 rounded hover:bg-red-900 text-red-400"
           >
             <Trash2 size={14} />
+          </button>
+
+          <div className="w-px h-4 bg-gray-700 mx-0.5" />
+
+          {/* Dismiss */}
+          <button
+            onClick={dismissSelectedElement}
+            title="Dismiss toolbar"
+            aria-label="Dismiss toolbar"
+            className="p-1 rounded hover:bg-gray-700 text-gray-300"
+          >
+            <X size={14} />
           </button>
         </div>
       )}
