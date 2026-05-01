@@ -332,10 +332,17 @@ async def resume_job_endpoint(
     job.finished_at = None
     await db.commit()
 
-    await job_manager.resume_job(job.id)
+    resumed = await job_manager.resume_job(job.id)
 
     row = await db.execute(select(Job).where(Job.id == job_id))
-    return row.scalar_one()
+    refreshed = row.scalar_one()
+    if not resumed and refreshed.status == JobStatus.pending:
+        refreshed.status = JobStatus.stopped
+        refreshed.error = "Could not resume this job. No runnable work was found."
+        await db.commit()
+        row = await db.execute(select(Job).where(Job.id == job_id))
+        refreshed = row.scalar_one()
+    return refreshed
 
 
 @router.post("/api/jobs/{job_id}/stop", response_model=JobOut)

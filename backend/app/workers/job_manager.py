@@ -287,7 +287,8 @@ class JobManager:
         main_loop = asyncio.get_running_loop()
         job_id_str = str(db_job.id)
         site_scope = select(Site.id).where(Site.project_id == db_job.project_id)
-        recipe_filters: list[Any] = [Recipe.site_id.in_(site_scope), Recipe.status == RecipeStatus.generated]
+        publishable_statuses = [RecipeStatus.generated, RecipeStatus.failed]
+        recipe_filters: list[Any] = [Recipe.site_id.in_(site_scope), Recipe.status.in_(publishable_statuses)]
         site_id = publish_meta.get("site_id")
         recipe_id = publish_meta.get("recipe_id")
         recipe_ids = publish_meta.get("recipe_ids")
@@ -332,7 +333,7 @@ class JobManager:
             update(Recipe)
             .where(
                 Recipe.id.in_(valid_ids),
-                Recipe.status == RecipeStatus.generated,
+                Recipe.status.in_(publishable_statuses),
             )
             .values(
                 status=RecipeStatus.publishing,
@@ -679,7 +680,8 @@ class JobManager:
 
         if db_job.job_type != JobType.articles_all_sites:
             if db_job.job_type == JobType.publisher:
-                publisher_filters: list[Any] = [Recipe.site_id == site_id, Recipe.status == RecipeStatus.generated]
+                publisher_statuses = [RecipeStatus.generated, RecipeStatus.failed]
+                publisher_filters: list[Any] = [Recipe.site_id == site_id, Recipe.status.in_(publisher_statuses)]
                 if recipe_id:
                     publisher_filters.append(Recipe.id == recipe_id)
 
@@ -720,7 +722,7 @@ class JobManager:
                     update(Recipe)
                     .where(
                         Recipe.id.in_(recipe_ids),
-                        Recipe.status == RecipeStatus.generated,
+                        Recipe.status.in_(publisher_statuses),
                     )
                     .values(
                         status=RecipeStatus.publishing,
@@ -1217,16 +1219,13 @@ class JobManager:
 
             elif db_job.job_type == JobType.auto_spy_generate:
                 from ..services.auto_spy_job_runner import resume_auto_spy_generate_job
-                asyncio.create_task(
-                    resume_auto_spy_generate_job(
-                        db_job=db_job,
-                        credentials=credentials,
-                        prompts=prompts,
-                        running_jobs=self._running,
-                        main_loop=main_loop,
-                    )
+                return await resume_auto_spy_generate_job(
+                    db_job=db_job,
+                    credentials=credentials,
+                    prompts=prompts,
+                    running_jobs=self._running,
+                    main_loop=main_loop,
                 )
-                return True
 
             elif db_job.job_type == JobType.publisher:
                 publish_meta = await self._load_publish_meta(job_id)

@@ -320,7 +320,7 @@ export default function AllSitesGeneratePage() {
   }, [history, trackJob]);
 
   const hasAnyGeneratedRecipes = Object.values(jobRecipeMap).some((arr) =>
-    arr.some((r) => r.status === "generated" || r.status === "published")
+    arr.some((r) => r.status === "generated" || r.status === "failed")
   );
 
   const canRunWordPressBatch =
@@ -547,11 +547,16 @@ export default function AllSitesGeneratePage() {
     setResumingJobId(jobId);
     try {
       const job = await api.resumeJob(jobId);
-      trackJob(job, {
-        title: "Resumed all-sites generation",
-        sourceLabel: "Open the pipeline icon to monitor logs and progress.",
-      });
-      toast.success("Resumed job added back to the pipeline.");
+      if (job.status === "running" || job.status === "pending") {
+        trackJob(job, {
+          title: "Resumed all-sites generation",
+          sourceLabel: "Open the pipeline icon to monitor logs and progress.",
+        });
+        toast.success("Resumed job added back to the pipeline.");
+      } else {
+        toast.info(job.status === "completed" ? "Nothing left to resume." : "Job is not ready to resume yet.");
+      }
+      loadHistory();
     } catch (e: any) {
       toast.error(e.message || "Failed to resume job");
     } finally {
@@ -993,7 +998,7 @@ export default function AllSitesGeneratePage() {
                                 </div>
                               </div>
                               <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                                {(row.status === "generated" || row.status === "published") && (
+                                {(row.status === "generated" || row.status === "failed" || row.status === "published") && (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();

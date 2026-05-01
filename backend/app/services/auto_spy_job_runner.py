@@ -1018,6 +1018,38 @@ async def _db_mark_recipe_failed(recipe_id: str, error_message: str) -> None:
             await session.commit()
 
 
+async def _db_mark_recipe_publish_failed(recipe_id: str, error_message: str) -> None:
+    async with SessionLocal() as session:
+        row = await session.execute(select(Recipe).where(Recipe.id == uuid.UUID(recipe_id)))
+        recipe = row.scalar_one_or_none()
+        if recipe:
+            recipe.status = RecipeStatus.generated if recipe.generated_article else RecipeStatus.failed
+            recipe.error_message = f"Publishing failed: {error_message}"
+            await session.commit()
+
+
+def _recipe_publish_payload(recipe: Recipe) -> dict:
+    return {
+        "id": str(recipe.id),
+        "site_id": str(recipe.site_id),
+        "recipe_text": recipe.recipe_text or "",
+        "pin_title": recipe.pin_title,
+        "image_url": recipe.image_url or "",
+        "generated_article": recipe.generated_article or "",
+        "generated_json": recipe.generated_json or "",
+        "focus_keyword": recipe.focus_keyword or "",
+        "meta_description": recipe.meta_description or "",
+        "category": recipe.category or "",
+        "generated_images": recipe.generated_images or "",
+        "wp_post_id": recipe.wp_post_id or "",
+        "wp_permalink": recipe.wp_permalink or "",
+        "seo_title": recipe.seo_title or "",
+        "wp_tags": recipe.wp_tags or "",
+        "pin_blog_link": recipe.pin_blog_link or "",
+        "pin_design_image": recipe.pin_design_image or "",
+    }
+
+
 async def _db_set_job_status(
     job_id_str: str,
     status: JobStatus,
@@ -1330,6 +1362,8 @@ async def start_auto_spy_generate_job(
 
                     # Save recipe without pin_design_image (large blob — kept in memory for WP publish only)
                     db_fields = {k: v for k, v in generated.items() if k != "pin_design_image"}
+                    if not generated.get("error_message") and item["id"] in per_recipe_generated:
+                        db_fields["pin_design_image"] = per_recipe_generated[item["id"]].get("pin_design_image")
                     _on_recipe_done(item["id"], db_fields)
                     done += 1
                     _on_progress(done, total)
@@ -1398,7 +1432,7 @@ async def start_auto_spy_generate_job(
                         rj.log(f"    Permanently failed: {reason[:120]}")
                         pub_failed.append((recipe_data.get("recipe_text", "")[:50], reason))
                         asyncio.run_coroutine_threadsafe(
-                            _db_mark_recipe_failed(item["id"], reason),
+                            _db_mark_recipe_publish_failed(item["id"], reason),
                             main_loop,
                         ).result()
                     else:
@@ -1442,8 +1476,8 @@ async def resume_auto_spy_generate_job(
     prompts: dict[str, str],
     running_jobs: dict,
     main_loop: asyncio.AbstractEventLoop,
-) -> None:
-    """Re-process pending recipes from a stopped/failed auto_spy_generate job."""
+) -> bool:
+    """Re-process pending recipes and retry publishable generated recipes."""
     from ..services.article_generator import generate_for_recipe, generate_images_only
 
     job_id_str = str(db_job.id)
@@ -1461,17 +1495,32 @@ async def resume_auto_spy_generate_job(
         )
         pending = pending_rows.all()
 
-        if not pending:
+        publishable_rows = await db.execute(
+            select(Recipe, Site)
+            .join(Site, Recipe.site_id == Site.id)
+            .where(
+                Recipe.created_by_job_id == db_job.id,
+                Recipe.status.in_([RecipeStatus.generated, RecipeStatus.failed]),
+                Recipe.generated_article.is_not(None),
+                Recipe.generated_article != "",
+                Recipe.wp_post_id.is_(None),
+            )
+            .order_by(Site.created_at, Recipe.created_at)
+        )
+        publishable = publishable_rows.all()
+
+        if not pending and not publishable:
             await _db_set_job_status(job_id_str, JobStatus.completed)
-            return
+            return False
 
         recipe_ids = [r.id for r, _ in pending]
-        await db.execute(
-            update(Recipe)
-            .where(Recipe.id.in_(recipe_ids))
-            .values(status=RecipeStatus.generating)
-        )
-        await db.commit()
+        if recipe_ids:
+            await db.execute(
+                update(Recipe)
+                .where(Recipe.id.in_(recipe_ids))
+                .values(status=RecipeStatus.generating)
+            )
+            await db.commit()
 
         groups: dict[tuple, list[dict]] = {}
         for recipe, site in pending:
@@ -1493,9 +1542,23 @@ async def resume_auto_spy_generate_job(
             for i, ((rt, iu), items) in enumerate(groups.items())
         ]
         recipes_data = [{"id": str(r.id)} for r, _ in pending]
+        publish_retry_items = [
+            {
+                "id": str(recipe.id),
+                "site_id": str(site.id),
+                "site_domain": site.domain,
+                "recipe_text": recipe.recipe_text,
+                "image_url": recipe.image_url,
+            }
+            for recipe, site in publishable
+        ]
+        publish_retry_data = {
+            str(recipe.id): _recipe_publish_payload(recipe)
+            for recipe, _site in publishable
+        }
 
         # Load site objects and their schedules for the WP publish step
-        site_ids = list({str(site.id) for _, site in pending})
+        site_ids = list({str(site.id) for _, site in [*pending, *publishable]})
         site_rows = await db.execute(select(Site).where(Site.id.in_([uuid.UUID(s) for s in site_ids])))
         resume_sites = {str(s.id): s for s in site_rows.scalars().all()}
 
@@ -1516,7 +1579,7 @@ async def resume_auto_spy_generate_job(
         )
         already_published = {str(sid): cnt for sid, cnt in pub_counts_rows.all()}
 
-    await _db_set_job_status(job_id_str, JobStatus.running, total_rows=len(recipes_data))
+    await _db_set_job_status(job_id_str, JobStatus.running, total_rows=len(recipes_data) + len(publish_retry_items))
 
     rj = RunningJob(db_job.id)
     running_jobs[job_id_str] = rj
@@ -1541,7 +1604,7 @@ async def resume_auto_spy_generate_job(
 
         rj.log(f"Resuming Auto Spy Generate — {total} recipe(s) remaining")
 
-        per_recipe_generated: dict[str, dict] = {}
+        per_recipe_generated: dict[str, dict] = dict(publish_retry_data)
 
         try:
             for group in multi_site_groups:
@@ -1634,6 +1697,8 @@ async def resume_auto_spy_generate_job(
                         }
 
                     db_fields = {k: v for k, v in generated.items() if k != "pin_design_image"}
+                    if not generated.get("error_message") and item["id"] in per_recipe_generated:
+                        db_fields["pin_design_image"] = per_recipe_generated[item["id"]].get("pin_design_image")
                     _on_recipe_done(item["id"], db_fields)
                     done += 1
                     _on_progress(done, total)
@@ -1651,6 +1716,9 @@ async def resume_auto_spy_generate_job(
                 for item in group["items"]:
                     if item["id"] in per_recipe_generated:
                         site_resume_groups.setdefault(item["site_id"], []).append(item)
+            for item in publish_retry_items:
+                if item["id"] in per_recipe_generated:
+                    site_resume_groups.setdefault(item["site_id"], []).append(item)
 
             rj.log("=" * 50)
             rj.log("Publishing to WordPress as scheduled posts...")
@@ -1695,7 +1763,7 @@ async def resume_auto_spy_generate_job(
                         rj.log(f"    Permanently failed: {reason[:120]}")
                         pub_failed.append((recipe_data.get("recipe_text", "")[:50], reason))
                         asyncio.run_coroutine_threadsafe(
-                            _db_mark_recipe_failed(item["id"], reason),
+                            _db_mark_recipe_publish_failed(item["id"], reason),
                             main_loop,
                         ).result()
                     else:
@@ -1729,3 +1797,4 @@ async def resume_auto_spy_generate_job(
     thread = threading.Thread(target=_run, daemon=True)
     rj._thread = thread
     thread.start()
+    return True

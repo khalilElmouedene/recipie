@@ -100,8 +100,8 @@ export default function JobResultsPage() {
     }
   };
 
-  const hasGenerated = recipes.some((r) => r.status === "generated");
-  const canBatch = canAdmin && !!job?.project_id && hasGenerated && !batchPublishing;
+  const hasPublishable = recipes.some((r) => r.status === "generated" || r.status === "failed");
+  const canBatch = canAdmin && !!job?.project_id && hasPublishable && !batchPublishing;
 
   const runBatch = (mode: "wordpress_scheduled" | "manual_backdate") => {
     if (!job?.project_id) return;
@@ -231,7 +231,7 @@ export default function JobResultsPage() {
               <History size={14} /> {batchPublishing === "manual_backdate" ? "Working…" : "Manual (backdated)"}
             </button>
           </div>
-          {!hasGenerated && (
+          {!hasPublishable && (
             <p className="text-xs text-amber-400 mt-2">No generated recipes left to publish in this job.</p>
           )}
         </div>

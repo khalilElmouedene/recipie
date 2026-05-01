@@ -97,12 +97,9 @@ export default function JobDetailPage() {
     if (resuming) return;
     setResuming(true);
     try {
-      await api.resumeJob(id);
+      const resumedJob = await api.resumeJob(id);
       setLogs([]);
-      // Optimistically mark as running so WebSocket + polling effects trigger immediately.
-      // Backend starts the job async and may return "stopped" in the response body.
-      setJob(prev => prev ? { ...prev, status: "running" } : null);
-      // Sync actual server state after the job has had time to start
+      setJob(resumedJob);
       setTimeout(() => api.getJob(id).then(setJob).catch(() => {}), 2000);
     } catch (e: unknown) {
       setToast({ message: e instanceof Error ? e.message : "Failed to resume job", type: "error" });
