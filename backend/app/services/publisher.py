@@ -317,8 +317,11 @@ def publish_recipes_from_db(
                 break
             if attempt < max_attempts:
                 err_preview = str(result["error_message"])[:120]
-                _log(f"  Attempt {attempt}/{max_attempts} failed: {err_preview} — retrying in {retry_delay:.0f}s…")
-                time.sleep(retry_delay)
+                # 403 = security plugin rate-limit / IP block — wait much longer than a normal retry
+                is_rate_limited = "403" in err_preview or "forbidden" in err_preview.lower()
+                wait = 90.0 if is_rate_limited else retry_delay
+                _log(f"  Attempt {attempt}/{max_attempts} failed: {err_preview} — retrying in {wait:.0f}s…")
+                time.sleep(wait)
 
         if result.get("error_message"):
             reason = str(result["error_message"])
@@ -331,7 +334,8 @@ def publish_recipes_from_db(
             on_recipe_done(recipe_id, result)
 
         if idx < total - 1 and not _stop():
-            time.sleep(2)
+            # 30s between recipes to avoid triggering WordPress security plugin rate limits
+            time.sleep(30)
 
     # ── Summary ─────────────────────────────────────────────────────────────────
     n_failed = len(failed_items)
