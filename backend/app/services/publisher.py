@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import random
 import re
 import requests
 import time
@@ -13,6 +14,12 @@ from .wordpress import (
     upload_image, upload_base64_image, add_recipe, validate_recipe_json, set_rank_math_meta,
     _wp_rest_base, _get_or_create_term, _wp_session,
 )
+
+
+def _random_delay(log: Callable, min_sec: float = 4, max_sec: float = 9) -> None:
+    delay = random.uniform(min_sec, max_sec)
+    log(f"Waiting {delay:.2f}s before next request...")
+    time.sleep(delay)
 
 
 def _strip_title_decorations(title: str) -> str:
@@ -129,6 +136,8 @@ def publish_recipe(
         if img1_id is None and img1_source != image_url and image_url:
             _log("Generated image failed, retrying with original image_url...")
             img1_id, img1_url = upload_image(image_url, site_config, wp_title, focus_kw, log=_log)
+        _log("Image uploaded.")
+        _random_delay(_log)
 
         # Normalize HTTP → HTTPS (some WP installs return http:// even on https sites)
         def _to_https(url):
@@ -160,6 +169,8 @@ def publish_recipe(
 
         if wp_recipe_id:
             content += f"\n[wprm-recipe id={wp_recipe_id}]"
+            _log("Recipe card created.")
+            _random_delay(_log)
 
         # Upload pin design image and insert it after the recipe card.
         # Handles both base64 data URIs and hosted https:// URLs.
@@ -171,6 +182,7 @@ def publish_recipe(
             _log(f"Pin image uploaded to WP: {pin_wp_url or 'FAILED'}")
             if pin_wp_url:
                 content += f'\n<img src="{pin_wp_url}" alt="{wp_title}" loading="lazy" decoding="async" />'
+            _random_delay(_log)
 
         base_url = _wp_rest_base(site_config)
         auth = (site_config["wp_username"], site_config["wp_password"])
