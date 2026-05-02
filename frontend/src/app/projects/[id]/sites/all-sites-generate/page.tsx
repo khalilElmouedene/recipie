@@ -452,14 +452,14 @@ export default function AllSitesGeneratePage() {
       const wb = XLSX.read(buffer, { type: "array" });
       const firstSheet = wb.SheetNames[0];
       if (!firstSheet) {
-        toast.warning("Excel file has no sheet.");
+        toast.warning("File has no sheet.");
         return;
       }
 
       const ws = wb.Sheets[firstSheet];
       const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
       if (!rawRows.length) {
-        toast.warning("No rows found in Excel.");
+        toast.warning("No rows found in file.");
         return;
       }
 
@@ -678,7 +678,7 @@ export default function AllSitesGeneratePage() {
           <input
             ref={excelInputRef}
             type="file"
-            accept=".xlsx,.xls"
+            accept=".xlsx,.xls,.csv"
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
@@ -698,9 +698,9 @@ export default function AllSitesGeneratePage() {
             onClick={() => excelInputRef.current?.click()}
             disabled={importingExcel}
             className="btn-secondary flex items-center gap-2"
-            title='Import Excel columns: "image_url", "recipe_text"'
+            title='Import Excel or CSV — columns: "image_url", "recipe_text"'
           >
-            <Upload size={16} /> {importingExcel ? "Importing..." : "Upload Excel"}
+            <Upload size={16} /> {importingExcel ? "Importing..." : "Upload Excel / CSV"}
           </button>
           <button
             type="button"
