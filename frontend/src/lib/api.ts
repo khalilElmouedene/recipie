@@ -372,6 +372,9 @@ export const api = {
   getLastPublishDate: (siteId: string) =>
     request<{ last_publish_date: string | null }>(`/api/sites/${siteId}/last-publish-date`),
 
+  testConnection: (siteId: string) =>
+    request<{ ok: boolean; message: string }>(`/api/sites/${siteId}/test-connection`, { method: "POST" }),
+
   createSite: (projectId: string, data: SiteCreateData) =>
     request<SiteOut>(`/api/projects/${projectId}/sites`, { method: "POST", body: JSON.stringify(data) }),
 

@@ -488,3 +488,45 @@ async def get_last_publish_date(
     except Exception:
         pass
     return {"last_publish_date": latest_date}
+
+
+@router.post("/api/sites/{site_id}/test-connection")
+async def test_wp_connection(
+    site_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)] = None,
+    db: Annotated[AsyncSession, Depends(get_db)] = None,
+):
+    """Test whether the stored WordPress credentials can authenticate against the REST API."""
+    result = await db.execute(select(Site).where(Site.id == site_id))
+    site = result.scalar_one_or_none()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    await check_project_access(site.project_id, user, db)
+
+    wp_username, wp_password = get_random_wp_credentials(site)
+    base = site.wp_url.replace("xmlrpc.php", "").rstrip("/")
+    url = f"{base}/wp-json/wp/v2/users/me"
+
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            r = await client.get(url, auth=(wp_username, wp_password))
+
+        if r.status_code == 200:
+            data = r.json()
+            name = data.get("name") or data.get("slug") or wp_username
+            return {"ok": True, "message": f"Connected as {name}"}
+        elif r.status_code == 401:
+            return {"ok": False, "message": "Wrong credentials (401) — check username / password"}
+        elif r.status_code == 403:
+            return {"ok": False, "message": "Forbidden (403) — use an Application Password (WP Admin → Users → Profile)"}
+        elif r.status_code == 404:
+            return {"ok": False, "message": "REST API not found (404) — may be disabled on this site"}
+        else:
+            return {"ok": False, "message": f"Unexpected response: {r.status_code}"}
+
+    except httpx.ConnectError:
+        return {"ok": False, "message": f"Cannot reach {base} — check the WordPress URL"}
+    except httpx.TimeoutException:
+        return {"ok": False, "message": "Request timed out — site may be slow or unreachable"}
+    except Exception as e:
+        return {"ok": False, "message": f"Error: {str(e)[:120]}"}

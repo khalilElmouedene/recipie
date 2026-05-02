@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload, RotateCcw, AlertTriangle, Sheet, Radar } from "lucide-react";
+import { Globe, Users, Briefcase, Plus, Trash2, ArrowLeft, Download, Send, Info, X, Pencil, Minus, Settings, Key, MessageSquare, Bot, Image as ImageIcon, FileJson, Shield, Save, ExternalLink, List, Upload, RotateCcw, AlertTriangle, Sheet, Radar, Wifi } from "lucide-react";
 import { api, ProjectOut, SiteOut, MemberOut, JobOut, UserOut, CredentialOut, PromptOut } from "@/lib/api";
 import { getUserRole, getUserId, getUserEmail } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
@@ -221,6 +221,8 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
   const [editSite, setEditSite] = useState<SiteOut | null>(null);
   const [editForm, setEditForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [editing, setEditing] = useState(false);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
 
   const load = () => api.getSites(projectId).then(setSites).catch(() => {});
   useEffect(() => { load(); }, [projectId]);
@@ -267,6 +269,18 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
     if (!await openConfirm({ message: "Delete this site and all its recipes?", danger: true, confirmLabel: "Delete" })) return;
     await api.deleteSite(siteId);
     load();
+  };
+
+  const handleTestConnection = async (siteId: string) => {
+    setTestingId(siteId);
+    try {
+      const result = await api.testConnection(siteId);
+      setTestResults((prev) => ({ ...prev, [siteId]: result }));
+    } catch {
+      setTestResults((prev) => ({ ...prev, [siteId]: { ok: false, message: "Request failed" } }));
+    } finally {
+      setTestingId(null);
+    }
   };
 
   const openEdit = (s: SiteOut) => {
@@ -411,6 +425,14 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
               <p className="text-sm text-gray-400 truncate">{s.wp_url} &middot; {(s as any).wp_users?.length || 1} user(s) &middot; {s.recipe_count} recipes</p>
             </Link>
             <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={() => handleTestConnection(s.id)}
+                disabled={testingId === s.id}
+                className={`transition p-2 ${testingId === s.id ? "text-gray-500 animate-pulse" : testResults[s.id]?.ok === true ? "text-green-400" : testResults[s.id]?.ok === false ? "text-red-400" : "text-gray-400 hover:text-brand-400"}`}
+                title={testResults[s.id]?.message ?? "Test REST API connection"}
+              >
+                <Wifi size={16} />
+              </button>
               <button
                 onClick={() => setDetailsSite(s)}
                 className="text-gray-400 hover:text-brand-400 transition p-2"
