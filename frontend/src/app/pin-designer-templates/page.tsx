@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useRef } from "react";
-import { LayoutTemplate, Plus, Trash2, Pencil, Copy, FolderOpen, X, Check, Download, Upload, Globe, Loader2, FlaskConical } from "lucide-react";
+import { LayoutTemplate, Plus, Trash2, Pencil, Copy, FolderOpen, X, Check, Download, Upload, Globe, Loader2 } from "lucide-react";
 import { api, PinDesignerTemplateOut, ProjectOut, SiteOut } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
@@ -107,29 +107,6 @@ export default function PinDesignerTemplatesPage() {
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [isGlobal, setIsGlobal] = useState(true);
   const [assignSaving, setAssignSaving] = useState(false);
-
-  // Test render state
-  const [testRenderingId, setTestRenderingId] = useState<string | null>(null);
-
-  async function handleTestRender(tmpl: PinDesignerTemplateOut) {
-    const imageUrl = window.prompt(
-      "Enter a food image URL to test render with:",
-      "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=800"
-    );
-    if (!imageUrl) return;
-    const title = window.prompt("Enter a recipe title:", "Creamy Garlic Pasta") || "Creamy Garlic Pasta";
-    setTestRenderingId(tmpl.id);
-    try {
-      const res = await api.previewRenderTemplate(tmpl.id, imageUrl, title);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Render failed");
-    } finally {
-      setTestRenderingId(null);
-    }
-  }
 
   // Assign to site state
   const [siteAssignTemplate, setSiteAssignTemplate] = useState<PinDesignerTemplateOut | null>(null);
@@ -644,16 +621,6 @@ export default function PinDesignerTemplatesPage() {
                     className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-700 hover:text-white transition"
                   >
                     <Download size={13} />
-                  </button>
-                  <button
-                    onClick={() => handleTestRender(tmpl)}
-                    disabled={testRenderingId === tmpl.id}
-                    title="Test render — preview the pin image instantly"
-                    className="p-1.5 rounded-lg text-gray-400 hover:bg-purple-900/60 hover:text-purple-300 transition disabled:opacity-50"
-                  >
-                    {testRenderingId === tmpl.id
-                      ? <Loader2 size={13} className="animate-spin" />
-                      : <FlaskConical size={13} />}
                   </button>
                   <button
                     onClick={() => handleDeleteTemplate(tmpl.id)}
