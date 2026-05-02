@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles, Globe, Square, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Play, Image, FileText, Download, Eye, X, ChevronDown, ChevronUp, Pencil, Check, ExternalLink, RefreshCw, LayoutGrid, Sparkles, Globe, Square, CheckCircle, XCircle, Loader2, ScrollText } from "lucide-react";
 import { api, getApiBaseUrl, SiteOut, RecipeOut, SiteRecipeCardOut, SiteRecipeCardPageOut, PinterestBoard, PinterestBulkResponse, PinTemplate, BulkGeneratePinsResponse, JobOut, getWsUrl } from "@/lib/api";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { useToast } from "@/contexts/ToastContext";
@@ -9,6 +9,7 @@ import { useConfirm } from "@/components/ConfirmModal";
 import { useJobActivity } from "@/contexts/JobActivityContext";
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
 import InfiniteScrollSentinel from "@/components/InfiniteScrollSentinel";
+import { LogViewer } from "@/components/LogViewer";
 
 const API_URL = getApiBaseUrl();
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "stopped"]);
@@ -136,6 +137,8 @@ export default function SiteDetailPage() {
   // Inline job monitoring
   const [activeJob, setActiveJob] = useState<JobOut | null>(null);
   const [activeJobLastLog, setActiveJobLastLog] = useState<string>("");
+  const [showJobLogs, setShowJobLogs] = useState(false);
+  const [historicalLogs, setHistoricalLogs] = useState<string[] | null>(null);
   const activeJobWsRef = useRef<WebSocket | null>(null);
   const activeJobStatusByIdRef = useRef<Map<string, string>>(new Map());
   const notifiedTerminalJobStatesRef = useRef<Set<string>>(new Set());
@@ -630,6 +633,8 @@ export default function SiteDetailPage() {
       setRecipeJobMap((prev) => ({ ...prev, [recipeId]: job.id }));
       setActiveJob(job);
       setActiveJobLastLog("");
+      setShowJobLogs(false);
+      setHistoricalLogs(null);
       if (job.status !== "running" && job.status !== "pending") {
         if (job.error) toast.error(job.error);
         await loadRecipes();
@@ -668,6 +673,8 @@ export default function SiteDetailPage() {
       });
       setActiveJob(job);
       setActiveJobLastLog("");
+      setShowJobLogs(false);
+      setHistoricalLogs(null);
       toast.success(`${type === "articles" ? "Generation" : "Publish"} added to the pipeline.`);
     } catch (err: any) {
       toast.error(err.message || "Failed to start job");
@@ -995,18 +1002,41 @@ export default function SiteDetailPage() {
                 </button>
               )}
               <button
+                onClick={() => {
+                  const next = !showJobLogs;
+                  setShowJobLogs(next);
+                  if (next && activeJob.status !== "running" && historicalLogs === null) {
+                    api.getJobLogs(activeJob.id)
+                      .then((l) => setHistoricalLogs(l.map((x: any) => x.message)))
+                      .catch(() => setHistoricalLogs([]));
+                  }
+                }}
+                className={`text-xs flex items-center gap-1 border px-2 py-1 rounded transition ${showJobLogs ? "text-brand-300 border-brand-700/60 bg-brand-900/20" : "text-gray-400 hover:text-gray-200 border-gray-700/40"}`}
+              >
+                <ScrollText size={11}/> {showJobLogs ? "Hide logs" : "Logs"}
+              </button>
+              <button
                 onClick={() => router.push(`/jobs/${activeJob.id}`)}
                 className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 border border-blue-800/40 px-2 py-1 rounded"
               >
                 Full logs <ExternalLink size={11}/>
               </button>
               {activeJob.status !== "running" && (
-                <button onClick={() => setActiveJob(null)} className="text-gray-500 hover:text-gray-300 ml-1">
+                <button onClick={() => { setActiveJob(null); setShowJobLogs(false); setHistoricalLogs(null); }} className="text-gray-500 hover:text-gray-300 ml-1">
                   <X size={14}/>
                 </button>
               )}
             </div>
           </div>
+          {showJobLogs && (
+            <div className="mt-3 border-t border-gray-700/40 pt-3">
+              <LogViewer
+                jobId={activeJob.status === "running" ? activeJob.id : null}
+                staticLogs={activeJob.status !== "running" ? (historicalLogs ?? undefined) : undefined}
+                className="h-64"
+              />
+            </div>
+          )}
         </div>
       )}
 
