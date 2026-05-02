@@ -19,7 +19,7 @@ export default function ProjectDetailPage() {
   const toast = useToast();
   const globalRole = getUserRole();
   const currentUserId = getUserId();
-  const canAutoSpy = (getUserEmail() || "").trim().toLowerCase() === "khalil@gmail.com";
+  const canAutoSpy = true;
   const { trackJob } = useJobActivity();
   const [project, setProject] = useState<ProjectOut | null>(null);
   const [notFound, setNotFound] = useState(false);
