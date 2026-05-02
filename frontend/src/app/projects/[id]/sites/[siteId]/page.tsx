@@ -1207,48 +1207,14 @@ export default function SiteDetailPage() {
             </p>
           )}
           {totalRecipeCount > 0 && (
-            <div className="relative group">
-              <button
-                disabled={deletingAll}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-900/40 hover:bg-red-950/40 hover:border-red-700/60 transition disabled:opacity-50"
-              >
-                {deletingAll ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                Delete All
-                <ChevronDown size={12} />
-              </button>
-              <div className="absolute right-0 top-full mt-1 z-20 hidden group-hover:flex flex-col w-52 rounded-xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
-                {recipeListStats.failed > 0 && (
-                  <button
-                    onClick={() => handleDeleteAll("failed")}
-                    className="px-4 py-2.5 text-left text-xs text-red-400 hover:bg-gray-800 transition"
-                  >
-                    Delete failed ({recipeListStats.failed})
-                  </button>
-                )}
-                {recipeListStats.pending > 0 && (
-                  <button
-                    onClick={() => handleDeleteAll("pending")}
-                    className="px-4 py-2.5 text-left text-xs text-gray-300 hover:bg-gray-800 transition"
-                  >
-                    Delete pending ({recipeListStats.pending})
-                  </button>
-                )}
-                {recipeListStats.published > 0 && (
-                  <button
-                    onClick={() => handleDeleteAll("published")}
-                    className="px-4 py-2.5 text-left text-xs text-gray-300 hover:bg-gray-800 transition"
-                  >
-                    Delete published ({recipeListStats.published})
-                  </button>
-                )}
-                <button
-                  onClick={() => handleDeleteAll()}
-                  className="px-4 py-2.5 text-left text-xs text-red-500 font-semibold hover:bg-red-950/30 border-t border-gray-800 transition"
-                >
-                  Delete all ({totalRecipeCount})
-                </button>
-              </div>
-            </div>
+            <button
+              disabled={deletingAll}
+              onClick={() => handleDeleteAll()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-900/40 hover:bg-red-950/40 hover:border-red-700/60 transition disabled:opacity-50"
+            >
+              {deletingAll ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
+              Delete All ({totalRecipeCount})
+            </button>
           )}
         </div>
       </div>
