@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import re
+import requests
 import time
 from datetime import datetime, timezone
 from typing import Callable
@@ -10,9 +11,8 @@ from slugify import slugify
 from .wordpress import (
     _parse_and_extract_title, inject_images_into_html, upload_pin_embed_images,
     upload_image, upload_base64_image, add_recipe, validate_recipe_json, set_rank_math_meta,
+    _wp_rest_base, _get_or_create_term,
 )
-from wordpress_xmlrpc import Client as WPClient, WordPressPost
-from wordpress_xmlrpc.methods.posts import NewPost, GetPost, EditPost
 
 
 def _strip_title_decorations(title: str) -> str:
@@ -86,7 +86,6 @@ def publish_recipe(
     result: dict = {}
 
     try:
-        wp = WPClient(site_config["wp_url"], site_config["wp_username"], site_config["wp_password"])
         domain = site_config.get("domain", "")
 
         article_html = recipe.get("generated_article", "")
@@ -125,13 +124,13 @@ def publish_recipe(
                 pass
 
         # Upload image (featured + inline top)
-        img1_id, img1_url = upload_image(img1_source, wp, wp_title, focus_kw, log=_log)
+        img1_id, img1_url = upload_image(img1_source, site_config, wp_title, focus_kw, log=_log)
         # Fallback to original image_url if generated image URL expired/failed
         if img1_id is None and img1_source != image_url and image_url:
             _log("Generated image failed, retrying with original image_url...")
-            img1_id, img1_url = upload_image(image_url, wp, wp_title, focus_kw, log=_log)
+            img1_id, img1_url = upload_image(image_url, site_config, wp_title, focus_kw, log=_log)
 
-        # Normalize HTTP → HTTPS (XML-RPC sometimes returns http:// on https sites)
+        # Normalize HTTP → HTTPS (some WP installs return http:// even on https sites)
         def _to_https(url):
             if url and domain.startswith("https://") and url.startswith("http://"):
                 return "https://" + url[7:]
@@ -140,7 +139,7 @@ def publish_recipe(
         img1_url = _to_https(img1_url)
 
         # Upload any pin embed base64 images to WordPress (replaces data: URL with real WP media URL)
-        upload_pin_embed_images(soup, wp, wp_title, log=_log)
+        upload_pin_embed_images(soup, site_config, wp_title, log=_log)
 
         # Auto spy recipes: skip injecting the food photo at the top (pin image will appear after recipe card)
         if has_pin_image:
@@ -166,56 +165,55 @@ def publish_recipe(
         # Handles both base64 data URIs and hosted https:// URLs.
         if has_pin_image:
             if _pin_is_base64:
-                pin_wp_url = upload_base64_image(pin_design_image, wp, wp_title, log=_log)
+                pin_wp_url = upload_base64_image(pin_design_image, site_config, wp_title, log=_log)
             else:
-                _, pin_wp_url = upload_image(pin_design_image, wp, wp_title, focus_kw, log=_log)
+                _, pin_wp_url = upload_image(pin_design_image, site_config, wp_title, focus_kw, log=_log)
             _log(f"Pin image uploaded to WP: {pin_wp_url or 'FAILED'}")
             if pin_wp_url:
                 content += f'\n<img src="{pin_wp_url}" alt="{wp_title}" loading="lazy" decoding="async" />'
 
-        post = WordPressPost()
-        post.title = wp_title
-        post.content = content
-        post.slug = slug
-        post.comment_status = "open"
-        post.ping_status = "closed"
-
+        base_url = _wp_rest_base(site_config)
+        auth = (site_config["wp_username"], site_config["wp_password"])
+        post_payload: dict = {
+            "title": wp_title, "content": content, "slug": slug,
+            "comment_status": "open", "ping_status": "closed", "status": "publish",
+        }
         now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         if post_date_gmt is not None:
             pd = post_date_gmt
             if pd.tzinfo is not None:
                 pd = pd.astimezone(timezone.utc)
             pd_naive = pd.replace(tzinfo=None)
-            post.date = pd_naive
-            post.post_status = "future" if pd_naive > now_naive else "publish"
-        else:
-            post.post_status = "publish"
+            post_payload["date_gmt"] = pd_naive.strftime("%Y-%m-%dT%H:%M:%S")
+            post_payload["status"] = "future" if pd_naive > now_naive else "publish"
         if img1_id:
-            post.thumbnail = str(img1_id)
-        terms: dict = {}
+            post_payload["featured_media"] = int(img1_id)
         if category:
-            terms["category"] = [category]
+            cat_id = _get_or_create_term(category, "categories", base_url, auth, _log)
+            if cat_id:
+                post_payload["categories"] = [cat_id]
         if wp_tags_raw:
             tags_list = [t.strip() for t in wp_tags_raw.split(",") if t.strip()]
-            if tags_list:
-                terms["post_tag"] = tags_list
-        if terms:
-            post.terms_names = terms
+            tag_ids = [tid for t in tags_list if (tid := _get_or_create_term(t, "tags", base_url, auth, _log))]
+            if tag_ids:
+                post_payload["tags"] = tag_ids
+        # Yoast SEO meta merged into create call (requires Yoast v14+; silently ignored on older versions)
+        if focus_kw or meta_desc or wp_title:
+            post_payload["meta"] = {
+                "_yoast_wpseo_title": wp_title,
+                "_yoast_wpseo_metadesc": meta_desc,
+                "_yoast_wpseo_focuskw": focus_kw,
+            }
 
-        post_id = wp.call(NewPost(post))
-
-        # Fetch the real permalink from WordPress (not a manually constructed slug URL)
-        try:
-            published_post = wp.call(GetPost(post_id))
-            permalink = getattr(published_post, "link", None) or f"{domain}/{slug}/"
-        except Exception:
-            permalink = f"{domain}/{slug}/"
+        rp = requests.post(f"{base_url}/posts", auth=auth, json=post_payload, timeout=30)
+        rp.raise_for_status()
+        rp_body = rp.json()
+        post_id = rp_body["id"]
+        permalink = rp_body.get("link") or f"{domain}/{slug}/"
 
         _log(f"Post created (ID: {post_id}) - {permalink}")
         result["wp_post_id"] = str(post_id)
         result["wp_permalink"] = permalink
-        # Auto-populate pin_blog_link so Pinterest pins always link to the published post
-        # (mirrors Articles_Publishing_Winsome.py which saves permalink back to the sheet)
         result["pin_blog_link"] = permalink
 
         try:
@@ -223,23 +221,6 @@ def publish_recipe(
                 set_rank_math_meta(post_id, focus_kw, meta_desc, site_config, seo_title=wp_title, log=_log)
         except Exception as seo_err:
             _log(f"Rank Math SEO meta failed (post published OK): {seo_err}")
-
-        # Set Yoast SEO meta via XML-RPC custom_fields (same as Articles_Publishing_Winsome.py)
-        # IMPORTANT: must set title explicitly — WordPressPost() defaults title="" which XML-RPC
-        # sends as an empty string, causing WordPress to show the post as "Untitled".
-        try:
-            if focus_kw or meta_desc or wp_title:
-                yoast_post = WordPressPost()
-                yoast_post.title = wp_title          # preserve the post title
-                yoast_post.custom_fields = [
-                    {"key": "_yoast_wpseo_title",    "value": wp_title},
-                    {"key": "_yoast_wpseo_metadesc", "value": meta_desc},
-                    {"key": "_yoast_wpseo_focuskw",  "value": focus_kw},
-                ]
-                wp.call(EditPost(post_id, yoast_post))
-                _log("Yoast SEO meta saved")
-        except Exception as yoast_err:
-            _log(f"Yoast SEO meta failed (post published OK): {yoast_err}")
 
     except Exception as e:
         _log(f"Publishing failed: {e}")

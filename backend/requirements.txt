@@ -13,7 +13,6 @@ requests
 httpx
 gspread
 oauth2client
-python-wordpress-xmlrpc
 beautifulsoup4
 python-slugify
 Pillow

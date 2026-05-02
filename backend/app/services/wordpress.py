@@ -11,9 +11,36 @@ import requests
 from bs4 import BeautifulSoup
 from PIL import Image
 from slugify import slugify
-from wordpress_xmlrpc import Client as WPClient, WordPressPost
-from wordpress_xmlrpc.methods.posts import NewPost, EditPost
-from wordpress_xmlrpc.methods.media import UploadFile
+def _wp_rest_base(wp_url_or_site_config) -> str:
+    """Return the /wp-json/wp/v2 base URL from a raw URL string or site_config dict."""
+    raw = (
+        wp_url_or_site_config.get("wp_url", "")
+        if isinstance(wp_url_or_site_config, dict)
+        else (wp_url_or_site_config or "")
+    )
+    return raw.replace("xmlrpc.php", "").rstrip("/") + "/wp-json/wp/v2"
+
+
+def _get_or_create_term(name: str, taxonomy: str, base_url: str, auth: tuple, log: Callable) -> int | None:
+    """Look up a category or tag by exact name; create it if absent. Returns ID or None."""
+    if not name or not name.strip():
+        return None
+    try:
+        r = requests.get(
+            f"{base_url}/{taxonomy}", auth=auth,
+            params={"search": name, "per_page": 5}, timeout=15,
+        )
+        if r.status_code == 200:
+            for item in r.json():
+                if item.get("name", "").lower() == name.strip().lower():
+                    return item["id"]
+        r2 = requests.post(f"{base_url}/{taxonomy}", auth=auth, json={"name": name.strip()}, timeout=15)
+        if r2.status_code in (200, 201):
+            return r2.json().get("id")
+        log(f"Term create failed for '{name}' ({taxonomy}): {r2.status_code}")
+    except Exception as e:
+        log(f"Term lookup error for '{name}': {e}")
+    return None
 
 
 def _convert_markdown_links(html: str) -> str:
@@ -46,7 +73,7 @@ def _parse_and_extract_title(html: str):
     return title, soup
 
 
-def upload_base64_image(data_uri: str, wp: WPClient, title: str, log: Callable[[str], None] | None = None) -> str | None:
+def upload_base64_image(data_uri: str, site_config: dict, title: str, log: Callable[[str], None] | None = None) -> str | None:
     """Upload a base64 data-URI image to the WordPress media library and return its URL."""
     _log = log or print
     try:
@@ -56,9 +83,14 @@ def upload_base64_image(data_uri: str, wp: WPClient, title: str, log: Callable[[
         img_bytes = base64.b64decode(b64data)
         webp_data = convert_to_webp(img_bytes) or img_bytes
         filename = f"{slugify(title or 'pin')}-pin.webp"
-        data = {"name": filename, "type": "image/webp", "bits": webp_data, "overwrite": True}
-        res = wp.call(UploadFile(data))
-        wp_url = res.get("url", "")
+        base_url = _wp_rest_base(site_config)
+        auth = (site_config["wp_username"], site_config["wp_password"])
+        r = requests.post(
+            f"{base_url}/media", auth=auth, data=webp_data, timeout=60,
+            headers={"Content-Type": "image/webp", "Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+        r.raise_for_status()
+        wp_url = r.json().get("source_url", "")
         if wp_url:
             _log(f"Pin image uploaded to WordPress: {wp_url[:80]}")
             return wp_url
@@ -67,10 +99,12 @@ def upload_base64_image(data_uri: str, wp: WPClient, title: str, log: Callable[[
     return None
 
 
-def upload_pin_embed_images(soup, wp: WPClient, title: str, log: Callable[[str], None] | None = None) -> None:
+def upload_pin_embed_images(soup, site_config: dict, title: str, log: Callable[[str], None] | None = None) -> None:
     """Find any pin-embed <figure> in the soup, upload their base64 images to WordPress,
     and replace data: src with the real WordPress media URL in-place."""
     _log = log or print
+    base_url = _wp_rest_base(site_config)
+    auth = (site_config["wp_username"], site_config["wp_password"])
     for figure in soup.find_all("figure", attrs={"data-recipe-generator-pin-embed": "1"}):
         img = figure.find("img")
         if not img:
@@ -83,9 +117,12 @@ def upload_pin_embed_images(soup, wp: WPClient, title: str, log: Callable[[str],
             img_bytes = base64.b64decode(b64data)
             webp_data = convert_to_webp(img_bytes) or img_bytes
             filename = f"{slugify(title)}-pin.webp"
-            data = {"name": filename, "type": "image/webp", "bits": webp_data, "overwrite": True}
-            res = wp.call(UploadFile(data))
-            wp_url = res.get("url", "")
+            r = requests.post(
+                f"{base_url}/media", auth=auth, data=webp_data, timeout=60,
+                headers={"Content-Type": "image/webp", "Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+            r.raise_for_status()
+            wp_url = r.json().get("source_url", "")
             if wp_url:
                 img["src"] = wp_url
                 _log(f"Pin embed image uploaded to WordPress: {wp_url[:80]}")
@@ -176,11 +213,10 @@ def validate_recipe_json(raw: str | None) -> dict | None:
 
 def upload_image(
     image_urls: str,
-    wp: WPClient,
+    site_config: dict,
     title: str,
     alt_text: str,
     image_slug: str | None = None,
-    site_config: dict | None = None,
     log: Callable[[str], None] | None = None,
 ) -> tuple[str | None, str | None]:
     _log = log or print
@@ -198,21 +234,22 @@ def upload_image(
 
         title_slug = image_slug if image_slug else slugify(title)
         filename = f"{title_slug}.webp"
-        data = {"name": filename, "type": "image/webp", "bits": webp_data, "overwrite": True}
+        base_url = _wp_rest_base(site_config)
+        auth = (site_config["wp_username"], site_config["wp_password"])
 
-        res = wp.call(UploadFile(data))
-        attachment_id = res["id"]
-        img_url = res["url"]
+        ru = requests.post(
+            f"{base_url}/media", auth=auth, data=webp_data, timeout=60,
+            headers={"Content-Type": "image/webp", "Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+        ru.raise_for_status()
+        body = ru.json()
+        attachment_id = body["id"]
+        img_url = body.get("source_url", "")
 
-        wp.call(EditPost(attachment_id, {
-            "post_title": title,
-            "post_excerpt": alt_text or title,
-            "post_content": title,
-            "post_name": title_slug,
-        }))
-
-        if site_config and alt_text:
-            _update_alt_text(attachment_id, alt_text, site_config, _log)
+        requests.post(
+            f"{base_url}/media/{attachment_id}", auth=auth, timeout=30,
+            json={"title": title, "caption": title, "alt_text": alt_text or title, "slug": title_slug},
+        )
 
         _log(f"Image uploaded (ID: {attachment_id})")
         return attachment_id, img_url
@@ -230,8 +267,6 @@ def upload_media(
     title: str = "Pin Design",
 ) -> dict:
     """Upload media directly to WordPress and return the media info."""
-    wp = WPClient(wp_url, username, password)
-    
     webp_data = convert_to_webp(file_content)
     if webp_data:
         file_content = webp_data
@@ -245,24 +280,23 @@ def upload_media(
             mime_type = "image/jpeg"
         else:
             mime_type = "image/png"
-    
-    data = {
-        "name": filename,
-        "type": mime_type,
-        "bits": file_content,
-        "overwrite": True,
-    }
-    
-    res = wp.call(UploadFile(data))
-    attachment_id = res["id"]
-    img_url = res["url"]
-    
-    wp.call(EditPost(attachment_id, {
-        "post_title": title,
-        "post_excerpt": title,
-        "post_content": title,
-    }))
-    
+
+    base_url = _wp_rest_base(wp_url)
+    auth = (username, password)
+    r = requests.post(
+        f"{base_url}/media", auth=auth, data=file_content, timeout=60,
+        headers={"Content-Type": mime_type, "Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+    r.raise_for_status()
+    body = r.json()
+    attachment_id = body["id"]
+    img_url = body.get("source_url", "")
+
+    requests.post(
+        f"{base_url}/media/{attachment_id}", auth=auth, timeout=30,
+        json={"title": title, "caption": title, "alt_text": title},
+    )
+
     return {"id": attachment_id, "url": img_url}
 
 
@@ -275,15 +309,17 @@ def create_pin_post(
     post_status: str = "publish",
 ) -> dict:
     """Create a blog post with the pin image as featured image."""
-    wp = WPClient(wp_url, username, password)
-    post = WordPressPost()
-    post.title = title
-    post.content = ""
-    post.post_status = post_status
-    post.thumbnail = media_id
-    post_id = wp.call(NewPost(post))
-    base_url = wp_url.replace("/xmlrpc.php", "")
-    return {"post_id": post_id, "post_url": f"{base_url}/?p={post_id}"}
+    base_url = _wp_rest_base(wp_url)
+    auth = (username, password)
+    r = requests.post(
+        f"{base_url}/posts", auth=auth, timeout=30,
+        json={"title": title, "content": "", "status": post_status, "featured_media": media_id},
+    )
+    r.raise_for_status()
+    body = r.json()
+    post_id = body["id"]
+    post_url = body.get("link") or f"{base_url.replace('/wp-json/wp/v2', '')}/?p={post_id}"
+    return {"post_id": post_id, "post_url": post_url}
 
 
 def _update_alt_text(attachment_id: str, alt_text: str, site_config: dict, log: Callable):
@@ -453,15 +489,13 @@ def create_post(
     log: Callable[[str], None] | None = None,
 ) -> str | None:
     _log = log or print
-    wp = WPClient(site_config["wp_url"], site_config["wp_username"], site_config["wp_password"])
-
     if project == "V2":
-        return _create_post_v2(row, site_config, wp, row_index, worksheet, _log)
+        return _create_post_v2(row, site_config, row_index, worksheet, _log)
     else:
-        return _create_post_v1(row, site_config, wp, row_index, worksheet, _log)
+        return _create_post_v1(row, site_config, row_index, worksheet, _log)
 
 
-def _create_post_v1(row, site_config, wp, row_index, worksheet, log):
+def _create_post_v1(row, site_config, row_index, worksheet, log):
     image_urls = row[0] if len(row) > 0 else ""
     html = row[1] if len(row) > 1 else ""
     recipe_json_str = row[2] if len(row) > 2 else ""
@@ -474,7 +508,7 @@ def _create_post_v1(row, site_config, wp, row_index, worksheet, log):
     title, content = extract_and_remove_title(html)
     slug = slugify(focus_kw or title)
 
-    img_id, img_url = upload_image(image_urls, wp, title, focus_kw, log=log)
+    img_id, img_url = upload_image(image_urls, site_config, title, focus_kw, log=log)
 
     recipe_id = None
     recipe_data = validate_recipe_json(recipe_json_str)
@@ -484,27 +518,32 @@ def _create_post_v1(row, site_config, wp, row_index, worksheet, log):
     if recipe_id:
         content += f"\n[wprm-recipe id={recipe_id}]"
 
-    post = WordPressPost()
-    post.title = title
-    post.content = content
-    post.slug = slug
-    post.post_status = "publish" if publish_date else "draft"
+    base_url = _wp_rest_base(site_config)
+    auth = (site_config["wp_username"], site_config["wp_password"])
+    post_payload: dict = {
+        "title": title, "content": content, "slug": slug,
+        "status": "publish" if publish_date else "draft",
+    }
     if img_id:
-        post.thumbnail = img_id
+        post_payload["featured_media"] = int(img_id)
     if category:
-        post.terms_names = {"category": [category]}
+        cat_id = _get_or_create_term(category, "categories", base_url, auth, log)
+        if cat_id:
+            post_payload["categories"] = [cat_id]
     if publish_date:
-        try:
-            post.date = datetime.strptime(publish_date, "%Y-%m-%d")
-        except ValueError:
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d %H:%M"):
             try:
-                post.date = datetime.strptime(publish_date, "%Y/%m/%d %H:%M")
+                post_payload["date_gmt"] = datetime.strptime(publish_date, fmt).strftime("%Y-%m-%dT%H:%M:%S")
+                break
             except ValueError:
-                pass
+                continue
 
-    post_id = wp.call(NewPost(post))
+    rp = requests.post(f"{base_url}/posts", auth=auth, json=post_payload, timeout=30)
+    rp.raise_for_status()
+    body = rp.json()
+    post_id = body["id"]
     domain = site_config.get("domain", "")
-    permalink = f'{domain}/{slug}/'
+    permalink = body.get("link") or f"{domain}/{slug}/"
 
     if worksheet:
         worksheet.update_cell(row_index, 10, permalink)
@@ -513,7 +552,7 @@ def _create_post_v1(row, site_config, wp, row_index, worksheet, log):
     return post_id
 
 
-def _create_post_v2(row, site_config, wp, row_index, worksheet, log):
+def _create_post_v2(row, site_config, row_index, worksheet, log):
     image_urls = row[0] if len(row) > 0 else ""
     html = row[1] if len(row) > 1 else ""
     recipe_json_str = row[2] if len(row) > 2 else ""
@@ -528,9 +567,7 @@ def _create_post_v2(row, site_config, wp, row_index, worksheet, log):
     title, content = extract_and_remove_title(html)
     slug = slugify(focus_kw or title)
 
-    img_id, img_url = upload_image(
-        image_urls, wp, title, focus_kw, image_slug=image_slug, site_config=site_config, log=log
-    )
+    img_id, img_url = upload_image(image_urls, site_config, title, focus_kw, image_slug=image_slug, log=log)
 
     recipe_id = None
     recipe_data = validate_recipe_json(recipe_json_str)
@@ -543,26 +580,32 @@ def _create_post_v2(row, site_config, wp, row_index, worksheet, log):
     if recipe_id:
         content += f"\n[wprm-recipe id={recipe_id}]"
 
-    post = WordPressPost()
-    post.title = title
-    post.content = content
-    post.slug = slug
-    post.post_status = "publish" if publish_date else "draft"
+    base_url = _wp_rest_base(site_config)
+    auth = (site_config["wp_username"], site_config["wp_password"])
+    post_payload: dict = {
+        "title": title, "content": content, "slug": slug,
+        "status": "publish" if publish_date else "draft",
+    }
     if img_id:
-        post.thumbnail = img_id
+        post_payload["featured_media"] = int(img_id)
     if category:
-        post.terms_names = {"category": [category]}
+        cat_id = _get_or_create_term(category, "categories", base_url, auth, log)
+        if cat_id:
+            post_payload["categories"] = [cat_id]
     if publish_date:
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M"):
             try:
-                post.date = datetime.strptime(publish_date, fmt)
+                post_payload["date_gmt"] = datetime.strptime(publish_date, fmt).strftime("%Y-%m-%dT%H:%M:%S")
                 break
             except ValueError:
                 continue
 
-    post_id = wp.call(NewPost(post))
+    rp = requests.post(f"{base_url}/posts", auth=auth, json=post_payload, timeout=30)
+    rp.raise_for_status()
+    body = rp.json()
+    post_id = body["id"]
     domain = site_config.get("domain", "")
-    permalink = f'{domain}/{slug}/'
+    permalink = body.get("link") or f"{domain}/{slug}/"
 
     if worksheet:
         worksheet.update_cell(row_index, 11, permalink)
