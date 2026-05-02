@@ -11,6 +11,21 @@ import requests
 from bs4 import BeautifulSoup
 from PIL import Image
 from slugify import slugify
+
+
+def _wp_session(auth: tuple) -> requests.Session:
+    """Return a requests Session that keeps Basic Auth through redirects.
+    By default requests drops the Authorization header when a redirect changes
+    the host (e.g. www → non-www). This subclass always re-attaches auth."""
+    class _StickeyAuthSession(requests.Session):
+        def rebuild_auth(self, prepared_request, response):
+            prepared_request.prepare_auth(self.auth)
+
+    session = _StickeyAuthSession()
+    session.auth = auth
+    return session
+
+
 def _wp_rest_base(wp_url_or_site_config) -> str:
     """Return the /wp-json/wp/v2 base URL from a raw URL string or site_config dict."""
     raw = (
@@ -26,15 +41,16 @@ def _get_or_create_term(name: str, taxonomy: str, base_url: str, auth: tuple, lo
     if not name or not name.strip():
         return None
     try:
-        r = requests.get(
-            f"{base_url}/{taxonomy}", auth=auth,
+        session = _wp_session(auth)
+        r = session.get(
+            f"{base_url}/{taxonomy}",
             params={"search": name, "per_page": 5}, timeout=15,
         )
         if r.status_code == 200:
             for item in r.json():
                 if item.get("name", "").lower() == name.strip().lower():
                     return item["id"]
-        r2 = requests.post(f"{base_url}/{taxonomy}", auth=auth, json={"name": name.strip()}, timeout=15)
+        r2 = session.post(f"{base_url}/{taxonomy}", json={"name": name.strip()}, timeout=15)
         if r2.status_code in (200, 201):
             return r2.json().get("id")
         log(f"Term create failed for '{name}' ({taxonomy}): {r2.status_code}")
@@ -85,8 +101,8 @@ def upload_base64_image(data_uri: str, site_config: dict, title: str, log: Calla
         filename = f"{slugify(title or 'pin')}-pin.webp"
         base_url = _wp_rest_base(site_config)
         auth = (site_config["wp_username"], site_config["wp_password"])
-        r = requests.post(
-            f"{base_url}/media", auth=auth, data=webp_data, timeout=60,
+        r = _wp_session(auth).post(
+            f"{base_url}/media", data=webp_data, timeout=60,
             headers={"Content-Type": "image/webp", "Content-Disposition": f'attachment; filename="{filename}"'},
         )
         r.raise_for_status()
@@ -105,6 +121,7 @@ def upload_pin_embed_images(soup, site_config: dict, title: str, log: Callable[[
     _log = log or print
     base_url = _wp_rest_base(site_config)
     auth = (site_config["wp_username"], site_config["wp_password"])
+    session = _wp_session(auth)
     for figure in soup.find_all("figure", attrs={"data-recipe-generator-pin-embed": "1"}):
         img = figure.find("img")
         if not img:
@@ -117,8 +134,8 @@ def upload_pin_embed_images(soup, site_config: dict, title: str, log: Callable[[
             img_bytes = base64.b64decode(b64data)
             webp_data = convert_to_webp(img_bytes) or img_bytes
             filename = f"{slugify(title)}-pin.webp"
-            r = requests.post(
-                f"{base_url}/media", auth=auth, data=webp_data, timeout=60,
+            r = session.post(
+                f"{base_url}/media", data=webp_data, timeout=60,
                 headers={"Content-Type": "image/webp", "Content-Disposition": f'attachment; filename="{filename}"'},
             )
             r.raise_for_status()
@@ -236,9 +253,10 @@ def upload_image(
         filename = f"{title_slug}.webp"
         base_url = _wp_rest_base(site_config)
         auth = (site_config["wp_username"], site_config["wp_password"])
+        session = _wp_session(auth)
 
-        ru = requests.post(
-            f"{base_url}/media", auth=auth, data=webp_data, timeout=60,
+        ru = session.post(
+            f"{base_url}/media", data=webp_data, timeout=60,
             headers={"Content-Type": "image/webp", "Content-Disposition": f'attachment; filename="{filename}"'},
         )
         ru.raise_for_status()
@@ -246,8 +264,8 @@ def upload_image(
         attachment_id = body["id"]
         img_url = body.get("source_url", "")
 
-        requests.post(
-            f"{base_url}/media/{attachment_id}", auth=auth, timeout=30,
+        session.post(
+            f"{base_url}/media/{attachment_id}", timeout=30,
             json={"title": title, "caption": title, "alt_text": alt_text or title, "slug": title_slug},
         )
 
@@ -282,9 +300,9 @@ def upload_media(
             mime_type = "image/png"
 
     base_url = _wp_rest_base(wp_url)
-    auth = (username, password)
-    r = requests.post(
-        f"{base_url}/media", auth=auth, data=file_content, timeout=60,
+    session = _wp_session((username, password))
+    r = session.post(
+        f"{base_url}/media", data=file_content, timeout=60,
         headers={"Content-Type": mime_type, "Content-Disposition": f'attachment; filename="{filename}"'},
     )
     r.raise_for_status()
@@ -292,8 +310,8 @@ def upload_media(
     attachment_id = body["id"]
     img_url = body.get("source_url", "")
 
-    requests.post(
-        f"{base_url}/media/{attachment_id}", auth=auth, timeout=30,
+    session.post(
+        f"{base_url}/media/{attachment_id}", timeout=30,
         json={"title": title, "caption": title, "alt_text": title},
     )
 
@@ -310,9 +328,8 @@ def create_pin_post(
 ) -> dict:
     """Create a blog post with the pin image as featured image."""
     base_url = _wp_rest_base(wp_url)
-    auth = (username, password)
-    r = requests.post(
-        f"{base_url}/posts", auth=auth, timeout=30,
+    r = _wp_session((username, password)).post(
+        f"{base_url}/posts", timeout=30,
         json={"title": title, "content": "", "status": post_status, "featured_media": media_id},
     )
     r.raise_for_status()
@@ -411,9 +428,8 @@ def add_recipe(
 ) -> int | None:
     _log = log or print
     try:
-        api_url = site_config["wp_url"].replace("xmlrpc.php", "wp-json/wp/v2/wprm_recipe")
-        token = base64.b64encode(f"{site_config['wp_username']}:{site_config['wp_password']}".encode()).decode()
-        headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
+        base_url = _wp_rest_base(site_config)
+        auth = (site_config["wp_username"], site_config["wp_password"])
 
         # Normalize flat format → grouped format that WPRM REST API expects
         recipe_data = _normalize_recipe_for_wprm(recipe_data)
@@ -427,7 +443,7 @@ def add_recipe(
         if author:
             recipe_data["author_name"] = author
 
-        r = requests.post(api_url, headers=headers, json={"recipe": recipe_data}, timeout=30)
+        r = _wp_session(auth).post(f"{base_url}/wprm_recipe", json={"recipe": recipe_data}, timeout=30)
         r.raise_for_status()
         recipe_id = r.json().get("id")
         _log(f"Recipe created (ID: {recipe_id})")
@@ -447,9 +463,8 @@ def set_rank_math_meta(
 ):
     _log = log or print
     try:
-        api_url = site_config["wp_url"].replace("xmlrpc.php", f"wp-json/wp/v2/posts/{post_id}")
-        token = base64.b64encode(f"{site_config['wp_username']}:{site_config['wp_password']}".encode()).decode()
-        headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
+        base_url = _wp_rest_base(site_config)
+        auth = (site_config["wp_username"], site_config["wp_password"])
         meta = {}
         if seo_title:
             meta["rank_math_title"] = seo_title
@@ -458,7 +473,7 @@ def set_rank_math_meta(
         if seo_description:
             meta["rank_math_description"] = seo_description
         if meta:
-            r = requests.post(api_url, headers=headers, json={"meta": meta}, timeout=30)
+            r = _wp_session(auth).post(f"{base_url}/posts/{post_id}", json={"meta": meta}, timeout=30)
             r.raise_for_status()
             _log(f"Rank Math SEO meta updated for post {post_id}")
     except Exception as e:

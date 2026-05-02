@@ -11,7 +11,7 @@ from slugify import slugify
 from .wordpress import (
     _parse_and_extract_title, inject_images_into_html, upload_pin_embed_images,
     upload_image, upload_base64_image, add_recipe, validate_recipe_json, set_rank_math_meta,
-    _wp_rest_base, _get_or_create_term,
+    _wp_rest_base, _get_or_create_term, _wp_session,
 )
 
 
@@ -174,6 +174,7 @@ def publish_recipe(
 
         base_url = _wp_rest_base(site_config)
         auth = (site_config["wp_username"], site_config["wp_password"])
+        wp_session = _wp_session(auth)
         post_payload: dict = {
             "title": wp_title, "content": content, "slug": slug,
             "comment_status": "open", "ping_status": "closed", "status": "publish",
@@ -205,7 +206,7 @@ def publish_recipe(
                 "_yoast_wpseo_focuskw": focus_kw,
             }
 
-        rp = requests.post(f"{base_url}/posts", auth=auth, json=post_payload, timeout=30)
+        rp = wp_session.post(f"{base_url}/posts", json=post_payload, timeout=30)
         rp.raise_for_status()
         rp_body = rp.json()
         post_id = rp_body["id"]

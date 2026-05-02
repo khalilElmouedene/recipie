@@ -347,8 +347,8 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
             <input value={form.domain} onChange={(e) => setForm({ ...form, domain: e.target.value })} required className="input-field" placeholder="example.com" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">WordPress URL</label>
-            <input value={form.wp_url} onChange={(e) => setForm({ ...form, wp_url: e.target.value })} required className="input-field" placeholder="https://example.com/xmlrpc.php" />
+            <label className="block text-sm font-medium text-gray-300 mb-1">WordPress URL <span className="text-gray-500 font-normal">(site root, e.g. https://example.com)</span></label>
+            <input value={form.wp_url} onChange={(e) => setForm({ ...form, wp_url: e.target.value })} required className="input-field" placeholder="https://example.com" />
           </div>
           <div className="col-span-2">
             <label className="block text-sm font-medium text-gray-300 mb-1">Pinterest Account URL <span className="text-gray-500 font-normal">(used in generated articles)</span></label>
@@ -530,13 +530,13 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">WordPress URL</label>
+                <label className="block text-sm font-medium text-gray-300 mb-1">WordPress URL <span className="text-gray-500 font-normal">(site root, e.g. https://example.com)</span></label>
                 <input
                   value={editForm.wp_url}
                   onChange={(e) => setEditForm({ ...editForm, wp_url: e.target.value })}
                   required
                   className="input-field w-full"
-                  placeholder="https://example.com/xmlrpc.php"
+                  placeholder="https://example.com"
                 />
               </div>
               <div>

@@ -476,7 +476,7 @@ async def get_last_publish_date(
     auth = (wp_username, wp_password)
     latest_date: str | None = None
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             for status in ("future", "publish"):
                 url = f"{base}/wp-json/wp/v2/posts?orderby=date&order=desc&per_page=1&status={status}"
                 r = await client.get(url, auth=auth)
@@ -507,26 +507,43 @@ async def test_wp_connection(
     base = site.wp_url.replace("xmlrpc.php", "").rstrip("/")
     url = f"{base}/wp-json/wp/v2/users/me"
 
+    # Mask password for diagnostics: show first 4 chars only
+    pwd_hint = (wp_password[:4] + "…") if wp_password and len(wp_password) > 4 else ("(empty)" if not wp_password else wp_password)
+
     try:
-        async with httpx.AsyncClient(timeout=12) as client:
+        # follow_redirects=False so we can detect redirect-strips-auth issues
+        async with httpx.AsyncClient(timeout=12, follow_redirects=False) as client:
             r = await client.get(url, auth=(wp_username, wp_password))
+
+        # Redirect detected — auth header was dropped by the redirect
+        if r.status_code in (301, 302, 307, 308):
+            redirect_to = r.headers.get("location", "(unknown)")
+            return {
+                "ok": False,
+                "message": (
+                    f"Redirect {r.status_code} → {redirect_to} — "
+                    f"update WordPress URL in site settings to '{redirect_to.rstrip('/wp-json/wp/v2/users/me').rstrip('/')}' "
+                    f"so auth is not dropped"
+                ),
+                "debug": {"url_called": url, "redirect_to": redirect_to, "user": wp_username, "password_hint": pwd_hint},
+            }
 
         if r.status_code == 200:
             data = r.json()
             name = data.get("name") or data.get("slug") or wp_username
-            return {"ok": True, "message": f"Connected as {name}"}
+            return {"ok": True, "message": f"Connected as {name}", "debug": {"url_called": url, "user": wp_username, "password_hint": pwd_hint}}
         elif r.status_code == 401:
-            return {"ok": False, "message": "Wrong credentials (401) — check username / password"}
+            return {"ok": False, "message": "Wrong credentials (401) — check username / password", "debug": {"url_called": url, "user": wp_username, "password_hint": pwd_hint}}
         elif r.status_code == 403:
-            return {"ok": False, "message": "Forbidden (403) — use an Application Password (WP Admin → Users → Profile)"}
+            return {"ok": False, "message": "Forbidden (403) — Authorization header is blocked. Add this to .htaccess: RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]", "debug": {"url_called": url, "user": wp_username, "password_hint": pwd_hint}}
         elif r.status_code == 404:
-            return {"ok": False, "message": "REST API not found (404) — may be disabled on this site"}
+            return {"ok": False, "message": "REST API not found (404) — may be disabled on this site", "debug": {"url_called": url}}
         else:
-            return {"ok": False, "message": f"Unexpected response: {r.status_code}"}
+            return {"ok": False, "message": f"Unexpected response: {r.status_code}", "debug": {"url_called": url, "user": wp_username, "password_hint": pwd_hint}}
 
     except httpx.ConnectError:
-        return {"ok": False, "message": f"Cannot reach {base} — check the WordPress URL"}
+        return {"ok": False, "message": f"Cannot reach {base} — check the WordPress URL", "debug": {"url_called": url}}
     except httpx.TimeoutException:
-        return {"ok": False, "message": "Request timed out — site may be slow or unreachable"}
+        return {"ok": False, "message": "Request timed out — site may be slow or unreachable", "debug": {"url_called": url}}
     except Exception as e:
-        return {"ok": False, "message": f"Error: {str(e)[:120]}"}
+        return {"ok": False, "message": f"Error: {str(e)[:120]}", "debug": {"url_called": url}}
