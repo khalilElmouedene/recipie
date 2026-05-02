@@ -45,6 +45,12 @@ from ..db_models import (
 )
 
 
+def _random_delay(log: Callable, min_sec: float = 4, max_sec: float = 9) -> None:
+    delay = random.uniform(min_sec, max_sec)
+    log(f"Waiting {delay:.2f}s before next request...")
+    time.sleep(delay)
+
+
 # ── Google Fonts download & caching ───────────────────────────────────────────
 
 _FONT_CACHE_DIR = os.path.join(tempfile.gettempdir(), "pin_renderer_fonts")
@@ -1443,7 +1449,7 @@ async def start_auto_spy_generate_job(
                             main_loop,
                         ).result()
                     if idx < len(items) - 1 and not rj.should_stop():
-                        time.sleep(30)
+                        _random_delay(rj.log, 25, 40)
 
             # ── Publishing summary ────────────────────────────────────────────────
             sep = "=" * 55
@@ -1774,7 +1780,7 @@ async def resume_auto_spy_generate_job(
                             main_loop,
                         ).result()
                     if idx < len(items) - 1 and not rj.should_stop():
-                        time.sleep(30)
+                        _random_delay(rj.log, 25, 40)
 
             # ── Publishing summary ────────────────────────────────────────────────
             sep = "=" * 55
