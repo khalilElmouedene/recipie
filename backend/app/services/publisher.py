@@ -120,19 +120,20 @@ def publish_recipe(
         wp_title = seo_title if seo_title else _wordpress_display_title(recipe, title_from_html)
         slug = slugify(focus_kw or wp_title)
 
-        # Resolve image source — for auto spy recipes use image_url directly (skip generated_images)
+        # Prefer our generated (Midjourney) images over the raw source image_url.
+        # generated_images are cached on our server under /uploads/ — stable and always available.
         img1_source = image_url
-        if not has_pin_image and generated_images_str:
+        if generated_images_str:
             try:
                 imgs = json.loads(generated_images_str)
-                if imgs and isinstance(imgs, list):
+                if imgs and isinstance(imgs, list) and imgs[0]:
                     img1_source = imgs[0]
             except Exception:
                 pass
 
         # Upload image (featured + inline top)
         img1_id, img1_url = upload_image(img1_source, site_config, wp_title, focus_kw, log=_log)
-        # Fallback to original image_url if generated image URL expired/failed
+        # Fallback to original image_url if generated image failed
         if img1_id is None and img1_source != image_url and image_url:
             _log("Generated image failed, retrying with original image_url...")
             img1_id, img1_url = upload_image(image_url, site_config, wp_title, focus_kw, log=_log)
