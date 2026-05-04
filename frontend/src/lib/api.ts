@@ -665,6 +665,9 @@ export const api = {
   // -- Dashboard ------------------------------------------
   getDashboard: () => request<DashboardStats>("/api/dashboard"),
 
+  // -- Analytics ------------------------------------------
+  getAnalytics: () => request<OwnerAnalytics>("/api/analytics"),
+
   // -- Threads Projects -----------------------------------
   getThreadsProjects: () => request<ThreadsProjectOut[]>("/api/threads-projects"),
   getThreadsProjectsPage: (params?: PaginationParams) =>
@@ -1113,6 +1116,63 @@ export interface DashboardStats {
   total_recipes: number;
   total_jobs: number;
   projects: ProjectOut[];
+}
+
+export interface SiteAnalytics {
+  id: string;
+  domain: string;
+  total: number;
+  published: number;
+  generated: number;
+  pending: number;
+  failed: number;
+  last_published_at: string | null;
+  last_title: string | null;
+}
+
+export interface ProjectAnalytics {
+  id: string;
+  name: string;
+  site_count: number;
+  total: number;
+  published: number;
+  generated: number;
+  pending: number;
+  failed: number;
+  last_published_at: string | null;
+  sites: SiteAnalytics[];
+}
+
+export interface OwnerAnalytics {
+  total_projects: number;
+  total_sites: number;
+  total_recipes: number;
+  total_published: number;
+  total_generated: number;
+  total_pending: number;
+  total_failed: number;
+  total_jobs: number;
+  total_jobs_completed: number;
+  total_jobs_failed: number;
+  success_rate: number;
+  last_published: {
+    title: string;
+    site_domain: string;
+    wp_permalink: string | null;
+    created_at: string;
+  } | null;
+  recent_jobs: Array<{
+    id: string;
+    job_type: string;
+    status: string;
+    project_name: string;
+    created_at: string;
+    finished_at: string | null;
+    total_rows: number | null;
+    current_row: number | null;
+  }>;
+  projects: ProjectAnalytics[];
+  monthly: Array<{ month: string; generated: number; published: number }>;
 }
 
 // -- Pin Generator ----------------------------------------

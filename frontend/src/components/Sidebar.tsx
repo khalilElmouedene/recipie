@@ -2,7 +2,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle, ScrollText } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle, ScrollText, BarChart2 } from "lucide-react";
 import { clearToken, getUserEmail, getUserRole } from "@/lib/auth";
 import { api } from "@/lib/api";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -40,9 +40,12 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const baseItems = role === "owner"
     ? [...NAV, { href: "/users", label: "Users", icon: Users }, { href: "/settings", label: "Settings", icon: Settings }]
     : [...NAV, { href: "/settings", label: "Settings", icon: Settings }];
-  const allItems = isAuditViewer
+  const withLogs = isAuditViewer
     ? [...baseItems, { href: "/logs", label: "Logs", icon: ScrollText }]
     : baseItems;
+  const allItems = isAuditViewer
+    ? [...withLogs, { href: "/analytics", label: "Analytics", icon: BarChart2 }]
+    : withLogs;
 
   return (
     <aside
