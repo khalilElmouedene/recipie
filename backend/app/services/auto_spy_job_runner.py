@@ -498,6 +498,7 @@ def _build_pin_render_html(
     food_data_uri: str,
     asset_data_uris: dict[str, str],
     title: str,
+    site_domain: str = "",
     log: Callable[[str], None] | None = None,
 ) -> str:
     """Build a self-contained HTML page that renders the pin template on a <canvas>."""
@@ -581,6 +582,7 @@ def _build_pin_render_html(
 
     elems_json = json.dumps(elements_tagged, ensure_ascii=False)
     title_json = json.dumps(title, ensure_ascii=False)
+    website_json = json.dumps(site_domain, ensure_ascii=False)
     bg_json = json.dumps(bg_color)
 
     return f"""<!DOCTYPE html>
@@ -600,6 +602,7 @@ canvas {{ display: block; }}
 <script>
 const ELEMENTS = {elems_json};
 const TITLE = {title_json};
+const WEBSITE = {website_json};
 const BG = {bg_json};
 const W = {canvas_width};
 const H = {canvas_height};
@@ -691,8 +694,14 @@ async function render() {{
     else if (t === 'text') {{
       // x,y are CENTER coords (getCenterPoint() saved them that way)
       const lx = ex - ew / 2, ty = ey - eh / 2;
-      let display = (elem.textVariable || !elem.defaultText)
-        ? TITLE : (elem.defaultText || TITLE);
+      let display;
+      if (elem.textVariable === 'website' || elem.id === 'website') {{
+        display = WEBSITE || elem.defaultText || TITLE;
+      }} else if (elem.textVariable || !elem.defaultText) {{
+        display = TITLE;
+      }} else {{
+        display = elem.defaultText || TITLE;
+      }}
       if (!display) continue;
       const tt = (elem.textTransform || 'none').toLowerCase();
       if (tt === 'uppercase') display = display.toUpperCase();
@@ -775,6 +784,7 @@ def _render_with_playwright_sync(
         food_data_uri=food_data_uri,
         asset_data_uris=asset_data_uris,
         title=title,
+        site_domain=site_domain,
         log=log,
     )
 
@@ -912,8 +922,13 @@ def _pil_render_elements(
 
                 default_text = str(elem.get("defaultText") or "").strip()
                 text_var = str(elem.get("textVariable") or "").strip()
-                # Variable-bound or empty text → substitute recipe title
-                display = title if (text_var or not default_text) else default_text
+                elem_id = str(elem.get("id") or "")
+                if text_var == "website" or elem_id == "website":
+                    display = site_domain or default_text or title
+                elif text_var or not default_text:
+                    display = title
+                else:
+                    display = default_text
                 if not display:
                     continue
 

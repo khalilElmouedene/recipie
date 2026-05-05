@@ -43,7 +43,7 @@ function parseRecipeCards(logs: string[]): RecipeCard[] {
     if (line.includes("Waiting") && line.includes("Midjourney generation")) { cur.currentStep = "Images – Midjourney processing…"; cur.mjStatus = "generating"; }
     if (line.includes("Image cached") || line.includes("Downloaded"))       { cur.completedSteps = Math.max(cur.completedSteps, 7); cur.currentStep = "Saving images"; }
     if (line.includes("Content generation complete")) { cur.status = "completed"; cur.completedSteps = TOTAL_STEPS; cur.currentStep = "Done"; cur.mjStatus = undefined; }
-    if (line.includes("Error generating content") || (line.includes("failed") && !line.includes("non-fatal"))) {
+    if (line.includes("Error generating content") || (line.includes("failed") && !line.includes("non-fatal") && !line.includes("PUBLISHING SUMMARY") && !line.includes("published,"))) {
       cur.status = "error"; cur.currentStep = "Error";
     }
   }
@@ -54,7 +54,7 @@ function parseRecipeCards(logs: string[]): RecipeCard[] {
 function logLineClass(line: string): string {
   if (line.match(/={3,}/))                                      return "text-gray-600";
   if (line.match(/RECIPE \d+\/\d+/))                            return "text-brand-400 font-semibold";
-  if (line.includes("Error") || line.includes("FAIL") || (line.includes("failed") && !line.includes("non-fatal"))) return "text-red-400";
+  if (line.includes("Error") || line.includes("FAIL") || (line.includes("failed") && !line.includes("non-fatal") && !line.includes("PUBLISHING SUMMARY") && !line.includes("published,"))) return "text-red-400";
   if (line.includes("complete") || line.includes("cached") || line.includes("Downloaded")) return "text-green-400";
   if (line.includes("Midjourney slot acquired"))                 return "text-orange-300 font-medium";
   if (line.includes("Midjourney queue") || line.includes("queue slot")) return "text-yellow-400";
