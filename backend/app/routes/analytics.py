@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -160,17 +160,20 @@ async def get_analytics(
         )
 
     # ── Monthly stats (last 6 months) ─────────────────────────────────────────
+    # Use text("'month'") so the literal is not parameterized — PostgreSQL requires
+    # the GROUP BY expression to be identical (not just equal) to the SELECT expression.
     cutoff = datetime.now(timezone.utc) - timedelta(days=183)
+    _month_trunc = func.date_trunc(text("'month'"), Recipe.created_at)
     monthly_q = await db.execute(
         select(
-            func.date_trunc("month", Recipe.created_at).label("month"),
+            _month_trunc.label("month"),
             func.count().label("total"),
             func.sum(case((Recipe.status == RecipeStatus.published, 1), else_=0)).label("published"),
         )
         .join(Site, Recipe.site_id == Site.id)
         .where(Site.project_id.in_(project_ids), Recipe.created_at >= cutoff)
-        .group_by(func.date_trunc("month", Recipe.created_at))
-        .order_by(func.date_trunc("month", Recipe.created_at))
+        .group_by(_month_trunc)
+        .order_by(_month_trunc)
     )
     monthly = [
         MonthStat(

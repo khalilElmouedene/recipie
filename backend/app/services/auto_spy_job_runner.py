@@ -1347,9 +1347,21 @@ async def start_auto_spy_generate_job(
                         generated["generated_images"] = per_item_images[item["id"]]
 
                     if not generated.get("error_message"):
+                        # Use the per-site generated image for pin rendering so each site
+                        # gets a unique food photo in its pin design. Fall back to the
+                        # original input image_url if no generated images are available.
+                        site_image_url = item["image_url"]
+                        if generated.get("generated_images"):
+                            try:
+                                _imgs = json.loads(generated["generated_images"])
+                                if _imgs and isinstance(_imgs, list) and _imgs[0]:
+                                    site_image_url = _imgs[0]
+                            except Exception:
+                                pass
+
                         pin_title = generated.get("pin_title") or item["recipe_text"].splitlines()[0].strip()
                         pin_img = _render_pin_for_recipe(
-                            image_url=item["image_url"],
+                            image_url=site_image_url,
                             title=pin_title,
                             pin_template_id=item.get("pin_template_id"),
                             site_domain=item["site_domain"],
@@ -1361,7 +1373,7 @@ async def start_auto_spy_generate_job(
                         per_recipe_generated[item["id"]] = {
                             "id": item["id"],
                             "recipe_text": item["recipe_text"],
-                            "image_url": item["image_url"],
+                            "image_url": site_image_url,
                             "pin_design_image": pin_img,
                             **generated,
                         }
@@ -1683,9 +1695,18 @@ async def resume_auto_spy_generate_job(
                         generated["generated_images"] = per_item_images[item["id"]]
 
                     if not generated.get("error_message"):
+                        site_image_url = item["image_url"]
+                        if generated.get("generated_images"):
+                            try:
+                                _imgs = json.loads(generated["generated_images"])
+                                if _imgs and isinstance(_imgs, list) and _imgs[0]:
+                                    site_image_url = _imgs[0]
+                            except Exception:
+                                pass
+
                         pin_title = generated.get("pin_title") or item["recipe_text"].splitlines()[0].strip()
                         pin_img = _render_pin_for_recipe(
-                            image_url=item["image_url"],
+                            image_url=site_image_url,
                             title=pin_title,
                             pin_template_id=item.get("pin_template_id"),
                             site_domain=item["site_domain"],
@@ -1697,7 +1718,7 @@ async def resume_auto_spy_generate_job(
                         per_recipe_generated[item["id"]] = {
                             "id": item["id"],
                             "recipe_text": item["recipe_text"],
-                            "image_url": item["image_url"],
+                            "image_url": site_image_url,
                             "pin_design_image": pin_img,
                             **generated,
                         }
