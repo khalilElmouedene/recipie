@@ -106,6 +106,7 @@ async def _site_out(site: Site, db: AsyncSession) -> dict:
         "pinterest_url": site.pinterest_url or "",
         "image_mode": site.image_mode or "featured_and_top",
         "embed_pin_in_article": bool(site.embed_pin_in_article),
+        "generate_recipe_json": bool(getattr(site, "generate_recipe_json", True)),
         "pin_template_id": site.pin_template_id,
         "created_at": site.created_at,
         "recipe_count": recipe_count,
@@ -156,6 +157,7 @@ async def create_site(
         pinterest_url=body.pinterest_url or None,
         image_mode=body.image_mode if body.image_mode in ("featured_only", "featured_and_top") else "featured_and_top",
         embed_pin_in_article=body.embed_pin_in_article,
+        generate_recipe_json=body.generate_recipe_json,
     )
     db.add(site)
     await db.commit()
@@ -209,6 +211,8 @@ async def update_site(
         site.image_mode = body.image_mode if body.image_mode in ("featured_only", "featured_and_top") else "featured_and_top"
     if body.embed_pin_in_article is not None:
         site.embed_pin_in_article = body.embed_pin_in_article
+    if body.generate_recipe_json is not None:
+        site.generate_recipe_json = body.generate_recipe_json
     if "pin_template_id" in body.model_fields_set:
         site.pin_template_id = body.pin_template_id
 

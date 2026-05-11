@@ -846,6 +846,7 @@ export interface SiteOut {
   pinterest_url: string;
   image_mode: string;
   embed_pin_in_article: boolean;
+  generate_recipe_json: boolean;
   pin_template_id: string | null;
   created_at: string;
   recipe_count: number;
@@ -865,6 +866,7 @@ export interface SiteCreateData {
   pinterest_url?: string;
   image_mode?: string;
   embed_pin_in_article?: boolean;
+  generate_recipe_json?: boolean;
 }
 
 export interface RecipeOut {

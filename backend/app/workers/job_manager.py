@@ -548,6 +548,7 @@ class JobManager:
             for p in project_rows.scalars().all():
                 prompts[p.key] = p.value
 
+        site_generate_recipe_json = True
         if db_job.job_type == JobType.articles_all_sites:
             site_rows = await db.execute(
                 select(Site).where(Site.project_id == project_id).order_by(Site.created_at.asc())
@@ -579,6 +580,7 @@ class JobManager:
             site_id = site_obj.id
             site_domain = site_obj.domain
             site_pinterest_url = site_obj.pinterest_url or ""
+            site_generate_recipe_json = bool(getattr(site_obj, "generate_recipe_json", True))
             site_config = self._build_site_config(site_obj)
         else:
             site_result = await db.execute(select(Site).where(Site.id == site_id))
@@ -591,6 +593,7 @@ class JobManager:
                 return
             site_domain = site_obj.domain
             site_pinterest_url = site_obj.pinterest_url or ""
+            site_generate_recipe_json = bool(getattr(site_obj, "generate_recipe_json", True))
             site_config = self._build_site_config(site_obj)
 
         if db_job.job_type == JobType.articles:
@@ -631,6 +634,7 @@ class JobManager:
                                 "id": str(new_recipe.id),
                                 "site_domain": s.domain,
                                 "pinterest_url": s.pinterest_url or "",
+                                "generate_recipe_json": bool(getattr(s, "generate_recipe_json", True)),
                                 "recipe_text": recipe_text,
                                 "image_url": image_url,
                                 "group_idx": idx + 1,
@@ -850,6 +854,7 @@ class JobManager:
                         on_progress=_on_progress,
                         on_recipe_done=_on_recipe_done,
                         pinterest_url=site_pinterest_url,
+                        generate_recipe_json=site_generate_recipe_json,
                     )
                 elif db_job.job_type == JobType.publisher:
                     processed = 0
@@ -987,6 +992,7 @@ class JobManager:
                                 log=rj.log,
                                 should_stop=rj.should_stop,
                                 pinterest_url=item.get("pinterest_url", ""),
+                                generate_recipe_json=bool(item.get("generate_recipe_json", True)),
                             )
                             if rj.should_stop():
                                 break
@@ -1174,6 +1180,7 @@ class JobManager:
             site_domain = ""
             site_config: dict = {}
             site_pinterest_url = ""
+            site_generate_recipe_json = True
 
             if db_job.job_type == JobType.articles_all_sites:
                 # Reload existing pending recipes grouped by (recipe_text, image_url)
@@ -1203,6 +1210,8 @@ class JobManager:
                     groups[key].append({
                         "id": str(recipe.id),
                         "site_domain": site.domain,
+                        "pinterest_url": site.pinterest_url or "",
+                        "generate_recipe_json": bool(getattr(site, "generate_recipe_json", True)),
                         "recipe_text": recipe.recipe_text,
                         "image_url": recipe.image_url,
                         "group_idx": len(groups),
@@ -1309,6 +1318,7 @@ class JobManager:
                     return False
                 site_domain = site_obj.domain
                 site_pinterest_url = site_obj.pinterest_url or ""
+                site_generate_recipe_json = bool(getattr(site_obj, "generate_recipe_json", True))
                 site_config = self._build_site_config(site_obj)
 
                 recipe_rows = await db.execute(
@@ -1412,6 +1422,7 @@ class JobManager:
                             on_progress=_on_progress,
                             on_recipe_done=_on_recipe_done,
                             pinterest_url=site_pinterest_url,
+                            generate_recipe_json=site_generate_recipe_json,
                         )
                     elif db_job.job_type == JobType.publisher:
                         processed = done_count
@@ -1539,6 +1550,7 @@ class JobManager:
                                     log=rj.log,
                                     should_stop=rj.should_stop,
                                     pinterest_url=item.get("pinterest_url", ""),
+                                    generate_recipe_json=bool(item.get("generate_recipe_json", True)),
                                 )
                                 if rj.should_stop():
                                     break

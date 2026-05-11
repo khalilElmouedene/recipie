@@ -214,12 +214,12 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
   const { trackJob } = useJobActivity();
   const [sites, setSites] = useState<SiteOut[]>([]);
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
+  const [form, setForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, generate_recipe_json: true, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [loading, setLoading] = useState(false);
   const [publishingSiteId, setPublishingSiteId] = useState<string | null>(null);
   const [detailsSite, setDetailsSite] = useState<SiteOut | null>(null);
   const [editSite, setEditSite] = useState<SiteOut | null>(null);
-  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
+  const [editForm, setEditForm] = useState({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, generate_recipe_json: true, wp_users: [emptyWpUser()] as { username: string; password: string }[] });
   const [editing, setEditing] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
@@ -241,7 +241,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
     setLoading(true);
     try {
       await api.createSite(projectId, { ...form, wp_users: validUsers });
-      setForm({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, wp_users: [emptyWpUser()] });
+      setForm({ domain: "", wp_url: "", pinterest_url: "", image_mode: "featured_and_top", embed_pin_in_article: false, generate_recipe_json: true, wp_users: [emptyWpUser()] });
       setShow(false);
       load();
     } catch {}
@@ -294,6 +294,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
       pinterest_url: s.pinterest_url || "",
       image_mode: s.image_mode || "featured_and_top",
       embed_pin_in_article: s.embed_pin_in_article ?? false,
+      generate_recipe_json: s.generate_recipe_json ?? true,
       wp_users: wpUsers.length ? wpUsers : [emptyWpUser()],
     });
   };
@@ -314,6 +315,7 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
         pinterest_url: editForm.pinterest_url || "",
         image_mode: editForm.image_mode,
         embed_pin_in_article: editForm.embed_pin_in_article,
+        generate_recipe_json: editForm.generate_recipe_json,
         wp_users: validUsers.map((u) => ({ username: u.username, password: u.password })),
       };
       await api.updateSite(editSite.id, data);
@@ -376,6 +378,19 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
               <div>
                 <span className="text-sm font-medium text-gray-300">Embed pin image in article</span>
                 <p className="text-xs text-gray-500">When enabled, the Pin Designer image is automatically inserted into the article body before publishing.</p>
+              </div>
+            </label>
+          </div>
+          <div className="col-span-2">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className="relative">
+                <input type="checkbox" className="sr-only" checked={form.generate_recipe_json} onChange={(e) => setForm({ ...form, generate_recipe_json: e.target.checked })} />
+                <div className={`w-10 h-5 rounded-full transition-colors ${form.generate_recipe_json ? "bg-brand-500" : "bg-gray-600"}`} />
+                <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.generate_recipe_json ? "translate-x-5" : ""}`} />
+              </div>
+              <div>
+                <span className="text-sm font-medium text-gray-300">Generate WP Recipe JSON: {form.generate_recipe_json ? "Yes" : "No"}</span>
+                <p className="text-xs text-gray-500">Default: yes. Disable only for sites that do not need WP Recipe Maker JSON.</p>
               </div>
             </label>
           </div>
@@ -498,6 +513,10 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
                 <dt className="text-gray-500">Recipes</dt>
                 <dd className="text-gray-300">{detailsSite.recipe_count}</dd>
               </div>
+              <div>
+                <dt className="text-gray-500">WP Recipe JSON</dt>
+                <dd className="text-gray-300">{detailsSite.generate_recipe_json ? "Enabled" : "Disabled"}</dd>
+              </div>
             </dl>
             <Link
               href={`/projects/${projectId}/sites/${detailsSite.id}`}
@@ -565,6 +584,19 @@ function SitesTab({ projectId, canManage, router }: { projectId: string; canMana
                   <div>
                     <span className="text-sm font-medium text-gray-300">Embed pin image in article</span>
                     <p className="text-xs text-gray-500">When enabled, the Pin Designer image is automatically inserted into the article body before publishing.</p>
+                  </div>
+                </label>
+              </div>
+              <div>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <div className="relative">
+                    <input type="checkbox" className="sr-only" checked={editForm.generate_recipe_json} onChange={(e) => setEditForm({ ...editForm, generate_recipe_json: e.target.checked })} />
+                    <div className={`w-10 h-5 rounded-full transition-colors ${editForm.generate_recipe_json ? "bg-brand-500" : "bg-gray-600"}`} />
+                    <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${editForm.generate_recipe_json ? "translate-x-5" : ""}`} />
+                  </div>
+                  <div>
+                    <span className="text-sm font-medium text-gray-300">Generate WP Recipe JSON: {editForm.generate_recipe_json ? "Yes" : "No"}</span>
+                    <p className="text-xs text-gray-500">Default: yes. Disable only for sites that do not need WP Recipe Maker JSON.</p>
                   </div>
                 </label>
               </div>

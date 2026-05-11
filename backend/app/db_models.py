@@ -250,6 +250,8 @@ class Site(Base):
     image_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="featured_and_top")
     # When True, the pin designer image is embedded in the article HTML on save.
     embed_pin_in_article: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # When True, generation creates WP Recipe Maker JSON for this site's recipes.
+    generate_recipe_json: Mapped[bool] = mapped_column(default=True, server_default="true")
     # UUID of the PinDesignerTemplate to use when auto-rendering pin images for this site.
     pin_template_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

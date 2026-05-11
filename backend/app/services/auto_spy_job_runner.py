@@ -1224,6 +1224,7 @@ async def start_auto_spy_generate_job(
                         "site_id": str(s.id),
                         "site_domain": s.domain,
                         "pinterest_url": s.pinterest_url or "",
+                        "generate_recipe_json": bool(getattr(s, "generate_recipe_json", True)),
                         "pin_template_id": s.pin_template_id,
                         "recipe_text": recipe_text,
                         "image_url": image_url,
@@ -1352,6 +1353,7 @@ async def start_auto_spy_generate_job(
                         log=rj.log,
                         should_stop=rj.should_stop,
                         pinterest_url=item.get("pinterest_url", ""),
+                        generate_recipe_json=bool(item.get("generate_recipe_json", True)),
                     )
 
                     if rj.should_stop():
@@ -1565,6 +1567,7 @@ async def resume_auto_spy_generate_job(
                 "site_id": str(site.id),
                 "site_domain": site.domain,
                 "pinterest_url": site.pinterest_url or "",
+                "generate_recipe_json": bool(getattr(site, "generate_recipe_json", True)),
                 "pin_template_id": site.pin_template_id,
                 "recipe_text": recipe.recipe_text,
                 "image_url": recipe.image_url,
@@ -1701,6 +1704,7 @@ async def resume_auto_spy_generate_job(
                         log=rj.log,
                         should_stop=rj.should_stop,
                         pinterest_url=item.get("pinterest_url", ""),
+                        generate_recipe_json=bool(item.get("generate_recipe_json", True)),
                     )
 
                     if rj.should_stop():

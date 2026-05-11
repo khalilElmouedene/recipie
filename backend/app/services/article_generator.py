@@ -344,6 +344,7 @@ def generate_for_recipe(
     log: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     pinterest_url: str = "",
+    generate_recipe_json: bool = True,
 ) -> dict:
     """Generate all content for a single recipe. Returns a dict of fields to update on the Recipe row."""
     _log = log or print
@@ -417,11 +418,15 @@ def generate_for_recipe(
         result["generated_article"] = article
 
         # 3. Generate recipe JSON for WP Recipe Maker (uses full article)
-        if _stop():
-            return result
-        _log("Generating recipe JSON...")
-        recipe_json = openai_service.generate_recipe_json(recipe_title, article, "", openai_key, prompts=prompts, log=_log)
-        result["generated_json"] = recipe_json
+        if generate_recipe_json:
+            if _stop():
+                return result
+            _log("Generating recipe JSON...")
+            recipe_json = openai_service.generate_recipe_json(recipe_title, article, "", openai_key, prompts=prompts, log=_log)
+            result["generated_json"] = recipe_json
+        else:
+            _log("Skipping recipe JSON generation (disabled for this job)")
+            result["generated_json"] = ""
 
         # 4. Meta description
         if _stop():
@@ -570,6 +575,7 @@ def process_recipes_from_db(
     on_progress: Callable[[int, int], None] | None = None,
     on_recipe_done: Callable[[str, dict], None] | None = None,
     pinterest_url: str = "",
+    generate_recipe_json: bool = True,
 ):
     """Process a list of pending recipes from the database.
     recipes: list of dicts with id, recipe_text, image_url.
@@ -607,6 +613,7 @@ def process_recipes_from_db(
             log=_log,
             should_stop=_stop,
             pinterest_url=pinterest_url,
+            generate_recipe_json=generate_recipe_json,
         )
 
         if _stop():
