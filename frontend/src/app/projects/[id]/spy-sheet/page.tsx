@@ -1438,32 +1438,33 @@ export default function SpySheetPage() {
           </button>
         </div>
 
-        {/* Row 1b: scrape source input */}
+        {/* Row 1b: URL input */}
         <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-800 bg-gray-900/80">
-          <Globe size={14} className="text-purple-400 shrink-0" />
+          <Globe size={14} className="text-teal-400 shrink-0" />
           <input
             type="url"
             value={scrapeUrl}
             onChange={(e) => setScrapeUrl(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void handleAddSource(); }}
             placeholder="Enter WordPress article URL (e.g. https://example.com)"
-            className="flex-1 rounded border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-purple-500 focus:outline-none transition"
+            className="flex-1 rounded border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-teal-500 focus:outline-none transition"
           />
           <button
             onClick={() => void handleAddSource()}
             disabled={addingSource || !scrapeUrl.trim()}
-            className="flex items-center gap-1.5 rounded-md bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-500 disabled:opacity-50 transition shrink-0"
+            className="flex items-center gap-1.5 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-500 disabled:opacity-50 transition shrink-0"
           >
             {addingSource ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
             Add
           </button>
         </div>
 
+        {/* Row 1c: Source list */}
         {sources.length > 0 && (
           <div className="px-3 py-2 border-b border-gray-800 flex flex-wrap gap-2">
             {sources.map((src) => (
               <div key={src.id} className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs">
-                <Globe size={11} className="text-purple-400 shrink-0" />
+                <Globe size={11} className="text-teal-400 shrink-0" />
                 <span className="text-gray-200 font-medium">{src.site_name}</span>
                 {src.last_scanned_at && (
                   <span className="text-gray-500 text-[10px]">
@@ -1474,7 +1475,7 @@ export default function SpySheetPage() {
                   onClick={() => void handleScanSource(src.id)}
                   disabled={scanningId === src.id}
                   title="Scan now"
-                  className="ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border border-purple-700 text-purple-300 hover:bg-purple-900/30 disabled:opacity-50 transition"
+                  className="ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border border-teal-700 text-teal-400 hover:bg-teal-900/30 disabled:opacity-50 transition"
                 >
                   {scanningId === src.id ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
                   Scan Now
