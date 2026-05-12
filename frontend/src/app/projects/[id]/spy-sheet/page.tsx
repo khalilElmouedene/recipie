@@ -7,6 +7,7 @@ import {
   Bold, Italic, Underline, Strikethrough,
   AlignLeft, AlignCenter, AlignRight,
   Palette, PaintBucket, Loader2, Check, Copy, Trash2, Pencil, Send,
+  Globe,
 } from "lucide-react";
 import { api, SharedRecipeInput } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
@@ -508,6 +509,8 @@ export default function SpySheetPage() {
   const [selectionCtxMenu, setSelectionCtxMenu] = useState<SelectionCtxMenu | null>(null);
   const [startingGeneration, setStartingGeneration] = useState(false);
   const [deleteAfterGeneration, setDeleteAfterGeneration] = useState(false);
+  const [scrapeUrl, setScrapeUrl] = useState("");
+  const [scraping, setScraping] = useState(false);
 
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -1216,7 +1219,7 @@ export default function SpySheetPage() {
     } finally {
       setStartingGeneration(false);
     }
-  }, [id, router, selectionCtxMenu, startingGeneration, deleteAfterGeneration, updateActiveData, toast]);
+  }, [id, selectionCtxMenu, startingGeneration, deleteAfterGeneration, updateActiveData, toast, trackJob]);
 
   // ── Sheet tab operations ──
   const addSheet = () => {
@@ -1320,6 +1323,28 @@ export default function SpySheetPage() {
     URL.revokeObjectURL(url);
   };
 
+  const handleScrapeSource = async () => {
+    const url = scrapeUrl.trim();
+    if (!url || scraping) return;
+    setScraping(true);
+    try {
+      const res = await api.scrapeSpySheetSource(id, url);
+      if (res.data) setWorkbook(parseStored(res.data));
+      if (res.updated_at) setSavedAt(res.updated_at);
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+      setScrapeUrl("");
+      if (res.rows_added > 0) {
+        toast.success(`Scraped ${res.rows_added} row(s) from ${res.site_name}.`);
+      } else {
+        toast.warning(`No new rows found for ${res.site_name}.`);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to scrape source");
+    } finally {
+      setScraping(false);
+    }
+  };
+
   const selCell = getCell(sel.row, sel.col);
   const selAddr = `${colLabel(sel.col)}${sel.row + 1}`;
   const tableMinWidth = HEADER_WIDTH + Array.from(
@@ -1372,6 +1397,27 @@ export default function SpySheetPage() {
           <button onClick={() => void handleSave()} disabled={saving} className="flex items-center gap-1.5 rounded-md bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-500 disabled:opacity-50 transition">
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
             {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+
+        {/* Row 1b: scrape source input */}
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-800 bg-gray-900/80">
+          <Globe size={14} className="text-purple-400 shrink-0" />
+          <input
+            type="url"
+            value={scrapeUrl}
+            onChange={(e) => setScrapeUrl(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void handleScrapeSource(); }}
+            placeholder="Paste a WordPress site or article link to scrape rows into this Spy Sheet"
+            className="flex-1 rounded border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-purple-500 focus:outline-none transition"
+          />
+          <button
+            onClick={() => void handleScrapeSource()}
+            disabled={scraping || !scrapeUrl.trim()}
+            className="flex items-center gap-1.5 rounded-md bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-500 disabled:opacity-50 transition shrink-0"
+          >
+            {scraping ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+            {scraping ? "Scraping..." : "Add"}
           </button>
         </div>
 

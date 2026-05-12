@@ -544,6 +544,11 @@ export const api = {
       `/api/projects/${projectId}/spy-sheet`,
       { method: "PUT", body: JSON.stringify({ data }) },
     ),
+  scrapeSpySheetSource: (projectId: string, url: string) =>
+    request<{ project_id: string; data: string | null; updated_at: string | null; site_name: string; rows_added: number }>(
+      `/api/projects/${projectId}/spy-sheet/scrape`,
+      { method: "POST", body: JSON.stringify({ url }) },
+    ),
 
   // -- Auto Spy -------------------------------------------
   getAutoSpySheet: (projectId: string) =>
