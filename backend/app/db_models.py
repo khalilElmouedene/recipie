@@ -153,6 +153,26 @@ class SpySheet(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
+class SpySheetSource(Base):
+    """A WordPress URL scraped into a Spy Sheet tab."""
+    __tablename__ = "spy_sheet_sources"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    url: Mapped[str] = mapped_column(String(500), nullable=False)
+    site_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    sheet_tab_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class AutoSpySheet(Base):
     """Per-project Auto Spy workbook stored as JSON (separate from SpySheet)."""
     __tablename__ = "auto_spy_sheets"

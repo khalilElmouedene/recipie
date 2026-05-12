@@ -7,9 +7,9 @@ import {
   Bold, Italic, Underline, Strikethrough,
   AlignLeft, AlignCenter, AlignRight,
   Palette, PaintBucket, Loader2, Check, Copy, Trash2, Pencil, Send,
-  Globe,
+  Globe, RefreshCw, X,
 } from "lucide-react";
-import { api, SharedRecipeInput } from "@/lib/api";
+import { api, SharedRecipeInput, SpySheetSourceOut } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
 import { useJobActivity } from "@/contexts/JobActivityContext";
 
@@ -510,7 +510,9 @@ export default function SpySheetPage() {
   const [startingGeneration, setStartingGeneration] = useState(false);
   const [deleteAfterGeneration, setDeleteAfterGeneration] = useState(false);
   const [scrapeUrl, setScrapeUrl] = useState("");
-  const [scraping, setScraping] = useState(false);
+  const [sources, setSources] = useState<SpySheetSourceOut[]>([]);
+  const [addingSource, setAddingSource] = useState(false);
+  const [scanningId, setScanningId] = useState<string | null>(null);
 
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -562,11 +564,13 @@ export default function SpySheetPage() {
 
   // ── Load ──
   useEffect(() => {
-    api.getSpySheet(id)
-      .then((res) => {
+    Promise.all([
+      api.getSpySheet(id).then((res) => {
         if (res.data) setWorkbook(parseStored(res.data));
         if (res.updated_at) setSavedAt(res.updated_at);
-      })
+      }),
+      api.getSpySheetSources(id).then(setSources),
+    ])
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [id]);
@@ -1323,25 +1327,59 @@ export default function SpySheetPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleScrapeSource = async () => {
+  const reloadSheetAndSources = async () => {
+    const [sheetRes, sourceRes] = await Promise.all([
+      api.getSpySheet(id),
+      api.getSpySheetSources(id),
+    ]);
+    if (sheetRes.data) setWorkbook(parseStored(sheetRes.data));
+    if (sheetRes.updated_at) setSavedAt(sheetRes.updated_at);
+    setSources(sourceRes);
+  };
+
+  const handleAddSource = async () => {
     const url = scrapeUrl.trim();
-    if (!url || scraping) return;
-    setScraping(true);
+    if (!url || addingSource) return;
+    setAddingSource(true);
     try {
-      const res = await api.scrapeSpySheetSource(id, url);
-      if (res.data) setWorkbook(parseStored(res.data));
-      if (res.updated_at) setSavedAt(res.updated_at);
-      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+      const source = await api.addSpySheetSource(id, url);
+      setSources((prev) => [...prev, source]);
       setScrapeUrl("");
-      if (res.rows_added > 0) {
-        toast.success(`Scraped ${res.rows_added} row(s) from ${res.site_name}.`);
-      } else {
-        toast.warning(`No new rows found for ${res.site_name}.`);
-      }
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+      await reloadSheetAndSources();
+      toast.success(`Added ${source.site_name} - scanning for rows...`);
+      setTimeout(() => {
+        void reloadSheetAndSources().catch(() => {});
+      }, 3000);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to scrape source");
+      toast.error(err instanceof Error ? err.message : "Failed to add source");
     } finally {
-      setScraping(false);
+      setAddingSource(false);
+    }
+  };
+
+  const handleDeleteSource = async (sourceId: string) => {
+    try {
+      await api.deleteSpySheetSource(id, sourceId);
+      setSources((prev) => prev.filter((src) => src.id !== sourceId));
+      await reloadSheetAndSources();
+    } catch {
+      toast.error("Failed to remove source");
+    }
+  };
+
+  const handleScanSource = async (sourceId: string) => {
+    setScanningId(sourceId);
+    try {
+      await api.triggerSpySheetSourceScan(id, sourceId);
+      toast.success("Scan triggered - new rows will appear shortly.");
+      setTimeout(() => {
+        void reloadSheetAndSources().catch(() => {});
+      }, 3000);
+    } catch {
+      toast.error("Failed to trigger scan");
+    } finally {
+      setScanningId(null);
     }
   };
 
@@ -1407,19 +1445,51 @@ export default function SpySheetPage() {
             type="url"
             value={scrapeUrl}
             onChange={(e) => setScrapeUrl(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void handleScrapeSource(); }}
-            placeholder="Paste a WordPress site or article link to scrape rows into this Spy Sheet"
+            onKeyDown={(e) => { if (e.key === "Enter") void handleAddSource(); }}
+            placeholder="Enter WordPress article URL (e.g. https://example.com)"
             className="flex-1 rounded border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-purple-500 focus:outline-none transition"
           />
           <button
-            onClick={() => void handleScrapeSource()}
-            disabled={scraping || !scrapeUrl.trim()}
+            onClick={() => void handleAddSource()}
+            disabled={addingSource || !scrapeUrl.trim()}
             className="flex items-center gap-1.5 rounded-md bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-500 disabled:opacity-50 transition shrink-0"
           >
-            {scraping ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
-            {scraping ? "Scraping..." : "Add"}
+            {addingSource ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+            Add
           </button>
         </div>
+
+        {sources.length > 0 && (
+          <div className="px-3 py-2 border-b border-gray-800 flex flex-wrap gap-2">
+            {sources.map((src) => (
+              <div key={src.id} className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-2.5 py-1.5 text-xs">
+                <Globe size={11} className="text-purple-400 shrink-0" />
+                <span className="text-gray-200 font-medium">{src.site_name}</span>
+                {src.last_scanned_at && (
+                  <span className="text-gray-500 text-[10px]">
+                    scanned {new Date(src.last_scanned_at).toLocaleString()}
+                  </span>
+                )}
+                <button
+                  onClick={() => void handleScanSource(src.id)}
+                  disabled={scanningId === src.id}
+                  title="Scan now"
+                  className="ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border border-purple-700 text-purple-300 hover:bg-purple-900/30 disabled:opacity-50 transition"
+                >
+                  {scanningId === src.id ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+                  Scan Now
+                </button>
+                <button
+                  onClick={() => void handleDeleteSource(src.id)}
+                  title="Remove source"
+                  className="ml-0.5 flex items-center justify-center rounded p-0.5 text-gray-600 hover:text-red-400 hover:bg-red-950/30 transition"
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Row 2: formatting toolbar */}
         <div className="flex items-center gap-0.5 px-3 py-1.5 overflow-x-auto">

@@ -549,6 +549,17 @@ export const api = {
       `/api/projects/${projectId}/spy-sheet/scrape`,
       { method: "POST", body: JSON.stringify({ url }) },
     ),
+  getSpySheetSources: (projectId: string) =>
+    request<SpySheetSourceOut[]>(`/api/projects/${projectId}/spy-sheet/sources`),
+  addSpySheetSource: (projectId: string, url: string) =>
+    request<SpySheetSourceOut>(`/api/projects/${projectId}/spy-sheet/sources`, {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
+  deleteSpySheetSource: (projectId: string, sourceId: string) =>
+    request<void>(`/api/projects/${projectId}/spy-sheet/sources/${sourceId}`, { method: "DELETE" }),
+  triggerSpySheetSourceScan: (projectId: string, sourceId: string) =>
+    request<{ status: string }>(`/api/projects/${projectId}/spy-sheet/sources/${sourceId}/scan`, { method: "POST" }),
 
   // -- Auto Spy -------------------------------------------
   getAutoSpySheet: (projectId: string) =>
@@ -1094,6 +1105,17 @@ export interface AutoSpySourceOut {
   last_scanned_at: string | null;
   next_scan_at: string | null;
   created_at: string;
+}
+
+export interface SpySheetSourceOut {
+  id: string;
+  project_id: string;
+  created_by_user_id: string | null;
+  url: string;
+  site_name: string;
+  sheet_tab_id: string;
+  last_scanned_at: string | null;
+  created_at: string | null;
 }
 
 export interface AuditLogOut {
