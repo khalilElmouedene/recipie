@@ -161,7 +161,7 @@ def publish_recipe(
             content = str(soup.find("body").decode_contents() if soup.find("body") else soup)
         else:
             image_mode = site_config.get("image_mode", "featured_and_top")
-            if image_mode == "featured_and_top":
+            if image_mode == "featured_and_top" and not site_config.get("skip_inline_top_image"):
                 content = inject_images_into_html(soup, img1_url)
             else:
                 content = str(soup)
