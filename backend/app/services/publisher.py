@@ -72,6 +72,10 @@ def _wordpress_display_title(recipe: dict, title_from_html: str) -> str:
     return html_t or recipe_line or placeholder
 
 
+def _has_recipe_generator_pin_embed(soup) -> bool:
+    return soup.find("figure", attrs={"data-recipe-generator-pin-embed": "1"}) is not None
+
+
 def publish_recipe(
     recipe: dict,
     site_config: dict | None,
@@ -116,6 +120,7 @@ def publish_recipe(
 
         # Parse HTML and strip title — keep soup object for proper image injection
         title_from_html, soup = _parse_and_extract_title(article_html)
+        has_article_pin_embed = _has_recipe_generator_pin_embed(soup)
         # Use AI-generated SEO title when available, fall back to H1-derived title
         wp_title = seo_title if seo_title else _wordpress_display_title(recipe, title_from_html)
         slug = slugify(focus_kw or wp_title)
@@ -173,9 +178,10 @@ def publish_recipe(
             _log("Recipe card created.")
             _random_delay(_log)
 
-        # Upload pin design image and insert it after the recipe card.
+        # Upload pin design image and insert it after the recipe card, unless the
+        # article already contains the app-managed pin embed block.
         # Handles both base64 data URIs and hosted https:// URLs.
-        if has_pin_image:
+        if has_pin_image and not has_article_pin_embed:
             if _pin_is_base64:
                 pin_wp_url = upload_base64_image(pin_design_image, site_config, wp_title, log=_log)
             else:
@@ -184,6 +190,8 @@ def publish_recipe(
             if pin_wp_url:
                 content += f'\n<img src="{pin_wp_url}" alt="{wp_title}" loading="lazy" decoding="async" />'
             _random_delay(_log)
+        elif has_pin_image:
+            _log("Pin image already embedded in article; skipping duplicate append.")
 
         base_url = _wp_rest_base(site_config)
         auth = (site_config["wp_username"], site_config["wp_password"])
