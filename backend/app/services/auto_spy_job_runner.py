@@ -1458,6 +1458,7 @@ async def start_auto_spy_generate_job(
                         "wp_username": wp_user,
                         "wp_password": wp_pass,
                         "domain": site_obj.domain if site_obj.domain.startswith("http") else f"https://{site_obj.domain}",
+                        "image_mode": getattr(site_obj, "image_mode", "featured_and_top") or "featured_and_top",
                     }
                     post_date = publish_start + step * idx
                     rj.log(f"  [{site_obj.domain}] #{idx + 1} (user: {wp_user}): {recipe_data['recipe_text'][:50]} → {post_date.strftime('%Y-%m-%d %H:%M UTC')}")
@@ -1800,6 +1801,7 @@ async def resume_auto_spy_generate_job(
                         "wp_username": wp_user,
                         "wp_password": wp_pass,
                         "domain": site_obj.domain if site_obj.domain.startswith("http") else f"https://{site_obj.domain}",
+                        "image_mode": getattr(site_obj, "image_mode", "featured_and_top") or "featured_and_top",
                     }
                     post_date = publish_start + step * (offset + idx)
                     rj.log(f"  [{site_obj.domain}] #{offset + idx + 1} (user: {wp_user}): {recipe_data['recipe_text'][:50]} → {post_date.strftime('%Y-%m-%d %H:%M UTC')}")

@@ -107,6 +107,23 @@ class PublisherPinEmbedTests(unittest.TestCase):
         self.assertIn("wp-published-pin.webp", content)
         self.assertEqual(content.count("<img"), 1)
 
+    def test_featured_only_image_mode_does_not_inject_top_article_image(self) -> None:
+        recipe = {
+            **self.base_recipe,
+            "pin_design_image": "",
+            "generated_article": """
+                <h1>Honey Lavender Latte Cookies</h1>
+                <p>Don't forget to follow us on Pinterest.</p>
+            """,
+        }
+        self.site_config["image_mode"] = "featured_only"
+
+        payload, upload_image_mock, _logs = self._publish(recipe)
+
+        self.assertEqual(upload_image_mock.call_count, 1)
+        self.assertEqual(payload["featured_media"], 10)
+        self.assertNotIn("<img", payload["content"])
+
 
 if __name__ == "__main__":
     unittest.main()
