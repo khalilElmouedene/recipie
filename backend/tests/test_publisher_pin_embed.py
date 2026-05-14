@@ -87,7 +87,6 @@ class PublisherPinEmbedTests(unittest.TestCase):
 
         self.assertEqual(upload_image_mock.call_count, 1)
         self.assertEqual(content.count("data-recipe-generator-pin-embed"), 1)
-        self.assertEqual(content.count("<img"), 1)
         self.assertNotIn("wp-published-pin.webp", content)
         self.assertTrue(any("skipping duplicate append" in msg for msg in logs))
 
@@ -99,6 +98,7 @@ class PublisherPinEmbedTests(unittest.TestCase):
                 <p>Don't forget to follow us on Pinterest.</p>
             """,
         }
+        self.site_config["image_mode"] = "featured_only"
 
         payload, upload_image_mock, _logs = self._publish(recipe)
         content = payload["content"]
@@ -106,6 +106,24 @@ class PublisherPinEmbedTests(unittest.TestCase):
         self.assertEqual(upload_image_mock.call_count, 2)
         self.assertIn("wp-published-pin.webp", content)
         self.assertEqual(content.count("<img"), 1)
+
+    def test_pin_image_does_not_suppress_featured_and_top_article_image(self) -> None:
+        recipe = {
+            **self.base_recipe,
+            "generated_article": """
+                <h1>Honey Lavender Latte Cookies</h1>
+                <p>Don't forget to follow us on Pinterest.</p>
+            """,
+        }
+        self.site_config["image_mode"] = "featured_and_top"
+
+        payload, upload_image_mock, _logs = self._publish(recipe)
+        content = payload["content"]
+
+        self.assertEqual(upload_image_mock.call_count, 2)
+        self.assertIn('src="https://wp.example.com/featured.webp"', content)
+        self.assertIn("wp-published-pin.webp", content)
+        self.assertEqual(content.count("<img"), 2)
 
     def test_featured_only_image_mode_does_not_inject_top_article_image(self) -> None:
         recipe = {

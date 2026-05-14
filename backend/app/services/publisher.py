@@ -156,15 +156,13 @@ def publish_recipe(
         # Upload any pin embed base64 images to WordPress (replaces data: URL with real WP media URL)
         upload_pin_embed_images(soup, site_config, wp_title, log=_log)
 
-        # Auto spy recipes: skip injecting the food photo at the top (pin image will appear after recipe card)
-        if has_pin_image:
-            content = str(soup.find("body").decode_contents() if soup.find("body") else soup)
+        # The site's image mode controls the normal food photo. A Pin Designer
+        # image is handled separately below and should not suppress this setting.
+        image_mode = site_config.get("image_mode", "featured_and_top")
+        if image_mode == "featured_and_top":
+            content = inject_images_into_html(soup, img1_url)
         else:
-            image_mode = site_config.get("image_mode", "featured_and_top")
-            if image_mode == "featured_and_top":
-                content = inject_images_into_html(soup, img1_url)
-            else:
-                content = str(soup)
+            content = str(soup.find("body").decode_contents() if soup.find("body") else soup)
 
         # Recipe card shortcode
         wp_recipe_id = None
