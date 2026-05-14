@@ -15,7 +15,6 @@ class PublishImageModeConfigTests(unittest.TestCase):
         endpoint_setup = text[start:end]
 
         self.assertIn('"image_mode"', endpoint_setup)
-        self.assertIn('"skip_inline_top_image"', endpoint_setup)
         self.assertIn("site_obj", endpoint_setup)
 
 

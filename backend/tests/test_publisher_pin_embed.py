@@ -124,7 +124,7 @@ class PublisherPinEmbedTests(unittest.TestCase):
         self.assertEqual(payload["featured_media"], 10)
         self.assertNotIn("<img", payload["content"])
 
-    def test_skip_inline_top_image_prevents_duplicate_featured_image_layout(self) -> None:
+    def test_featured_and_top_image_mode_injects_top_article_image(self) -> None:
         recipe = {
             **self.base_recipe,
             "pin_design_image": "",
@@ -134,13 +134,12 @@ class PublisherPinEmbedTests(unittest.TestCase):
             """,
         }
         self.site_config["image_mode"] = "featured_and_top"
-        self.site_config["skip_inline_top_image"] = True
 
         payload, upload_image_mock, _logs = self._publish(recipe)
 
         self.assertEqual(upload_image_mock.call_count, 1)
         self.assertEqual(payload["featured_media"], 10)
-        self.assertNotIn("<img", payload["content"])
+        self.assertIn('src="https://wp.example.com/featured.webp"', payload["content"])
 
 
 if __name__ == "__main__":
