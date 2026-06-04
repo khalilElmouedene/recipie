@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
+from pathlib import Path
 import secrets
 import time
 import uuid
@@ -29,6 +32,42 @@ SCOPES = "boards:read,boards:write,pins:read,pins:write,user_accounts:read"
 # States are valid for 10 minutes; purged on each new auth request.
 _VALID_STATES: dict[str, float] = {}
 _STATE_TTL = 600  # seconds
+_UPLOADS_ROOT = Path("/app/uploads")
+_PIN_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+
+
+def _persist_pin_data_url(data_url: str) -> str:
+    """Persist a browser-exported data URL and return a public image URL."""
+    header, sep, payload = data_url.partition(",")
+    if not sep or not header.startswith("data:image/") or ";base64" not in header:
+        raise HTTPException(status_code=400, detail="Invalid pin image data URL")
+
+    mime = header.split(";", 1)[0].removeprefix("data:")
+    ext_map = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/webp": ".webp",
+    }
+    ext = ext_map.get(mime.lower())
+    if not ext:
+        raise HTTPException(status_code=400, detail="Unsupported pin image format")
+
+    try:
+        raw = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid pin image data")
+
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty pin image")
+    if len(raw) > _PIN_UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Pin image exceeds the 10 MB size limit")
+
+    pins_dir = _UPLOADS_ROOT / "pins"
+    pins_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid.uuid4().hex}{ext}"
+    (pins_dir / filename).write_bytes(raw)
+    return f"{settings.server_base_url.rstrip('/')}/uploads/pins/{filename}"
 
 
 def _issue_state() -> str:
@@ -252,10 +291,14 @@ async def create_pin(
     if not token:
         raise HTTPException(400, "Pinterest not connected")
 
+    image_url = data.image_url
+    if image_url.startswith("data:image/"):
+        image_url = _persist_pin_data_url(image_url)
+
     result = pinterest_service.create_pin(
         access_token=token,
         board_id=data.board_id,
-        image_url=data.image_url,
+        image_url=image_url,
         title=data.title,
         description=data.description,
         link=data.link,

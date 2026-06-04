@@ -454,6 +454,52 @@ def _parse_hex_color(color: str, opacity: float = 1.0) -> tuple:
     return (136, 136, 136, a)
 
 
+def _pil_wrap_lines(text: str, max_w: int, font: Any) -> list[str]:
+    words = text.split()
+    lines: list[str] = []
+    cur = ""
+    for word in words:
+        test = f"{cur} {word}".strip()
+        bbox = font.getbbox(test)
+        bw = bbox[2] - bbox[0]
+        if bw <= max_w or not cur:
+            cur = test
+        else:
+            lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def _pil_line_height(font: Any, spacing: float) -> int:
+    bbox = font.getbbox("Ayg")
+    return max(1, int((bbox[3] - bbox[1]) * spacing))
+
+
+def _pil_draw_wrapped_lines(
+    draw: Any,
+    lines: list[str],
+    x: int,
+    y: int,
+    max_w: int,
+    font: Any,
+    color: Any,
+    line_height: int,
+    align: str,
+) -> None:
+    for idx, line in enumerate(lines):
+        bbox = font.getbbox(line)
+        lw = bbox[2] - bbox[0]
+        if align == "center":
+            lx = x + (max_w - lw) // 2
+        elif align == "right":
+            lx = x + max_w - lw
+        else:
+            lx = x
+        draw.text((lx, y + idx * line_height), line, fill=color, font=font)
+
+
 def _url_to_data_uri(url: str, log: Callable[[str], None]) -> str | None:
     """Download *url* and return it as a base64 data URI, or None on failure.
     If the URL is already a data URI it is returned as-is.
@@ -623,7 +669,7 @@ function drawCover(ctx, img, dx, dy, dw, dh, flipX) {{
   ctx.restore();
 }}
 
-function wrapText(ctx, text, x, y, maxW, lh) {{
+function wrapLines(ctx, text, maxW) {{
   if (!text) return;
   const words = text.split(' ');
   const lines = [];
@@ -635,8 +681,18 @@ function wrapText(ctx, text, x, y, maxW, lh) {{
     }} else {{ line = test; }}
   }}
   if (line) lines.push(line);
+  return lines;
+}}
+
+function drawWrappedText(ctx, text, x, centerY, maxW, lh) {{
+  const lines = wrapLines(ctx, text, maxW) || [];
+  if (!lines.length) return;
+  const metrics = ctx.measureText('Ayg');
+  const glyphH = Math.max(1, (metrics.actualBoundingBoxAscent || lh * 0.78) + (metrics.actualBoundingBoxDescent || lh * 0.22));
+  const totalH = glyphH + Math.max(0, lines.length - 1) * lh;
+  const startY = centerY - totalH / 2;
   ctx.textBaseline = 'top';
-  for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x, y + i * lh);
+  for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x, startY + i * lh);
 }}
 
 async function render() {{
@@ -717,13 +773,13 @@ async function render() {{
       const align = (elem.textAlign || 'center').toLowerCase();
       if (align === 'center') {{
         ctx.textAlign = 'center';
-        wrapText(ctx, display, lx + ew / 2, ty, ew, lh);
+        drawWrappedText(ctx, display, lx + ew / 2, ey, ew, lh);
       }} else if (align === 'right') {{
         ctx.textAlign = 'right';
-        wrapText(ctx, display, lx + ew, ty, ew, lh);
+        drawWrappedText(ctx, display, lx + ew, ey, ew, lh);
       }} else {{
         ctx.textAlign = 'left';
-        wrapText(ctx, display, lx, ty, ew, lh);
+        drawWrappedText(ctx, display, lx, ey, ew, lh);
       }}
     }}
   }}
@@ -820,7 +876,7 @@ def _pil_render_elements(
 ) -> str | None:
     try:
         from PIL import Image, ImageDraw
-        from ..services.pin_generator import _download, _fit_crop, _wrap_draw, _placeholder
+        from ..services.pin_generator import _download, _fit_crop, _placeholder
     except Exception as exc:
         log(f"PIL import failed: {exc}")
         return None
@@ -945,9 +1001,18 @@ def _pil_render_elements(
                 if align not in ("left", "center", "right"):
                     align = "center"
                 lh = float(elem.get("lineHeight", 1.3))
-                # Render into a taller image to avoid clipping tall text
-                el = Image.new("RGBA", (max(1, w), max(1, h * 2)), (0, 0, 0, 0))
-                _wrap_draw(ImageDraw.Draw(el), display, 0, 0, w, font, fill_color, spacing=lh, align=align)
+                lines = _pil_wrap_lines(display, w, font)
+                if not lines:
+                    continue
+                line_height = _pil_line_height(font, lh)
+                glyph_bbox = font.getbbox("Ayg")
+                glyph_h = max(1, glyph_bbox[3] - glyph_bbox[1])
+                total_text_h = glyph_h + max(0, len(lines) - 1) * line_height
+                top_y = ey - total_text_h // 2
+
+                el_h = max(1, total_text_h + line_height)
+                el = Image.new("RGBA", (max(1, w), el_h), (0, 0, 0, 0))
+                _pil_draw_wrapped_lines(ImageDraw.Draw(el), lines, 0, 0, w, font, fill_color, line_height, align)
                 _paste(el, left_x, top_y)
 
         buf = BytesIO()

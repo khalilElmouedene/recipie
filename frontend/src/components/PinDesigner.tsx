@@ -955,7 +955,69 @@ function TemplatePreview({ layout }: { layout: PinTemplate["previewLayout"] }) {
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
-export type PinDesignerApi = { getJson: () => string; exportPng: () => string | null };
+export type PinDesignerApi = { getJson: () => string; exportPng: () => Promise<string | null> };
+
+function waitForNextFrame(): Promise<void> {
+  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+}
+
+async function settleCanvasTextForExport(canvas: any): Promise<void> {
+  const textObjects = (canvas.getObjects?.() || []).filter((obj: any) =>
+    obj?.__pinType === "text" || obj?.type === "textbox" || obj?.type === "text"
+  );
+
+  const fontSet = typeof document !== "undefined" ? (document as any).fonts : null;
+  if (fontSet?.load) {
+    await Promise.allSettled(
+      textObjects.map((obj: any) => {
+        const size = Math.max(8, Math.round(Number(obj.fontSize) || 16));
+        const weight = obj.fontWeight || "400";
+        const style = obj.fontStyle || "normal";
+        const family = obj.fontFamily || "Arial";
+        return fontSet.load(`${style} ${weight} ${size}px "${family}"`);
+      })
+    );
+    if (fontSet.ready) {
+      try {
+        await fontSet.ready;
+      } catch {
+        // Continue with the best available metrics if a font fails to settle.
+      }
+    }
+  }
+
+  for (const obj of textObjects) {
+    if (obj.isEditing && typeof obj.exitEditing === "function") obj.exitEditing();
+    obj.dirty = true;
+    if (typeof obj.initDimensions === "function") obj.initDimensions();
+    if (typeof obj.setCoords === "function") obj.setCoords();
+  }
+
+  canvas.renderAll?.();
+  await waitForNextFrame();
+  await waitForNextFrame();
+}
+
+async function exportCanvasDataUrl(canvas: any): Promise<string | null> {
+  if (!canvas) return null;
+  await settleCanvasTextForExport(canvas);
+
+  const helpers = (canvas.getObjects?.() || []).filter((o: any) => o.__isLabel || o.__designerBorder);
+  const helperVisibility = helpers.map((o: any) => [o, o.visible] as const);
+  helpers.forEach((o: any) => o.set("visible", false));
+
+  try {
+    canvas.renderAll();
+    await waitForNextFrame();
+    return canvas.toDataURL({ format: "png", multiplier: 1 });
+  } finally {
+    helperVisibility.forEach(([o, visible]: readonly [any, unknown]) => o.set("visible", visible));
+    canvas.renderAll();
+  }
+}
 
 export interface FrameInfo {
   recipeId: string;
@@ -1571,6 +1633,7 @@ export default function PinDesigner({
     if (!frames || frames.length === 0) return;
     const canvas = fabricCanvasRef.current;
     if (canvas) {
+      await settleCanvasTextForExport(canvas);
       frameJsonsRef.current[activeFrameIdx] = JSON.stringify(
         canvas.toObject(DESIGNER_CUSTOM_KEYS)
       );
@@ -1613,9 +1676,7 @@ export default function PinDesigner({
           });
         }
 
-        fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
-        fc.renderAll();
-        dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
+        dataUrl = await exportCanvasDataUrl(fc);
         fc.dispose();
       } catch { /* skip */ } finally {
         document.body.removeChild(canvasEl);
@@ -1670,7 +1731,7 @@ export default function PinDesigner({
           await saveAllFrames(false);
         } else if (recipeId) {
           // Single recipe mode — save current canvas pin into article
-          const data = getExportDataUrl();
+          const data = await getExportDataUrl();
           if (data) {
             await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe");
           }
@@ -1981,19 +2042,13 @@ export default function PinDesigner({
     }
   };
 
-  const getExportDataUrl = () => {
+  const getExportDataUrl = async () => {
     const canvas = fabricCanvasRef.current;
-    if (!canvas) return null;
-    canvas.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
-    canvas.renderAll();
-    const data = canvas.toDataURL({ format: "png", multiplier: 1 });
-    canvas.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", true));
-    canvas.renderAll();
-    return data;
+    return exportCanvasDataUrl(canvas);
   };
 
-  const handleExport = () => {
-    const data = getExportDataUrl();
+  const handleExport = async () => {
+    const data = await getExportDataUrl();
     if (!data) return;
     const a = document.createElement("a");
     a.href = data;
@@ -2001,15 +2056,15 @@ export default function PinDesigner({
     a.click();
   };
 
-  const handlePublish = () => {
-    const data = getExportDataUrl();
+  const handlePublish = async () => {
+    const data = await getExportDataUrl();
     if (data) publishToPinterest(data);
   };
 
 
   const handleSaveToRecipe = async () => {
     if (!recipeId) return;
-    const data = getExportDataUrl();
+    const data = await getExportDataUrl();
     if (!data) return;
     setSavingToRecipe(true);
     try {
