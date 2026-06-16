@@ -1053,6 +1053,7 @@ export interface PinDesignerTemplateElement {
   strokeWidth?: number | null;
   strokeStyle?: Record<string, unknown> | string | null;
   imageUrl?: string | null;
+  imageSource?: "original" | "random" | null;
   flipX?: boolean | null;
   flipY?: boolean | null;
   [key: string]: unknown;

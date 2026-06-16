@@ -475,6 +475,7 @@ class PinDesignerTemplateElement(BaseModel):
     strokeWidth: float | None = None
     strokeStyle: dict | str | None = None
     imageUrl: str | None = None
+    imageSource: str | None = None
     flipX: bool | None = None
     flipY: bool | None = None
     locked: bool | None = None

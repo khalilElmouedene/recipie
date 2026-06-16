@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import random
@@ -318,12 +319,46 @@ def _elem_font(elem: dict, log: Callable[[str], None]):
 
 # ── Pin image rendering ────────────────────────────────────────────────────────
 
+def _image_source_mode(elem: dict) -> str:
+    return "random" if elem.get("imageSource") == "random" else "original"
+
+
+def _stable_image_index(seed: str, length: int) -> int:
+    if length <= 1:
+        return 0
+    digest = hashlib.sha256(seed.encode("utf-8", errors="ignore")).digest()
+    return int.from_bytes(digest[:8], "big") % length
+
+
+def _image_urls_from_json(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(url).strip() for url in parsed if str(url or "").strip()]
+
+
+def _other_site_pin_images(items: list[dict], per_item_images: dict[str, str], current_item_id: str) -> list[str]:
+    images: list[str] = []
+    for other in items:
+        other_id = str(other.get("id") or "")
+        if not other_id or other_id == current_item_id:
+            continue
+        images.extend(_image_urls_from_json(per_item_images.get(other_id)))
+    return images
+
+
 def _render_pin_for_recipe(
     image_url: str,
     title: str,
     pin_template_id: str | None,
     site_domain: str,
     log: Callable[[str], None],
+    random_image_urls: list[str] | None = None,
     main_loop: asyncio.AbstractEventLoop | None = None,
 ) -> str | None:
     """Return a base64 data-URI for the pin image, or None on failure."""
@@ -340,7 +375,15 @@ def _render_pin_for_recipe(
             return b64
 
         if pin_template_id:
-            b64 = _render_custom_template_sync(pin_template_id, image_url, title, site_domain, log, main_loop=main_loop)
+            b64 = _render_custom_template_sync(
+                pin_template_id,
+                image_url,
+                title,
+                site_domain,
+                log,
+                random_image_urls=random_image_urls,
+                main_loop=main_loop,
+            )
             if b64:
                 return b64
 
@@ -363,6 +406,7 @@ def _render_custom_template_sync(
     title: str,
     site_domain: str,
     log: Callable[[str], None],
+    random_image_urls: list[str] | None = None,
     main_loop: asyncio.AbstractEventLoop | None = None,
 ) -> str | None:
     """Render a PinDesignerTemplate from the DB.
@@ -412,6 +456,7 @@ def _render_custom_template_sync(
         canvas_width=canvas_width,
         canvas_height=canvas_height,
         image_url=image_url,
+        random_image_urls=random_image_urls or [],
         title=title,
         site_domain=site_domain,
         log=log,
@@ -427,6 +472,7 @@ def _render_custom_template_sync(
         canvas_width=canvas_width,
         canvas_height=canvas_height,
         image_url=image_url,
+        random_image_urls=random_image_urls or [],
         title=title,
         site_domain=site_domain,
         log=log,
@@ -542,6 +588,7 @@ def _build_pin_render_html(
     canvas_width: int,
     canvas_height: int,
     food_data_uri: str,
+    random_food_data_uris: list[str],
     asset_data_uris: dict[str, str],
     title: str,
     site_domain: str = "",
@@ -607,6 +654,12 @@ def _build_pin_render_html(
             else:
                 _log(f"    {weight} {css_style} → FAILED to download")
 
+    random_food_imgs = "".join(
+        f'<img id="food_random_{idx}" src="{uri}" style="display:none">\n'
+        for idx, uri in enumerate(random_food_data_uris)
+    )
+    random_food_ids_json = json.dumps([f"food_random_{idx}" for idx in range(len(random_food_data_uris))])
+
     # Hidden <img> elements for asset images (data URIs avoid canvas CORS taint)
     asset_id_map: dict[str, str] = {}
     asset_imgs = ""
@@ -644,6 +697,7 @@ canvas {{ display: block; }}
 <body>
 <canvas id="c" width="{canvas_width}" height="{canvas_height}"></canvas>
 <img id="food" src="{food_data_uri}" style="display:none">
+{random_food_imgs}
 {asset_imgs}
 <script>
 const ELEMENTS = {elems_json};
@@ -652,6 +706,24 @@ const WEBSITE = {website_json};
 const BG = {bg_json};
 const W = {canvas_width};
 const H = {canvas_height};
+const RANDOM_FOOD_IDS = {random_food_ids_json};
+
+function stableHash(value) {{
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {{
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }}
+  return hash >>> 0;
+}}
+
+function pickFoodImage(elem, imageIndex) {{
+  if (elem.imageSource === 'random' && RANDOM_FOOD_IDS.length > 0) {{
+    const idx = stableHash(`${{TITLE}}:${{WEBSITE}}:${{elem.id || ''}}:${{imageIndex}}`) % RANDOM_FOOD_IDS.length;
+    return document.getElementById(RANDOM_FOOD_IDS[idx]) || document.getElementById('food');
+  }}
+  return document.getElementById('food');
+}}
 
 function drawCover(ctx, img, dx, dy, dw, dh, flipX) {{
   if (!img || !img.naturalWidth) return;
@@ -707,6 +779,7 @@ async function render() {{
   ctx.fillStyle = BG;
   ctx.fillRect(0, 0, W, H);
 
+  let imageIndex = 0;
   for (const elem of ELEMENTS) {{
     const t = elem.type || '';
     const ex = elem.x || 0, ey = elem.y || 0;
@@ -730,7 +803,8 @@ async function render() {{
       ctx.restore();
     }}
     else if (t === 'image') {{
-      drawCover(ctx, food, ex, ey, ew, eh, !!elem.flipX);
+      drawCover(ctx, pickFoodImage(elem, imageIndex), ex, ey, ew, eh, !!elem.flipX);
+      imageIndex += 1;
     }}
     else if (t === 'asset') {{
       const assetEl = elem.__assetId ? document.getElementById(elem.__assetId) : null;
@@ -802,6 +876,7 @@ def _render_with_playwright_sync(
     canvas_width: int,
     canvas_height: int,
     image_url: str,
+    random_image_urls: list[str],
     title: str,
     site_domain: str,
     log: Callable[[str], None],
@@ -823,6 +898,12 @@ def _render_with_playwright_sync(
         log("  Could not fetch food image — skipping Playwright render")
         return None
 
+    random_food_data_uris = [
+        data
+        for data in (_url_to_data_uri(url, log) for url in random_image_urls if url and url != image_url)
+        if data
+    ]
+
     asset_data_uris: dict[str, str] = {}
     for elem in elements:
         if elem.get("type") == "asset":
@@ -838,6 +919,7 @@ def _render_with_playwright_sync(
         canvas_width=canvas_width,
         canvas_height=canvas_height,
         food_data_uri=food_data_uri,
+        random_food_data_uris=random_food_data_uris,
         asset_data_uris=asset_data_uris,
         title=title,
         site_domain=site_domain,
@@ -870,6 +952,7 @@ def _pil_render_elements(
     canvas_width: int,
     canvas_height: int,
     image_url: str,
+    random_image_urls: list[str],
     title: str,
     site_domain: str,
     log: Callable[[str], None],
@@ -886,6 +969,8 @@ def _pil_render_elements(
         canvas = Image.new("RGBA", (canvas_width, canvas_height), bg_rgba)
 
         food_img: Image.Image | None = None
+        random_food_cache: dict[str, Image.Image] = {}
+        random_image_urls = [url for url in random_image_urls if url and url != image_url]
 
         def _get_food() -> Image.Image:
             nonlocal food_img
@@ -895,6 +980,18 @@ def _pil_render_elements(
                 except Exception:
                     food_img = _placeholder(400, 600)
             return food_img
+
+        def _get_random_food(elem: dict, image_index: int) -> Image.Image:
+            if _image_source_mode(elem) != "random" or not random_image_urls:
+                return _get_food()
+            idx = _stable_image_index(f"{title}:{site_domain}:{elem.get('id', '')}:{image_index}", len(random_image_urls))
+            url = random_image_urls[idx]
+            if url not in random_food_cache:
+                try:
+                    random_food_cache[url] = _download(url)
+                except Exception:
+                    random_food_cache[url] = _get_food()
+            return random_food_cache[url]
 
         def _paste(el_img: Image.Image, lx: int, ty: int) -> None:
             """Alpha-composite el_img onto canvas at (lx, ty), clamped to canvas bounds."""
@@ -908,6 +1005,7 @@ def _pil_render_elements(
                 return
             canvas.alpha_composite(el_img.crop((ox, oy, ox + cw, oy + ch)), (max(0, lx), max(0, ty)))
 
+        image_index = 0
         for elem in elements:
             # Template designer saves elements with a custom schema (not raw Fabric.js JSON):
             #   type     → "band" | "image" | "frame" | "text" | "asset"
@@ -948,7 +1046,8 @@ def _pil_render_elements(
 
             elif etype == "image":
                 # Image zone — render the scraped food photo here
-                cropped = _fit_crop(_get_food(), w, h).convert("RGBA")
+                cropped = _fit_crop(_get_random_food(elem, image_index), w, h).convert("RGBA")
+                image_index += 1
                 if elem.get("flipX"):
                     cropped = cropped.transpose(Image.FLIP_LEFT_RIGHT)
                 _paste(cropped, ex, ey)
@@ -1442,12 +1541,14 @@ async def start_auto_spy_generate_job(
                                 pass
 
                         pin_title = generated.get("pin_title") or item["recipe_text"].splitlines()[0].strip()
+                        random_pin_image_urls = _other_site_pin_images(items, per_item_images, item["id"])
                         pin_img = _render_pin_for_recipe(
                             image_url=site_image_url,
                             title=pin_title,
                             pin_template_id=item.get("pin_template_id"),
                             site_domain=item["site_domain"],
                             log=rj.log,
+                            random_image_urls=random_pin_image_urls,
                             main_loop=main_loop,
                         )
                         if pin_img:
@@ -1790,12 +1891,14 @@ async def resume_auto_spy_generate_job(
                                 pass
 
                         pin_title = generated.get("pin_title") or item["recipe_text"].splitlines()[0].strip()
+                        random_pin_image_urls = _other_site_pin_images(items, per_item_images, item["id"])
                         pin_img = _render_pin_for_recipe(
                             image_url=site_image_url,
                             title=pin_title,
                             pin_template_id=item.get("pin_template_id"),
                             site_domain=item["site_domain"],
                             log=rj.log,
+                            random_image_urls=random_pin_image_urls,
                             main_loop=main_loop,
                         )
                         if pin_img:

@@ -32,6 +32,22 @@ function getRecipeImages(r: RecipeOut): string[] {
   return images;
 }
 
+function titleFromRecipeText(text?: string | null): string {
+  return text?.split("\n")[0]?.trim() || "Recipe";
+}
+
+function recipeKey(text?: string | null): string {
+  return (text?.trim() || titleFromRecipeText(text)).replace(/\s+/g, " ").toLowerCase();
+}
+
+function flattenImagesFromJobRecipes(recipes: GeneratedJobRecipeOut[]): string[] {
+  return recipes.flatMap(imagesFromJobRecipe).filter(Boolean);
+}
+
+function flattenImagesFromRecipes(recipes: RecipeOut[]): string[] {
+  return recipes.flatMap(getRecipeImages).filter(Boolean);
+}
+
 export default function PinDesignerPage() {
   const params = useParams<{ id: string; siteId: string }>();
   const searchParams = useSearchParams();
@@ -41,6 +57,7 @@ export default function PinDesignerPage() {
 
   const [frames, setFrames] = useState<FrameInfo[]>([]);
   const [singleRecipe, setSingleRecipe] = useState<RecipeOut | null>(null);
+  const [singleRandomImages, setSingleRandomImages] = useState<string[]>([]);
   const [siteDomain, setSiteDomain] = useState("");
   const [embedPinInArticle, setEmbedPinInArticle] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -72,43 +89,87 @@ export default function PinDesignerPage() {
 
     if (recipeParam) {
       api.getRecipe(recipeParam)
-        .then(setSingleRecipe)
+        .then(async (recipe) => {
+          setSingleRecipe(recipe);
+          try {
+            const sites = await api.getSites(params.id);
+            const otherSiteRecipes = (
+              await Promise.all(
+                sites
+                  .filter((site) => site.id !== params.siteId)
+                  .map((site) => api.getRecipes(site.id, "pin_designer").catch(() => [] as RecipeOut[]))
+              )
+            ).flat().filter((r) => r.status === "generated");
+            const currentKey = recipeKey(recipe.recipe_text);
+            const sameRecipeImages = flattenImagesFromRecipes(
+              otherSiteRecipes.filter((r) => recipeKey(r.recipe_text) === currentKey)
+            );
+            setSingleRandomImages(sameRecipeImages);
+          } catch {
+            setSingleRandomImages([]);
+          }
+        })
         .catch(() => {})
         .finally(() => setLoading(false));
     } else if (jobParam) {
       Promise.all([
         api.getJobGeneratedRecipes(jobParam, params.siteId),
+        api.getJobGeneratedRecipes(jobParam),
         api.getRecipes(params.siteId, "pin_designer").catch(() => [] as RecipeOut[]),
       ])
-        .then(([list, siteRecipes]) => {
+        .then(([list, allJobRecipes, siteRecipes]) => {
           const recipeById = new Map(siteRecipes.map((recipe) => [recipe.id, recipe]));
           const generatedOnly = list.filter((r) => r.status === "generated");
+          const otherSiteRecipes = allJobRecipes.filter((r) => r.status === "generated" && r.site_id !== params.siteId);
           setFrames(
-            generatedOnly.map((r) => ({
-              recipeId: r.id,
-              title: r.recipe_text?.split("\n")[0]?.trim() || "Recipe",
-              pinTitle: recipeById.get(r.id)?.pin_title?.trim() || r.pin_title?.trim() || undefined,
-              images: imagesFromJobRecipe(r),
-            }))
+            generatedOnly.map((r) => {
+              const title = titleFromRecipeText(r.recipe_text);
+              const sameRecipeImages = flattenImagesFromJobRecipes(
+                otherSiteRecipes.filter((other) => recipeKey(other.recipe_text) === recipeKey(r.recipe_text))
+              );
+              return {
+                recipeId: r.id,
+                title,
+                pinTitle: recipeById.get(r.id)?.pin_title?.trim() || r.pin_title?.trim() || undefined,
+                images: imagesFromJobRecipe(r),
+                randomImages: sameRecipeImages,
+              };
+            })
           );
         })
         .catch(() => {})
         .finally(() => setLoading(false));
     } else {
-      api.getRecipes(params.siteId, "pin_designer")
-        .then((all) => {
+      Promise.all([
+        api.getRecipes(params.siteId, "pin_designer"),
+        api.getSites(params.id),
+      ])
+        .then(async ([all, sites]) => {
+          const otherSiteRecipes = (
+            await Promise.all(
+              sites
+                .filter((site) => site.id !== params.siteId)
+                .map((site) => api.getRecipes(site.id, "pin_designer").catch(() => [] as RecipeOut[]))
+            )
+          ).flat().filter((r) => r.status === "generated");
           const source = all.filter((r) => r.status === "generated");
           setFrames(source.map((r) => ({
             recipeId: r.id,
-            title: r.recipe_text?.split("\n")[0]?.trim() || "Recipe",
+            title: titleFromRecipeText(r.recipe_text),
             pinTitle: r.pin_title?.trim() || undefined,
             images: getRecipeImages(r),
+            randomImages: (() => {
+              const sameRecipeImages = flattenImagesFromRecipes(
+                otherSiteRecipes.filter((other) => recipeKey(other.recipe_text) === recipeKey(r.recipe_text))
+              );
+              return sameRecipeImages;
+            })(),
           })));
         })
         .catch(() => {})
         .finally(() => setLoading(false));
     }
-  }, [params.siteId, recipeParam, jobParam]);
+  }, [params.id, params.siteId, recipeParam, jobParam]);
 
   if (loading) {
     return (
@@ -125,6 +186,7 @@ export default function PinDesignerPage() {
       <PinDesigner
         recipeId={singleRecipe.id}
         recipeImages={recipeImagesForDesigner}
+        randomImages={singleRandomImages}
         initialTitle={singleRecipe.recipe_text?.split("\n")[0]?.trim() || "Recipe"}
         initialJson={singleRecipe.pin_design_image?.startsWith("{") ? singleRecipe.pin_design_image : undefined}
         initialTemplateId={singleRecipe.pin_template_id || undefined}

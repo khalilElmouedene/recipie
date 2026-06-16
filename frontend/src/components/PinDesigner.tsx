@@ -24,7 +24,7 @@ import { useConfirm } from "@/components/ConfirmModal";
 import BatchPublishModal from "@/components/BatchPublishModal";
 import type { PublishBatchRequest } from "@/lib/api";
 import { useDesignerStore } from "@/store/useDesignerStore";
-import type { StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
+import type { ImageSourceMode, StrokeStyle, ShapeProps } from "@/store/useDesignerStore";
 
 const PIN_W = 1000;
 const PIN_H = 1500;
@@ -50,6 +50,7 @@ const DESIGNER_CUSTOM_KEYS = [
   "__pinLocked",
   "__designerBorder",
   "__forPinId",
+  "__imageSource",
 ];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -246,6 +247,7 @@ interface TemplateElement {
   textVariable?: string;
   textTransform?: string;
   flipX?: boolean;
+  imageSource?: ImageSourceMode;
   strokeWidth?: number;
   strokeStyle?: StrokeStyle;
   radius?: number;
@@ -473,6 +475,7 @@ export interface BulkOverrides {
   pinTitleText?: string;
   websiteText?: string;
   bgColor?: string;
+  randomImages?: string[];
 }
 
 // ─── Text case transform helper ──────────────────────────────────────────────
@@ -487,6 +490,36 @@ export function applyTextTransform(text: string, transform: string): string {
 function resolvePinTitleValue(pinTitle: string | null | undefined, title: string): string {
   const trimmed = pinTitle?.trim();
   return trimmed || title;
+}
+
+function normalizeImageSourceMode(value: unknown): ImageSourceMode {
+  return value === "random" ? "random" : "original";
+}
+
+function stableHash(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function pickTemplateImageUrl(
+  element: TemplateElement,
+  originalImages: string[],
+  randomImages: string[],
+  imageIndex: number,
+  contextKey: string,
+): string {
+  const mode = normalizeImageSourceMode((element as any).imageSource);
+  if (mode === "random" && randomImages.length > 0) {
+    const pickedIdx = stableHash(`${contextKey}:${element.id}:${imageIndex}`) % randomImages.length;
+    return randomImages[pickedIdx]?.trim() || "";
+  }
+
+  const assignedIdx = imageIndex % Math.max(originalImages.length, 1);
+  return originalImages.length > 0 ? (originalImages[assignedIdx]?.trim() || "") : "";
 }
 
 function resolveTemplateTextContent(
@@ -668,6 +701,7 @@ export async function buildTemplateOnCanvas(
   const oBandColor = overrides?.bandColor;
   const resolvedPinTitle = resolvePinTitleValue(overrides?.pinTitleText, title);
   const oWebsite = overrides?.websiteText;
+  const randomImages = overrides?.randomImages ?? [];
   const imageGroupBounds = buildImageZoneGroupBounds(template.elements, Math.max(images.length, 1));
 
 
@@ -698,8 +732,7 @@ export async function buildTemplateOnCanvas(
       if (legacyAssetId.startsWith("bg_") || legacyAssetId.startsWith("img_")) {
         continue;
       }
-      const assignedIdx = imageIndex % Math.max(images.length, 1);
-      const imageUrl = images.length > 0 ? (images[assignedIdx]?.trim() || "") : "";
+      const imageUrl = pickTemplateImageUrl(el, images, randomImages, imageIndex, `${template.id}:${title}:${website}`);
       imageIndex++;
       if (imageUrl) {
         try {
@@ -1024,6 +1057,7 @@ export interface FrameInfo {
   title: string;
   pinTitle?: string;
   images: string[];
+  randomImages?: string[];
 }
 
 export interface PinDesignerProps {
@@ -1048,6 +1082,8 @@ export interface PinDesignerProps {
   embedded?: boolean;
   /** Multiple recipe frames for batch design */
   frames?: FrameInfo[];
+  /** Generated images from other sites in the same project/run for random image zones */
+  randomImages?: string[];
   /** Website/domain to display on pin templates that have a website element */
   website?: string;
   /** Override access level — pass true for project admins who have global role "member" */
@@ -1074,6 +1110,7 @@ export default function PinDesigner({
   onTemplateSelected,
   embedded = false,
   frames,
+  randomImages = [],
   website = "",
   canManage,
   embedPinInArticle = false,
@@ -1229,6 +1266,7 @@ export default function PinDesigner({
   // Derive effective images/title from frames prop if present
   const activeFrame = frames?.[activeFrameIdx];
   const effectiveImages = activeFrame ? activeFrame.images : recipeImages;
+  const effectiveRandomImages = activeFrame ? (activeFrame.randomImages ?? randomImages) : randomImages;
   const effectiveTitle = activeFrame ? activeFrame.title : initialTitle;
   const effectivePinTitle = activeFrame
     ? resolvePinTitleValue(activeFrame.pinTitle, activeFrame.title)
@@ -1303,7 +1341,9 @@ export default function PinDesigner({
     };
 
     recipeImages.forEach(addImageUrl);
+    randomImages.forEach(addImageUrl);
     frames?.forEach((frame) => frame.images.forEach(addImageUrl));
+    frames?.forEach((frame) => frame.randomImages?.forEach(addImageUrl));
     selectedTemplate?.elements.forEach((element) => {
       if (element.type !== "image") return;
       const src = (element as TemplateElement & { src?: string }).src;
@@ -1311,7 +1351,7 @@ export default function PinDesigner({
     });
 
     setImageResourceCacheMax(uniqueImageUrls.size + IMAGE_RESOURCE_CACHE_BUFFER);
-  }, [frames, recipeImages, selectedTemplate]);
+  }, [frames, randomImages, recipeImages, selectedTemplate]);
 
   useEffect(() => {
     return () => {
@@ -1385,7 +1425,7 @@ export default function PinDesigner({
   };
 
   const getFramePreviewCacheKey = (template: PinTemplate, frame: FrameInfo) =>
-    `${getTemplateRenderSignature(template)}::${frame.recipeId}::${frame.title}::${resolvePinTitleValue(frame.pinTitle, frame.title)}::${website}::${frame.images.join("|")}`;
+    `${getTemplateRenderSignature(template)}::${frame.recipeId}::${frame.title}::${resolvePinTitleValue(frame.pinTitle, frame.title)}::${website}::${frame.images.join("|")}::random=${(frame.randomImages ?? randomImages).join("|")}`;
 
   const renderFramePreview = async (template: PinTemplate, frameIndex: number, runId: number) => {
     if (!frames || frameIndex < 0 || frameIndex >= frames.length || frameIndex === activeFrameIdx) return;
@@ -1437,6 +1477,7 @@ export default function PinDesigner({
       } else {
         await buildTemplateOnCanvas(fabricMod, fc, template, frame.images, proxyBase, frame.title, website, {
           pinTitleText: frame.pinTitle,
+          randomImages: frame.randomImages ?? randomImages,
         });
       }
 
@@ -1578,6 +1619,7 @@ export default function PinDesigner({
         frames[newIdx].title,
         undefined,
         frames[newIdx].pinTitle,
+        frames[newIdx].randomImages ?? randomImages,
       );
     } else {
       canvas.clear();
@@ -1673,11 +1715,12 @@ export default function PinDesigner({
               website,
             });
             fc.renderAll();
-          } else if (selectedTemplate) {
-            await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website, {
-              pinTitleText: frame.pinTitle,
-            });
-          }
+        } else if (selectedTemplate) {
+          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website, {
+            pinTitleText: frame.pinTitle,
+            randomImages: frame.randomImages ?? randomImages,
+          });
+        }
 
           dataUrl = await exportCanvasDataUrl(fc);
           fc.dispose();
@@ -1967,7 +2010,18 @@ export default function PinDesigner({
           bgColor = bgColor || "#e0e0e0";
         }
 
-        elements.push({ id: String(pinId), type: "image", label, x, y, width, height, bgColor, flipX: !!(o as any).flipX });
+        elements.push({
+          id: String(pinId),
+          type: "image",
+          label,
+          x,
+          y,
+          width,
+          height,
+          bgColor,
+          flipX: !!(o as any).flipX,
+          imageSource: normalizeImageSourceMode((o as any).__imageSource),
+        });
       } else if (pinType === "imageFrame") {
         // New-style: frame rect position IS the zone bounds
         elements.push({
@@ -1980,6 +2034,7 @@ export default function PinDesigner({
           height: typeof o.height === "number" ? o.height * (o.scaleY ?? 1) : 0,
           bgColor: "#e0e0e0",
           flipX: !!(o as any).__flipX,
+          imageSource: normalizeImageSourceMode((o as any).__imageSource),
         });
       } else if (pinType === "text") {
         elements.push({
@@ -2216,12 +2271,14 @@ export default function PinDesigner({
       const parsed = rgbaToHex(fill);
       setBandProps({ bandFill: parsed.hex, bandOpacity: parsed.alpha });
     } else if (obj.__pinType === "image" || obj.__pinType === "imageFrame" || obj.__pinType === "imageContent") {
+      const sourceOwner = obj.__pinType === "imageContent" && obj.__frameRect ? obj.__frameRect : obj;
       setImageProps({
         left: Math.round(obj.left ?? 0),
         top: Math.round(obj.top ?? 0),
         width: Math.round((obj.width ?? 0) * (obj.scaleX ?? 1)),
         height: Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)),
         angle: Math.round(obj.angle ?? 0),
+        imageSource: normalizeImageSourceMode(sourceOwner.__imageSource),
       });
     } else if (obj.__pinType === "shape") {
       const fill = typeof obj.fill === "string" ? obj.fill : "#6366f1";
@@ -2324,13 +2381,14 @@ export default function PinDesigner({
         const fill = typeof restoredObj.fill === "string" ? restoredObj.fill : "#ffffff";
         const parsed = rgbaToHex(fill);
         setBandProps({ bandFill: parsed.hex, bandOpacity: parsed.alpha });
-      } else if (restoredObj.__pinType === "image") {
+      } else if (restoredObj.__pinType === "image" || restoredObj.__pinType === "imageFrame") {
         setImageProps({
           left: Math.round(restoredObj.left ?? 0),
           top: Math.round(restoredObj.top ?? 0),
           width: Math.round((restoredObj.width ?? 0) * (restoredObj.scaleX ?? 1)),
           height: Math.round((restoredObj.height ?? 0) * (restoredObj.scaleY ?? 1)),
           angle: Math.round(restoredObj.angle ?? 0),
+          imageSource: normalizeImageSourceMode(restoredObj.__imageSource),
         });
       }
 
@@ -2422,6 +2480,9 @@ export default function PinDesigner({
         else if (o.__pinType === "shape") o.__pinLabel = "Shape";
         else o.__pinLabel = o.__pinId;
       }
+      if ((o.__pinType === "image" || o.__pinType === "imageFrame" || o.__pinType === "imageContent") && !o.__imageSource) {
+        o.__imageSource = "original";
+      }
       // Reapply lock constraints (lost after loadFromJSON)
       applyLockState(o);
 
@@ -2443,6 +2504,7 @@ export default function PinDesigner({
       if (content) {
         frame.__linkedImg = content;
         content.__frameRect = frame;
+        content.__imageSource = normalizeImageSourceMode(frame.__imageSource);
       }
     });
   };
@@ -2532,6 +2594,7 @@ export default function PinDesigner({
     titleOverride?: string,
     websiteOverride?: string,
     pinTitleOverride?: string,
+    randomImagesOverride?: string[],
   ) => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
@@ -2550,6 +2613,7 @@ export default function PinDesigner({
     }
 
     const imgs = imagesOverride ?? effectiveImages;
+    const rndImgs = randomImagesOverride ?? effectiveRandomImages;
     const ttl = titleOverride ?? effectiveTitle;
     const siteWebsite = websiteOverride ?? website;
     const proxyBase = getApiBaseUrl();
@@ -2609,8 +2673,7 @@ export default function PinDesigner({
         if (legacyAssetId.startsWith("bg_") || legacyAssetId.startsWith("img_")) {
           continue;
         }
-        const assignedIdx = imageIndex % Math.max(imgs.length, 1);
-        const imageUrl = imgs.length > 0 ? (imgs[assignedIdx]?.trim() || "") : "";
+        const imageUrl = pickTemplateImageUrl(el, imgs, rndImgs, imageIndex, `${template.id}:${ttl}:${siteWebsite}`);
         imageIndex++;
         let imageLoaded = false;
 
@@ -2639,6 +2702,7 @@ export default function PinDesigner({
             (img as any).__pinLabel = el.label;
             (img as any).__pinType = "imageContent";
             (img as any).__pinLocked = !!(el as any).locked;
+            (img as any).__imageSource = normalizeImageSourceMode((el as any).imageSource);
 
             // Clip to this individual zone's rectangle.
             const clipRect = new fabric.Rect({
@@ -2676,6 +2740,7 @@ export default function PinDesigner({
             (frameRect as any).__pinType = "imageFrame";
             (frameRect as any).__pinLocked = !!(el as any).locked;
             (frameRect as any).__flipX = shouldFlip;
+            (frameRect as any).__imageSource = normalizeImageSourceMode((el as any).imageSource);
             (frameRect as any).__linkedImg = img;
             (img as any).__frameRect = frameRect;
             applyLockState(frameRect);
@@ -2705,6 +2770,7 @@ export default function PinDesigner({
           (rect as any).__pinLabel = el.label;
           (rect as any).__pinType = "image";
           (rect as any).__pinLocked = !!(el as any).locked;
+          (rect as any).__imageSource = normalizeImageSourceMode((el as any).imageSource);
           applyLockState(rect);
           canvas.add(rect);
           addDesignerBorder(fabric, canvas, el.x, el.y, el.width, el.height, el.id);
@@ -3125,6 +3191,7 @@ export default function PinDesigner({
               width: Math.round((obj.width ?? 0) * (obj.scaleX ?? 1)),
               height: Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)),
               angle: Math.round(obj.angle ?? 0),
+              imageSource: normalizeImageSourceMode(obj.__imageSource),
             });
           } else if (obj.__pinType === "image") {
             setImageProps({
@@ -3133,6 +3200,7 @@ export default function PinDesigner({
               width: Math.round((obj.width ?? 0) * (obj.scaleX ?? 1)),
               height: Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)),
               angle: Math.round(obj.angle ?? 0),
+              imageSource: normalizeImageSourceMode(obj.__imageSource),
             });
           } else if (obj.__pinType === "frame") {
             for (;;) {
@@ -3552,6 +3620,7 @@ export default function PinDesigner({
         } else {
           await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website, {
             pinTitleText: frame.pinTitle,
+            randomImages: frame.randomImages ?? randomImages,
           });
         }
 
@@ -3862,6 +3931,7 @@ export default function PinDesigner({
         img.__pinId = pid;
         img.__pinLabel = target.__pinLabel;
         img.__pinType = "imageContent";
+        img.__imageSource = normalizeImageSourceMode(target.__imageSource);
 
         const clipRect = new fabric.Rect({
           left: zoneLeft,
@@ -3902,6 +3972,7 @@ export default function PinDesigner({
           frameRect.__pinType = "imageFrame";
           frameRect.__pinLocked = target.__pinLocked;
           frameRect.__flipX = !!(target as any).__flipX;
+          frameRect.__imageSource = normalizeImageSourceMode(target.__imageSource);
           frameRect.__linkedImg = img;
           img.__frameRect = frameRect;
           canvas.remove(target);
@@ -3947,6 +4018,33 @@ export default function PinDesigner({
     canvas.renderAll();
   };
 
+  const updateImageSourceMode = (mode: ImageSourceMode) => {
+    const canvas = fabricCanvasRef.current;
+    let obj = getSelectedObject();
+    if (!canvas || !obj) return;
+    if (obj.__pinType === "imageContent" && obj.__frameRect) obj = obj.__frameRect;
+    if (obj.__pinType !== "imageFrame" && obj.__pinType !== "image") return;
+    saveUndoState();
+    obj.__imageSource = mode;
+    if (obj.__linkedImg) obj.__linkedImg.__imageSource = mode;
+    setImageProps({ imageSource: mode });
+    const imageZones = canvas.getObjects().filter((o: any) =>
+      (o.__pinType === "imageFrame" || o.__pinType === "image") &&
+      !o.__isLabel &&
+      !o.__designerBorder
+    ) as any[];
+    const zoneIndex = Math.max(0, imageZones.findIndex((zone: any) => zone.__pinId === obj.__pinId));
+    const pool = mode === "random" && effectiveRandomImages.length > 0 ? effectiveRandomImages : effectiveImages;
+    const nextImageUrl = mode === "random" && effectiveRandomImages.length > 0
+      ? pool[stableHash(`${effectiveTitle}:${obj.__pinId}:${zoneIndex}`) % pool.length]
+      : pool[zoneIndex % Math.max(pool.length, 1)];
+    if (nextImageUrl) {
+      applyImage(nextImageUrl);
+      return;
+    }
+    canvas.renderAll();
+  };
+
   const addFlipImageZone = () => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
@@ -3979,6 +4077,7 @@ export default function PinDesigner({
     (rect as any).__pinLabel = "Flip Image Zone";
     (rect as any).__pinType = "image";
     (rect as any).__flipX = true;
+    (rect as any).__imageSource = "original";
     canvas.add(rect);
     const label = new fabric.FabricText("⇄ Flip Image Zone", {
       left: zoneW / 2,
@@ -4032,6 +4131,7 @@ export default function PinDesigner({
     (rect as any).__pinId = id;
     (rect as any).__pinLabel = "Image Zone";
     (rect as any).__pinType = "image";
+    (rect as any).__imageSource = "original";
     canvas.add(rect);
     const label = new fabric.FabricText("Image Zone", {
       left: zoneW / 2,
@@ -4229,6 +4329,7 @@ export default function PinDesigner({
           fill: str(obj.fill, obj.__flipX ? "#b3d9ff" : "#e0e0e0"),
           stroke: str(obj.stroke, obj.__flipX ? "#4a90d9" : "#cccccc"),
           flipX: !!obj.__flipX,
+          imageSource: normalizeImageSourceMode(obj.__imageSource),
         },
       };
     }
@@ -4437,6 +4538,7 @@ export default function PinDesigner({
         (rect as any).__pinLabel = str(payload.label, flip ? "Flip Image Zone" : "Image Zone");
         (rect as any).__pinType = "image";
         (rect as any).__flipX = flip;
+        (rect as any).__imageSource = normalizeImageSourceMode(payload.imageSource);
         applyPlacementFromPayload(rect, payload);
         canvas.add(rect);
         const label = new fabric.FabricText(flip ? "⇄ Flip Image Zone" : "Image Zone", {
@@ -5934,6 +6036,28 @@ export default function PinDesigner({
                     </div>
                   </div>
                   <div>
+                    <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Image Source</label>
+                    <div className="grid grid-cols-2 gap-1 rounded-lg bg-gray-800 p-1">
+                      {([
+                        ["original", "Original"],
+                        ["random", "Random"],
+                      ] as const).map(([mode, label]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => updateImageSourceMode(mode)}
+                          className={`rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                            imageProps.imageSource === mode
+                              ? "bg-brand-500 text-white"
+                              : "text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
                     <label className="text-xs text-gray-400 block mb-2">Choose Image</label>
                     {effectiveImages.length > 0 ? (
                       <div className="grid grid-cols-2 gap-2">
@@ -5987,6 +6111,28 @@ export default function PinDesigner({
                       <div>
                         <label className="text-xs font-semibold text-gray-400 uppercase block mb-1">Image Zone</label>
                         <p className="text-[10px] text-gray-500">Single-click to move the zone. Double-click to reposition the image inside.</p>
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Image Source</label>
+                        <div className="grid grid-cols-2 gap-1 rounded-lg bg-gray-800 p-1">
+                          {([
+                            ["original", "Original"],
+                            ["random", "Random"],
+                          ] as const).map(([mode, label]) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              onClick={() => updateImageSourceMode(mode)}
+                              className={`rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                                imageProps.imageSource === mode
+                                  ? "bg-brand-500 text-white"
+                                  : "text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                       <div>
                         <label className="text-xs text-gray-400 block mb-2">Choose Image</label>

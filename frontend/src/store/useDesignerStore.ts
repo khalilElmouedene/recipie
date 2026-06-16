@@ -4,6 +4,7 @@ import { subscribeWithSelector } from "zustand/middleware";
 export type ActiveTool = "select" | "text" | "image" | "band" | "frame";
 export type StrokeStyle = "solid" | "dashed" | "dotted";
 export type LeftTab = "elements" | "layers" | "templates" | "fonts";
+export type ImageSourceMode = "original" | "random";
 
 export interface Layer {
   id: string;
@@ -40,6 +41,7 @@ export interface ImageProps {
   width: number;
   height: number;
   angle: number;
+  imageSource: ImageSourceMode;
 }
 
 export interface ShapeProps {
@@ -149,7 +151,7 @@ export const useDesignerStore = create<DesignerState>()(
     setFrameProps: (props) =>
       set((s) => ({ frameProps: { ...s.frameProps, ...props } })),
 
-    imageProps: { left: 0, top: 0, width: 0, height: 0, angle: 0 },
+    imageProps: { left: 0, top: 0, width: 0, height: 0, angle: 0, imageSource: "original" },
     setImageProps: (props) =>
       set((s) => ({ imageProps: { ...s.imageProps, ...props } })),
 
