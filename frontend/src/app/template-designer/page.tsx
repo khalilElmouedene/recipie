@@ -48,6 +48,7 @@ function uid(prefix: string) {
 type SelType = "text" | "image" | "band" | "asset" | "frame" | null;
 type StrokeStyle = "solid" | "dashed" | "dotted";
 type TextVariable = "" | "title" | "pinTitle" | "website";
+type ImageSourceMode = "original" | "random";
 
 const TEMPLATE_FONTS = [
   "Triumvirate Compressed",
@@ -63,6 +64,10 @@ const SYSTEM_FONTS = [
   "Courier New",
   "Impact",
 ];
+
+function normalizeImageSourceMode(value: unknown): ImageSourceMode {
+  return value === "random" ? "random" : "original";
+}
 
 function TemplateDesignerInner() {
   const router = useRouter();
@@ -108,6 +113,7 @@ function TemplateDesignerInner() {
   // Band / image zone color
   const [elemColor, setElemColor] = useState("#4a90d9");
   const [isFlipZone, setIsFlipZone] = useState(false);
+  const [imageSource, setImageSource] = useState<ImageSourceMode>("original");
 
   // Frame props
   const [frameStrokeColor, setFrameStrokeColor] = useState("#333333");
@@ -133,7 +139,7 @@ function TemplateDesignerInner() {
   const undoHistoryRef = useRef<string[]>([]);
   const isRestoringRef = useRef(false);
   const transformSaveDoneRef = useRef(false);
-  const UNDO_CUSTOM_KEYS = ["__id", "__ttype", "__strokeStyle", "__textVariable", "__textTransform", "__rawText", "__flipX", "__pinLocked"];
+  const UNDO_CUSTOM_KEYS = ["__id", "__ttype", "__strokeStyle", "__textVariable", "__textTransform", "__rawText", "__flipX", "__imageSource", "__pinLocked"];
   const MAX_UNDO = 50;
 
   useEffect(() => {
@@ -353,7 +359,10 @@ function TemplateDesignerInner() {
       setTextVariable((obj.__textVariable as TextVariable) ?? "");
     } else if (t === "band" || t === "image") {
       setElemColor(typeof obj.fill === "string" ? obj.fill : "#4a90d9");
-      if (t === "image") setIsFlipZone(obj.__flipX === true);
+      if (t === "image") {
+        setIsFlipZone(obj.__flipX === true);
+        setImageSource(normalizeImageSourceMode(obj.__imageSource));
+      }
     } else if (t === "frame") {
       setFrameStrokeColor(obj.stroke ?? "#333333");
       setFrameStrokeWidth(obj.strokeWidth ?? 4);
@@ -547,6 +556,7 @@ function TemplateDesignerInner() {
         });
         (rect as any).__id = el.id || uid("image");
         (rect as any).__flipX = isFlip;
+        (rect as any).__imageSource = normalizeImageSourceMode((el as any).imageSource);
         (rect as any).__ttype = "image";
         (rect as any).__pinLocked = !!(el as any).locked;
         applyLockStateDesigner(rect);
@@ -739,6 +749,7 @@ function TemplateDesignerInner() {
     });
     (rect as any).__id = uid("image");
     (rect as any).__ttype = "image";
+    (rect as any).__imageSource = "original";
     applySelectionVisuals(rect);
     canvas.add(rect);
     canvas.setActiveObject(rect);
@@ -766,6 +777,7 @@ function TemplateDesignerInner() {
     (rect as any).__id = uid("image");
     (rect as any).__ttype = "image";
     (rect as any).__flipX = true;
+    (rect as any).__imageSource = "original";
     applySelectionVisuals(rect);
     canvas.add(rect);
     canvas.setActiveObject(rect);
@@ -1037,6 +1049,7 @@ function TemplateDesignerInner() {
       fill: nowFlip ? "#b3d9ff" : "#e8e8e8",
       stroke: nowFlip ? "#4a90d9" : "#aaaaaa",
     });
+    setIsFlipZone(nowFlip);
     canvas.requestRenderAll();
     syncLayers();
   }
@@ -1197,6 +1210,14 @@ function TemplateDesignerInner() {
     setElemColor(color);
   }
 
+  function applyImageSource(mode: ImageSourceMode) {
+    const obj = getActive();
+    if (!obj || obj.__ttype !== "image") return;
+    saveUndoState();
+    obj.__imageSource = mode;
+    setImageSource(mode);
+  }
+
   function applyBackgroundColor(color: string) {
     const canvas = fabricRef.current;
     if (canvas && canvas.backgroundColor !== color) {
@@ -1259,6 +1280,7 @@ function TemplateDesignerInner() {
           height: h,
           bgColor: typeof o.fill === "string" ? o.fill : "#e8e8e8",
           flipX: o.__flipX === true,
+          imageSource: normalizeImageSourceMode(o.__imageSource),
           locked: !!o.__pinLocked,
         });
       } else if (type === "band") {
@@ -2067,6 +2089,31 @@ function TemplateDesignerInner() {
                 <p className="text-[11px] text-gray-500 leading-relaxed">
                   This zone will be filled with the recipe image when using this template in the Pin Designer.
                 </p>
+              )}
+
+              {selType === "image" && (
+                <div>
+                  <label className="text-[10px] text-gray-500 block mb-1.5">Image Source</label>
+                  <div className="grid grid-cols-2 gap-1 rounded-lg bg-gray-900 border border-gray-800 p-1">
+                    {([
+                      ["original", "Original"],
+                      ["random", "Random"],
+                    ] as const).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => applyImageSource(mode)}
+                        className={`py-1.5 rounded-md text-xs font-medium transition ${
+                          imageSource === mode
+                            ? "bg-brand-600 text-white shadow-sm"
+                            : "text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
 
               <div>
