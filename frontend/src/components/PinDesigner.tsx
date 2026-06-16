@@ -1629,7 +1629,7 @@ export default function PinDesigner({
   );
 
   // Shared: render every frame, save pin image to recipe (embed in article), optionally download
-  const saveAllFrames = async (download: boolean) => {
+  const saveAllFrames = async (download: boolean, opts: { failOnSaveError?: boolean } = {}) => {
     if (!frames || frames.length === 0) return;
     const canvas = fabricCanvasRef.current;
     if (canvas) {
@@ -1641,48 +1641,55 @@ export default function PinDesigner({
     setSavingAll(true);
     setSaveAllProgress(0);
 
-    const fabricMod = await import("fabric");
-    const proxyBase = getApiBaseUrl();
-    const tmplW = selectedTemplate?.canvasWidth || PIN_W;
-    const tmplH = selectedTemplate?.canvasHeight || PIN_H;
+    const failedFrames: string[] = [];
 
-    for (let i = 0; i < frames.length; i++) {
-      const frame = frames[i];
-      const savedJson = frameJsonsRef.current[i];
-      setSaveAllProgress(Math.round(((i + 0.5) / frames.length) * 100));
+    try {
+      const fabricMod = await import("fabric");
+      const proxyBase = getApiBaseUrl();
+      const tmplW = selectedTemplate?.canvasWidth || PIN_W;
+      const tmplH = selectedTemplate?.canvasHeight || PIN_H;
 
-      let dataUrl: string | null = null;
-      const canvasEl = document.createElement("canvas");
-      canvasEl.width = tmplW;
-      canvasEl.height = tmplH;
-      document.body.appendChild(canvasEl);
+      for (let i = 0; i < frames.length; i++) {
+        const frame = frames[i];
+        const savedJson = frameJsonsRef.current[i];
+        setSaveAllProgress(Math.round(((i + 0.5) / frames.length) * 100));
 
-      try {
-        const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
-        const fc = new FC(canvasEl, { width: tmplW, height: tmplH, enableRetinaScaling: false });
+        let dataUrl: string | null = null;
+        const canvasEl = document.createElement("canvas");
+        canvasEl.width = tmplW;
+        canvasEl.height = tmplH;
+        document.body.appendChild(canvasEl);
 
-        if (savedJson && savedJson !== "{}") {
-          await fc.loadFromJSON(savedJson);
-          restoreSerializedCanvasCustomProperties(fc, savedJson);
-          syncCanvasTextBindings(fc, {
-            title: frame.title,
-            pinTitle: resolvePinTitleValue(frame.pinTitle, frame.title),
-            website,
-          });
-          fc.renderAll();
-        } else if (selectedTemplate) {
-          await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website, {
-            pinTitleText: frame.pinTitle,
-          });
+        try {
+          const FC = (fabricMod as any).Canvas || (fabricMod as any).default?.Canvas;
+          const fc = new FC(canvasEl, { width: tmplW, height: tmplH, enableRetinaScaling: false });
+
+          if (savedJson && savedJson !== "{}") {
+            await fc.loadFromJSON(savedJson);
+            restoreSerializedCanvasCustomProperties(fc, savedJson);
+            syncCanvasTextBindings(fc, {
+              title: frame.title,
+              pinTitle: resolvePinTitleValue(frame.pinTitle, frame.title),
+              website,
+            });
+            fc.renderAll();
+          } else if (selectedTemplate) {
+            await buildTemplateOnCanvas(fabricMod, fc, selectedTemplate, frame.images, proxyBase, frame.title, website, {
+              pinTitleText: frame.pinTitle,
+            });
+          }
+
+          dataUrl = await exportCanvasDataUrl(fc);
+          fc.dispose();
+        } catch { /* skip */ } finally {
+          document.body.removeChild(canvasEl);
         }
 
-        dataUrl = await exportCanvasDataUrl(fc);
-        fc.dispose();
-      } catch { /* skip */ } finally {
-        document.body.removeChild(canvasEl);
-      }
+        if (!dataUrl) {
+          if (opts.failOnSaveError) failedFrames.push(frame.title || `Pin ${i + 1}`);
+          continue;
+        }
 
-      if (dataUrl) {
         // Save pin image embedded in article HTML (after Conclusion, before WPRM recipe card)
         if (frame.recipeId) {
           try {
@@ -1691,7 +1698,9 @@ export default function PinDesigner({
               dataUrl,
               resolvePinTitleValue(frame.pinTitle, frame.title),
             );
-          } catch { /* skip */ }
+          } catch {
+            if (opts.failOnSaveError) failedFrames.push(frame.title || `Pin ${i + 1}`);
+          }
         }
         if (download) {
           const a = document.createElement("a");
@@ -1703,12 +1712,51 @@ export default function PinDesigner({
           await new Promise((r) => setTimeout(r, 350));
         }
       }
+
+      if (failedFrames.length > 0) {
+        throw new Error(`Failed to save ${failedFrames.length} pin design${failedFrames.length === 1 ? "" : "s"} before publishing.`);
+      }
+
+      setSaveAllProgress(100);
+    } finally {
+      setSavingAll(false);
     }
-    setSaveAllProgress(100);
-    setSavingAll(false);
   };
 
   const handleSaveAll = () => saveAllFrames(true);
+
+  const hasCurrentDesignerState = () => {
+    const canvas = fabricCanvasRef.current;
+    const canvasHasObjects = canvas
+      ? canvas.getObjects().some((o: any) => !o.__isLabel && !o.__isFill && !o.__designerBorder)
+      : false;
+    return selectedTemplate !== null || !!initialJson || canvasHasObjects;
+  };
+
+  const saveDesignerBeforePublish = async (opts: { exportCurrent?: boolean } = {}) => {
+    const hasDesign = hasCurrentDesignerState();
+    let currentExport: string | null = null;
+
+    if (hasDesign) {
+      if (frames && frames.length > 0) {
+        await saveAllFrames(false, { failOnSaveError: true });
+      } else if (recipeId) {
+        currentExport = await getExportDataUrl();
+        if (!currentExport) throw new Error("Failed to render pin design before publishing.");
+        await savePinToRecipeWithArticleEmbed(recipeId, currentExport, recipePinTitle || initialTitle || "Recipe", {
+          pin_title: recipePinTitle || initialTitle || "Recipe",
+          pin_description: recipePinDescription || initialTitle || "Recipe",
+        });
+      }
+    }
+
+    if (opts.exportCurrent) {
+      currentExport = currentExport ?? await getExportDataUrl();
+      if (!currentExport) throw new Error("Failed to render pin design before publishing.");
+    }
+
+    return currentExport;
+  };
 
   const runWordPressBatchFromDesigner = async (
     mode: "wordpress_scheduled" | "manual_backdate",
@@ -1728,12 +1776,15 @@ export default function PinDesigner({
       const hasDesign = selectedTemplate !== null || !!initialJson || canvasHasObjects;
       if (hasDesign) {
         if (frames && frames.length > 0) {
-          await saveAllFrames(false);
+          await saveAllFrames(false, { failOnSaveError: true });
         } else if (recipeId) {
           // Single recipe mode — save current canvas pin into article
           const data = await getExportDataUrl();
           if (data) {
-            await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe");
+            await savePinToRecipeWithArticleEmbed(recipeId, data, recipePinTitle || initialTitle || "Recipe", {
+              pin_title: recipePinTitle || initialTitle || "Recipe",
+              pin_description: recipePinDescription || initialTitle || "Recipe",
+            });
           }
         }
       }
@@ -1851,7 +1902,6 @@ export default function PinDesigner({
 
   const publishToPinterest = async (imageDataUrl: string) => {
     if (!projectId || !selectedBoard) return;
-    setPublishing(true);
     try {
       const res = await fetch(`${getApiBaseUrl()}/pinterest/create-pin`, {
         method: "POST",
@@ -1875,8 +1925,6 @@ export default function PinDesigner({
       }
     } catch (err: any) {
       toast.error(`Error: ${err.message}`);
-    } finally {
-      setPublishing(false);
     }
   };
 
@@ -2057,8 +2105,15 @@ export default function PinDesigner({
   };
 
   const handlePublish = async () => {
-    const data = await getExportDataUrl();
-    if (data) publishToPinterest(data);
+    setPublishing(true);
+    try {
+      const data = await saveDesignerBeforePublish({ exportCurrent: true });
+      if (data) await publishToPinterest(data);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to save pin before publishing");
+    } finally {
+      setPublishing(false);
+    }
   };
 
 
