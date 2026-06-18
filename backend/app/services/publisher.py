@@ -76,6 +76,23 @@ def _has_recipe_generator_pin_embed(soup) -> bool:
     return soup.find("figure", attrs={"data-recipe-generator-pin-embed": "1"}) is not None
 
 
+def _remove_recipe_generator_pin_embeds(soup) -> int:
+    removed = 0
+    for figure in soup.find_all("figure", attrs={"data-recipe-generator-pin-embed": "1"}):
+        figure.decompose()
+        removed += 1
+    return removed
+
+
+def _site_allows_pin_embed(site_config: dict | None) -> bool:
+    if not site_config:
+        return False
+    value = site_config.get("embed_pin_in_article", False)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def publish_recipe(
     recipe: dict,
     site_config: dict | None,
@@ -120,7 +137,12 @@ def publish_recipe(
 
         # Parse HTML and strip title — keep soup object for proper image injection
         title_from_html, soup = _parse_and_extract_title(article_html)
-        has_article_pin_embed = _has_recipe_generator_pin_embed(soup)
+        embed_pin_in_article = _site_allows_pin_embed(site_config)
+        if not embed_pin_in_article:
+            removed_embeds = _remove_recipe_generator_pin_embeds(soup)
+            if removed_embeds:
+                _log(f"Pin image embed disabled for this site; removed {removed_embeds} existing article embed(s).")
+        has_article_pin_embed = embed_pin_in_article and _has_recipe_generator_pin_embed(soup)
         # Use AI-generated SEO title when available, fall back to H1-derived title
         wp_title = seo_title if seo_title else _wordpress_display_title(recipe, title_from_html)
         slug = slugify(focus_kw or wp_title)
@@ -153,8 +175,9 @@ def publish_recipe(
 
         img1_url = _to_https(img1_url)
 
-        # Upload any pin embed base64 images to WordPress (replaces data: URL with real WP media URL)
-        upload_pin_embed_images(soup, site_config, wp_title, log=_log)
+        # Upload any allowed pin embed base64 images to WordPress (replaces data: URL with real WP media URL)
+        if embed_pin_in_article:
+            upload_pin_embed_images(soup, site_config, wp_title, log=_log)
 
         # The site's image mode controls the normal food photo. A Pin Designer
         # image is handled separately below and should not suppress this setting.
@@ -179,7 +202,7 @@ def publish_recipe(
         # Upload pin design image and insert it after the recipe card, unless the
         # article already contains the app-managed pin embed block.
         # Handles both base64 data URIs and hosted https:// URLs.
-        if has_pin_image and not has_article_pin_embed:
+        if embed_pin_in_article and has_pin_image and not has_article_pin_embed:
             if _pin_is_base64:
                 pin_wp_url = upload_base64_image(pin_design_image, site_config, wp_title, log=_log)
             else:
@@ -188,8 +211,10 @@ def publish_recipe(
             if pin_wp_url:
                 content += f'\n<img src="{pin_wp_url}" alt="{wp_title}" loading="lazy" decoding="async" />'
             _random_delay(_log)
-        elif has_pin_image:
+        elif embed_pin_in_article and has_pin_image:
             _log("Pin image already embedded in article; skipping duplicate append.")
+        elif has_pin_image:
+            _log("Pin image embed disabled for this site; skipping article pin image append.")
 
         base_url = _wp_rest_base(site_config)
         auth = (site_config["wp_username"], site_config["wp_password"])

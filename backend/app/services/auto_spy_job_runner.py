@@ -533,6 +533,8 @@ def _pil_draw_wrapped_lines(
     color: Any,
     line_height: int,
     align: str,
+    stroke_color: Any | None = None,
+    stroke_width: int = 0,
 ) -> None:
     for idx, line in enumerate(lines):
         bbox = font.getbbox(line)
@@ -543,7 +545,14 @@ def _pil_draw_wrapped_lines(
             lx = x + max_w - lw
         else:
             lx = x
-        draw.text((lx, y + idx * line_height), line, fill=color, font=font)
+        draw.text(
+            (lx, y + idx * line_height),
+            line,
+            fill=color,
+            font=font,
+            stroke_width=max(0, stroke_width),
+            stroke_fill=stroke_color if stroke_width > 0 else None,
+        )
 
 
 def _url_to_data_uri(url: str, log: Callable[[str], None]) -> str | None:
@@ -756,7 +765,7 @@ function wrapLines(ctx, text, maxW) {{
   return lines;
 }}
 
-function drawWrappedText(ctx, text, x, centerY, maxW, lh) {{
+function drawWrappedText(ctx, text, x, centerY, maxW, lh, strokeColor, strokeWidth) {{
   const lines = wrapLines(ctx, text, maxW) || [];
   if (!lines.length) return;
   const metrics = ctx.measureText('Ayg');
@@ -764,7 +773,15 @@ function drawWrappedText(ctx, text, x, centerY, maxW, lh) {{
   const totalH = glyphH + Math.max(0, lines.length - 1) * lh;
   const startY = centerY - totalH / 2;
   ctx.textBaseline = 'top';
-  for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x, startY + i * lh);
+  for (let i = 0; i < lines.length; i++) {{
+    if (strokeColor && strokeWidth > 0) {{
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = strokeWidth;
+      ctx.lineJoin = 'round';
+      ctx.strokeText(lines[i], x, startY + i * lh);
+    }}
+    ctx.fillText(lines[i], x, startY + i * lh);
+  }}
 }}
 
 async function render() {{
@@ -852,16 +869,18 @@ async function render() {{
       ctx.font = fi + ' ' + fw + ' ' + fs + 'px "' + fam + '", sans-serif';
       ctx.fillStyle = elem.fill || '#fff';
       const lh = (elem.lineHeight || 1.3) * fs;
+      const strokeColor = elem.textBorderColor || '';
+      const strokeWidth = elem.textBorderWidth || 0;
       const align = (elem.textAlign || 'center').toLowerCase();
       if (align === 'center') {{
         ctx.textAlign = 'center';
-        drawWrappedText(ctx, display, lx + ew / 2, ey, ew, lh);
+        drawWrappedText(ctx, display, lx + ew / 2, ey, ew, lh, strokeColor, strokeWidth);
       }} else if (align === 'right') {{
         ctx.textAlign = 'right';
-        drawWrappedText(ctx, display, lx + ew, ey, ew, lh);
+        drawWrappedText(ctx, display, lx + ew, ey, ew, lh, strokeColor, strokeWidth);
       }} else {{
         ctx.textAlign = 'left';
-        drawWrappedText(ctx, display, lx, ey, ew, lh);
+        drawWrappedText(ctx, display, lx, ey, ew, lh, strokeColor, strokeWidth);
       }}
     }}
   }}
@@ -1108,6 +1127,8 @@ def _pil_render_elements(
                     display = display.lower()
 
                 fill_color = _parse_hex_color(str(elem.get("fill") or "#ffffff"))
+                text_border_width = max(0, int(float(elem.get("textBorderWidth") or 0)))
+                text_border_color = _parse_hex_color(str(elem.get("textBorderColor") or "#000000")) if text_border_width > 0 else None
                 font = _elem_font(elem, log)
                 align = str(elem.get("textAlign", "center")).lower()
                 if align not in ("left", "center", "right"):
@@ -1124,7 +1145,7 @@ def _pil_render_elements(
 
                 el_h = max(1, total_text_h + line_height)
                 el = Image.new("RGBA", (max(1, w), el_h), (0, 0, 0, 0))
-                _pil_draw_wrapped_lines(ImageDraw.Draw(el), lines, 0, 0, w, font, fill_color, line_height, align)
+                _pil_draw_wrapped_lines(ImageDraw.Draw(el), lines, 0, 0, w, font, fill_color, line_height, align, text_border_color, text_border_width)
                 _paste(el, left_x, top_y)
 
         buf = BytesIO()
@@ -1638,6 +1659,7 @@ async def start_auto_spy_generate_job(
                         "wp_password": wp_pass,
                         "domain": site_obj.domain if site_obj.domain.startswith("http") else f"https://{site_obj.domain}",
                         "image_mode": getattr(site_obj, "image_mode", "featured_and_top") or "featured_and_top",
+                        "embed_pin_in_article": bool(getattr(site_obj, "embed_pin_in_article", False)),
                     }
                     post_date = publish_start + step * idx
                     rj.log(f"  [{site_obj.domain}] #{idx + 1} (user: {wp_user}): {recipe_data['recipe_text'][:50]} → {post_date.strftime('%Y-%m-%d %H:%M UTC')}")
@@ -1983,6 +2005,7 @@ async def resume_auto_spy_generate_job(
                         "wp_password": wp_pass,
                         "domain": site_obj.domain if site_obj.domain.startswith("http") else f"https://{site_obj.domain}",
                         "image_mode": getattr(site_obj, "image_mode", "featured_and_top") or "featured_and_top",
+                        "embed_pin_in_article": bool(getattr(site_obj, "embed_pin_in_article", False)),
                     }
                     post_date = publish_start + step * (offset + idx)
                     rj.log(f"  [{site_obj.domain}] #{offset + idx + 1} (user: {wp_user}): {recipe_data['recipe_text'][:50]} → {post_date.strftime('%Y-%m-%d %H:%M UTC')}")

@@ -1050,6 +1050,8 @@ export interface PinDesignerTemplateElement {
   textAlign?: string | null;
   textVariable?: string | null;
   textTransform?: string | null;
+  textBorderColor?: string | null;
+  textBorderWidth?: number | null;
   radius?: number | null;
   strokeWidth?: number | null;
   strokeStyle?: Record<string, unknown> | string | null;

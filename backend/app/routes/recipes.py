@@ -581,6 +581,7 @@ async def publish_recipe_article(
         "wp_password": wp_password,
         "domain": site_obj.domain if site_obj.domain.startswith("http") else f"https://{site_obj.domain}",
         "image_mode": getattr(site_obj, "image_mode", "featured_and_top") or "featured_and_top",
+        "embed_pin_in_article": bool(getattr(site_obj, "embed_pin_in_article", False)),
     }
 
     recipe_dict = {

@@ -16,7 +16,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { api, getApiBaseUrl, type PinReusableElementOut } from "@/lib/api";
-import { appendPinImageToArticleHtml } from "@/lib/pinArticleEmbed";
+import { appendPinImageToArticleHtml, removeRecipeGeneratorPinEmbed } from "@/lib/pinArticleEmbed";
 import { storePinterestGalleryContext } from "@/lib/pinterestGalleryContext";
 import { getUserRole, getUserId } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
@@ -246,6 +246,8 @@ interface TemplateElement {
   textAlign?: string;
   textVariable?: string;
   textTransform?: string;
+  textBorderColor?: string;
+  textBorderWidth?: number;
   flipX?: boolean;
   imageSource?: ImageSourceMode;
   borderColor?: string;
@@ -821,6 +823,8 @@ export async function buildTemplateOnCanvas(
         fontWeight: (isTitle && oWeight) ? oWeight : (el.fontWeight || "normal"),
         fontStyle: (el.fontStyle as any) || "normal",
         fill,
+        stroke: normalizeImageBorderColor((el as any).textBorderColor, "#000000"),
+        strokeWidth: Number((el as any).textBorderWidth || 0),
         textAlign: el.textAlign || "center",
       });
       (tb as any).__pinId = el.id;
@@ -1690,6 +1694,12 @@ export default function PinDesigner({
           dataUrl,
           { alt: titleAlt }
         );
+      } else {
+        const full = await api.getRecipe(rid);
+        const currentArticle = full.generated_article ?? "";
+        if (currentArticle.includes("data-recipe-generator-pin-embed")) {
+          updates.generated_article = removeRecipeGeneratorPinEmbed(currentArticle);
+        }
       }
 
       await api.updateRecipe(rid, updates);
@@ -2080,6 +2090,8 @@ export default function PinDesigner({
           fontWeight: o.fontWeight != null ? String(o.fontWeight) : undefined,
           fontStyle: o.fontStyle != null ? String(o.fontStyle) : undefined,
           fill: typeof o.fill === "string" ? o.fill : undefined,
+          textBorderColor: normalizeImageBorderColor((o as any).stroke, "#000000"),
+          textBorderWidth: typeof o.strokeWidth === "number" ? o.strokeWidth : 0,
           textAlign: o.textAlign != null ? String(o.textAlign) : undefined,
         });
       } else if (pinType === "band") {
@@ -2286,6 +2298,8 @@ export default function PinDesigner({
         fontWeight: obj.fontWeight ?? "normal",
         textAlign: obj.textAlign ?? "center",
         textColor: obj.fill ?? "#333333",
+        textBorderColor: normalizeImageBorderColor(obj.stroke, "#000000"),
+        textBorderWidth: typeof obj.strokeWidth === "number" ? obj.strokeWidth : 0,
         textTransform: obj.__textTransform ?? "none",
       });
     } else if (obj.__pinType === "frame") {
@@ -2398,6 +2412,8 @@ export default function PinDesigner({
           fontWeight: restoredObj.fontWeight ?? "normal",
           textAlign: restoredObj.textAlign ?? "center",
           textColor: restoredObj.fill ?? "#333333",
+          textBorderColor: normalizeImageBorderColor(restoredObj.stroke, "#000000"),
+          textBorderWidth: typeof restoredObj.strokeWidth === "number" ? restoredObj.strokeWidth : 0,
           textTransform: restoredObj.__textTransform ?? "none",
         });
       } else if (restoredObj.__pinType === "frame") {
@@ -2877,6 +2893,8 @@ export default function PinDesigner({
             fontWeight: el.fontWeight || "normal",
             fontStyle: (el.fontStyle as any) || "normal",
             fill: el.fill || "#333333",
+            stroke: normalizeImageBorderColor((el as any).textBorderColor, "#000000"),
+            strokeWidth: Number((el as any).textBorderWidth || 0),
             originX: "center",
             originY: "center",
             selectable: true,
@@ -3602,6 +3620,46 @@ export default function PinDesigner({
       return;
     }
 
+    if (property === "textBorderColor") {
+      const width = textProps.textBorderWidth > 0 ? textProps.textBorderWidth : 2;
+      const patch = { stroke: value, strokeWidth: width };
+      if (applyToAllPages) {
+        canvas.getObjects().filter((o: any) => o.__pinType === "text" || o.type === "textbox").forEach((o: any) => {
+          o.set(patch);
+          if (typeof o.initDimensions === "function") o.initDimensions();
+          o.setCoords();
+        });
+        updateTextPropsInAllFrames(patch);
+      } else {
+        obj.set(patch);
+        if (typeof obj.initDimensions === "function") obj.initDimensions();
+        obj.setCoords();
+      }
+      setTextProps({ textBorderColor: value, textBorderWidth: width });
+      canvas.renderAll();
+      return;
+    }
+
+    if (property === "textBorderWidth") {
+      const width = Math.max(0, parseInt(value) || 0);
+      const patch = { stroke: textProps.textBorderColor, strokeWidth: width };
+      if (applyToAllPages) {
+        canvas.getObjects().filter((o: any) => o.__pinType === "text" || o.type === "textbox").forEach((o: any) => {
+          o.set(patch);
+          if (typeof o.initDimensions === "function") o.initDimensions();
+          o.setCoords();
+        });
+        updateTextPropsInAllFrames(patch);
+      } else {
+        obj.set(patch);
+        if (typeof obj.initDimensions === "function") obj.initDimensions();
+        obj.setCoords();
+      }
+      setTextProps({ textBorderWidth: width });
+      canvas.renderAll();
+      return;
+    }
+
     const propName = property === "fill" ? "fill" : property;
     const propValue = property === "fontSize" ? parseInt(value) : value;
     if (applyToAllPages) {
@@ -3711,6 +3769,8 @@ export default function PinDesigner({
       fontFamily: "Arial",
       fontWeight: "normal",
       fill: "#333333",
+      stroke: "#000000",
+      strokeWidth: 0,
       originX: "center",
       originY: "center",
       selectable: true,
@@ -4297,6 +4357,8 @@ export default function PinDesigner({
           fontWeight: str(obj.fontWeight, "normal"),
           fontStyle: str(obj.fontStyle, "normal"),
           fill: str(obj.fill, "#333333"),
+          textBorderColor: str(obj.stroke, "#000000"),
+          textBorderWidth: num(obj.strokeWidth, 0),
           textAlign: str(obj.textAlign, "center"),
         },
       };
@@ -4508,6 +4570,8 @@ export default function PinDesigner({
           fontWeight: str(payload.fontWeight, "normal"),
           fontStyle: str(payload.fontStyle, "normal"),
           fill: str(payload.fill, "#333333"),
+          stroke: str(payload.textBorderColor, "#000000"),
+          strokeWidth: num(payload.textBorderWidth, 0),
           textAlign: str(payload.textAlign, "center"),
           originX: str(payload.originX, "center") as any,
           originY: str(payload.originY, "center") as any,
@@ -6053,6 +6117,20 @@ export default function PinDesigner({
                     <div className="flex gap-2 items-center">
                       <input type="color" value={textProps.textColor} onChange={(e) => updateTextProperty("fill", e.target.value)} className="w-10 h-8 rounded border border-gray-600 cursor-pointer" />
                       <input type="text" value={textProps.textColor} onChange={(e) => updateTextProperty("fill", e.target.value)} className="input-field text-sm flex-1" placeholder="#000000" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Text Border Color</label>
+                    <div className="flex gap-2 items-center">
+                      <input type="color" value={textProps.textBorderColor} onChange={(e) => updateTextProperty("textBorderColor", e.target.value)} className="w-10 h-8 rounded border border-gray-600 cursor-pointer bg-transparent" />
+                      <input type="text" value={textProps.textBorderColor} onChange={(e) => updateTextProperty("textBorderColor", e.target.value)} className="input-field text-sm flex-1" placeholder="#000000" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Text Border Width</label>
+                    <div className="flex gap-2 items-center">
+                      <input type="range" min="0" max="12" value={textProps.textBorderWidth} onChange={(e) => updateTextProperty("textBorderWidth", e.target.value)} className="flex-1" />
+                      <span className="text-sm text-gray-300 w-8">{textProps.textBorderWidth}px</span>
                     </div>
                   </div>
                   <div>

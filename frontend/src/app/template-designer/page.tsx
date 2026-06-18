@@ -104,6 +104,8 @@ function TemplateDesignerInner() {
   const [text, setText] = useState("");
   const [fontSize, setFontSize] = useState(48);
   const [textColor, setTextColor] = useState("#333333");
+  const [textBorderColor, setTextBorderColor] = useState("#000000");
+  const [textBorderWidth, setTextBorderWidth] = useState(0);
   const [textAlign, setTextAlign] = useState("center");
   const [fontWeight, setFontWeight] = useState("normal");
   const [fontStyle, setFontStyle] = useState("normal");
@@ -356,6 +358,8 @@ function TemplateDesignerInner() {
       setText((obj.__rawText as string) ?? obj.text ?? "");
       setFontSize(obj.fontSize ?? 48);
       setTextColor(typeof obj.fill === "string" ? obj.fill : "#333333");
+      setTextBorderColor(normalizeImageBorderColor(obj.stroke, "#000000"));
+      setTextBorderWidth(typeof obj.strokeWidth === "number" ? obj.strokeWidth : 0);
       setTextAlign(obj.textAlign ?? "center");
       setFontWeight(obj.fontWeight ?? "normal");
       setFontStyle(obj.fontStyle ?? "normal");
@@ -531,6 +535,8 @@ function TemplateDesignerInner() {
           fontWeight: el.fontWeight || "normal",
           fontStyle: el.fontStyle || "normal",
           fill: el.fill || "#333333",
+          stroke: normalizeImageBorderColor((el as any).textBorderColor, "#000000"),
+          strokeWidth: Number((el as any).textBorderWidth || 0),
           textAlign: (el.textAlign as any) || "center",
           originX: "center",
           originY: "center",
@@ -730,6 +736,7 @@ function TemplateDesignerInner() {
     (tb as any).__textVariable = "";
     (tb as any).__textTransform = "none";
     (tb as any).__rawText = "Text";
+    tb.set({ stroke: "#000000", strokeWidth: 0 });
     applySelectionVisuals(tb);
     canvas.add(tb);
     canvas.setActiveObject(tb);
@@ -894,6 +901,7 @@ function TemplateDesignerInner() {
     (tb as any).__textVariable = "website";
     (tb as any).__textTransform = "none";
     (tb as any).__rawText = "WWW.YOURSITE.COM";
+    tb.set({ stroke: "#000000", strokeWidth: 0 });
     applySelectionVisuals(tb);
     canvas.add(tb);
     canvas.setActiveObject(tb);
@@ -1284,6 +1292,8 @@ function TemplateDesignerInner() {
           fontStyle: o.fontStyle ?? "normal",
           fontFamily: o.fontFamily ?? "Arial",
           fill: typeof o.fill === "string" ? o.fill : "#333333",
+          textBorderColor: normalizeImageBorderColor(o.stroke, "#000000"),
+          textBorderWidth: typeof o.strokeWidth === "number" ? o.strokeWidth : 0,
           textAlign: o.textAlign ?? "center",
           locked: !!o.__pinLocked,
         });
@@ -1933,6 +1943,52 @@ function TemplateDesignerInner() {
                   />
                   <span className="text-xs font-mono text-gray-400">
                     {textColor}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1.5">
+                  Text Border Color
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={textBorderColor}
+                    onChange={(e) => {
+                      const color = e.target.value;
+                      const width = textBorderWidth > 0 ? textBorderWidth : 2;
+                      setTextBorderColor(color);
+                      setTextBorderWidth(width);
+                      applyText({ stroke: color, strokeWidth: width });
+                    }}
+                    className="w-8 h-8 rounded-lg cursor-pointer border border-gray-700 p-0.5 bg-transparent"
+                  />
+                  <span className="text-xs font-mono text-gray-400">
+                    {textBorderColor}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1.5">
+                  Text Border Width
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min={0}
+                    max={12}
+                    value={textBorderWidth}
+                    onChange={(e) => {
+                      const width = Number(e.target.value);
+                      setTextBorderWidth(width);
+                      applyText({ stroke: textBorderColor, strokeWidth: width });
+                    }}
+                    className="flex-1 accent-brand-500"
+                  />
+                  <span className="text-xs text-gray-400 w-8">
+                    {textBorderWidth}px
                   </span>
                 </div>
               </div>

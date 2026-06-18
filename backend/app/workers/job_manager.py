@@ -1130,6 +1130,7 @@ class JobManager:
             "wp_username": wp_user,
             "wp_password": wp_pass,
             "image_mode": getattr(site_obj, "image_mode", "featured_and_top") or "featured_and_top",
+            "embed_pin_in_article": bool(getattr(site_obj, "embed_pin_in_article", False)),
         }
 
     def stop_job(self, job_id: str) -> bool:

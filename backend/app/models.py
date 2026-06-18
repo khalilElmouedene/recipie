@@ -472,6 +472,8 @@ class PinDesignerTemplateElement(BaseModel):
     textAlign: str | None = None
     textVariable: str | None = None
     textTransform: str | None = None
+    textBorderColor: str | None = None
+    textBorderWidth: float | None = None
     radius: float | None = None
     strokeWidth: float | None = None
     strokeStyle: dict | str | None = None

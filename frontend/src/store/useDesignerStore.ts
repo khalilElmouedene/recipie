@@ -20,6 +20,8 @@ export interface TextProps {
   fontWeight: string;
   textAlign: string;
   textColor: string;
+  textBorderColor: string;
+  textBorderWidth: number;
   textTransform: "none" | "uppercase" | "lowercase" | "capitalize";
 }
 
@@ -134,6 +136,8 @@ export const useDesignerStore = create<DesignerState>()(
       fontWeight: "normal",
       textAlign: "center",
       textColor: "#333333",
+      textBorderColor: "#000000",
+      textBorderWidth: 0,
       textTransform: "none",
     },
     setTextProps: (props) =>

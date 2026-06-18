@@ -37,6 +37,7 @@ def _build_site_config(site: Site, wp_username: str | None = None, wp_password: 
         "wp_password": wp_password,
         "domain": site.domain if site.domain.startswith("http") else f"https://{site.domain}",
         "image_mode": getattr(site, "image_mode", "featured_and_top") or "featured_and_top",
+        "embed_pin_in_article": bool(getattr(site, "embed_pin_in_article", False)),
     }
 
 
