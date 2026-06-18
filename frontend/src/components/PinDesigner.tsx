@@ -248,6 +248,7 @@ interface TemplateElement {
   textTransform?: string;
   flipX?: boolean;
   imageSource?: ImageSourceMode;
+  borderColor?: string;
   strokeWidth?: number;
   strokeStyle?: StrokeStyle;
   radius?: number;
@@ -496,6 +497,10 @@ function normalizeImageSourceMode(value: unknown): ImageSourceMode {
   return value === "random" ? "random" : "original";
 }
 
+function normalizeImageBorderColor(value: unknown, fallback = "#cccccc"): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
 function stableHash(value: string): number {
   let hash = 2166136261;
   for (let i = 0; i < value.length; i++) {
@@ -733,6 +738,25 @@ export async function buildTemplateOnCanvas(
         continue;
       }
       const imageUrl = pickTemplateImageUrl(el, images, randomImages, imageIndex, `${template.id}:${title}:${website}`);
+      const borderColor = normalizeImageBorderColor((el as any).borderColor, "");
+      const addImageBorder = () => {
+        if (!borderColor) return;
+        canvas.add(new fabric.Rect({
+          left: el.x,
+          top: el.y,
+          width: el.width,
+          height: el.height,
+          fill: "transparent",
+          stroke: borderColor,
+          strokeWidth: 2,
+          strokeDashArray: [8, 5],
+          strokeUniform: true,
+          originX: "left",
+          originY: "top",
+          selectable: false,
+          evented: false,
+        }));
+      };
       imageIndex++;
       if (imageUrl) {
         try {
@@ -758,13 +782,16 @@ export async function buildTemplateOnCanvas(
             fill: "",
           });
           canvas.add(img);
+          addImageBorder();
         } catch {
           const rect = new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: el.bgColor || "#e0e0e0" });
           canvas.add(rect);
+          addImageBorder();
         }
       } else {
         const rect = new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: el.bgColor || "#e0e0e0" });
         canvas.add(rect);
+        addImageBorder();
       }
     } else if (el.type === "band" || el.type === "circle") {
       const bandFill = (el.id === "textBand" && oBandColor) ? oBandColor : (el.bgColor || (el.type === "circle" ? "#8b0000" : "#ffffff"));
@@ -2019,8 +2046,9 @@ export default function PinDesigner({
           width,
           height,
           bgColor,
-          flipX: !!(o as any).flipX,
+          flipX: !!((o as any).__flipX || (o as any).flipX),
           imageSource: normalizeImageSourceMode((o as any).__imageSource),
+          borderColor: normalizeImageBorderColor((o as any).stroke, ((o as any).__flipX || (o as any).flipX) ? "#4a90d9" : "#cccccc"),
         });
       } else if (pinType === "imageFrame") {
         // New-style: frame rect position IS the zone bounds
@@ -2035,6 +2063,7 @@ export default function PinDesigner({
           bgColor: "#e0e0e0",
           flipX: !!(o as any).__flipX,
           imageSource: normalizeImageSourceMode((o as any).__imageSource),
+          borderColor: normalizeImageBorderColor((o as any).stroke, (o as any).__flipX ? "#4a90d9" : "#666"),
         });
       } else if (pinType === "text") {
         elements.push({
@@ -2279,6 +2308,7 @@ export default function PinDesigner({
         height: Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)),
         angle: Math.round(obj.angle ?? 0),
         imageSource: normalizeImageSourceMode(sourceOwner.__imageSource),
+        borderColor: normalizeImageBorderColor(sourceOwner.stroke, sourceOwner.__flipX ? "#4a90d9" : "#cccccc"),
       });
     } else if (obj.__pinType === "shape") {
       const fill = typeof obj.fill === "string" ? obj.fill : "#6366f1";
@@ -2389,6 +2419,7 @@ export default function PinDesigner({
           height: Math.round((restoredObj.height ?? 0) * (restoredObj.scaleY ?? 1)),
           angle: Math.round(restoredObj.angle ?? 0),
           imageSource: normalizeImageSourceMode(restoredObj.__imageSource),
+          borderColor: normalizeImageBorderColor(restoredObj.stroke, restoredObj.__flipX ? "#4a90d9" : "#cccccc"),
         });
       }
 
@@ -2527,14 +2558,14 @@ export default function PinDesigner({
 
   // ── Designer border overlay helper ────────────────────────────────────────
 
-  const addDesignerBorder = (fabric: any, canvas: any, x: number, y: number, w: number, h: number, forPinId?: string) => {
+  const addDesignerBorder = (fabric: any, canvas: any, x: number, y: number, w: number, h: number, forPinId?: string, borderColor = "#aaaaaa") => {
     const border = new fabric.Rect({
       left: x,
       top: y,
       width: w,
       height: h,
       fill: "transparent",
-      stroke: "#aaaaaa",
+      stroke: borderColor,
       strokeWidth: 2,
       strokeDashArray: [10, 6],
       selectable: false,
@@ -2675,6 +2706,7 @@ export default function PinDesigner({
         }
         const imageUrl = pickTemplateImageUrl(el, imgs, rndImgs, imageIndex, `${template.id}:${ttl}:${siteWebsite}`);
         imageIndex++;
+        const borderColor = normalizeImageBorderColor((el as any).borderColor, (el as any).flipX === true ? "#4a90d9" : "#666");
         let imageLoaded = false;
 
         if (imageUrl) {
@@ -2722,7 +2754,7 @@ export default function PinDesigner({
               width: el.width,
               height: el.height,
               fill: "transparent",
-              stroke: "#666",
+              stroke: borderColor,
               strokeWidth: 1,
               strokeDashArray: [8, 5],
               strokeUniform: true,
@@ -2764,7 +2796,7 @@ export default function PinDesigner({
             ry: 0,
             selectable: true,
             strokeWidth: 0,
-            stroke: "transparent",
+            stroke: borderColor,
           });
           (rect as any).__pinId = el.id;
           (rect as any).__pinLabel = el.label;
@@ -2773,7 +2805,7 @@ export default function PinDesigner({
           (rect as any).__imageSource = normalizeImageSourceMode((el as any).imageSource);
           applyLockState(rect);
           canvas.add(rect);
-          addDesignerBorder(fabric, canvas, el.x, el.y, el.width, el.height, el.id);
+          addDesignerBorder(fabric, canvas, el.x, el.y, el.width, el.height, el.id, borderColor);
 
           const label = new FabricText(el.label, {
             left: el.x + el.width / 2,
@@ -3192,6 +3224,7 @@ export default function PinDesigner({
               height: Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)),
               angle: Math.round(obj.angle ?? 0),
               imageSource: normalizeImageSourceMode(obj.__imageSource),
+              borderColor: normalizeImageBorderColor(obj.stroke, obj.__flipX ? "#4a90d9" : "#cccccc"),
             });
           } else if (obj.__pinType === "image") {
             setImageProps({
@@ -3201,6 +3234,7 @@ export default function PinDesigner({
               height: Math.round((obj.height ?? 0) * (obj.scaleY ?? 1)),
               angle: Math.round(obj.angle ?? 0),
               imageSource: normalizeImageSourceMode(obj.__imageSource),
+              borderColor: normalizeImageBorderColor(obj.stroke, obj.__flipX ? "#4a90d9" : "#cccccc"),
             });
           } else if (obj.__pinType === "frame") {
             for (;;) {
@@ -3960,9 +3994,10 @@ export default function PinDesigner({
           const label = canvas.getObjects().find((o: any) => o.__forId === pid);
           if (label) canvas.remove(label);
           // Create frame rect to wrap the new image
+          const borderColor = normalizeImageBorderColor(target.stroke, target.__flipX ? "#4a90d9" : "#666");
           const frameRect = new fabric.Rect({
             left: zoneLeft, top: zoneTop, width: zoneW, height: zoneH,
-            fill: "transparent", stroke: "#666", strokeWidth: 1, strokeDashArray: [8, 5],
+            fill: "transparent", stroke: borderColor, strokeWidth: 1, strokeDashArray: [8, 5],
             strokeUniform: true, originX: "left", originY: "top",
             selectable: !target.__pinLocked, evented: !target.__pinLocked,
             hasControls: false, hasBorders: true, borderColor: "#6366f1", objectCaching: false,
@@ -4042,6 +4077,20 @@ export default function PinDesigner({
       applyImage(nextImageUrl);
       return;
     }
+    canvas.renderAll();
+  };
+
+  const updateImageBorderColor = (color: string) => {
+    const canvas = fabricCanvasRef.current;
+    let obj = getSelectedObject();
+    if (!canvas || !obj) return;
+    if (obj.__pinType === "imageContent" && obj.__frameRect) obj = obj.__frameRect;
+    if (obj.__pinType !== "imageFrame" && obj.__pinType !== "image") return;
+    saveUndoState();
+    obj.set("stroke", color);
+    const border = canvas.getObjects().find((o: any) => o.__designerBorder && o.__forPinId === obj.__pinId);
+    if (border) border.set("stroke", color);
+    setImageProps({ borderColor: color });
     canvas.renderAll();
   };
 
@@ -4328,6 +4377,7 @@ export default function PinDesigner({
           height: num(obj.height, 300),
           fill: str(obj.fill, obj.__flipX ? "#b3d9ff" : "#e0e0e0"),
           stroke: str(obj.stroke, obj.__flipX ? "#4a90d9" : "#cccccc"),
+          borderColor: str(obj.stroke, obj.__flipX ? "#4a90d9" : "#cccccc"),
           flipX: !!obj.__flipX,
           imageSource: normalizeImageSourceMode(obj.__imageSource),
         },
@@ -4522,6 +4572,7 @@ export default function PinDesigner({
       } else if (kind === "imageZone") {
         saveUndoState();
         const flip = !!payload.flipX;
+        const borderColor = str(payload.borderColor ?? payload.stroke, flip ? "#4a90d9" : "#cccccc");
         const rect = new fabric.Rect({
           left: num(payload.left, 0),
           top: num(payload.top, 0),
@@ -4530,7 +4581,7 @@ export default function PinDesigner({
           fill: str(payload.fill, flip ? "#b3d9ff" : "#e0e0e0"),
           selectable: true,
           strokeWidth: 2,
-          stroke: str(payload.stroke, flip ? "#4a90d9" : "#cccccc"),
+          stroke: borderColor,
           originX: str(payload.originX, "left") as any,
           originY: str(payload.originY, "top") as any,
         });
@@ -6058,6 +6109,24 @@ export default function PinDesigner({
                     </div>
                   </div>
                   <div>
+                    <label className="text-xs text-gray-400 block mb-2">Border Color</label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="color"
+                        value={imageProps.borderColor}
+                        onChange={(e) => updateImageBorderColor(e.target.value)}
+                        className="w-10 h-8 rounded border border-gray-600 cursor-pointer bg-transparent"
+                      />
+                      <input
+                        type="text"
+                        value={imageProps.borderColor}
+                        onChange={(e) => updateImageBorderColor(e.target.value)}
+                        className="input-field text-sm flex-1"
+                        placeholder="#cccccc"
+                      />
+                    </div>
+                  </div>
+                  <div>
                     <label className="text-xs text-gray-400 block mb-2">Choose Image</label>
                     {effectiveImages.length > 0 ? (
                       <div className="grid grid-cols-2 gap-2">
@@ -6132,6 +6201,24 @@ export default function PinDesigner({
                               {label}
                             </button>
                           ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-400 block mb-2">Border Color</label>
+                        <div className="flex gap-2 items-center">
+                          <input
+                            type="color"
+                            value={imageProps.borderColor}
+                            onChange={(e) => updateImageBorderColor(e.target.value)}
+                            className="w-10 h-8 rounded border border-gray-600 cursor-pointer bg-transparent"
+                          />
+                          <input
+                            type="text"
+                            value={imageProps.borderColor}
+                            onChange={(e) => updateImageBorderColor(e.target.value)}
+                            className="input-field text-sm flex-1"
+                            placeholder="#cccccc"
+                          />
                         </div>
                       </div>
                       <div>

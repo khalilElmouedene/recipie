@@ -468,6 +468,7 @@ class PinDesignerTemplateElement(BaseModel):
     fontStyle: str | None = None
     fill: str | None = None
     bgColor: str | None = None
+    borderColor: str | None = None
     textAlign: str | None = None
     textVariable: str | None = None
     textTransform: str | None = None

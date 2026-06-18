@@ -1046,6 +1046,7 @@ export interface PinDesignerTemplateElement {
   fontStyle?: string | null;
   fill?: string | null;
   bgColor?: string | null;
+  borderColor?: string | null;
   textAlign?: string | null;
   textVariable?: string | null;
   textTransform?: string | null;

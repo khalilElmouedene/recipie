@@ -42,6 +42,7 @@ export interface ImageProps {
   height: number;
   angle: number;
   imageSource: ImageSourceMode;
+  borderColor: string;
 }
 
 export interface ShapeProps {
@@ -151,7 +152,7 @@ export const useDesignerStore = create<DesignerState>()(
     setFrameProps: (props) =>
       set((s) => ({ frameProps: { ...s.frameProps, ...props } })),
 
-    imageProps: { left: 0, top: 0, width: 0, height: 0, angle: 0, imageSource: "original" },
+    imageProps: { left: 0, top: 0, width: 0, height: 0, angle: 0, imageSource: "original", borderColor: "#cccccc" },
     setImageProps: (props) =>
       set((s) => ({ imageProps: { ...s.imageProps, ...props } })),
 

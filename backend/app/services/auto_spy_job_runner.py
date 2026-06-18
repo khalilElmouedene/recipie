@@ -804,6 +804,14 @@ async function render() {{
     }}
     else if (t === 'image') {{
       drawCover(ctx, pickFoodImage(elem, imageIndex), ex, ey, ew, eh, !!elem.flipX);
+      if (elem.borderColor) {{
+        ctx.save();
+        ctx.strokeStyle = elem.borderColor;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 5]);
+        ctx.strokeRect(ex + 1, ey + 1, Math.max(0, ew - 2), Math.max(0, eh - 2));
+        ctx.restore();
+      }}
       imageIndex += 1;
     }}
     else if (t === 'asset') {{
@@ -1051,6 +1059,11 @@ def _pil_render_elements(
                 if elem.get("flipX"):
                     cropped = cropped.transpose(Image.FLIP_LEFT_RIGHT)
                 _paste(cropped, ex, ey)
+                border_color = str(elem.get("borderColor") or "").strip()
+                if border_color and w > 2 and h > 2:
+                    border = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+                    ImageDraw.Draw(border).rectangle([1, 1, w - 2, h - 2], outline=_parse_hex_color(border_color), width=2)
+                    _paste(border, ex, ey)
 
             elif etype == "asset":
                 # Static image uploaded by user into the template

@@ -69,6 +69,10 @@ function normalizeImageSourceMode(value: unknown): ImageSourceMode {
   return value === "random" ? "random" : "original";
 }
 
+function normalizeImageBorderColor(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
 function TemplateDesignerInner() {
   const router = useRouter();
   const toast = useToast();
@@ -114,6 +118,7 @@ function TemplateDesignerInner() {
   const [elemColor, setElemColor] = useState("#4a90d9");
   const [isFlipZone, setIsFlipZone] = useState(false);
   const [imageSource, setImageSource] = useState<ImageSourceMode>("original");
+  const [imageBorderColor, setImageBorderColor] = useState("#aaaaaa");
 
   // Frame props
   const [frameStrokeColor, setFrameStrokeColor] = useState("#333333");
@@ -362,6 +367,7 @@ function TemplateDesignerInner() {
       if (t === "image") {
         setIsFlipZone(obj.__flipX === true);
         setImageSource(normalizeImageSourceMode(obj.__imageSource));
+        setImageBorderColor(normalizeImageBorderColor(obj.stroke, obj.__flipX === true ? "#4a90d9" : "#aaaaaa"));
       }
     } else if (t === "frame") {
       setFrameStrokeColor(obj.stroke ?? "#333333");
@@ -541,13 +547,14 @@ function TemplateDesignerInner() {
         canvas.add(tb);
       } else if (el.type === "image") {
         const isFlip = (el as any).flipX === true;
+        const borderColor = normalizeImageBorderColor((el as any).borderColor ?? (el as any).stroke, isFlip ? "#4a90d9" : "#aaaaaa");
         const rect = new fabric.Rect({
           left: el.x ?? 100,
           top: el.y ?? 100,
           width: el.width || 400,
           height: el.height || 300,
           fill: isFlip ? "#b3d9ff" : (el.bgColor || "#e8e8e8"),
-          stroke: isFlip ? "#4a90d9" : "#aaaaaa",
+          stroke: borderColor,
           strokeWidth: 3,
           strokeUniform: true,
           strokeDashArray: [10, 6],
@@ -750,6 +757,7 @@ function TemplateDesignerInner() {
     (rect as any).__id = uid("image");
     (rect as any).__ttype = "image";
     (rect as any).__imageSource = "original";
+    setImageBorderColor("#aaaaaa");
     applySelectionVisuals(rect);
     canvas.add(rect);
     canvas.setActiveObject(rect);
@@ -778,6 +786,7 @@ function TemplateDesignerInner() {
     (rect as any).__ttype = "image";
     (rect as any).__flipX = true;
     (rect as any).__imageSource = "original";
+    setImageBorderColor("#4a90d9");
     applySelectionVisuals(rect);
     canvas.add(rect);
     canvas.setActiveObject(rect);
@@ -1050,6 +1059,7 @@ function TemplateDesignerInner() {
       stroke: nowFlip ? "#4a90d9" : "#aaaaaa",
     });
     setIsFlipZone(nowFlip);
+    setImageBorderColor(nowFlip ? "#4a90d9" : "#aaaaaa");
     canvas.requestRenderAll();
     syncLayers();
   }
@@ -1218,6 +1228,15 @@ function TemplateDesignerInner() {
     setImageSource(mode);
   }
 
+  function applyImageBorderColor(color: string) {
+    const obj = getActive();
+    if (!obj || obj.__ttype !== "image") return;
+    saveUndoState();
+    obj.set("stroke", color);
+    fabricRef.current?.renderAll();
+    setImageBorderColor(color);
+  }
+
   function applyBackgroundColor(color: string) {
     const canvas = fabricRef.current;
     if (canvas && canvas.backgroundColor !== color) {
@@ -1281,6 +1300,7 @@ function TemplateDesignerInner() {
           bgColor: typeof o.fill === "string" ? o.fill : "#e8e8e8",
           flipX: o.__flipX === true,
           imageSource: normalizeImageSourceMode(o.__imageSource),
+          borderColor: normalizeImageBorderColor(o.stroke, o.__flipX ? "#4a90d9" : "#aaaaaa"),
           locked: !!o.__pinLocked,
         });
       } else if (type === "band") {
@@ -2112,6 +2132,23 @@ function TemplateDesignerInner() {
                         {label}
                       </button>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {selType === "image" && (
+                <div>
+                  <label className="text-[10px] text-gray-500 block mb-1.5">Border Color</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={imageBorderColor}
+                      onChange={(e) => applyImageBorderColor(e.target.value)}
+                      className="w-8 h-8 rounded-lg cursor-pointer border border-gray-700 p-0.5 bg-transparent"
+                    />
+                    <span className="text-xs font-mono text-gray-400">
+                      {imageBorderColor}
+                    </span>
                   </div>
                 </div>
               )}
