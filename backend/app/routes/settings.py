@@ -15,7 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..crypto import encrypt, decrypt
 from ..database import get_db
-from ..db_models import User, UserCredential, Prompt, UserRole, CleanupConfig, Project
+from ..db_models import (
+    CleanupConfig,
+    Project,
+    ProjectMemberRole,
+    Prompt,
+    User,
+    UserCredential,
+    UserRole,
+)
 from ..dependencies import get_current_user, require_owner, check_project_access
 from ..midjourney_settings import (
     DEFAULT_GRID_WAIT_SECONDS,
@@ -156,6 +164,9 @@ async def reset_prompts(
     project_id: uuid.UUID = Query(...),
 ):
     """Delete all custom prompt rows for this project so defaults are used."""
+    await check_project_access(
+        project_id, user, db, require_roles=[ProjectMemberRole.admin]
+    )
     result = await db.execute(
         select(Prompt).where(Prompt.owner_id == user.id, Prompt.project_id == project_id)
     )
@@ -183,6 +194,9 @@ async def update_prompts(
     db: Annotated[AsyncSession, Depends(get_db)],
     project_id: uuid.UUID = Query(...),
 ):
+    await check_project_access(
+        project_id, user, db, require_roles=[ProjectMemberRole.admin]
+    )
     for key, value in body.prompts.items():
         if key not in DEFAULT_PROMPTS:
             raise HTTPException(status_code=400, detail=f"Invalid prompt key: {key}")

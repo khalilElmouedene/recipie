@@ -731,11 +731,17 @@ async def start_facebook_generation(
         )
 
     page_query = select(FacebookPage).where(FacebookPage.project_id == project.id)
-    if body.page_ids:
-        page_query = page_query.where(FacebookPage.id.in_(body.page_ids))
+    requested_page_ids = set(body.page_ids or [])
+    if body.page_ids is not None:
+        page_query = page_query.where(FacebookPage.id.in_(requested_page_ids))
     pages = list((await db.execute(page_query.order_by(FacebookPage.created_at.asc()))).scalars())
+    if body.page_ids is not None and len(pages) != len(requested_page_ids):
+        raise HTTPException(
+            status_code=404,
+            detail="One or more selected Facebook Pages were not found in this project.",
+        )
     if not pages:
-        raise HTTPException(status_code=400, detail="Connect at least one Facebook Page.")
+        raise HTTPException(status_code=400, detail="Select at least one connected Facebook Page.")
 
     selected_rows = list(
         (
@@ -754,9 +760,13 @@ async def start_facebook_generation(
 
     schedule_map: dict[uuid.UUID, list[datetime | None]] = {}
     if body.schedule:
-        requested_start = body.start_at or datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        requested_start = body.start_at or now
         if requested_start.tzinfo is None:
             requested_start = requested_start.replace(tzinfo=timezone.utc)
+        else:
+            requested_start = requested_start.astimezone(timezone.utc)
+        requested_start = max(requested_start, now)
         for page in pages:
             existing_rows = (
                 await db.execute(

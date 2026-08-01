@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -77,12 +77,10 @@ function dateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function contentDate(content: FacebookContentOut) {
-  const dated = content.deliveries
-    .map((delivery) => delivery.scheduled_at || delivery.published_at)
-    .filter(Boolean)
-    .sort()[0];
-  return new Date(dated || content.created_at);
+function localDateTimeInput(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 function FacebookMark({ className = "h-5 w-5" }: { className?: string }) {
@@ -281,6 +279,7 @@ function FacebookCalendar({
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [scheduleDelivery, setScheduleDelivery] = useState<FacebookDeliveryOut | null>(null);
   const [scheduleAt, setScheduleAt] = useState("");
+  const [savingSchedule, setSavingSchedule] = useState(false);
   const toast = useToast();
 
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
@@ -292,10 +291,32 @@ function FacebookCalendar({
     return day;
   });
   const byDay = useMemo(() => {
-    const map: Record<string, FacebookContentOut[]> = {};
+    const map: Record<
+      string,
+      { key: string; content: FacebookContentOut; delivery: FacebookDeliveryOut | null }[]
+    > = {};
     for (const content of contents) {
-      const key = dateKey(contentDate(content));
-      (map[key] ||= []).push(content);
+      const datedDeliveries = content.deliveries.filter(
+        (delivery) => delivery.scheduled_at || delivery.published_at,
+      );
+      if (datedDeliveries.length === 0) {
+        const key = dateKey(new Date(content.created_at));
+        (map[key] ||= []).push({ key: content.id, content, delivery: null });
+        continue;
+      }
+      for (const delivery of datedDeliveries) {
+        const value = delivery.scheduled_at || delivery.published_at;
+        if (!value) continue;
+        const key = dateKey(new Date(value));
+        (map[key] ||= []).push({ key: delivery.id, content, delivery });
+      }
+    }
+    for (const events of Object.values(map)) {
+      events.sort((left, right) => {
+        const leftDate = left.delivery?.scheduled_at || left.delivery?.published_at || left.content.created_at;
+        const rightDate = right.delivery?.scheduled_at || right.delivery?.published_at || right.content.created_at;
+        return leftDate.localeCompare(rightDate);
+      });
     }
     return map;
   }, [contents]);
@@ -316,11 +337,18 @@ function FacebookCalendar({
 
   const saveSchedule = async () => {
     if (!scheduleDelivery || !scheduleAt) return;
-    await api.scheduleFacebookDelivery(scheduleDelivery.id, new Date(scheduleAt).toISOString());
-    setScheduleDelivery(null);
-    setScheduleAt("");
-    toast.success("Publication scheduled");
-    onRefresh();
+    setSavingSchedule(true);
+    try {
+      await api.scheduleFacebookDelivery(scheduleDelivery.id, new Date(scheduleAt).toISOString());
+      setScheduleDelivery(null);
+      setScheduleAt("");
+      toast.success("Publication scheduled");
+      onRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not schedule publication");
+    } finally {
+      setSavingSchedule(false);
+    }
   };
 
   if (!project.has_website || pages.length === 0) {
@@ -375,7 +403,7 @@ function FacebookCalendar({
         </div>
         <div className="grid grid-cols-7">
           {days.map((day, index) => {
-            const dayContents = byDay[dateKey(day)] || [];
+            const dayEvents = byDay[dateKey(day)] || [];
             const inMonth = day.getMonth() === month.getMonth();
             const today = dateKey(day) === dateKey(new Date());
             return (
@@ -391,16 +419,17 @@ function FacebookCalendar({
                   {day.getDate()}
                 </span>
                 <div className="mt-1 space-y-1">
-                  {dayContents.slice(0, 3).map((content) => (
+                  {dayEvents.slice(0, 3).map((event) => (
                     <button
-                      key={content.id}
-                      onClick={() => setSelectedContent(content)}
+                      key={event.key}
+                      onClick={() => setSelectedContent(event.content)}
+                      title={event.delivery ? `${event.delivery.page_name}: ${event.content.title}` : event.content.title}
                       className="block w-full truncate rounded-md border border-[#1877f2]/20 bg-[#1877f2]/10 px-1.5 py-1 text-left text-[10px] font-medium text-[#8bbcff] transition hover:bg-[#1877f2]/20 md:text-xs"
                     >
-                      {content.title}
+                      {event.delivery ? `${event.delivery.page_name}: ` : ""}{event.content.title}
                     </button>
                   ))}
-                  {dayContents.length > 3 && <p className="px-1 text-[10px] text-slate-600">+{dayContents.length - 3} more</p>}
+                  {dayEvents.length > 3 && <p className="px-1 text-[10px] text-slate-600">+{dayEvents.length - 3} more</p>}
                 </div>
               </div>
             );
@@ -437,7 +466,7 @@ function FacebookCalendar({
               onPublish={publish}
               onSchedule={(delivery) => {
                 setScheduleDelivery(delivery);
-                setScheduleAt(delivery.scheduled_at ? new Date(delivery.scheduled_at).toISOString().slice(0, 16) : "");
+                setScheduleAt(delivery.scheduled_at ? localDateTimeInput(delivery.scheduled_at) : "");
               }}
               onOpen={() => setSelectedContent(content)}
             />
@@ -459,9 +488,15 @@ function FacebookCalendar({
               </div>
               <button onClick={() => setScheduleDelivery(null)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white"><X size={17} /></button>
             </div>
-            <input type="datetime-local" value={scheduleAt} onChange={(event) => setScheduleAt(event.target.value)} className="input-field mt-5" />
-            <button onClick={saveSchedule} disabled={!scheduleAt} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
-              <CalendarDays size={16} /> Save schedule
+            <input
+              type="datetime-local"
+              value={scheduleAt}
+              min={localDateTimeInput(new Date())}
+              onChange={(event) => setScheduleAt(event.target.value)}
+              className="input-field mt-5"
+            />
+            <button onClick={saveSchedule} disabled={!scheduleAt || savingSchedule} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
+              {savingSchedule ? <Loader2 size={16} className="animate-spin" /> : <CalendarDays size={16} />} Save schedule
             </button>
           </div>
         </div>
@@ -575,6 +610,12 @@ function ContentDetail({ content, onClose }: { content: FacebookContentOut; onCl
           <div>
             {content.processed_video_url ? (
               <video src={content.processed_video_url} controls className="max-h-[520px] w-full rounded-2xl bg-black object-contain" />
+            ) : content.status === "failed" ? (
+              <div className="flex min-h-80 flex-col items-center justify-center rounded-2xl border border-red-900/40 bg-red-950/15 px-6 text-center">
+                <AlertCircle className="text-red-400" />
+                <p className="mt-3 text-sm font-medium text-red-200">Video generation failed</p>
+                {content.error_message && <p className="mt-2 text-xs leading-5 text-red-300/80">{content.error_message}</p>}
+              </div>
             ) : (
               <div className="grid min-h-80 place-items-center rounded-2xl bg-slate-950"><Loader2 className="animate-spin text-[#68a8ff]" /></div>
             )}
@@ -592,7 +633,13 @@ function ContentDetail({ content, onClose }: { content: FacebookContentOut; onCl
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-950/30 p-4">
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">Article</p>
-              <p className="mt-2 text-sm text-slate-400">{content.generated_article ? "Generated and ready for WordPress" : "Generation in progress"}</p>
+              <p className="mt-2 text-sm text-slate-400">
+                {content.generated_article
+                  ? "Generated and ready for WordPress"
+                  : content.status === "failed"
+                    ? "Article generation failed"
+                    : "Generation in progress"}
+              </p>
               {content.article_url && (
                 <a href={content.article_url} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-2 text-sm text-[#68a8ff] hover:text-white">
                   Open published article <ExternalLink size={14} />
@@ -715,10 +762,38 @@ function FacebookPagesSettings({
   const [appId, setAppId] = useState(project.app_id || "");
   const [appSecret, setAppSecret] = useState("");
   const [savingApp, setSavingApp] = useState(false);
+  const oauthPopupRef = useRef<Window | null>(null);
+  const oauthPopupPollRef = useRef<number | null>(null);
+  const oauthTimeoutRef = useRef<number | null>(null);
+
+  const clearOAuthWindow = useCallback((closePopup = false) => {
+    if (oauthPopupPollRef.current !== null) {
+      window.clearInterval(oauthPopupPollRef.current);
+      oauthPopupPollRef.current = null;
+    }
+    if (oauthTimeoutRef.current !== null) {
+      window.clearTimeout(oauthTimeoutRef.current);
+      oauthTimeoutRef.current = null;
+    }
+
+    const popup = oauthPopupRef.current;
+    if (closePopup && popup && !popup.closed) popup.close();
+    oauthPopupRef.current = null;
+  }, []);
+
+  const stopOAuth = useCallback((closePopup = false) => {
+    clearOAuthWindow(closePopup);
+    setConnecting(false);
+  }, [clearOAuthWindow]);
 
   useEffect(() => {
     const receive = async (event: MessageEvent) => {
       if (event.origin !== window.location.origin || event.data?.source !== "facebook-oauth") return;
+      if (oauthPopupRef.current && event.source !== oauthPopupRef.current) return;
+
+      // The callback was reached, so popup polling is no longer needed. Keep the
+      // loading state active while the backend exchanges the authorization code.
+      clearOAuthWindow(false);
       if (event.data.error) {
         toast.error(event.data.error);
         setConnecting(false);
@@ -737,18 +812,43 @@ function FacebookPagesSettings({
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [onRefresh, toast]);
+  }, [clearOAuthWindow, onRefresh, toast]);
+
+  useEffect(() => () => clearOAuthWindow(true), [clearOAuthWindow]);
 
   const connectOAuth = async () => {
+    stopOAuth(true);
     setConnecting(true);
     try {
       const { url } = await api.getFacebookOAuthUrl(project.id, commentMode);
       const popup = window.open(url, "facebook-oauth", "width=720,height=760,resizable=yes,scrollbars=yes");
       if (!popup) throw new Error("Allow popups to connect Facebook Pages.");
+      oauthPopupRef.current = popup;
+
+      oauthPopupPollRef.current = window.setInterval(() => {
+        if (!popup.closed) return;
+        stopOAuth(false);
+        toast.warning("Facebook login was closed before it completed. You can try again.");
+      }, 500);
+
+      oauthTimeoutRef.current = window.setTimeout(() => {
+        stopOAuth(true);
+        toast.error("Facebook login timed out. Please try again.");
+      }, 120_000);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not start Facebook login");
-      setConnecting(false);
+      stopOAuth(true);
     }
+  };
+
+  const cancelOAuth = () => {
+    stopOAuth(true);
+    toast.warning("Facebook connection cancelled.");
+  };
+
+  const closeConnectModal = () => {
+    stopOAuth(true);
+    setShowConnect(false);
   };
 
   const connectToken = async () => {
@@ -879,8 +979,9 @@ function FacebookPagesSettings({
           onToken={setToken}
           connecting={connecting}
           onOAuth={connectOAuth}
+          onCancelOAuth={cancelOAuth}
           onTokenConnect={connectToken}
-          onClose={() => setShowConnect(false)}
+          onClose={closeConnectModal}
         />
       )}
       {editingPage && (
@@ -897,6 +998,7 @@ function ConnectPageModal({
   onToken,
   connecting,
   onOAuth,
+  onCancelOAuth,
   onTokenConnect,
   onClose,
 }: {
@@ -906,6 +1008,7 @@ function ConnectPageModal({
   onToken: (value: string) => void;
   connecting: boolean;
   onOAuth: () => void;
+  onCancelOAuth: () => void;
   onTokenConnect: () => void;
   onClose: () => void;
 }) {
@@ -940,8 +1043,13 @@ function ConnectPageModal({
           </div>
           <button onClick={onOAuth} disabled={connecting} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877f2] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50">
             {connecting ? <Loader2 size={17} className="animate-spin" /> : <FacebookMark className="h-4 w-4" />}
-            Continue with Facebook
+            {connecting ? "Waiting for Facebook..." : "Continue with Facebook"}
           </button>
+          {connecting && (
+            <button onClick={onCancelOAuth} className="w-full text-center text-xs font-medium text-slate-400 transition hover:text-white">
+              Cancel Facebook connection
+            </button>
+          )}
           <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.16em] text-slate-700"><span className="h-px flex-1 bg-slate-800" /> or paste a Page token <span className="h-px flex-1 bg-slate-800" /></div>
           <div className="flex gap-2">
             <input value={token} onChange={(event) => onToken(event.target.value)} type="password" className="input-field font-mono text-xs" placeholder="Page access token" />

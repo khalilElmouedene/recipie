@@ -228,7 +228,48 @@ async def publish_facebook_delivery(delivery_id: uuid.UUID) -> bool:
         return False
 
 
+async def recover_interrupted_facebook_deliveries() -> int:
+    """Make deliveries claimed by a previous backend process retryable.
+
+    A process can stop after changing a delivery to ``publishing`` but before
+    the Facebook request or first comment completes. Scheduled work is put
+    back in the scheduler queue; manually started work becomes a retryable
+    failure. Persisted Facebook post IDs keep those retries idempotent.
+    """
+    async with SessionLocal() as db:
+        scheduled = await db.execute(
+            update(FacebookDelivery)
+            .where(
+                FacebookDelivery.status == FacebookDeliveryStatus.publishing,
+                FacebookDelivery.scheduled_at.is_not(None),
+            )
+            .values(
+                status=FacebookDeliveryStatus.scheduled,
+                error_message="Publication was interrupted by a backend restart and will be retried.",
+            )
+            .returning(FacebookDelivery.id)
+        )
+        manual = await db.execute(
+            update(FacebookDelivery)
+            .where(
+                FacebookDelivery.status == FacebookDeliveryStatus.publishing,
+                FacebookDelivery.scheduled_at.is_(None),
+            )
+            .values(
+                status=FacebookDeliveryStatus.failed,
+                error_message="Publication was interrupted by a backend restart. Retry when ready.",
+            )
+            .returning(FacebookDelivery.id)
+        )
+        recovered = len(list(scheduled.scalars())) + len(list(manual.scalars()))
+        await db.commit()
+    if recovered:
+        logger.warning("Recovered %s interrupted Facebook deliveries", recovered)
+    return recovered
+
+
 async def run_facebook_scheduler(stop_event: asyncio.Event) -> None:
+    await recover_interrupted_facebook_deliveries()
     while not stop_event.is_set():
         now = datetime.now(timezone.utc)
         async with SessionLocal() as db:
