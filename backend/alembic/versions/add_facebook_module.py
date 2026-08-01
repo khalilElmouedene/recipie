@@ -19,6 +19,31 @@ depends_on = None
 def upgrade():
     bind = op.get_bind()
 
+    # The container intentionally runs Base.metadata.create_all() before Alembic
+    # so a fresh installation has the original baseline schema. Existing
+    # migrations therefore treat tables created from current metadata as
+    # already applied. Keep the Facebook migration consistent with that
+    # bootstrap strategy instead of attempting to create the same tables twice.
+    facebook_tables = {
+        "facebook_projects",
+        "facebook_pages",
+        "facebook_spy_rows",
+        "facebook_contents",
+        "facebook_deliveries",
+    }
+    existing_tables = {
+        table_name
+        for table_name in facebook_tables
+        if bind.dialect.has_table(bind, table_name)
+    }
+    if existing_tables:
+        if existing_tables != facebook_tables:
+            missing = ", ".join(sorted(facebook_tables - existing_tables))
+            raise RuntimeError(
+                "Partial Facebook schema detected; missing tables: " + missing
+            )
+        return
+
     comment_mode = postgresql.ENUM(
         "full_recipe", "full_recipe_url", name="facebook_comment_mode"
     )

@@ -18,6 +18,7 @@ import {
   Image as ImageIcon,
   KeyRound,
   Loader2,
+  MessageSquare,
   MessageSquareText,
   MonitorPlay,
   MoreHorizontal,
@@ -47,9 +48,10 @@ import {
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
 import FacebookWebsiteSettings from "@/components/facebook/FacebookWebsiteSettings";
+import FacebookAiPromptSettings from "@/components/facebook/FacebookAiPromptSettings";
 
 type MainTab = "calendar" | "settings";
-type SettingsTab = "website" | "pages" | "keys" | "prompts";
+type SettingsTab = "website" | "pages" | "keys" | "ai_prompts" | "video_prompts";
 
 const STATUS_STYLE: Record<string, string> = {
   processing: "border-sky-800/50 bg-sky-950/30 text-sky-300",
@@ -638,7 +640,8 @@ function FacebookSettings({
     { key: "website" as SettingsTab, label: "Website", icon: Globe2 },
     { key: "pages" as SettingsTab, label: "Facebook Pages", icon: Users },
     { key: "keys" as SettingsTab, label: "API Keys", icon: KeyRound },
-    { key: "prompts" as SettingsTab, label: "Video Prompts", icon: MessageSquareText },
+    { key: "ai_prompts" as SettingsTab, label: "AI Prompts", icon: MessageSquare },
+    { key: "video_prompts" as SettingsTab, label: "Video Prompts", icon: MessageSquareText },
   ];
   return (
     <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
@@ -666,7 +669,8 @@ function FacebookSettings({
           <FacebookPagesSettings project={project} pages={pages} onRefresh={onRefresh} onProject={onProject} />
         )}
         {activeTab === "keys" && <FacebookKeysSettings contentProjectId={project.content_project_id} />}
-        {activeTab === "prompts" && <FacebookPromptSettings contentProjectId={project.content_project_id} />}
+        {activeTab === "ai_prompts" && <FacebookAiPromptSettings contentProjectId={project.content_project_id} />}
+        {activeTab === "video_prompts" && <FacebookVideoPromptSettings contentProjectId={project.content_project_id} />}
       </div>
     </div>
   );
@@ -1125,7 +1129,7 @@ function FacebookKeysSettings({ contentProjectId }: { contentProjectId: string }
 
 const FACEBOOK_PROMPT_KEYS = ["facebook_video_script", "facebook_recipe_card"];
 
-function FacebookPromptSettings({ contentProjectId }: { contentProjectId: string }) {
+function FacebookVideoPromptSettings({ contentProjectId }: { contentProjectId: string }) {
   const toast = useToast();
   const [prompts, setPrompts] = useState<PromptOut[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
