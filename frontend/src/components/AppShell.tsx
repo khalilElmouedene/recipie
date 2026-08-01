@@ -10,7 +10,7 @@ import { ConfirmProvider } from "@/components/ConfirmModal";
 import { JobActivityProvider } from "@/contexts/JobActivityContext";
 import JobActivityCenter from "./JobActivityCenter";
 
-const PUBLIC = ["/login", "/register", "/auth/google/callback", "/setup-password", "/forgot-password", "/reset-password"];
+const PUBLIC = ["/login", "/register", "/auth/google/callback", "/facebook/callback", "/setup-password", "/forgot-password", "/reset-password"];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();

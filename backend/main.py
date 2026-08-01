@@ -18,7 +18,7 @@ from app.config import settings
 from app.database import init_db, SessionLocal
 from app.services.prompts import DEFAULT_PROMPTS
 
-UPLOADS_DIR = Path("/app/uploads")
+UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "/app/uploads"))
 
 # Prompts that must always match the latest code default.
 # If the DB value is outdated (missing the uid/group structure), it gets reset.
@@ -76,6 +76,8 @@ async def lifespan(app: FastAPI):
     from app.services.threads_media_cleanup_scheduler import run_threads_media_cleanup_scheduler
     from app.services.auto_spy_scraper import run_auto_spy_scheduler
     from app.services.job_email_notifications import run_job_email_notifier
+    from app.services.facebook_generation import facebook_generation_manager
+    from app.services.facebook_publisher import run_facebook_scheduler
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(run_publish_scheduler(stop_event))
     retention_task = asyncio.create_task(run_image_retention_scheduler(stop_event))
@@ -84,6 +86,8 @@ async def lifespan(app: FastAPI):
     threads_cleanup_task = asyncio.create_task(run_threads_media_cleanup_scheduler(stop_event))
     auto_spy_task = asyncio.create_task(run_auto_spy_scheduler(stop_event))
     job_email_task = asyncio.create_task(run_job_email_notifier(stop_event))
+    facebook_scheduler_task = asyncio.create_task(run_facebook_scheduler(stop_event))
+    await facebook_generation_manager.resume_pending()
     yield
     stop_event.set()
     await scheduler_task
@@ -93,6 +97,7 @@ async def lifespan(app: FastAPI):
     await threads_cleanup_task
     await auto_spy_task
     await job_email_task
+    await facebook_scheduler_task
 
 
 _debug = os.getenv("APP_ENV", "production").lower() != "production"
@@ -166,12 +171,14 @@ from app.routes.pinterest import router as pinterest_router
 from app.routes.settings import router as settings_router
 from app.routes.pin_designer_templates import router as pin_designer_templates_router
 from app.routes.threads import router as threads_router
+from app.routes.facebook import router as facebook_router
 from app.routes.spy_sheet import router as spy_sheet_router
 from app.routes.auto_spy import router as auto_spy_router
 from app.routes.audit_logs import router as audit_logs_router
 from app.routes.analytics import router as analytics_router
 from app.ws.logs import router as ws_router
 
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 app.mount("/api/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="api_uploads")
 
@@ -187,6 +194,7 @@ app.include_router(pinterest_router)
 app.include_router(settings_router)
 app.include_router(pin_designer_templates_router)
 app.include_router(threads_router)
+app.include_router(facebook_router)
 app.include_router(spy_sheet_router)
 app.include_router(auto_spy_router)
 app.include_router(audit_logs_router)

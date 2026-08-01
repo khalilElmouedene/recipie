@@ -468,6 +468,151 @@ class ThreadsPost(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+# ── Facebook ──────────────────────────────────────────────────────────────────
+
+class FacebookContentStatus(str, enum.Enum):
+    processing = "processing"
+    ready = "ready"
+    failed = "failed"
+
+
+class FacebookDeliveryStatus(str, enum.Enum):
+    processing = "processing"
+    draft = "draft"
+    scheduled = "scheduled"
+    publishing = "publishing"
+    published = "published"
+    failed = "failed"
+
+
+class FacebookCommentMode(str, enum.Enum):
+    full_recipe = "full_recipe"
+    full_recipe_url = "full_recipe_url"
+
+
+class FacebookProject(Base):
+    """Facebook workspace backed by a regular content Project.
+
+    The linked project lets Facebook reuse the existing Site, Prompt,
+    ProjectCredential, Recipe, Midjourney, article and WordPress pipelines.
+    """
+    __tablename__ = "facebook_projects"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    content_project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    app_secret: Mapped[str | None] = mapped_column(Text, nullable=True)  # encrypted
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class FacebookPage(Base):
+    __tablename__ = "facebook_pages"
+    __table_args__ = (
+        UniqueConstraint("project_id", "facebook_page_id", name="uq_facebook_project_page"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("facebook_projects.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    facebook_page_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    picture_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_token: Mapped[str] = mapped_column(Text, nullable=False)  # encrypted
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    comment_mode: Mapped[FacebookCommentMode] = mapped_column(
+        SAEnum(FacebookCommentMode, name="facebook_comment_mode"),
+        nullable=False, default=FacebookCommentMode.full_recipe,
+    )
+    publish_start_time: Mapped[str] = mapped_column(String(5), nullable=False, default="12:00")
+    publish_end_time: Mapped[str] = mapped_column(String(5), nullable=False, default="19:00")
+    max_posts_per_day: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=180)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class FacebookSpyRow(Base):
+    __tablename__ = "facebook_spy_rows"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("facebook_projects.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    direct_link: Mapped[str] = mapped_column(Text, nullable=False)
+    post_title: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class FacebookContent(Base):
+    """Generated assets shared by every connected Facebook page."""
+    __tablename__ = "facebook_contents"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("facebook_projects.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    recipe_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("recipes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source_video_url: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    screenshot_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processed_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generated_images: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    generated_article: Mapped[str | None] = mapped_column(Text, nullable=True)
+    article_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[FacebookContentStatus] = mapped_column(
+        SAEnum(FacebookContentStatus, name="facebook_content_status"),
+        nullable=False, default=FacebookContentStatus.processing,
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class FacebookDelivery(Base):
+    """One publication of shared content to one connected Facebook page."""
+    __tablename__ = "facebook_deliveries"
+    __table_args__ = (
+        UniqueConstraint("content_id", "page_id", name="uq_facebook_content_page"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    content_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("facebook_contents.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    page_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("facebook_pages.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    status: Mapped[FacebookDeliveryStatus] = mapped_column(
+        SAEnum(FacebookDeliveryStatus, name="facebook_delivery_status"),
+        nullable=False, default=FacebookDeliveryStatus.processing,
+    )
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    facebook_post_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    first_comment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class SystemCleanupState(Base):
     """Singleton tracking the last time the system-wide automatic cleanup ran."""
     __tablename__ = "system_cleanup_state"

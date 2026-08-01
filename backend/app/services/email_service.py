@@ -4,6 +4,7 @@ import asyncio
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from functools import partial
+import html
 
 from ..config import settings
 
@@ -82,3 +83,29 @@ async def send_project_invite_email(
     </div>
     """
     await send_email(to_email, subject, html)
+
+
+async def send_facebook_spy_sheet_low_email(
+    to_email: str,
+    full_name: str,
+    project_name: str,
+    remaining_rows: int,
+) -> None:
+    safe_name = html.escape(full_name or "there")
+    safe_project = html.escape(project_name)
+    plural = "s" if remaining_rows != 1 else ""
+    await send_email(
+        to_email,
+        f"Facebook Spy Sheet is running low - {project_name}",
+        f"""
+        <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#111827">
+          <h2 style="color:#1877f2">Your Facebook Spy Sheet needs more data</h2>
+          <p>Hi {safe_name},</p>
+          <p>
+            The Spy Sheet for <strong>{safe_project}</strong> has
+            <strong>{remaining_rows}</strong> row{plural} remaining.
+          </p>
+          <p>Add more video links and post titles now so the generation queue does not run empty.</p>
+        </div>
+        """,
+    )

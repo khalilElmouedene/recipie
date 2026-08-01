@@ -411,6 +411,35 @@ Artikel:
         "value": "Air Fryer Dinners & Snacks\n30-Minute Weeknight Meals\nBrunch & Breakfast Bakes\nDesserts & Chaos Cakes\nPickle Fix (Dill-icious Recipes)\nRebel Floats & Fun Drinks\nCharcuterie & Party Boards\nOne-Pot & Casserole Comforts\nPasta & Pizza Night\nBBQ & Grilling Classics\nHealthy Salads & Veggie Sides\nSlow Cooker & Instant Pot Comforts\nBread & Pastry Workshop\nProtein-Packed Lunch Prep\nSauces, Dips & Seasonings\nSoups, Stews & Chowders\nCanning, Ferments & Pickles\nKitchen Hacks & How-To Guides\nHoliday & Seasonal Recipes\nBudget-Friendly & 5-Ingredient Meals\nKid-Friendly Snacks & Lunches",
         "description": "Pinterest boards list - one board name per line, used as {boards_list} in the pinterest_board prompt",
     },
+    "facebook_video_script": {
+        "value": """Write a hooked, viral Facebook recipe video voice-over for:
+
+{recipe_title}
+
+Requirements:
+- About 8 seconds when spoken
+- Start with a strong hook
+- Conversational, natural human tone
+- Make viewers curious
+- Mention that the full recipe is in the first comment
+- Short sentences
+- No emojis
+- No hashtags
+
+Return only the voice-over script.""",
+        "description": "Facebook video voice-over - placeholder: {recipe_title}",
+    },
+    "facebook_recipe_card": {
+        "value": """Transform this exact food screenshot into a premium infographic recipe card.
+
+Keep the exact dish, camera angle, composition, plating, and food styling.
+Add only an elegant recipe-card layout, an ingredients section, and realistic shadows.
+Use a premium food-magazine look, vertical composition, and crisp readable typography.
+
+Recipe title:
+{recipe_title}""",
+        "description": "Facebook recipe-card image edit - placeholder: {recipe_title}",
+    },
 }
 
 

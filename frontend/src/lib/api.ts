@@ -746,6 +746,134 @@ export const api = {
   deleteThreadsPost: (postId: string) =>
     request<void>(`/api/threads-posts/${postId}`, { method: "DELETE" }),
 
+  // -- Facebook Projects ----------------------------------
+  getFacebookProjects: () =>
+    request<FacebookProjectOut[]>("/api/facebook-projects"),
+  createFacebookProject: (data: {
+    name: string;
+    description: string;
+    app_id: string;
+    app_secret: string;
+  }) =>
+    request<FacebookProjectOut>("/api/facebook-projects", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  getFacebookProject: (projectId: string) =>
+    request<FacebookProjectOut>(`/api/facebook-projects/${projectId}`),
+  updateFacebookProject: (
+    projectId: string,
+    data: Partial<{ name: string; description: string; app_id: string; app_secret: string }>,
+  ) =>
+    request<FacebookProjectOut>(`/api/facebook-projects/${projectId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteFacebookProject: (projectId: string) =>
+    request<void>(`/api/facebook-projects/${projectId}`, { method: "DELETE" }),
+
+  // -- Facebook Pages -------------------------------------
+  getFacebookPages: (projectId: string) =>
+    request<FacebookPageOut[]>(`/api/facebook-projects/${projectId}/pages`),
+  getFacebookOAuthUrl: (
+    projectId: string,
+    commentMode: FacebookCommentMode,
+  ) =>
+    request<{ url: string }>(
+      `/api/facebook/oauth/url?project_id=${projectId}&comment_mode=${commentMode}`,
+    ),
+  connectFacebookPages: (data: { code: string; state: string }) =>
+    request<FacebookPageOut[]>("/api/facebook/oauth/callback", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  addFacebookPageByToken: (
+    projectId: string,
+    accessToken: string,
+    commentMode: FacebookCommentMode,
+  ) =>
+    request<FacebookPageOut>(`/api/facebook-projects/${projectId}/pages/token`, {
+      method: "POST",
+      body: JSON.stringify({ access_token: accessToken, comment_mode: commentMode }),
+    }),
+  updateFacebookPage: (
+    pageId: string,
+    data: Partial<{
+      comment_mode: FacebookCommentMode;
+      publish_start_time: string;
+      publish_end_time: string;
+      max_posts_per_day: number;
+      interval_minutes: number;
+      timezone: string;
+    }>,
+  ) =>
+    request<FacebookPageOut>(`/api/facebook-pages/${pageId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteFacebookPage: (pageId: string) =>
+    request<void>(`/api/facebook-pages/${pageId}`, { method: "DELETE" }),
+
+  // -- Facebook Spy Sheet / Generation --------------------
+  getFacebookSpyRows: (projectId: string) =>
+    request<FacebookSpyRowOut[]>(`/api/facebook-projects/${projectId}/spy-sheet`),
+  createFacebookSpyRow: (
+    projectId: string,
+    data: { direct_link: string; post_title: string },
+  ) =>
+    request<FacebookSpyRowOut>(`/api/facebook-projects/${projectId}/spy-sheet`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateFacebookSpyRow: (
+    rowId: string,
+    data: Partial<{ direct_link: string; post_title: string }>,
+  ) =>
+    request<FacebookSpyRowOut>(`/api/facebook-spy-rows/${rowId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteFacebookSpyRow: (rowId: string) =>
+    request<void>(`/api/facebook-spy-rows/${rowId}`, { method: "DELETE" }),
+  uploadFacebookVideo: async (file: File): Promise<{ url: string }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`${API_URL}/api/facebook/upload-video`, {
+      method: "POST",
+      body: formData,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(typeof err.detail === "string" ? err.detail : "Video upload failed");
+    }
+    return res.json();
+  },
+  startFacebookGeneration: (
+    projectId: string,
+    data: {
+      row_ids: string[];
+      schedule: boolean;
+      start_at?: string;
+      page_ids?: string[];
+    },
+  ) =>
+    request<FacebookGenerationStartOut>(`/api/facebook-projects/${projectId}/generate`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  getFacebookContents: (projectId: string) =>
+    request<FacebookContentOut[]>(`/api/facebook-projects/${projectId}/contents`),
+  scheduleFacebookDelivery: (deliveryId: string, scheduledAt: string | null) =>
+    request<FacebookDeliveryOut>(`/api/facebook-deliveries/${deliveryId}/schedule`, {
+      method: "PATCH",
+      body: JSON.stringify({ scheduled_at: scheduledAt }),
+    }),
+  publishFacebookDelivery: (deliveryId: string) =>
+    request<{ ok: boolean }>(`/api/facebook-deliveries/${deliveryId}/publish`, {
+      method: "POST",
+    }),
+
   // -- Cleanup Config -------------------------------------
   getCleanupConfig: () =>
     request<CleanupConfigOut>("/api/settings/cleanup-config"),
@@ -1307,5 +1435,87 @@ export interface ThreadsPostOut {
   threads_post_id: string | null;
   error_message: string | null;
   created_at: string;
+}
+
+export type FacebookCommentMode = "full_recipe" | "full_recipe_url";
+export type FacebookContentStatus = "processing" | "ready" | "failed";
+export type FacebookDeliveryStatus =
+  | "processing"
+  | "draft"
+  | "scheduled"
+  | "publishing"
+  | "published"
+  | "failed";
+
+export interface FacebookProjectOut {
+  id: string;
+  owner_id: string;
+  content_project_id: string;
+  name: string;
+  description: string;
+  app_id: string | null;
+  has_app_secret: boolean;
+  page_count: number;
+  content_count: number;
+  has_website: boolean;
+  created_at: string;
+}
+
+export interface FacebookPageOut {
+  id: string;
+  project_id: string;
+  facebook_page_id: string;
+  name: string;
+  picture_url: string | null;
+  token_expires_at: string | null;
+  comment_mode: FacebookCommentMode;
+  publish_start_time: string;
+  publish_end_time: string;
+  max_posts_per_day: number;
+  interval_minutes: number;
+  timezone: string;
+  created_at: string;
+}
+
+export interface FacebookSpyRowOut {
+  id: string;
+  project_id: string;
+  direct_link: string;
+  post_title: string;
+  created_at: string;
+}
+
+export interface FacebookDeliveryOut {
+  id: string;
+  page_id: string;
+  page_name: string;
+  status: FacebookDeliveryStatus;
+  scheduled_at: string | null;
+  published_at: string | null;
+  facebook_post_id: string | null;
+  error_message: string | null;
+}
+
+export interface FacebookContentOut {
+  id: string;
+  project_id: string;
+  title: string;
+  source_video_url: string;
+  screenshot_url: string | null;
+  processed_video_url: string | null;
+  generated_images: string[];
+  generated_article: string | null;
+  article_url: string | null;
+  status: FacebookContentStatus;
+  error_message: string | null;
+  created_at: string;
+  deliveries: FacebookDeliveryOut[];
+}
+
+export interface FacebookGenerationStartOut {
+  content_ids: string[];
+  removed_rows: number;
+  remaining_rows: number;
+  low_queue_email_sent: boolean;
 }
 

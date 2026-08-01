@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     threads_app_secret: str = ""
     threads_redirect_uri: str = "http://localhost:3000/threads/callback"
 
+    # Facebook Pages OAuth / Graph API
+    facebook_app_id: str = ""
+    facebook_app_secret: str = ""
+    facebook_redirect_uri: str = "http://localhost:3000/facebook/callback"
+    facebook_graph_version: str = "v24.0"
+
     # Cloudinary
     cloudinary_cloud_name: str = ""
     cloudinary_api_key: str = ""
