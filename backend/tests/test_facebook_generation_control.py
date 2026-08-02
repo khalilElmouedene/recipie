@@ -6,10 +6,13 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from fastapi import BackgroundTasks
+
 from app.db_models import FacebookContentStatus, FacebookSpyRow
 from app.routes.facebook import (
     cancel_facebook_generation,
     delete_facebook_content,
+    publish_facebook_delivery_now,
     replace_facebook_video_and_retry,
     retry_facebook_generation,
 )
@@ -343,6 +346,33 @@ class FacebookDeleteGenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.commits, 1)
         cleanup.assert_awaited_once()
         self.assertTrue(cleanup.await_args.kwargs["delete_source"])
+
+
+class FacebookPublicationQueueTests(unittest.IsolatedAsyncioTestCase):
+    async def test_manual_publication_is_claimed_before_background_job_is_started(self):
+        owner_id = uuid.uuid4()
+        delivery_id = uuid.uuid4()
+        session = _CancelSession(
+            [
+                _Result(scalar=owner_id),
+                _Result(scalar=delivery_id),
+            ]
+        )
+        background_tasks = BackgroundTasks()
+
+        result = await publish_facebook_delivery_now(
+            delivery_id,
+            background_tasks,
+            SimpleNamespace(id=owner_id),
+            session,
+        )
+
+        self.assertEqual(result, {"ok": True, "status": "publishing"})
+        self.assertEqual(session.commits, 1)
+        self.assertEqual(len(background_tasks.tasks), 1)
+        queued = background_tasks.tasks[0]
+        self.assertEqual(queued.args, (delivery_id,))
+        self.assertTrue(queued.kwargs["already_claimed"])
 
 
 if __name__ == "__main__":

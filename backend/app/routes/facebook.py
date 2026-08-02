@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from sqlalchemy import delete as sql_delete, func, select, update
@@ -1601,9 +1601,13 @@ async def schedule_facebook_delivery(
     )
 
 
-@router.post("/facebook-deliveries/{delivery_id}/publish")
+@router.post(
+    "/facebook-deliveries/{delivery_id}/publish",
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def publish_facebook_delivery_now(
     delivery_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
@@ -1618,7 +1622,31 @@ async def publish_facebook_delivery_now(
         raise HTTPException(status_code=404, detail="Facebook delivery not found")
     if owner_id != user.id:
         raise HTTPException(status_code=403, detail="Not the owner of this Facebook project")
-    success = await publish_facebook_delivery(delivery_id)
-    if not success:
-        raise HTTPException(status_code=400, detail="Facebook publication failed.")
-    return {"ok": True}
+    claimed = await db.execute(
+        update(FacebookDelivery)
+        .where(
+            FacebookDelivery.id == delivery_id,
+            FacebookDelivery.status.in_(
+                [
+                    FacebookDeliveryStatus.draft,
+                    FacebookDeliveryStatus.scheduled,
+                    FacebookDeliveryStatus.failed,
+                ]
+            ),
+        )
+        .values(status=FacebookDeliveryStatus.publishing, error_message=None)
+        .returning(FacebookDelivery.id)
+    )
+    if claimed.scalar_one_or_none() is None:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This Facebook publication is already running or completed.",
+        )
+    await db.commit()
+    background_tasks.add_task(
+        publish_facebook_delivery,
+        delivery_id,
+        already_claimed=True,
+    )
+    return {"ok": True, "status": "publishing"}

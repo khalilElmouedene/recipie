@@ -450,27 +450,32 @@ async def _ensure_article_published(content_id: uuid.UUID) -> str:
         return article_url
 
 
-async def publish_facebook_delivery(delivery_id: uuid.UUID) -> bool:
-    async with SessionLocal() as db:
-        claimed = await db.execute(
-            update(FacebookDelivery)
-            .where(
-                FacebookDelivery.id == delivery_id,
-                FacebookDelivery.status.in_(
-                    [
-                        FacebookDeliveryStatus.draft,
-                        FacebookDeliveryStatus.scheduled,
-                        FacebookDeliveryStatus.failed,
-                    ]
-                ),
+async def publish_facebook_delivery(
+    delivery_id: uuid.UUID,
+    *,
+    already_claimed: bool = False,
+) -> bool:
+    if not already_claimed:
+        async with SessionLocal() as db:
+            claimed = await db.execute(
+                update(FacebookDelivery)
+                .where(
+                    FacebookDelivery.id == delivery_id,
+                    FacebookDelivery.status.in_(
+                        [
+                            FacebookDeliveryStatus.draft,
+                            FacebookDeliveryStatus.scheduled,
+                            FacebookDeliveryStatus.failed,
+                        ]
+                    ),
+                )
+                .values(status=FacebookDeliveryStatus.publishing, error_message=None)
+                .returning(FacebookDelivery.id)
             )
-            .values(status=FacebookDeliveryStatus.publishing, error_message=None)
-            .returning(FacebookDelivery.id)
-        )
-        if claimed.scalar_one_or_none() is None:
-            await db.rollback()
-            return False
-        await db.commit()
+            if claimed.scalar_one_or_none() is None:
+                await db.rollback()
+                return False
+            await db.commit()
 
     try:
         async with SessionLocal() as db:

@@ -24,6 +24,7 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  Radio,
   RefreshCw,
   RotateCcw,
   Save,
@@ -217,6 +218,13 @@ export default function FacebookProjectPage() {
               Generation Jobs
             </Link>
             <Link
+              href={`/facebook/${project.id}/publishing-jobs`}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900/70 px-5 py-3 text-sm font-semibold text-slate-300 transition hover:border-[#1877f2]/40 hover:bg-[#1877f2]/10 hover:text-[#8bbcff]"
+            >
+              <Radio size={17} />
+              Publication Jobs
+            </Link>
+            <Link
               href={`/facebook/${project.id}/spy-sheet`}
               className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#1877f2]/45 bg-[#1877f2]/10 px-5 py-3 text-sm font-semibold text-[#8bbcff] transition hover:bg-[#1877f2]/20"
             >
@@ -285,6 +293,7 @@ function FacebookCalendar({
   onRefresh: () => void;
   onOpenSettings: (tab: SettingsTab) => void;
 }) {
+  const router = useRouter();
   const [month, setMonth] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -350,8 +359,8 @@ function FacebookCalendar({
     setPublishingId(delivery.id);
     try {
       await api.publishFacebookDelivery(delivery.id);
-      toast.success(`Published to ${delivery.page_name}`);
-      onRefresh();
+      toast.success(`Publication started for ${delivery.page_name}`);
+      router.push(`/facebook/${project.id}/publishing-jobs`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Facebook publication failed");
       onRefresh();
@@ -377,15 +386,15 @@ function FacebookCalendar({
       const failedCount = results.length - publishedCount;
       if (publishedCount) {
         toast.success(
-          `Published to ${publishedCount} Facebook Page${publishedCount === 1 ? "" : "s"}.`,
+          `${publishedCount} Facebook publication job${publishedCount === 1 ? "" : "s"} started.`,
         );
       }
       if (failedCount) {
         toast.error(
-          `${failedCount} Page publication${failedCount === 1 ? "" : "s"} failed. Open Page deliveries for details.`,
+          `${failedCount} publication job${failedCount === 1 ? "" : "s"} could not be started.`,
         );
       }
-      onRefresh();
+      if (publishedCount) router.push(`/facebook/${project.id}/publishing-jobs`);
     } finally {
       setPublishingContentId(null);
     }

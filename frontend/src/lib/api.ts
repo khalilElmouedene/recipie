@@ -943,7 +943,7 @@ export const api = {
       body: JSON.stringify({ scheduled_at: scheduledAt }),
     }),
   publishFacebookDelivery: (deliveryId: string) =>
-    request<{ ok: boolean }>(`/api/facebook-deliveries/${deliveryId}/publish`, {
+    request<{ ok: boolean; status: "publishing" }>(`/api/facebook-deliveries/${deliveryId}/publish`, {
       method: "POST",
     }),
 
