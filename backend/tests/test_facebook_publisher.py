@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import unittest
 import uuid
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.config import settings
 from app.db_models import FacebookCommentMode
+from app.db_models import FacebookDeliveryStatus
 from app.services import facebook_api
 from app.services.facebook_publisher import (
+    _delete_content_video_files,
     build_first_comment,
+    cleanup_published_facebook_content_video,
     publish_facebook_delivery,
     recover_interrupted_facebook_deliveries,
 )
@@ -52,6 +57,43 @@ class _ExecutionResult:
 
     def one(self):
         return self._row
+
+
+class _CleanupResult:
+    def __init__(self, *, scalar=None, rows=None):
+        self._scalar = scalar
+        self._rows = rows or []
+
+    def scalar_one_or_none(self):
+        return self._scalar
+
+    def scalar_one(self):
+        return self._scalar
+
+    def all(self):
+        return self._rows
+
+
+class _CleanupSession:
+    def __init__(self, results: list[_CleanupResult]):
+        self._results = iter(results)
+        self.added = []
+        self.commits = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def execute(self, _statement):
+        return next(self._results)
+
+    def add(self, value):
+        self.added.append(value)
+
+    async def commit(self):
+        self.commits += 1
 
 
 class _QueuedSession:
@@ -159,11 +201,151 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(facebook_api, "publish_video", side_effect=publish_video),
             patch.object(facebook_api, "add_first_comment", side_effect=publish_comment),
+            patch(
+                "app.services.facebook_publisher.cleanup_published_facebook_content_video",
+                new=AsyncMock(return_value=False),
+            ) as cleanup,
         ):
             published = await publish_facebook_delivery(delivery_id)
 
         self.assertTrue(published)
         self.assertEqual(order, ["article", "video", "comment"])
+        cleanup.assert_awaited_once_with(content_id)
+
+
+class FacebookPublishedVideoCleanupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cleanup_waits_until_every_page_delivery_is_published(self):
+        content_id = uuid.uuid4()
+        content = SimpleNamespace(
+            id=content_id,
+            project_id=uuid.uuid4(),
+            source_video_url="https://example.com/video.mp4",
+            processed_video_url="https://example.com/uploads/facebook/processed.mp4",
+        )
+        session = _CleanupSession(
+            [
+                _CleanupResult(scalar=content),
+                _CleanupResult(
+                    rows=[
+                        (FacebookDeliveryStatus.published, datetime.now(timezone.utc)),
+                        (FacebookDeliveryStatus.scheduled, None),
+                    ]
+                ),
+            ]
+        )
+        with (
+            patch("app.services.facebook_publisher.SessionLocal", return_value=session),
+            patch(
+                "app.services.facebook_publisher._delete_content_video_files"
+            ) as delete_files,
+        ):
+            cleaned = await cleanup_published_facebook_content_video(
+                content_id,
+                retention_hours=0,
+            )
+
+        self.assertFalse(cleaned)
+        self.assertEqual(content.processed_video_url, "https://example.com/uploads/facebook/processed.mp4")
+        delete_files.assert_not_called()
+
+    async def test_cleanup_clears_video_url_after_retention_window(self):
+        now = datetime.now(timezone.utc)
+        content_id = uuid.uuid4()
+        content = SimpleNamespace(
+            id=content_id,
+            project_id=uuid.uuid4(),
+            source_video_url=f"{settings.server_base_url.rstrip('/')}/uploads/facebook/sources/source.mp4",
+            processed_video_url=(
+                f"{settings.server_base_url.rstrip('/')}/uploads/facebook/"
+                f"{content_id}/processed-video.mp4"
+            ),
+        )
+        session = _CleanupSession(
+            [
+                _CleanupResult(scalar=content),
+                _CleanupResult(
+                    rows=[
+                        (
+                            FacebookDeliveryStatus.published,
+                            now - timedelta(hours=2),
+                        )
+                    ]
+                ),
+                _CleanupResult(scalar=0),
+                _CleanupResult(scalar=0),
+            ]
+        )
+        with (
+            patch("app.services.facebook_publisher.SessionLocal", return_value=session),
+            patch(
+                "app.services.facebook_publisher._delete_content_video_files",
+                return_value=(4, 8 * 1024 * 1024, []),
+            ) as delete_files,
+        ):
+            cleaned = await cleanup_published_facebook_content_video(
+                content_id,
+                now=now,
+                retention_hours=1,
+            )
+
+        self.assertTrue(cleaned)
+        self.assertIsNone(content.processed_video_url)
+        self.assertEqual(session.commits, 1)
+        self.assertEqual(session.added[0].stage, "cleanup")
+        self.assertIn("freed 8.0 MB", session.added[0].message)
+        delete_files.assert_called_once()
+
+    def test_file_cleanup_removes_only_video_files_and_the_unshared_source(self):
+        content_id = uuid.uuid4()
+        facebook_root = MagicMock()
+        source_root = MagicMock()
+        work_dir_expression = MagicMock()
+        work_dir = MagicMock()
+        facebook_root.__truediv__.return_value = work_dir_expression
+        work_dir_expression.resolve.return_value = work_dir
+        facebook_root.resolve.return_value = facebook_root
+        source_root.resolve.return_value = source_root
+        work_dir.is_dir.return_value = True
+
+        def video_path(name: str, size: int) -> MagicMock:
+            path = MagicMock()
+            path.is_file.return_value = True
+            path.suffix = name[name.rfind(".") :]
+            path.resolve.return_value = path
+            path.stat.return_value.st_size = size
+            path.__str__.return_value = name
+            return path
+
+        work_videos = [
+            video_path("source.mp4", 2048),
+            video_path("source-silent.mp4", 2048),
+            video_path("processed-video.mp4", 2048),
+        ]
+        screenshot = video_path("first-frame.jpg", 5)
+        work_dir.iterdir.return_value = [*work_videos, screenshot]
+        processed_path = work_videos[-1]
+        source_path = video_path("uploaded-source.mp4", 1024)
+
+        with (
+            patch("app.services.facebook_publisher.FACEBOOK_UPLOADS_ROOT", facebook_root),
+            patch("app.services.facebook_publisher.FACEBOOK_SOURCE_ROOT", source_root),
+            patch(
+                "app.services.facebook_publisher._local_upload_path",
+                side_effect=[processed_path, source_path],
+            ),
+        ):
+            deleted_count, deleted_bytes, failures = _delete_content_video_files(
+                content_id,
+                source_video_url="https://example.com/uploads/facebook/sources/source.mp4",
+                processed_video_url="https://example.com/uploads/facebook/processed.mp4",
+                delete_source=True,
+            )
+
+        self.assertEqual(deleted_count, 4)
+        self.assertEqual(deleted_bytes, 7 * 1024)
+        self.assertEqual(failures, [])
+        screenshot.unlink.assert_not_called()
+        source_path.unlink.assert_called_once_with(missing_ok=True)
 
 
 if __name__ == "__main__":

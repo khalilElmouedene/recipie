@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 
 from app.config import settings
 from app.crypto import decrypt
@@ -13,10 +16,13 @@ from app.database import SessionLocal
 from app.db_models import (
     FacebookCommentMode,
     FacebookContent,
+    FacebookContentStatus,
     FacebookDelivery,
     FacebookDeliveryStatus,
+    FacebookGenerationLog,
     FacebookPage,
     FacebookProject,
+    FacebookSpyRow,
     Recipe,
     RecipeStatus,
     Site,
@@ -28,6 +34,11 @@ from app.site_credentials import get_random_wp_credentials
 logger = logging.getLogger(__name__)
 _content_locks: dict[uuid.UUID, asyncio.Lock] = {}
 _content_locks_guard = asyncio.Lock()
+UPLOADS_ROOT = Path(os.getenv("UPLOADS_DIR", "/app/uploads"))
+FACEBOOK_UPLOADS_ROOT = UPLOADS_ROOT / "facebook"
+FACEBOOK_SOURCE_ROOT = FACEBOOK_UPLOADS_ROOT / "sources"
+VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".m4v"}
+DEFAULT_VIDEO_RETENTION_HOURS = 1.0
 
 
 def build_first_comment(mode: FacebookCommentMode | str, article_url: str) -> str:
@@ -51,6 +62,256 @@ def _absolute_media_url(url: str) -> str:
 async def _content_lock(content_id: uuid.UUID) -> asyncio.Lock:
     async with _content_locks_guard:
         return _content_locks.setdefault(content_id, asyncio.Lock())
+
+
+def _video_retention_hours() -> float:
+    raw_value = os.getenv(
+        "FACEBOOK_VIDEO_RETENTION_HOURS",
+        str(DEFAULT_VIDEO_RETENTION_HOURS),
+    )
+    try:
+        return max(0.0, float(raw_value))
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid FACEBOOK_VIDEO_RETENTION_HOURS=%r; using %.1f hour",
+            raw_value,
+            DEFAULT_VIDEO_RETENTION_HOURS,
+        )
+        return DEFAULT_VIDEO_RETENTION_HOURS
+
+
+def _local_upload_path(raw_url: str | None) -> Path | None:
+    """Resolve only this application's /uploads URLs into the upload volume."""
+    if not raw_url:
+        return None
+    parsed = urlparse(raw_url)
+    if parsed.hostname:
+        server_hostname = (urlparse(settings.server_base_url).hostname or "").lower()
+        if not server_hostname or parsed.hostname.lower() != server_hostname:
+            return None
+    path = unquote(parsed.path if parsed.scheme else raw_url)
+    marker = "/uploads/"
+    if marker not in path:
+        return None
+    candidate = (UPLOADS_ROOT / path.split(marker, 1)[1]).resolve()
+    try:
+        candidate.relative_to(UPLOADS_ROOT.resolve())
+    except ValueError:
+        return None
+    return candidate
+
+
+def _delete_content_video_files(
+    content_id: uuid.UUID,
+    *,
+    source_video_url: str,
+    processed_video_url: str | None,
+    delete_source: bool,
+) -> tuple[int, int, list[str]]:
+    """Delete locally-owned videos and return count, bytes and failed paths."""
+    candidates: set[Path] = set()
+    work_dir = (FACEBOOK_UPLOADS_ROOT / str(content_id)).resolve()
+    try:
+        work_dir.relative_to(FACEBOOK_UPLOADS_ROOT.resolve())
+    except ValueError:
+        return 0, 0, [str(work_dir)]
+    if work_dir.is_dir():
+        candidates.update(
+            path.resolve()
+            for path in work_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES
+        )
+
+    processed_path = _local_upload_path(processed_video_url)
+    if processed_path is not None:
+        try:
+            processed_path.relative_to(FACEBOOK_UPLOADS_ROOT.resolve())
+            candidates.add(processed_path)
+        except ValueError:
+            pass
+
+    if delete_source:
+        source_path = _local_upload_path(source_video_url)
+        if source_path is not None:
+            try:
+                source_path.relative_to(FACEBOOK_SOURCE_ROOT.resolve())
+                candidates.add(source_path)
+            except ValueError:
+                pass
+
+    deleted_count = 0
+    deleted_bytes = 0
+    failures: list[str] = []
+    for path in candidates:
+        try:
+            exists = path.is_file()
+            size = path.stat().st_size if exists else 0
+            path.unlink(missing_ok=True)
+            if exists:
+                deleted_count += 1
+                deleted_bytes += size
+        except OSError:
+            failures.append(str(path))
+            logger.exception("Could not delete published Facebook video %s", path)
+    return deleted_count, deleted_bytes, failures
+
+
+async def cleanup_published_facebook_content_video(
+    content_id: uuid.UUID,
+    *,
+    now: datetime | None = None,
+    retention_hours: float | None = None,
+) -> bool:
+    """Delete a content video's local files after every Page delivery is published."""
+    current_time = now or datetime.now(timezone.utc)
+    retention = _video_retention_hours() if retention_hours is None else max(0.0, retention_hours)
+    async with SessionLocal() as db:
+        content = (
+            await db.execute(
+                select(FacebookContent)
+                .where(FacebookContent.id == content_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if content is None or not content.processed_video_url:
+            return False
+
+        delivery_rows = (
+            await db.execute(
+                select(FacebookDelivery.status, FacebookDelivery.published_at).where(
+                    FacebookDelivery.content_id == content_id
+                )
+            )
+        ).all()
+        if not delivery_rows or any(
+            delivery_status != FacebookDeliveryStatus.published
+            for delivery_status, _published_at in delivery_rows
+        ):
+            return False
+
+        published_times = [
+            published_at
+            for _delivery_status, published_at in delivery_rows
+            if published_at is not None
+        ]
+        if not published_times:
+            return False
+        latest_publication = max(published_times)
+        if latest_publication.tzinfo is None:
+            latest_publication = latest_publication.replace(tzinfo=timezone.utc)
+        if latest_publication > current_time - timedelta(hours=retention):
+            return False
+
+        other_content_references = int(
+            (
+                await db.execute(
+                    select(func.count(FacebookContent.id)).where(
+                        FacebookContent.id != content_id,
+                        FacebookContent.source_video_url == content.source_video_url,
+                        FacebookContent.generation_cancelled.is_(False),
+                        or_(
+                            FacebookContent.processed_video_url.is_not(None),
+                            FacebookContent.status.in_(
+                                [
+                                    FacebookContentStatus.processing,
+                                    FacebookContentStatus.failed,
+                                ]
+                            ),
+                        ),
+                    )
+                )
+            ).scalar_one()
+        )
+        spy_sheet_references = int(
+            (
+                await db.execute(
+                    select(func.count(FacebookSpyRow.id)).where(
+                        FacebookSpyRow.direct_link == content.source_video_url
+                    )
+                )
+            ).scalar_one()
+        )
+        delete_source = other_content_references == 0 and spy_sheet_references == 0
+        deleted_count, deleted_bytes, failures = await asyncio.to_thread(
+            _delete_content_video_files,
+            content.id,
+            source_video_url=content.source_video_url,
+            processed_video_url=content.processed_video_url,
+            delete_source=delete_source,
+        )
+        if failures:
+            db.add(
+                FacebookGenerationLog(
+                    project_id=content.project_id,
+                    content_id=content.id,
+                    level="warning",
+                    stage="cleanup",
+                    message=(
+                        "Published-video cleanup could not remove every file and will "
+                        "retry automatically."
+                    ),
+                )
+            )
+            await db.commit()
+            return False
+
+        content.processed_video_url = None
+        freed_mb = deleted_bytes / (1024 * 1024)
+        source_note = (
+            "unshared local source released"
+            if delete_source
+            else "shared source preserved"
+        )
+        db.add(
+            FacebookGenerationLog(
+                project_id=content.project_id,
+                content_id=content.id,
+                level="success",
+                stage="cleanup",
+                message=(
+                    f"Published-video cleanup removed {deleted_count} file(s), freed "
+                    f"{freed_mb:.1f} MB, {source_note}."
+                ),
+            )
+        )
+        await db.commit()
+    logger.info(
+        "Cleaned published Facebook content %s: %s file(s), %.1f MB",
+        content_id,
+        deleted_count,
+        freed_mb,
+    )
+    return True
+
+
+async def cleanup_published_facebook_videos(*, limit: int = 200) -> int:
+    """Clean eligible historical publications in bounded batches."""
+    async with SessionLocal() as db:
+        rows = await db.execute(
+            select(FacebookContent.id)
+            .where(
+                FacebookContent.processed_video_url.is_not(None),
+                select(FacebookDelivery.id)
+                .where(FacebookDelivery.content_id == FacebookContent.id)
+                .exists(),
+                ~select(FacebookDelivery.id)
+                .where(
+                    FacebookDelivery.content_id == FacebookContent.id,
+                    FacebookDelivery.status != FacebookDeliveryStatus.published,
+                )
+                .exists(),
+            )
+            .order_by(FacebookContent.updated_at.asc())
+            .limit(limit)
+        )
+        content_ids = list(rows.scalars().all())
+    cleaned = 0
+    for content_id in content_ids:
+        try:
+            cleaned += int(await cleanup_published_facebook_content_video(content_id))
+        except Exception:
+            logger.exception("Published Facebook video cleanup failed for %s", content_id)
+    return cleaned
 
 
 async def _ensure_article_published(content_id: uuid.UUID) -> str:
@@ -212,6 +473,15 @@ async def publish_facebook_delivery(delivery_id: uuid.UUID) -> bool:
                 )
             )
             await db.commit()
+        try:
+            await cleanup_published_facebook_content_video(content_id)
+        except Exception:
+            # Publication already succeeded. Cleanup is retried by the scheduler
+            # and must never turn a successful Facebook post into a failed one.
+            logger.exception(
+                "Deferred published-video cleanup failed for content %s",
+                content_id,
+            )
         return True
     except Exception as exc:
         logger.exception("Facebook delivery %s failed", delivery_id)
@@ -270,8 +540,14 @@ async def recover_interrupted_facebook_deliveries() -> int:
 
 async def run_facebook_scheduler(stop_event: asyncio.Event) -> None:
     await recover_interrupted_facebook_deliveries()
+    next_cleanup_at = datetime.now(timezone.utc)
     while not stop_event.is_set():
         now = datetime.now(timezone.utc)
+        if now >= next_cleanup_at:
+            cleaned = await cleanup_published_facebook_videos()
+            if cleaned:
+                logger.info("Cleaned videos for %s published Facebook content item(s)", cleaned)
+            next_cleanup_at = now + timedelta(minutes=10)
         async with SessionLocal() as db:
             rows = await db.execute(
                 select(FacebookDelivery.id)
