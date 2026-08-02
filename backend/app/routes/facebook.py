@@ -240,6 +240,15 @@ class FacebookDeliveryScheduleUpdate(BaseModel):
     scheduled_at: datetime | None = None
 
 
+class FacebookDeliveryBulkPublish(BaseModel):
+    delivery_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+
+
+class FacebookDeliveryBulkPublishOut(BaseModel):
+    queued_ids: list[uuid.UUID]
+    skipped_ids: list[uuid.UUID]
+
+
 class FacebookGenerationLogOut(BaseModel):
     id: int
     project_id: uuid.UUID
@@ -1698,6 +1707,71 @@ async def schedule_facebook_delivery(
         published_at=delivery.published_at,
         facebook_post_id=delivery.facebook_post_id,
         error_message=delivery.error_message,
+    )
+
+
+@router.post(
+    "/facebook-deliveries/publish-bulk",
+    response_model=FacebookDeliveryBulkPublishOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def publish_facebook_deliveries_bulk(
+    body: FacebookDeliveryBulkPublish,
+    background_tasks: BackgroundTasks,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    # Preserve the caller's order while preventing duplicate tasks for the same
+    # Page delivery.
+    delivery_ids = list(dict.fromkeys(body.delivery_ids))
+    rows = (
+        await db.execute(
+            select(FacebookDelivery.id, FacebookProject.owner_id)
+            .join(FacebookContent, FacebookContent.id == FacebookDelivery.content_id)
+            .join(FacebookProject, FacebookProject.id == FacebookContent.project_id)
+            .where(FacebookDelivery.id.in_(delivery_ids))
+        )
+    ).all()
+    if len(rows) != len(delivery_ids):
+        raise HTTPException(
+            status_code=404,
+            detail="One or more Facebook publications were not found.",
+        )
+    if any(owner_id != user.id for _delivery_id, owner_id in rows):
+        raise HTTPException(
+            status_code=403,
+            detail="Not the owner of one or more Facebook publications.",
+        )
+
+    claimed = await db.execute(
+        update(FacebookDelivery)
+        .where(
+            FacebookDelivery.id.in_(delivery_ids),
+            FacebookDelivery.status.in_(
+                [
+                    FacebookDeliveryStatus.draft,
+                    FacebookDeliveryStatus.scheduled,
+                    FacebookDeliveryStatus.failed,
+                ]
+            ),
+        )
+        .values(status=FacebookDeliveryStatus.publishing, error_message=None)
+        .returning(FacebookDelivery.id)
+    )
+    queued_set = set(claimed.scalars().all())
+    await db.commit()
+
+    queued_ids = [delivery_id for delivery_id in delivery_ids if delivery_id in queued_set]
+    skipped_ids = [delivery_id for delivery_id in delivery_ids if delivery_id not in queued_set]
+    for delivery_id in queued_ids:
+        background_tasks.add_task(
+            publish_facebook_delivery,
+            delivery_id,
+            already_claimed=True,
+        )
+    return FacebookDeliveryBulkPublishOut(
+        queued_ids=queued_ids,
+        skipped_ids=skipped_ids,
     )
 
 

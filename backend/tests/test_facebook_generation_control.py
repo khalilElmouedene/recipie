@@ -10,8 +10,10 @@ from fastapi import BackgroundTasks
 
 from app.db_models import FacebookContentStatus, FacebookSpyRow
 from app.routes.facebook import (
+    FacebookDeliveryBulkPublish,
     cancel_facebook_generation,
     delete_facebook_content,
+    publish_facebook_deliveries_bulk,
     publish_facebook_delivery_now,
     replace_facebook_video_and_retry,
     retry_facebook_generation,
@@ -349,6 +351,32 @@ class FacebookDeleteGenerationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FacebookPublicationQueueTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bulk_publication_claims_each_delivery_once(self):
+        owner_id = uuid.uuid4()
+        delivery_ids = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+        session = _CancelSession(
+            [
+                _Result(values=[(delivery_id, owner_id) for delivery_id in delivery_ids]),
+                _Result(values=delivery_ids[:2]),
+            ]
+        )
+        background_tasks = BackgroundTasks()
+
+        result = await publish_facebook_deliveries_bulk(
+            FacebookDeliveryBulkPublish(delivery_ids=delivery_ids),
+            background_tasks,
+            SimpleNamespace(id=owner_id),
+            session,
+        )
+
+        self.assertEqual(result.queued_ids, delivery_ids[:2])
+        self.assertEqual(result.skipped_ids, delivery_ids[2:])
+        self.assertEqual(session.commits, 1)
+        self.assertEqual(len(background_tasks.tasks), 2)
+        for queued, delivery_id in zip(background_tasks.tasks, delivery_ids[:2]):
+            self.assertEqual(queued.args, (delivery_id,))
+            self.assertTrue(queued.kwargs["already_claimed"])
+
     async def test_manual_publication_is_claimed_before_background_job_is_started(self):
         owner_id = uuid.uuid4()
         delivery_id = uuid.uuid4()

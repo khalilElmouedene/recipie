@@ -948,6 +948,11 @@ export const api = {
     request<{ ok: boolean; status: "publishing" }>(`/api/facebook-deliveries/${deliveryId}/publish`, {
       method: "POST",
     }),
+  publishFacebookDeliveriesBulk: (deliveryIds: string[]) =>
+    request<FacebookDeliveryBulkPublishOut>("/api/facebook-deliveries/publish-bulk", {
+      method: "POST",
+      body: JSON.stringify({ delivery_ids: deliveryIds }),
+    }),
 
   // -- Cleanup Config -------------------------------------
   getCleanupConfig: () =>
@@ -1589,6 +1594,11 @@ export interface FacebookDeliveryOut {
   published_at: string | null;
   facebook_post_id: string | null;
   error_message: string | null;
+}
+
+export interface FacebookDeliveryBulkPublishOut {
+  queued_ids: string[];
+  skipped_ids: string[];
 }
 
 export interface FacebookContentOut {

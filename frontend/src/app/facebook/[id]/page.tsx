@@ -109,6 +109,14 @@ function canPublishFacebookDelivery(
     && Boolean(content.article_url || content.generated_article);
 }
 
+function publishableFacebookDeliveries(content: FacebookContentOut) {
+  return content.deliveries.filter(
+    (delivery) =>
+      ["draft", "scheduled", "failed"].includes(delivery.status)
+      && canPublishFacebookDelivery(content, delivery),
+  );
+}
+
 function FacebookMark({ className = "h-5 w-5" }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={`${className} fill-current`} aria-hidden>
@@ -317,7 +325,6 @@ function FacebookCalendar({
   onRefresh: () => void;
   onOpenSettings: (tab: SettingsTab) => void;
 }) {
-  const router = useRouter();
   const [month, setMonth] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -333,6 +340,8 @@ function FacebookCalendar({
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [postQuery, setPostQuery] = useState("");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
+  const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
+  const [bulkPublishing, setBulkPublishing] = useState(false);
   const toast = useToast();
   const confirm = useConfirm();
   const selectedContentId = selectedContent?.id;
@@ -367,6 +376,50 @@ function FacebookCalendar({
       return true;
     });
   }, [contents, postFilter, postQuery]);
+
+  const selectableVisibleIds = useMemo(
+    () => visibleContents
+      .filter((content) => publishableFacebookDeliveries(content).length > 0)
+      .map((content) => content.id),
+    [visibleContents],
+  );
+
+  const selectedDeliveryIds = useMemo(
+    () => contents
+      .filter((content) => selectedPostIds.has(content.id))
+      .flatMap((content) => publishableFacebookDeliveries(content).map((delivery) => delivery.id)),
+    [contents, selectedPostIds],
+  );
+
+  const allSelectableVisibleSelected = selectableVisibleIds.length > 0
+    && selectableVisibleIds.every((contentId) => selectedPostIds.has(contentId));
+
+  const toggleSelectAllVisible = () => {
+    setSelectedPostIds((current) => {
+      const next = new Set(current);
+      if (allSelectableVisibleSelected) {
+        selectableVisibleIds.forEach((contentId) => next.delete(contentId));
+      } else {
+        selectableVisibleIds.forEach((contentId) => next.add(contentId));
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const available = new Set(
+      contents
+        .filter((content) => publishableFacebookDeliveries(content).length > 0)
+        .map((content) => content.id),
+    );
+    setSelectedPostIds((current) => {
+      const next = new Set([...current].filter((contentId) => available.has(contentId)));
+      if (next.size === current.size && [...next].every((contentId) => current.has(contentId))) {
+        return current;
+      }
+      return next;
+    });
+  }, [contents]);
 
   useEffect(() => {
     if (!selectedContentId) return;
@@ -417,7 +470,7 @@ function FacebookCalendar({
     try {
       await api.publishFacebookDelivery(delivery.id);
       toast.success(`Publication started for ${delivery.page_name}`);
-      router.push(`/facebook/${project.id}/publishing-jobs`);
+      onRefresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Facebook publication failed");
       onRefresh();
@@ -427,33 +480,71 @@ function FacebookCalendar({
   };
 
   const publishContent = async (content: FacebookContentOut) => {
-    const deliveries = content.deliveries.filter((delivery) =>
-      ["draft", "scheduled", "failed"].includes(delivery.status),
-    );
+    const deliveries = publishableFacebookDeliveries(content);
     if (!deliveries.length) {
       toast.warning("This post has no delivery waiting to be published.");
       return;
     }
     setPublishingContentId(content.id);
     try {
-      const results = await Promise.allSettled(
-        deliveries.map((delivery) => api.publishFacebookDelivery(delivery.id)),
+      const result = await api.publishFacebookDeliveriesBulk(
+        deliveries.map((delivery) => delivery.id),
       );
-      const publishedCount = results.filter((result) => result.status === "fulfilled").length;
-      const failedCount = results.length - publishedCount;
-      if (publishedCount) {
+      if (result.queued_ids.length) {
         toast.success(
-          `${publishedCount} Facebook publication job${publishedCount === 1 ? "" : "s"} started.`,
+          `${result.queued_ids.length} Facebook publication job${result.queued_ids.length === 1 ? "" : "s"} started.`,
         );
       }
-      if (failedCount) {
-        toast.error(
-          `${failedCount} publication job${failedCount === 1 ? "" : "s"} could not be started.`,
+      if (result.skipped_ids.length) {
+        toast.warning(
+          `${result.skipped_ids.length} publication job${result.skipped_ids.length === 1 ? " was" : "s were"} already running or completed.`,
         );
       }
-      if (publishedCount) router.push(`/facebook/${project.id}/publishing-jobs`);
+      onRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not start Facebook publication");
+      onRefresh();
     } finally {
       setPublishingContentId(null);
+    }
+  };
+
+  const publishSelected = async () => {
+    if (!selectedDeliveryIds.length) {
+      toast.warning("Select at least one post that is ready to publish or retry.");
+      return;
+    }
+    setBulkPublishing(true);
+    try {
+      const result = await api.publishFacebookDeliveriesBulk(selectedDeliveryIds);
+      if (result.queued_ids.length) {
+        toast.success(
+          `${result.queued_ids.length} Page publication${result.queued_ids.length === 1 ? "" : "s"} started from ${selectedPostIds.size} selected post${selectedPostIds.size === 1 ? "" : "s"}.`,
+        );
+      }
+      if (result.skipped_ids.length) {
+        toast.warning(
+          `${result.skipped_ids.length} publication${result.skipped_ids.length === 1 ? " was" : "s were"} skipped because the status changed.`,
+        );
+      }
+      setSelectedPostIds(new Set());
+      onRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not publish selected posts");
+      onRefresh();
+    } finally {
+      setBulkPublishing(false);
+    }
+  };
+
+  const scheduleInline = async (delivery: FacebookDeliveryOut, value: string) => {
+    try {
+      await api.scheduleFacebookDelivery(delivery.id, new Date(value).toISOString());
+      toast.success(`${delivery.page_name} publication scheduled`);
+      onRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not schedule publication");
+      throw error;
     }
   };
 
@@ -664,6 +755,41 @@ function FacebookCalendar({
               </button>
             ))}
           </div>
+          <div className="flex flex-col gap-3 border-t border-slate-800 pt-3 sm:flex-row sm:items-center sm:justify-between">
+            <label className={`inline-flex items-center gap-2.5 text-xs font-medium ${selectableVisibleIds.length ? "cursor-pointer text-slate-300" : "cursor-not-allowed text-slate-600"}`}>
+              <input
+                type="checkbox"
+                checked={allSelectableVisibleSelected}
+                disabled={!selectableVisibleIds.length || bulkPublishing}
+                onChange={toggleSelectAllVisible}
+                className="h-4 w-4 rounded border-slate-600 bg-slate-950 accent-[#1877f2]"
+              />
+              Select all publishable posts in this view
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedPostIds.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedPostIds(new Set())}
+                  disabled={bulkPublishing}
+                  className="px-2 py-2 text-xs font-medium text-slate-500 transition hover:text-white disabled:opacity-50"
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void publishSelected()}
+                disabled={!selectedDeliveryIds.length || bulkPublishing}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-xs font-semibold text-white shadow-[0_8px_24px_rgba(24,119,242,0.18)] transition hover:bg-[#2f86f6] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {bulkPublishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                {bulkPublishing
+                  ? "Starting publicationsâ€¦"
+                  : `Publish selected (${selectedPostIds.size} posts / ${selectedDeliveryIds.length} Pages)`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -679,7 +805,8 @@ function FacebookCalendar({
       ) : viewMode === "list" ? (
         visibleContents.length > 0 ? (
           <div className="mt-4 overflow-hidden rounded-[18px] border border-slate-800 bg-[#101827]">
-            <div className="hidden grid-cols-[88px_minmax(260px,1fr)_150px_220px_130px] gap-4 border-b border-slate-800 bg-slate-950/25 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600 lg:grid">
+            <div className="hidden grid-cols-[32px_72px_minmax(220px,1fr)_120px_190px_280px] gap-4 border-b border-slate-800 bg-slate-950/25 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600 lg:grid">
+              <span>Select</span>
               <span>Media</span>
               <span>Post</span>
               <span>Generation</span>
@@ -691,9 +818,24 @@ function FacebookCalendar({
                 <FacebookPostListRow
                   key={content.id}
                   content={content}
+                  selected={selectedPostIds.has(content.id)}
+                  selectable={publishableFacebookDeliveries(content).length > 0}
+                  publishing={publishingContentId === content.id}
+                  publishingDeliveryId={publishingId}
                   retrying={retryingId === content.id}
+                  replacing={replacingId === content.id}
                   deleting={deletingId === content.id}
+                  onSelect={(selected) => setSelectedPostIds((current) => {
+                    const next = new Set(current);
+                    if (selected) next.add(content.id);
+                    else next.delete(content.id);
+                    return next;
+                  })}
+                  onPublishAll={() => void publishContent(content)}
+                  onPublishDelivery={(delivery) => void publish(delivery)}
+                  onScheduleDelivery={scheduleInline}
                   onRetry={() => void retryGeneration(content)}
+                  onReplace={(file) => void replaceVideoAndRetry(content, file)}
                   onDelete={() => void deleteGeneration(content)}
                   onOpen={() => setSelectedContent(content)}
                 />
@@ -779,19 +921,43 @@ function FacebookCalendar({
 
 function FacebookPostListRow({
   content,
+  selected,
+  selectable,
+  publishing,
+  publishingDeliveryId,
   retrying,
+  replacing,
   deleting,
+  onSelect,
+  onPublishAll,
+  onPublishDelivery,
+  onScheduleDelivery,
   onRetry,
+  onReplace,
   onDelete,
   onOpen,
 }: {
   content: FacebookContentOut;
+  selected: boolean;
+  selectable: boolean;
+  publishing: boolean;
+  publishingDeliveryId: string | null;
   retrying: boolean;
+  replacing: boolean;
   deleting: boolean;
+  onSelect: (selected: boolean) => void;
+  onPublishAll: () => void;
+  onPublishDelivery: (delivery: FacebookDeliveryOut) => void;
+  onScheduleDelivery: (delivery: FacebookDeliveryOut, value: string) => Promise<void>;
   onRetry: () => void;
+  onReplace: (file: File) => void;
   onDelete: () => void;
   onOpen: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const [scheduleDeliveryId, setScheduleDeliveryId] = useState<string | null>(null);
+  const [scheduleValue, setScheduleValue] = useState("");
+  const [savingSchedule, setSavingSchedule] = useState(false);
   const publishedCount = content.deliveries.filter((delivery) => delivery.status === "published").length;
   const failedCount = content.deliveries.filter((delivery) => delivery.status === "failed").length;
   const pendingCount = content.deliveries.filter((delivery) =>
@@ -801,54 +967,222 @@ function FacebookPostListRow({
     .map((delivery) => delivery.scheduled_at)
     .filter((value): value is string => Boolean(value))
     .sort()[0] || null;
+  const publishableDeliveries = publishableFacebookDeliveries(content);
+  const retryOnly = publishableDeliveries.length > 0
+    && publishableDeliveries.every((delivery) => delivery.status === "failed");
+
+  const editSchedule = (delivery: FacebookDeliveryOut) => {
+    const fiveMinutesFromNow = new Date(Date.now() + 5 * 60_000);
+    setScheduleDeliveryId(delivery.id);
+    setScheduleValue(localDateTimeInput(delivery.scheduled_at || fiveMinutesFromNow));
+    setExpanded(true);
+  };
+
+  const saveInlineSchedule = async (delivery: FacebookDeliveryOut) => {
+    if (!scheduleValue) return;
+    setSavingSchedule(true);
+    try {
+      await onScheduleDelivery(delivery, scheduleValue);
+      setScheduleDeliveryId(null);
+      setScheduleValue("");
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
 
   return (
-    <article className="grid gap-4 px-4 py-4 transition hover:bg-slate-900/35 lg:grid-cols-[88px_minmax(260px,1fr)_150px_220px_130px] lg:items-center">
-      <button type="button" onClick={onOpen} className="relative h-20 w-20 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 text-slate-600">
-        {content.screenshot_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={content.screenshot_url} alt="" className="h-full w-full object-cover" />
-        ) : (
-          <span className="grid h-full place-items-center"><Video size={20} /></span>
-        )}
-        {content.processed_video_url && <span className="absolute bottom-1.5 right-1.5 grid h-5 w-5 place-items-center rounded-full bg-black/75 text-white"><Video size={10} /></span>}
-      </button>
+    <article className={`transition ${selected ? "bg-[#1877f2]/[0.06]" : "hover:bg-slate-900/35"}`}>
+      <div className="grid gap-4 px-4 py-4 lg:grid-cols-[32px_72px_minmax(220px,1fr)_120px_190px_280px] lg:items-center">
+        <label className={`${selectable ? "cursor-pointer" : "cursor-not-allowed"}`} title={selectable ? "Select this post for bulk publication" : "No Page delivery is ready to publish"}>
+          <input
+            type="checkbox"
+            checked={selected}
+            disabled={!selectable || publishing || deleting}
+            onChange={(event) => onSelect(event.target.checked)}
+            className="h-4 w-4 rounded border-slate-600 bg-slate-950 accent-[#1877f2] disabled:opacity-30"
+          />
+        </label>
 
-      <div className="min-w-0">
-        <button type="button" onClick={onOpen} className="block max-w-full text-left">
-          <h3 className="truncate text-sm font-semibold text-white transition hover:text-[#8bbcff]" title={content.title}>{content.title}</h3>
+        <button type="button" onClick={onOpen} className="relative h-16 w-16 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 text-slate-600" title="Preview generated post">
+          {content.screenshot_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={content.screenshot_url} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <span className="grid h-full place-items-center"><Video size={20} /></span>
+          )}
+          {content.processed_video_url && <span className="absolute bottom-1.5 right-1.5 grid h-5 w-5 place-items-center rounded-full bg-black/75 text-white"><Video size={10} /></span>}
         </button>
-        <p className="mt-1 text-xs text-slate-600">Created {formatDate(content.created_at)}</p>
-        {nextDate && <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-amber-300/80"><Clock3 size={11} /> Next: {formatDate(nextDate)}</p>}
-      </div>
 
-      <div>
-        <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${STATUS_STYLE[content.status]}`}>
-          {content.status}
-        </span>
-        {content.error_message && <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-red-300" title={content.error_message}>{content.error_message}</p>}
-      </div>
-
-      <div className="flex flex-wrap gap-1.5">
-        {publishedCount > 0 && <span className="rounded-md border border-emerald-900/60 bg-emerald-950/25 px-2 py-1 text-[10px] font-medium text-emerald-300">{publishedCount} published</span>}
-        {pendingCount > 0 && <span className="rounded-md border border-blue-900/60 bg-blue-950/25 px-2 py-1 text-[10px] font-medium text-blue-300">{pendingCount} pending</span>}
-        {failedCount > 0 && <span className="rounded-md border border-red-900/60 bg-red-950/25 px-2 py-1 text-[10px] font-medium text-red-300">{failedCount} failed</span>}
-        {content.deliveries.length === 0 && <span className="text-xs text-slate-600">No Page delivery</span>}
-      </div>
-
-      <div className="flex items-center gap-1 lg:justify-end">
-        {content.status === "failed" && (
-          <button type="button" onClick={onRetry} disabled={retrying || deleting} className="rounded-lg p-2 text-red-400 transition hover:bg-red-500/10 disabled:opacity-50" title="Retry generation">
-            {retrying ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />}
+        <div className="min-w-0">
+          <button type="button" onClick={onOpen} className="block max-w-full text-left" title="Preview generated post">
+            <h3 className="truncate text-sm font-semibold text-white transition hover:text-[#8bbcff]" title={content.title}>{content.title}</h3>
           </button>
-        )}
-        <button type="button" onClick={onOpen} className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-[#1877f2]/50 hover:text-[#8bbcff]">Manage</button>
-        {(content.status === "ready" || content.status === "failed") && (
-          <button type="button" onClick={onDelete} disabled={deleting || retrying} className="rounded-lg p-2 text-slate-600 transition hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50" title="Delete generation">
-            {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+          <p className="mt-1 text-xs text-slate-600">Created {formatDate(content.created_at)}</p>
+          {nextDate && <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-amber-300/80"><Clock3 size={11} /> Next: {formatDate(nextDate)}</p>}
+        </div>
+
+        <div>
+          <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${STATUS_STYLE[content.status]}`}>
+            {content.status}
+          </span>
+          {content.error_message && <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-red-300" title={content.error_message}>{content.error_message}</p>}
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          {publishedCount > 0 && <span className="rounded-md border border-emerald-900/60 bg-emerald-950/25 px-2 py-1 text-[10px] font-medium text-emerald-300">{publishedCount} published</span>}
+          {pendingCount > 0 && <span className="rounded-md border border-blue-900/60 bg-blue-950/25 px-2 py-1 text-[10px] font-medium text-blue-300">{pendingCount} pending</span>}
+          {failedCount > 0 && <span className="rounded-md border border-red-900/60 bg-red-950/25 px-2 py-1 text-[10px] font-medium text-red-300">{failedCount} failed</span>}
+          {content.deliveries.length === 0 && <span className="text-xs text-slate-600">No Page delivery</span>}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
+          {publishableDeliveries.length > 0 && (
+            <button
+              type="button"
+              onClick={onPublishAll}
+              disabled={publishing || deleting || Boolean(publishingDeliveryId)}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition disabled:opacity-50 ${retryOnly ? "border border-red-800/60 bg-red-950/30 text-red-200 hover:bg-red-900/40" : "bg-[#1877f2] text-white hover:bg-[#2f86f6]"}`}
+              title={`${retryOnly ? "Retry" : "Publish"} all available Page deliveries`}
+            >
+              {publishing ? <Loader2 size={14} className="animate-spin" /> : retryOnly ? <RotateCcw size={14} /> : <Send size={14} />}
+              {publishing ? "Startingâ€¦" : retryOnly ? "Retry Facebook" : `Publish (${publishableDeliveries.length})`}
+            </button>
+          )}
+          {content.status === "failed" && (
+            <>
+              <button type="button" onClick={onRetry} disabled={retrying || replacing || deleting} className="rounded-lg p-2 text-red-400 transition hover:bg-red-500/10 disabled:opacity-50" title="Retry generation from the same link">
+                {retrying ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />}
+              </button>
+              <label className={`rounded-lg p-2 text-red-400 transition hover:bg-red-500/10 ${replacing || retrying || deleting ? "pointer-events-none opacity-50" : "cursor-pointer"}`} title="Upload another video and retry generation">
+                {replacing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                <input
+                  type="file"
+                  accept="video/mp4,video/quicktime,video/webm"
+                  className="hidden"
+                  disabled={replacing || retrying || deleting}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) onReplace(file);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition ${expanded ? "border-[#1877f2]/60 bg-[#1877f2]/10 text-[#8bbcff]" : "border-slate-700 text-slate-300 hover:border-[#1877f2]/50 hover:text-[#8bbcff]"}`}
+          >
+            <SlidersHorizontal size={14} /> {expanded ? "Close actions" : "All actions"}
           </button>
-        )}
+          {(content.status === "ready" || content.status === "failed") && (
+            <button type="button" onClick={onDelete} disabled={deleting || retrying || publishing} className="rounded-lg p-2 text-slate-600 transition hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50" title="Delete generation">
+              {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+            </button>
+          )}
+        </div>
       </div>
+
+      {expanded && (
+        <div className="border-t border-slate-800 bg-slate-950/20 px-4 py-4 lg:pl-[136px]">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">Page actions</p>
+              <p className="mt-1 text-xs text-slate-500">Publish, retry, schedule or open each Page delivery without opening the post popup.</p>
+            </div>
+            <button type="button" onClick={onOpen} className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 transition hover:text-white">
+              <MonitorPlay size={14} /> Preview media and article
+            </button>
+          </div>
+          <div className="grid gap-2 xl:grid-cols-2">
+            {content.deliveries.map((delivery) => {
+              const canPublish = ["draft", "scheduled", "failed"].includes(delivery.status)
+                && canPublishFacebookDelivery(content, delivery);
+              const editingSchedule = scheduleDeliveryId === delivery.id;
+              return (
+                <div key={delivery.id} className="rounded-xl border border-slate-800 bg-[#0d1422] p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-xs font-semibold text-white">{delivery.page_name}</span>
+                        <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase ${STATUS_STYLE[delivery.status]}`}>{delivery.status}</span>
+                      </div>
+                      <p className="mt-1 text-[10px] text-slate-600">{formatDate(delivery.scheduled_at || delivery.published_at)}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {delivery.status === "published" && delivery.facebook_post_id && (
+                        <a
+                          href={`https://www.facebook.com/reel/${delivery.facebook_post_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-900/60 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-300 transition hover:bg-emerald-950/30"
+                        >
+                          View Reel <ExternalLink size={11} />
+                        </a>
+                      )}
+                      {canPublish && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => editSchedule(delivery)}
+                            disabled={publishing || Boolean(publishingDeliveryId)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11px] font-semibold text-slate-400 transition hover:border-amber-700/60 hover:text-amber-300 disabled:opacity-50"
+                          >
+                            <Clock3 size={12} /> Schedule
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onPublishDelivery(delivery)}
+                            disabled={publishing || Boolean(publishingDeliveryId)}
+                            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${delivery.status === "failed" ? "border border-red-800/60 bg-red-950/30 text-red-200 hover:bg-red-900/40" : "bg-[#1877f2] text-white hover:bg-[#2f86f6]"}`}
+                          >
+                            {publishingDeliveryId === delivery.id ? <Loader2 size={12} className="animate-spin" /> : delivery.status === "failed" ? <RotateCcw size={12} /> : <Send size={12} />}
+                            {delivery.status === "failed" ? "Retry" : "Publish"}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {delivery.error_message && (
+                    <p className="mt-2 rounded-lg border border-red-900/40 bg-red-950/20 px-3 py-2 text-[11px] leading-4 text-red-300">{delivery.error_message}</p>
+                  )}
+                  {editingSchedule && (
+                    <div className="mt-3 flex flex-col gap-2 border-t border-slate-800 pt-3 sm:flex-row">
+                      <input
+                        type="datetime-local"
+                        value={scheduleValue}
+                        min={localDateTimeInput(new Date())}
+                        onChange={(event) => setScheduleValue(event.target.value)}
+                        className="input-field min-w-0 flex-1 py-2 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void saveInlineSchedule(delivery)}
+                        disabled={!scheduleValue || savingSchedule}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-slate-950 transition hover:bg-amber-400 disabled:opacity-40"
+                      >
+                        {savingSchedule ? <Loader2 size={13} className="animate-spin" /> : <CalendarDays size={13} />} Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setScheduleDeliveryId(null)}
+                        disabled={savingSchedule}
+                        className="rounded-lg px-3 py-2 text-xs font-medium text-slate-500 hover:text-white disabled:opacity-40"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {content.deliveries.length === 0 && (
+              <p className="text-xs text-slate-600">No Facebook Page delivery exists for this post.</p>
+            )}
+          </div>
+        </div>
+      )}
     </article>
   );
 }

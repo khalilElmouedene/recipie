@@ -109,6 +109,11 @@ export default function FacebookPublishingJobsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkPublishing, setBulkPublishing] = useState(false);
+  const [scheduleId, setScheduleId] = useState<string | null>(null);
+  const [scheduleValue, setScheduleValue] = useState("");
+  const [savingSchedule, setSavingSchedule] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (quiet = false) => {
@@ -160,6 +165,36 @@ export default function FacebookPublishingJobsPage() {
     return true;
   }), [filter, jobs]);
 
+  const selectableVisibleIds = useMemo(
+    () => visibleJobs
+      .filter((job) =>
+        ["draft", "scheduled", "failed"].includes(job.delivery.status)
+        && canPublishFacebookDelivery(job.content, job.delivery),
+      )
+      .map((job) => job.delivery.id),
+    [visibleJobs],
+  );
+  const allSelectableVisibleSelected = selectableVisibleIds.length > 0
+    && selectableVisibleIds.every((deliveryId) => selectedIds.has(deliveryId));
+
+  useEffect(() => {
+    const available = new Set(
+      jobs
+        .filter((job) =>
+          ["draft", "scheduled", "failed"].includes(job.delivery.status)
+          && canPublishFacebookDelivery(job.content, job.delivery),
+        )
+        .map((job) => job.delivery.id),
+    );
+    setSelectedIds((current) => {
+      const next = new Set([...current].filter((deliveryId) => available.has(deliveryId)));
+      if (next.size === current.size && [...next].every((deliveryId) => current.has(deliveryId))) {
+        return current;
+      }
+      return next;
+    });
+  }, [jobs]);
+
   const queuePublication = async (job: PublicationJob) => {
     setActionId(job.delivery.id);
     try {
@@ -175,6 +210,53 @@ export default function FacebookPublishingJobsPage() {
       await load(true);
     } finally {
       setActionId(null);
+    }
+  };
+
+  const queueSelectedPublications = async () => {
+    const deliveryIds = [...selectedIds];
+    if (!deliveryIds.length) return;
+    setBulkPublishing(true);
+    try {
+      const result = await api.publishFacebookDeliveriesBulk(deliveryIds);
+      if (result.queued_ids.length) {
+        toast.success(`${result.queued_ids.length} Facebook publication${result.queued_ids.length === 1 ? "" : "s"} started.`);
+      }
+      if (result.skipped_ids.length) {
+        toast.warning(`${result.skipped_ids.length} publication${result.skipped_ids.length === 1 ? " was" : "s were"} skipped because the status changed.`);
+      }
+      setSelectedIds(new Set());
+      await load(true);
+    } catch (actionError) {
+      toast.error(actionError instanceof Error ? actionError.message : "Could not publish selected jobs");
+      await load(true);
+    } finally {
+      setBulkPublishing(false);
+    }
+  };
+
+  const editSchedule = (job: PublicationJob) => {
+    const target = job.delivery.scheduled_at
+      ? new Date(job.delivery.scheduled_at)
+      : new Date(Date.now() + 5 * 60_000);
+    const local = new Date(target.getTime() - target.getTimezoneOffset() * 60_000);
+    setScheduleId(job.delivery.id);
+    setScheduleValue(local.toISOString().slice(0, 16));
+  };
+
+  const saveSchedule = async (job: PublicationJob) => {
+    if (!scheduleValue) return;
+    setSavingSchedule(true);
+    try {
+      await api.scheduleFacebookDelivery(job.delivery.id, new Date(scheduleValue).toISOString());
+      toast.success(`${job.delivery.page_name} publication scheduled.`);
+      setScheduleId(null);
+      setScheduleValue("");
+      await load(true);
+    } catch (actionError) {
+      toast.error(actionError instanceof Error ? actionError.message : "Could not schedule publication");
+    } finally {
+      setSavingSchedule(false);
     }
   };
 
@@ -261,6 +343,39 @@ export default function FacebookPublishingJobsPage() {
             </button>
           ))}
         </div>
+        <div className="mt-3 flex flex-col gap-3 border-t border-slate-800 pt-3 sm:flex-row sm:items-center sm:justify-between">
+          <label className={`inline-flex items-center gap-2.5 text-xs font-medium ${selectableVisibleIds.length ? "cursor-pointer text-slate-300" : "cursor-not-allowed text-slate-600"}`}>
+            <input
+              type="checkbox"
+              checked={allSelectableVisibleSelected}
+              disabled={!selectableVisibleIds.length || bulkPublishing}
+              onChange={() => setSelectedIds((current) => {
+                const next = new Set(current);
+                if (allSelectableVisibleSelected) selectableVisibleIds.forEach((deliveryId) => next.delete(deliveryId));
+                else selectableVisibleIds.forEach((deliveryId) => next.add(deliveryId));
+                return next;
+              })}
+              className="h-4 w-4 rounded border-slate-600 bg-slate-950 accent-[#1877f2]"
+            />
+            Select all publishable jobs in this view
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedIds.size > 0 && (
+              <button type="button" onClick={() => setSelectedIds(new Set())} disabled={bulkPublishing} className="px-2 py-2 text-xs font-medium text-slate-500 hover:text-white disabled:opacity-50">
+                Clear
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void queueSelectedPublications()}
+              disabled={!selectedIds.size || bulkPublishing}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[#2f86f6] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {bulkPublishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              {bulkPublishing ? "Startingâ€¦" : `Publish selected (${selectedIds.size})`}
+            </button>
+          </div>
+        </div>
       </div>
 
       <section className="space-y-3">
@@ -270,14 +385,29 @@ export default function FacebookPublishingJobsPage() {
           const retryable = job.delivery.status === "failed";
           const publishable = retryable || job.delivery.status === "draft" || job.delivery.status === "scheduled";
           const canRunPublication = publishable && canPublishFacebookDelivery(job.content, job.delivery);
+          const editingSchedule = scheduleId === job.delivery.id;
           return (
-            <article key={job.delivery.id} className={`overflow-hidden rounded-xl border bg-[#101827] ${retryable ? "border-red-900/60" : "border-slate-800"}`}>
+            <article key={job.delivery.id} className={`overflow-hidden rounded-xl border bg-[#101827] ${selectedIds.has(job.delivery.id) ? "border-[#1877f2]/70 ring-1 ring-[#1877f2]/20" : retryable ? "border-red-900/60" : "border-slate-800"}`}>
               {job.delivery.status === "publishing" && (
                 <div className="h-0.5 overflow-hidden bg-[#1877f2]/15">
                   <div className="h-full w-1/3 animate-pulse rounded-full bg-[#1877f2]" />
                 </div>
               )}
               <div className="flex flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-center">
+                <label className={canRunPublication ? "cursor-pointer" : "cursor-not-allowed"} title={canRunPublication ? "Select this publication job" : "This job cannot be published now"}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(job.delivery.id)}
+                    disabled={!canRunPublication || bulkPublishing}
+                    onChange={(event) => setSelectedIds((current) => {
+                      const next = new Set(current);
+                      if (event.target.checked) next.add(job.delivery.id);
+                      else next.delete(job.delivery.id);
+                      return next;
+                    })}
+                    className="h-4 w-4 rounded border-slate-600 bg-slate-950 accent-[#1877f2] disabled:opacity-30"
+                  />
+                </label>
                 <div className="flex min-w-0 flex-1 items-start gap-3">
                   <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border ${copy.style}`}>
                     <StatusIcon size={18} className={job.delivery.status === "publishing" ? "animate-spin" : ""} />
@@ -317,21 +447,52 @@ export default function FacebookPublishingJobsPage() {
                 </div>
 
                 {canRunPublication && (
-                  <button
-                    type="button"
-                    onClick={() => void queuePublication(job)}
-                    disabled={actionId === job.delivery.id}
-                    className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold transition disabled:opacity-50 ${
-                      retryable
-                        ? "border border-red-800/60 bg-red-950/30 text-red-200 hover:bg-red-900/40"
-                        : "bg-[#1877f2] text-white hover:bg-[#2f86f6]"
-                    }`}
-                  >
-                    {actionId === job.delivery.id ? <Loader2 size={14} className="animate-spin" /> : retryable ? <RotateCcw size={14} /> : <Send size={14} />}
-                    {actionId === job.delivery.id ? "Starting…" : retryable ? "Retry publication" : "Publish now"}
-                  </button>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => editSchedule(job)}
+                      disabled={actionId === job.delivery.id || savingSchedule}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-2.5 text-xs font-semibold text-slate-400 transition hover:border-amber-700/60 hover:text-amber-300 disabled:opacity-50"
+                    >
+                      <CalendarClock size={14} /> Schedule
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void queuePublication(job)}
+                      disabled={actionId === job.delivery.id || savingSchedule}
+                      className={`inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold transition disabled:opacity-50 ${
+                        retryable
+                          ? "border border-red-800/60 bg-red-950/30 text-red-200 hover:bg-red-900/40"
+                          : "bg-[#1877f2] text-white hover:bg-[#2f86f6]"
+                      }`}
+                    >
+                      {actionId === job.delivery.id ? <Loader2 size={14} className="animate-spin" /> : retryable ? <RotateCcw size={14} /> : <Send size={14} />}
+                      {actionId === job.delivery.id ? "Starting…" : retryable ? "Retry publication" : "Publish now"}
+                    </button>
+                  </div>
                 )}
               </div>
+              {editingSchedule && (
+                <div className="flex flex-col gap-2 border-t border-slate-800 bg-slate-950/20 px-4 py-3 sm:flex-row sm:px-5">
+                  <input
+                    type="datetime-local"
+                    value={scheduleValue}
+                    onChange={(event) => setScheduleValue(event.target.value)}
+                    className="input-field min-w-0 flex-1 py-2 text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveSchedule(job)}
+                    disabled={!scheduleValue || savingSchedule}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-40"
+                  >
+                    {savingSchedule ? <Loader2 size={13} className="animate-spin" /> : <CalendarClock size={13} />} Save schedule
+                  </button>
+                  <button type="button" onClick={() => setScheduleId(null)} disabled={savingSchedule} className="rounded-lg px-3 py-2 text-xs font-medium text-slate-500 hover:text-white disabled:opacity-40">
+                    Cancel
+                  </button>
+                </div>
+              )}
             </article>
           );
         })}
