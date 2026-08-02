@@ -61,14 +61,14 @@ class FacebookPublishingContractTests(unittest.TestCase):
             comment_id = facebook_api.add_first_comment(
                 post_id="video-123",
                 page_access_token="page-token",
-                message="Full Recipe\nhttps://example.com/recipe",
+                message="Ingredients\n- Garlic\n\nInstructions\n1. Blend.\n\nhttps://example.com/recipe",
             )
 
         self.assertEqual(comment_id, "comment-456")
         self.assertTrue(post.call_args.args[0].endswith("/video-123/comments"))
         self.assertEqual(
             post.call_args.kwargs["data"]["message"],
-            "Full Recipe\nhttps://example.com/recipe",
+            "Ingredients\n- Garlic\n\nInstructions\n1. Blend.\n\nhttps://example.com/recipe",
         )
 
 

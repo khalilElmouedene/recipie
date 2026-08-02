@@ -1372,7 +1372,7 @@ function FacebookPagesSettings({
                 <div>
                   <h3 className="font-semibold text-white">{page.name}</h3>
                   <p className="mt-1 text-xs text-slate-500">
-                    First comment: {page.comment_mode === "full_recipe_url" ? "Full Recipe + article URL" : "Full Recipe"}
+                    First comment: {page.comment_mode === "full_recipe_url" ? "Generated recipe + WordPress URL" : "Generated recipe"}
                   </p>
                 </div>
               </div>
@@ -1457,8 +1457,8 @@ function ConnectPageModal({
         <div className="space-y-5 p-6">
           <div className="grid gap-3 sm:grid-cols-2">
             {[
-              { mode: "full_recipe" as FacebookCommentMode, title: "Full Recipe", sample: "Full Recipe" },
-              { mode: "full_recipe_url" as FacebookCommentMode, title: "Full Recipe + URL", sample: "Full Recipe\nhttps://your-site.com/article" },
+              { mode: "full_recipe" as FacebookCommentMode, title: "Full Recipe", sample: "Ingredients\n- 2 cups ...\n\nInstructions\n1. Mix ..." },
+              { mode: "full_recipe_url" as FacebookCommentMode, title: "Full Recipe + URL", sample: "Ingredients\n- 2 cups ...\n\nInstructions\n1. Mix ...\n\nhttps://your-site.com/article" },
             ].map((option) => (
               <button
                 key={option.mode}

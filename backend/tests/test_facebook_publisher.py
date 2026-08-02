@@ -116,19 +116,34 @@ class _QueuedSession:
 
 class FacebookFirstCommentTests(unittest.TestCase):
     def test_full_recipe_mode_does_not_include_article_url(self):
+        recipe = "Creamy Garlic Sauce\n\nIngredients\n- 2 cloves garlic\n\nInstructions\n1. Blend."
         self.assertEqual(
-            build_first_comment(FacebookCommentMode.full_recipe, "https://example.com/recipe"),
-            "Full Recipe",
+            build_first_comment(
+                FacebookCommentMode.full_recipe,
+                recipe,
+                "https://example.com/recipe",
+            ),
+            recipe,
         )
 
     def test_full_recipe_url_mode_includes_published_article_url(self):
+        recipe = "Creamy Garlic Sauce\n\nIngredients\n- 2 cloves garlic\n\nInstructions\n1. Blend."
         self.assertEqual(
             build_first_comment(
                 FacebookCommentMode.full_recipe_url,
+                recipe,
                 "https://example.com/recipe",
             ),
-            "Full Recipe\nhttps://example.com/recipe",
+            f"{recipe}\n\nhttps://example.com/recipe",
         )
+
+    def test_missing_generated_recipe_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "generated full recipe is missing"):
+            build_first_comment(
+                FacebookCommentMode.full_recipe,
+                "",
+                "https://example.com/recipe",
+            )
 
 
 class FacebookRecoveryTests(unittest.IsolatedAsyncioTestCase):
@@ -163,10 +178,16 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
             facebook_page_id="page-42",
             comment_mode=FacebookCommentMode.full_recipe_url,
         )
+        recipe = SimpleNamespace(
+            generated_full_recipe=(
+                "Creamy Garlic Sauce\n\nIngredients\n- 2 cloves garlic\n\n"
+                "Instructions\n1. Blend until smooth."
+            ),
+        )
         sessions = iter(
             [
                 _QueuedSession([_ExecutionResult(scalar=delivery_id)]),
-                _QueuedSession([_ExecutionResult(row=(delivery, content, page))]),
+                _QueuedSession([_ExecutionResult(row=(delivery, content, page, recipe))]),
                 _QueuedSession([_ExecutionResult()]),
                 _QueuedSession([_ExecutionResult()]),
             ]
@@ -185,7 +206,7 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
             order.append("comment")
             self.assertEqual(
                 kwargs["message"],
-                "Full Recipe\nhttps://example.com/recipe",
+                f"{recipe.generated_full_recipe}\n\nhttps://example.com/recipe",
             )
             return "comment-456"
 

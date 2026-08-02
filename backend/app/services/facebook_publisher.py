@@ -41,11 +41,23 @@ VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".m4v"}
 DEFAULT_VIDEO_RETENTION_HOURS = 1.0
 
 
-def build_first_comment(mode: FacebookCommentMode | str, article_url: str) -> str:
+def build_first_comment(
+    mode: FacebookCommentMode | str,
+    full_recipe: str,
+    article_url: str,
+) -> str:
+    recipe = (full_recipe or "").strip()
+    if not recipe:
+        raise ValueError(
+            "The generated full recipe is missing. Regenerate this content before publishing."
+        )
     value = mode.value if hasattr(mode, "value") else str(mode)
     if value == FacebookCommentMode.full_recipe_url.value:
-        return f"Full Recipe\n{article_url}"
-    return "Full Recipe"
+        url = (article_url or "").strip()
+        if not url:
+            raise ValueError("The WordPress recipe URL is missing.")
+        return f"{recipe}\n\n{url}"
+    return recipe
 
 
 def _absolute_media_url(url: str) -> str:
@@ -480,12 +492,13 @@ async def publish_facebook_delivery(
     try:
         async with SessionLocal() as db:
             row = await db.execute(
-                select(FacebookDelivery, FacebookContent, FacebookPage)
+                select(FacebookDelivery, FacebookContent, FacebookPage, Recipe)
                 .join(FacebookContent, FacebookContent.id == FacebookDelivery.content_id)
                 .join(FacebookPage, FacebookPage.id == FacebookDelivery.page_id)
+                .join(Recipe, Recipe.id == FacebookContent.recipe_id)
                 .where(FacebookDelivery.id == delivery_id)
             )
-            delivery, content, page = row.one()
+            delivery, content, page, recipe = row.one()
             if not content.processed_video_url:
                 raise ValueError("Processed video is not ready.")
             page_token = decrypt(page.access_token)
@@ -496,6 +509,7 @@ async def publish_facebook_delivery(
             content_id = content.id
             existing_post_id = delivery.facebook_post_id
             existing_comment_id = delivery.first_comment_id
+            full_recipe = recipe.generated_full_recipe or ""
 
         article_url = await _ensure_article_published(content_id)
         post_id = existing_post_id
@@ -523,7 +537,7 @@ async def publish_facebook_delivery(
                 facebook_api.add_first_comment,
                 post_id=post_id,
                 page_access_token=page_token,
-                message=build_first_comment(page_mode, article_url),
+                message=build_first_comment(page_mode, full_recipe, article_url),
             )
         async with SessionLocal() as db:
             await db.execute(
