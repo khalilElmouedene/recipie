@@ -4,63 +4,196 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  Activity,
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Circle,
   Clock3,
+  FileVideo2,
   Loader2,
   Pause,
   Play,
   RefreshCw,
   RotateCcw,
-  Search,
-  SquareTerminal,
+  Trash2,
   Upload,
+  XCircle,
 } from "lucide-react";
 import {
   api,
   FacebookGenerationControlOut,
   FacebookGenerationLogOut,
-  FacebookLogLevel,
   FacebookProjectOut,
 } from "@/lib/api";
 import { useConfirm } from "@/components/ConfirmModal";
 import { useToast } from "@/contexts/ToastContext";
 
-const LEVEL_STYLE: Record<FacebookLogLevel, { dot: string; badge: string; icon: typeof Circle }> = {
-  info: {
-    dot: "bg-sky-400",
-    badge: "border-sky-900/70 bg-sky-950/35 text-sky-300",
-    icon: Circle,
+type JobState = "queued" | "running" | "completed" | "failed" | "cancelled";
+type JobFilter = "all" | "active" | "completed" | "failed";
+
+interface FacebookJob {
+  id: string;
+  title: string;
+  state: JobState;
+  currentStep: string;
+  currentStepIndex: number;
+  summary: string;
+  startedAt: string;
+  updatedAt: string;
+  entries: FacebookGenerationLogOut[];
+}
+
+const PIPELINE_STEPS = ["Queued", "Video", "Article & images", "Ready"];
+
+const STATE_COPY: Record<JobState, { label: string; badge: string; icon: typeof Circle }> = {
+  queued: {
+    label: "Queued",
+    badge: "border-slate-700 bg-slate-800/70 text-slate-300",
+    icon: Clock3,
   },
-  success: {
-    dot: "bg-emerald-400",
-    badge: "border-emerald-900/70 bg-emerald-950/35 text-emerald-300",
+  running: {
+    label: "Running",
+    badge: "border-blue-800/60 bg-blue-950/35 text-blue-300",
+    icon: Loader2,
+  },
+  completed: {
+    label: "Completed",
+    badge: "border-emerald-800/60 bg-emerald-950/30 text-emerald-300",
     icon: CheckCircle2,
   },
-  warning: {
-    dot: "bg-amber-400",
-    badge: "border-amber-900/70 bg-amber-950/35 text-amber-300",
-    icon: AlertCircle,
+  failed: {
+    label: "Failed",
+    badge: "border-red-800/60 bg-red-950/30 text-red-300",
+    icon: XCircle,
   },
-  error: {
-    dot: "bg-red-400",
-    badge: "border-red-900/70 bg-red-950/35 text-red-300",
-    icon: AlertCircle,
+  cancelled: {
+    label: "Cancelled",
+    badge: "border-amber-800/60 bg-amber-950/25 text-amber-300",
+    icon: Pause,
   },
 };
 
-function formatTime(value: string) {
+function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
     month: "short",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
   }).format(new Date(value));
+}
+
+function stageLabel(stage: string) {
+  const labels: Record<string, string> = {
+    queue: "Added to queue",
+    retry: "Retry requested",
+    setup: "Preparing generation",
+    video: "Processing video",
+    article: "Generating article and images",
+    complete: "Generation completed",
+    failed: "Generation failed",
+    cancelled: "Generation cancelled",
+    cleanup: "Cleaning up storage",
+  };
+  return labels[stage] || stage.replaceAll("_", " ");
+}
+
+function friendlyError(message: string) {
+  const detail = message.replace(/^Generation failed:\s*/i, "").trim();
+  const normalized = detail.toLowerCase();
+
+  if (
+    normalized.includes("moov atom") ||
+    normalized.includes("invalid data found when processing input") ||
+    normalized.includes("returned text/html")
+  ) {
+    return "The source link did not return a valid video. Upload the video or retry with another link.";
+  }
+  if (normalized.includes("facebook could not provide the reel")) {
+    return "Facebook did not provide this Reel video. Upload the video or retry the link.";
+  }
+  if (normalized.includes("facebook_cookies_file") && normalized.includes("not available")) {
+    return "Facebook login information is missing on the server. Upload the video or retry another source.";
+  }
+  if (normalized.includes("api key") || normalized.includes("unauthorized")) {
+    return "The AI service could not continue. Check this project's API key, then retry.";
+  }
+  return detail || "Generation stopped because of an unexpected error.";
+}
+
+function readableProgress(entry: FacebookGenerationLogOut, state: JobState) {
+  if (state === "failed") return friendlyError(entry.message);
+  if (state === "cancelled") return "Stopped by the user and returned to Spy Sheet.";
+  if (state === "completed") return "Video, article and images are ready for publishing.";
+
+  const normalized = entry.message.toLowerCase();
+  if (entry.stage === "queue") return "Waiting for generation to start.";
+  if (entry.stage === "retry") return "Waiting for the retry to start.";
+  if (entry.stage === "setup") return "Preparing this job.";
+  if (entry.stage === "video") {
+    if (normalized.includes("resolving") || normalized.includes("download")) {
+      return "Downloading the source video.";
+    }
+    return "Preparing the video and its cover image.";
+  }
+  if (entry.stage === "article") {
+    if (normalized.includes("midjourney") || normalized.includes("image")) {
+      return "Generating the article images.";
+    }
+    return "Generating the recipe article.";
+  }
+  return entry.message;
+}
+
+function stepIndex(entries: FacebookGenerationLogOut[], state: JobState) {
+  if (state === "completed") return PIPELINE_STEPS.length - 1;
+  const stages = new Set(entries.map((entry) => entry.stage));
+  if (stages.has("article") || stages.has("complete")) return 2;
+  if (stages.has("video")) return 1;
+  return 0;
+}
+
+function groupLogsIntoJobs(logs: FacebookGenerationLogOut[]): FacebookJob[] {
+  const grouped = new Map<string, FacebookGenerationLogOut[]>();
+
+  for (const entry of logs) {
+    if (!entry.content_id) continue;
+    const entries = grouped.get(entry.content_id) || [];
+    entries.push(entry);
+    grouped.set(entry.content_id, entries);
+  }
+
+  return Array.from(grouped.entries()).map(([id, entries]) => {
+    const latest = entries[0];
+    const oldest = entries[entries.length - 1];
+    let state: JobState;
+
+    if (latest.content_cancelled) state = "cancelled";
+    else if (latest.content_status === "ready") state = "completed";
+    else if (latest.content_status === "failed") state = "failed";
+    else if (latest.stage === "queue" || latest.stage === "retry") state = "queued";
+    else state = "running";
+
+    return {
+      id,
+      title: latest.content_title || "Untitled Facebook post",
+      state,
+      currentStep:
+        state === "completed"
+          ? "Generation completed"
+          : state === "failed"
+            ? "Generation failed"
+            : state === "cancelled"
+              ? "Generation cancelled"
+              : stageLabel(latest.stage),
+      currentStepIndex: stepIndex(entries, state),
+      summary: readableProgress(latest, state),
+      startedAt: oldest.created_at,
+      updatedAt: latest.created_at,
+      entries,
+    };
+  });
 }
 
 export default function FacebookGenerationLogsPage() {
@@ -73,26 +206,23 @@ export default function FacebookGenerationLogsPage() {
     state: "idle",
     processing_count: 0,
   });
-  const [level, setLevel] = useState<FacebookLogLevel | "">("");
-  const [search, setSearch] = useState("");
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [filter, setFilter] = useState<JobFilter>("all");
+  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [controlAction, setControlAction] = useState<"pause" | "resume" | "cancel" | null>(null);
   const [retryingContentId, setRetryingContentId] = useState<string | null>(null);
   const [replacingContentId, setReplacingContentId] = useState<string | null>(null);
+  const [deletingContentId, setDeletingContentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (quiet = false) => {
-    if (!quiet) setLoading(true);
-    else setRefreshing(true);
+    if (quiet) setRefreshing(true);
+    else setLoading(true);
     try {
       const [projectData, logData, controlData] = await Promise.all([
-        project ? Promise.resolve(project) : api.getFacebookProject(id),
-        api.getFacebookGenerationLogs(id, {
-          level: level || undefined,
-          limit: 1000,
-        }),
+        api.getFacebookProject(id),
+        api.getFacebookGenerationLogs(id, { limit: 1000 }),
         api.getFacebookGenerationControl(id),
       ]);
       setProject(projectData);
@@ -100,36 +230,32 @@ export default function FacebookGenerationLogsPage() {
       setControl(controlData);
       setError(null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Could not load generation logs");
+      setError(loadError instanceof Error ? loadError.message : "Could not load generation jobs");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [id, level, project]);
+  }, [id]);
 
   useEffect(() => {
     void load();
-  }, [load]);
-
-  useEffect(() => {
-    if (!autoRefresh) return;
     const timer = window.setInterval(() => void load(true), 5000);
     return () => window.clearInterval(timer);
-  }, [autoRefresh, load]);
+  }, [load]);
 
-  const visibleLogs = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    if (!needle) return logs;
-    return logs.filter((entry) =>
-      [entry.message, entry.stage, entry.content_title || ""]
-        .some((value) => value.toLowerCase().includes(needle)),
-    );
-  }, [logs, search]);
-
+  const jobs = useMemo(() => groupLogsIntoJobs(logs), [logs]);
   const counts = useMemo(() => ({
-    errors: logs.filter((entry) => entry.level === "error").length,
-    completed: logs.filter((entry) => entry.level === "success").length,
-  }), [logs]);
+    all: jobs.length,
+    active: jobs.filter((job) => job.state === "queued" || job.state === "running").length,
+    completed: jobs.filter((job) => job.state === "completed").length,
+    failed: jobs.filter((job) => job.state === "failed" || job.state === "cancelled").length,
+  }), [jobs]);
+  const visibleJobs = useMemo(() => jobs.filter((job) => {
+    if (filter === "active") return job.state === "queued" || job.state === "running";
+    if (filter === "completed") return job.state === "completed";
+    if (filter === "failed") return job.state === "failed" || job.state === "cancelled";
+    return true;
+  }), [filter, jobs]);
 
   const pauseGeneration = async () => {
     setControlAction("pause");
@@ -187,11 +313,11 @@ export default function FacebookGenerationLogsPage() {
     }
   };
 
-  const retryGeneration = async (contentId: string, title: string | null) => {
+  const retryGeneration = async (contentId: string, title: string) => {
     setRetryingContentId(contentId);
     try {
       await api.retryFacebookGeneration(contentId);
-      toast.success(`Generation restarted${title ? ` for ${title}` : ""}.`);
+      toast.success(`Generation restarted for ${title}.`);
       await load(true);
     } catch (actionError) {
       toast.error(actionError instanceof Error ? actionError.message : "Could not retry generation");
@@ -201,15 +327,11 @@ export default function FacebookGenerationLogsPage() {
     }
   };
 
-  const replaceVideoAndRetry = async (
-    contentId: string,
-    title: string | null,
-    file: File,
-  ) => {
+  const replaceVideoAndRetry = async (contentId: string, title: string, file: File) => {
     setReplacingContentId(contentId);
     try {
       await api.replaceFacebookVideoAndRetry(contentId, file);
-      toast.success(`Video replaced and generation restarted${title ? ` for ${title}` : ""}.`);
+      toast.success(`Video replaced and generation restarted for ${title}.`);
       await load(true);
     } catch (actionError) {
       toast.error(actionError instanceof Error ? actionError.message : "Could not replace the source video");
@@ -219,71 +341,62 @@ export default function FacebookGenerationLogsPage() {
     }
   };
 
+  const deleteGeneration = async (contentId: string, title: string) => {
+    const accepted = await confirm({
+      title: "Delete this generation?",
+      message: `“${title}” will be removed from Jobs and Calendar together with its local files (including an unshared uploaded source) and pending deliveries. Already published Facebook or WordPress posts stay online.`,
+      confirmLabel: "Delete generation",
+      danger: true,
+    });
+    if (!accepted) return;
+    setDeletingContentId(contentId);
+    try {
+      await api.deleteFacebookContent(contentId);
+      setExpandedJobId((current) => current === contentId ? null : current);
+      toast.success("Generation deleted.");
+      await load(true);
+    } catch (actionError) {
+      toast.error(actionError instanceof Error ? actionError.message : "Could not delete generation");
+    } finally {
+      setDeletingContentId(null);
+    }
+  };
+
   if (loading && !project) {
     return (
       <div className="grid min-h-[60vh] place-items-center">
-        <Loader2 className="animate-spin text-[#68a8ff]" />
+        <Loader2 className="animate-spin text-brand-400" />
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-[1500px] space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link
-          href={`/facebook/${id}`}
-          className="inline-flex items-center gap-2 text-sm text-slate-500 transition hover:text-white"
-        >
-          <ArrowLeft size={16} />
-          Back to project
-        </Link>
-        <div className="flex items-center gap-3 text-xs text-slate-500">
-          <label className="flex cursor-pointer items-center gap-2">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={autoRefresh}
-              onClick={() => setAutoRefresh((current) => !current)}
-              className={`relative h-5 w-9 rounded-full transition ${autoRefresh ? "bg-[#1877f2]" : "bg-slate-700"}`}
-            >
-              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${autoRefresh ? "left-[18px]" : "left-0.5"}`} />
-            </button>
-            Live refresh
-          </label>
-          <button
-            type="button"
-            onClick={() => void load(true)}
-            disabled={refreshing}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white disabled:opacity-60"
-          >
-            <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
-            Refresh
-          </button>
-        </div>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-4">
+      <Link
+        href={`/facebook/${id}`}
+        className="inline-flex items-center gap-2 text-sm text-gray-400 transition hover:text-white"
+      >
+        <ArrowLeft size={16} />
+        Back to project
+      </Link>
 
-      <header className="relative overflow-hidden rounded-[26px] border border-slate-800 bg-[#0d1422] px-6 py-6 md:px-8">
-        <div className="pointer-events-none absolute -right-20 -top-28 h-72 w-72 rounded-full bg-[#1877f2]/15 blur-3xl" />
-        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-[#68a8ff]">
-              <SquareTerminal size={16} />
-              Generation observability
-            </div>
-            <h1 className="text-3xl font-semibold tracking-[-0.035em] text-white">
-              {project?.name || "Facebook"} logs
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-              Follow video processing, AI generation, and failures for this project only.
-            </p>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <Summary label="Events" value={logs.length} icon={Activity} />
-            <Summary label="Completed" value={counts.completed} icon={CheckCircle2} tone="green" />
-            <Summary label="Errors" value={counts.errors} icon={AlertCircle} tone="red" />
-          </div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Generation Jobs</h1>
+          <p className="mt-1 text-sm text-gray-400">
+            {project?.name || "Facebook"} · Follow each video from import to ready content.
+          </p>
         </div>
-      </header>
+        <button
+          type="button"
+          onClick={() => void load(true)}
+          disabled={refreshing}
+          className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm"
+        >
+          <RefreshCw size={15} className={refreshing ? "animate-spin" : ""} />
+          Refresh
+        </button>
+      </div>
 
       <GenerationControl
         control={control}
@@ -293,71 +406,66 @@ export default function FacebookGenerationLogsPage() {
         onCancel={() => void cancelGeneration()}
       />
 
-      <div className="grid gap-3 rounded-2xl border border-slate-800 bg-[#0d1422] p-4 md:grid-cols-[220px_1fr]">
-        <select
-          value={level}
-          onChange={(event) => setLevel(event.target.value as FacebookLogLevel | "")}
-          className="rounded-xl border border-slate-700 bg-[#111b2c] px-3 py-2.5 text-sm text-slate-300 outline-none transition focus:border-[#1877f2]"
-        >
-          <option value="">All levels</option>
-          <option value="info">Information</option>
-          <option value="success">Success</option>
-          <option value="warning">Warnings</option>
-          <option value="error">Errors</option>
-        </select>
-        <label className="flex items-center gap-2 rounded-xl border border-slate-700 bg-[#111b2c] px-3 text-slate-500 transition focus-within:border-[#1877f2]">
-          <Search size={15} />
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search a title, stage, or message"
-            className="min-w-0 flex-1 bg-transparent py-2.5 text-sm text-slate-200 outline-none placeholder:text-slate-600"
-          />
-        </label>
-      </div>
-
       {error && (
-        <div className="flex items-start gap-3 rounded-xl border border-red-900/60 bg-red-950/25 px-4 py-3 text-sm text-red-300">
+        <div className="flex items-start gap-3 rounded-lg border border-red-900/60 bg-red-950/30 px-4 py-3 text-sm text-red-300">
           <AlertCircle className="mt-0.5 shrink-0" size={16} />
           {error}
         </div>
       )}
 
-      <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#080e19]">
-        <div className="flex items-center justify-between border-b border-slate-800 bg-[#0d1422] px-5 py-3">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-            <SquareTerminal size={14} />
-            Runtime stream
-          </div>
-          <span className="flex items-center gap-2 text-xs text-slate-600">
-            <span className={`h-1.5 w-1.5 rounded-full ${autoRefresh ? "animate-pulse bg-emerald-400" : "bg-slate-600"}`} />
-            {visibleLogs.length} visible
-          </span>
-        </div>
-
-        <div className="max-h-[68vh] min-h-[320px] overflow-auto">
-          {visibleLogs.map((entry) => (
-            <LogRow
-              key={entry.id}
-              entry={entry}
-              retrying={retryingContentId === entry.content_id}
-              replacing={replacingContentId === entry.content_id}
-              onRetry={(contentId, title) => void retryGeneration(contentId, title)}
-              onReplace={(contentId, title, file) => void replaceVideoAndRetry(contentId, title, file)}
-            />
+      <div className="card p-3">
+        <div className="flex flex-wrap gap-2" aria-label="Filter generation jobs">
+          {([
+            ["all", "All"],
+            ["active", "Active"],
+            ["completed", "Completed"],
+            ["failed", "Needs attention"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setFilter(value)}
+              className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                filter === value
+                  ? "bg-brand-600 text-white"
+                  : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+              }`}
+            >
+              {label} <span className="ml-1 opacity-70">{counts[value]}</span>
+            </button>
           ))}
-          {!visibleLogs.length && !error && (
-            <div className="grid min-h-[320px] place-items-center px-6 text-center">
-              <div>
-                <Clock3 className="mx-auto mb-3 text-slate-700" size={30} />
-                <p className="text-sm font-medium text-slate-400">No matching events yet</p>
-                <p className="mt-1 text-xs text-slate-600">
-                  Start a generation from Spy Sheet and its progress will appear here.
-                </p>
-              </div>
-            </div>
-          )}
         </div>
+      </div>
+
+      <section className="space-y-3">
+        {visibleJobs.map((job) => (
+          <JobCard
+            key={job.id}
+            job={job}
+            expanded={expandedJobId === job.id}
+            retrying={retryingContentId === job.id}
+            replacing={replacingContentId === job.id}
+            deleting={deletingContentId === job.id}
+            onToggle={() => setExpandedJobId((current) => current === job.id ? null : job.id)}
+            onRetry={() => void retryGeneration(job.id, job.title)}
+            onReplace={(file) => void replaceVideoAndRetry(job.id, job.title, file)}
+            onDelete={() => void deleteGeneration(job.id, job.title)}
+          />
+        ))}
+
+        {!visibleJobs.length && !error && (
+          <div className="card grid min-h-56 place-items-center px-6 text-center">
+            <div>
+              <FileVideo2 className="mx-auto mb-3 text-gray-600" size={30} />
+              <p className="text-sm font-medium text-gray-300">
+                {jobs.length ? "No jobs in this status" : "No generation jobs yet"}
+              </p>
+              <p className="mt-1 text-xs text-gray-500">
+                Start a generation from Spy Sheet to see its progress here.
+              </p>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );
@@ -379,52 +487,50 @@ function GenerationControl({
   const busy = action !== null;
   const copy = {
     idle: {
-      title: "Generation idle",
-      detail: "Start a new batch from Spy Sheet when you are ready.",
-      dot: "bg-slate-500",
+      title: "No active generation",
+      detail: "New jobs can be started from Spy Sheet.",
+      tone: "border-gray-800 bg-gray-900",
+      dot: "bg-gray-500",
     },
     running: {
-      title: `${control.processing_count} ${control.processing_count === 1 ? "item" : "items"} generating`,
-      detail: "Stop safely before choosing whether to continue or cancel.",
-      dot: "animate-pulse bg-emerald-400",
+      title: `${control.processing_count} ${control.processing_count === 1 ? "job" : "jobs"} running`,
+      detail: "This page updates automatically every few seconds.",
+      tone: "border-blue-800/40 bg-blue-950/20",
+      dot: "animate-pulse bg-blue-400",
     },
     paused: {
-      title: "Generation stopped",
-      detail: `${control.processing_count} unfinished ${control.processing_count === 1 ? "item is" : "items are"} waiting for your decision.`,
+      title: "Generation paused",
+      detail: `${control.processing_count} unfinished ${control.processing_count === 1 ? "job is" : "jobs are"} waiting for your decision.`,
+      tone: "border-amber-800/50 bg-amber-950/20",
       dot: "bg-amber-400",
     },
     cancelling: {
-      title: "Cancellation finishing",
-      detail: "The worker is closing safely. Restored rows are already available in Spy Sheet.",
+      title: "Cancelling generation",
+      detail: "Unfinished rows are being restored to Spy Sheet.",
+      tone: "border-red-900/50 bg-red-950/20",
       dot: "animate-pulse bg-red-400",
     },
   }[control.state];
 
   return (
-    <section className={`flex flex-col gap-4 rounded-2xl border px-5 py-4 md:flex-row md:items-center md:justify-between ${
-      control.state === "paused"
-        ? "border-amber-800/60 bg-amber-950/15"
-        : control.state === "cancelling"
-          ? "border-red-900/60 bg-red-950/15"
-          : "border-slate-800 bg-[#0d1422]"
-    }`}>
+    <section className={`flex flex-col gap-3 rounded-xl border px-4 py-3 md:flex-row md:items-center md:justify-between ${copy.tone}`}>
       <div className="flex items-start gap-3">
         <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${copy.dot}`} />
         <div>
           <h2 className="text-sm font-semibold text-white">{copy.title}</h2>
-          <p className="mt-1 text-xs leading-5 text-slate-500">{copy.detail}</p>
+          <p className="mt-0.5 text-xs text-gray-400">{copy.detail}</p>
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap gap-2">
         {control.state === "running" && (
           <button
             type="button"
             onClick={onPause}
             disabled={busy}
-            className="inline-flex items-center gap-2 rounded-xl border border-amber-700/60 bg-amber-950/30 px-4 py-2.5 text-xs font-semibold text-amber-300 transition hover:bg-amber-900/35 disabled:opacity-50"
+            className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-xs text-amber-300 disabled:opacity-50"
           >
             {action === "pause" ? <Loader2 size={14} className="animate-spin" /> : <Pause size={14} />}
-            Stop generation
+            Stop jobs
           </button>
         )}
         {control.state === "paused" && (
@@ -433,19 +539,19 @@ function GenerationControl({
               type="button"
               onClick={onResume}
               disabled={busy}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#1877f2] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[#2b85f5] disabled:opacity-50"
+              className="btn-primary inline-flex items-center gap-2 px-3 py-2 text-xs disabled:opacity-50"
             >
               {action === "resume" ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-              Continue
+              Continue jobs
             </button>
             <button
               type="button"
               onClick={onCancel}
               disabled={busy}
-              className="inline-flex items-center gap-2 rounded-xl border border-red-800/60 bg-red-950/30 px-4 py-2.5 text-xs font-semibold text-red-300 transition hover:bg-red-900/35 disabled:opacity-50"
+              className="btn-danger inline-flex items-center gap-2 px-3 py-2 text-xs disabled:opacity-50"
             >
               {action === "cancel" ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
-              Cancel & restore to Spy Sheet
+              Cancel & restore
             </button>
           </>
         )}
@@ -455,103 +561,157 @@ function GenerationControl({
   );
 }
 
-function Summary({
-  label,
-  value,
-  icon: Icon,
-  tone = "blue",
-}: {
-  label: string;
-  value: number;
-  icon: typeof Activity;
-  tone?: "blue" | "green" | "red";
-}) {
-  const tones = {
-    blue: "text-sky-300",
-    green: "text-emerald-300",
-    red: "text-red-300",
-  };
-  return (
-    <div className="min-w-[94px] rounded-xl border border-slate-800 bg-slate-950/45 px-3 py-2.5">
-      <div className={`flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider ${tones[tone]}`}>
-        <Icon size={12} />
-        {label}
-      </div>
-      <div className="mt-1 text-xl font-semibold text-white">{value}</div>
-    </div>
-  );
-}
-
-function LogRow({
-  entry,
+function JobCard({
+  job,
+  expanded,
   retrying,
   replacing,
+  deleting,
+  onToggle,
   onRetry,
   onReplace,
+  onDelete,
 }: {
-  entry: FacebookGenerationLogOut;
+  job: FacebookJob;
+  expanded: boolean;
   retrying: boolean;
   replacing: boolean;
-  onRetry: (contentId: string, title: string | null) => void;
-  onReplace: (contentId: string, title: string | null, file: File) => void;
+  deleting: boolean;
+  onToggle: () => void;
+  onRetry: () => void;
+  onReplace: (file: File) => void;
+  onDelete: () => void;
 }) {
-  const style = LEVEL_STYLE[entry.level];
-  const Icon = style.icon;
+  const state = STATE_COPY[job.state];
+  const StatusIcon = state.icon;
+  const isActive = job.state === "queued" || job.state === "running";
+
   return (
-    <article className="grid gap-3 border-b border-slate-800/80 px-4 py-4 last:border-0 hover:bg-slate-900/35 md:grid-cols-[180px_120px_1fr] md:px-5">
-      <time className="flex items-center gap-2 font-mono text-[11px] text-slate-600">
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${style.dot}`} />
-        {formatTime(entry.created_at)}
-      </time>
-      <div>
-        <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${style.badge}`}>
-          <Icon size={11} />
-          {entry.stage}
-        </span>
-      </div>
-      <div className="min-w-0">
-        {entry.content_title && (
-          <div className="mb-1 truncate text-xs font-semibold text-slate-300" title={entry.content_title}>
-            {entry.content_title}
+    <article className={`overflow-hidden rounded-xl border bg-gray-900 ${
+      job.state === "failed" ? "border-red-900/60" : "border-gray-800"
+    }`}>
+      <div className="p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <div className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg border ${state.badge}`}>
+              <StatusIcon size={17} className={job.state === "running" ? "animate-spin" : ""} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="truncate text-sm font-semibold text-white" title={job.title}>{job.title}</h2>
+                <span className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${state.badge}`}>
+                  {state.label}
+                </span>
+              </div>
+              <p className={`mt-1 text-xs leading-5 ${job.state === "failed" ? "text-red-300" : "text-gray-400"}`}>
+                {job.summary}
+              </p>
+              <p className="mt-1 text-[11px] text-gray-600">
+                Started {formatDate(job.startedAt)} · Updated {formatDate(job.updatedAt)}
+              </p>
+            </div>
           </div>
-        )}
-        <p className={`break-words font-mono text-xs leading-5 ${entry.level === "error" ? "text-red-300" : "text-slate-400"}`}>
-          {entry.message}
-        </p>
-        {entry.stage === "failed" &&
-          entry.content_id &&
-          entry.content_status === "failed" &&
-          !entry.content_cancelled && (
-            <div className="mt-3 flex flex-wrap gap-2">
-              <label className={`inline-flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 font-sans text-[11px] font-semibold text-white transition hover:bg-red-500 ${replacing ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
-                {replacing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                Upload video & retry
-                <input
-                  type="file"
-                  accept="video/mp4,video/quicktime,video/webm"
-                  className="hidden"
-                  disabled={replacing || retrying}
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) {
-                      onReplace(entry.content_id as string, entry.content_title, file);
-                    }
-                    event.target.value = "";
-                  }}
-                />
-              </label>
+
+          <div className="w-full lg:w-72">
+            <div className="mb-2 flex items-center justify-between text-[11px]">
+              <span className={isActive ? "font-medium text-blue-300" : "text-gray-400"}>{job.currentStep}</span>
+              <span className="text-gray-600">{job.currentStepIndex + 1}/{PIPELINE_STEPS.length}</span>
+            </div>
+            <div className="flex items-center gap-1.5" title={PIPELINE_STEPS.join(" → ")}>
+              {PIPELINE_STEPS.map((step, index) => {
+                const complete = job.state === "completed" || index < job.currentStepIndex;
+                const current = index === job.currentStepIndex;
+                const dot = complete
+                  ? "bg-emerald-500"
+                  : current && job.state === "failed"
+                    ? "bg-red-500"
+                    : current && job.state === "cancelled"
+                      ? "bg-amber-500"
+                      : current && isActive
+                        ? "animate-pulse bg-blue-400"
+                        : "bg-gray-700";
+                return <span key={step} className={`h-2 flex-1 rounded-full ${dot}`} />;
+              })}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
+            {job.state === "failed" && (
+              <>
+                <label className={`btn-primary inline-flex items-center gap-2 px-3 py-2 text-xs ${replacing ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
+                  {replacing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                  Upload & retry
+                  <input
+                    type="file"
+                    accept="video/mp4,video/quicktime,video/webm"
+                    className="hidden"
+                    disabled={replacing || retrying}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) onReplace(file);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  disabled={retrying || replacing}
+                  className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-xs disabled:opacity-50"
+                >
+                  {retrying ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                  Retry link
+                </button>
+              </>
+            )}
+            {!isActive && (
               <button
                 type="button"
-                onClick={() => onRetry(entry.content_id as string, entry.content_title)}
-                disabled={retrying || replacing}
-                className="inline-flex items-center gap-2 rounded-lg border border-red-800/60 bg-red-950/30 px-3 py-2 font-sans text-[11px] font-semibold text-red-200 transition hover:bg-red-900/40 disabled:opacity-50"
+                onClick={onDelete}
+                disabled={deleting}
+                className="inline-flex items-center gap-2 rounded-lg border border-red-900/50 px-3 py-2 text-xs font-semibold text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
               >
-                {retrying ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
-                Retry same link
+                {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                Delete
               </button>
-            </div>
-          )}
+            )}
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-expanded={expanded}
+              className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-xs"
+            >
+              {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              {expanded ? "Hide details" : "View details"}
+            </button>
+          </div>
+        </div>
       </div>
+
+      {expanded && (
+        <div className="border-t border-gray-800 bg-gray-950/45 px-4 py-3">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Job history</h3>
+          <div className="max-h-72 space-y-3 overflow-y-auto pr-2">
+            {[...job.entries].reverse().map((entry) => (
+              <div key={entry.id} className="grid gap-1 text-xs sm:grid-cols-[105px_170px_1fr] sm:gap-3">
+                <time className="text-gray-600">{formatDate(entry.created_at)}</time>
+                <span className={
+                  entry.level === "error"
+                    ? "text-red-300"
+                    : entry.level === "success"
+                      ? "text-emerald-300"
+                      : entry.level === "warning"
+                        ? "text-amber-300"
+                        : "text-blue-300"
+                }>
+                  {stageLabel(entry.stage)}
+                </span>
+                <p className="break-words leading-5 text-gray-400">{entry.message}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </article>
   );
 }

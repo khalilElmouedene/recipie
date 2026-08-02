@@ -8,6 +8,7 @@ from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 from app.services.facebook_video import (
+    _cover_resize_dimensions,
     _download_facebook_html_fallback,
     _download_facebook_source,
     _download_source,
@@ -15,10 +16,35 @@ from app.services.facebook_video import (
     _facebook_video_id,
     _is_facebook_video_url,
     validate_video_file,
+    video_dimensions,
 )
 
 
 class FacebookVideoValidationTests(unittest.TestCase):
+    def test_cover_resize_fills_a_portrait_target_without_padding(self):
+        width, height = _cover_resize_dimensions(720, 1280, 1024, 1536)
+
+        self.assertGreaterEqual(width, 1024)
+        self.assertGreaterEqual(height, 1536)
+        self.assertEqual(width % 2, 0)
+        self.assertEqual(height % 2, 0)
+
+    def test_cover_resize_fills_a_vertical_reel_from_landscape_video(self):
+        width, height = _cover_resize_dimensions(1920, 1080, 1080, 1920)
+
+        self.assertGreaterEqual(width, 1080)
+        self.assertEqual(height, 1920)
+
+    def test_video_format_presets_have_expected_dimensions(self):
+        self.assertEqual(video_dimensions("2:3"), (1024, 1536))
+        self.assertEqual(video_dimensions("9:16"), (1080, 1920))
+        self.assertEqual(video_dimensions("4:5"), (1080, 1350))
+        self.assertEqual(video_dimensions("1:1"), (1080, 1080))
+
+    def test_unknown_video_format_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported Facebook video format"):
+            video_dimensions("16:9")
+
     def _source_file(self, size: int = 2048) -> MagicMock:
         path = MagicMock()
         path.is_file.return_value = True

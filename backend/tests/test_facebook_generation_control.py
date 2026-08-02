@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.db_models import FacebookContentStatus, FacebookSpyRow
 from app.routes.facebook import (
     cancel_facebook_generation,
+    delete_facebook_content,
     replace_facebook_video_and_retry,
     retry_facebook_generation,
 )
@@ -42,6 +43,7 @@ class _CancelSession:
         self.added = []
         self.commits = 0
         self.rollbacks = 0
+        self.deleted = []
 
     async def execute(self, _statement):
         return next(self._results)
@@ -54,6 +56,9 @@ class _CancelSession:
 
     async def rollback(self):
         self.rollbacks += 1
+
+    async def delete(self, item):
+        self.deleted.append(item)
 
     async def flush(self):
         return None
@@ -219,6 +224,7 @@ class FacebookRetryGenerationTests(unittest.IsolatedAsyncioTestCase):
             created_by=owner_id,
         )
 
+
     async def test_replace_video_uploads_a_valid_source_and_retries(self):
         project_id = uuid.uuid4()
         owner_id = uuid.uuid4()
@@ -292,6 +298,51 @@ class FacebookRetryGenerationTests(unittest.IsolatedAsyncioTestCase):
             content_ids=[content_id],
             created_by=owner_id,
         )
+
+
+class FacebookDeleteGenerationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_delete_ready_generation_removes_database_row_and_local_assets(self):
+        project_id = uuid.uuid4()
+        owner_id = uuid.uuid4()
+        content_id = uuid.uuid4()
+        project = SimpleNamespace(id=project_id, owner_id=owner_id)
+        content = SimpleNamespace(
+            id=content_id,
+            project_id=project_id,
+            source_video_url="https://example.com/uploads/facebook/sources/source.mp4",
+            processed_video_url="https://example.com/uploads/facebook/item/processed-video.mp4",
+            recipe_id=None,
+            status=FacebookContentStatus.ready,
+        )
+        session = _CancelSession(
+            [
+                _Result(scalar=content),
+                _Result(scalar=project),
+                _Result(scalar=0),
+                _Result(scalar=0),
+                _Result(scalar=0),
+                _Result(),
+            ]
+        )
+        cleanup = AsyncMock(return_value=(6, 1024, []))
+
+        with (
+            patch(
+                "app.routes.facebook.facebook_generation_manager.is_running",
+                return_value=False,
+            ),
+            patch("app.routes.facebook.asyncio.to_thread", cleanup),
+        ):
+            await delete_facebook_content(
+                content_id,
+                SimpleNamespace(id=owner_id),
+                session,
+            )
+
+        self.assertEqual(session.deleted, [content])
+        self.assertEqual(session.commits, 1)
+        cleanup.assert_awaited_once()
+        self.assertTrue(cleanup.await_args.kwargs["delete_source"])
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ import {
   Send,
   Settings2,
   Sheet,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   Upload,
@@ -46,6 +47,7 @@ import {
   FacebookDeliveryOut,
   FacebookPageOut,
   FacebookProjectOut,
+  FacebookVideoFormat,
   PromptOut,
 } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
@@ -54,7 +56,7 @@ import FacebookWebsiteSettings from "@/components/facebook/FacebookWebsiteSettin
 import FacebookAiPromptSettings from "@/components/facebook/FacebookAiPromptSettings";
 
 type MainTab = "calendar" | "settings";
-type SettingsTab = "website" | "pages" | "keys" | "ai_prompts" | "video_prompts";
+type SettingsTab = "website" | "pages" | "keys" | "ai_prompts" | "video_prompts" | "video_settings";
 
 const STATUS_STYLE: Record<string, string> = {
   processing: "border-sky-800/50 bg-sky-950/30 text-sky-300",
@@ -212,7 +214,7 @@ export default function FacebookProjectPage() {
               className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900/70 px-5 py-3 text-sm font-semibold text-slate-300 transition hover:border-slate-600 hover:bg-slate-800 hover:text-white"
             >
               <ScrollText size={17} />
-              Generation Logs
+              Generation Jobs
             </Link>
             <Link
               href={`/facebook/${project.id}/spy-sheet`}
@@ -291,10 +293,12 @@ function FacebookCalendar({
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [replacingId, setReplacingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [scheduleDelivery, setScheduleDelivery] = useState<FacebookDeliveryOut | null>(null);
   const [scheduleAt, setScheduleAt] = useState("");
   const [savingSchedule, setSavingSchedule] = useState(false);
   const toast = useToast();
+  const confirm = useConfirm();
 
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const gridStart = new Date(first);
@@ -376,6 +380,26 @@ function FacebookCalendar({
       onRefresh();
     } finally {
       setReplacingId(null);
+    }
+  };
+
+  const deleteGeneration = async (content: FacebookContentOut) => {
+    const accepted = await confirm({
+      message: `Delete “${content.title}” from this calendar? Its local files (including an unshared uploaded source) and pending deliveries will be removed. Already published Facebook or WordPress posts are not deleted.`,
+      confirmLabel: "Delete generation",
+      danger: true,
+    });
+    if (!accepted) return;
+    setDeletingId(content.id);
+    try {
+      await api.deleteFacebookContent(content.id);
+      setSelectedContent((selected) => selected?.id === content.id ? null : selected);
+      toast.success("Generation deleted from the calendar");
+      onRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not delete generation");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -509,9 +533,11 @@ function FacebookCalendar({
               publishingId={publishingId}
               retryingId={retryingId}
               replacingId={replacingId}
+              deletingId={deletingId}
               onPublish={publish}
               onRetry={retryGeneration}
               onReplace={replaceVideoAndRetry}
+              onDelete={deleteGeneration}
               onSchedule={(delivery) => {
                 setScheduleDelivery(delivery);
                 setScheduleAt(delivery.scheduled_at ? localDateTimeInput(delivery.scheduled_at) : "");
@@ -527,8 +553,10 @@ function FacebookCalendar({
           content={selectedContent}
           retrying={retryingId === selectedContent.id}
           replacing={replacingId === selectedContent.id}
+          deleting={deletingId === selectedContent.id}
           onRetry={() => void retryGeneration(selectedContent)}
           onReplace={(file) => void replaceVideoAndRetry(selectedContent, file)}
+          onDelete={() => void deleteGeneration(selectedContent)}
           onClose={() => setSelectedContent(null)}
         />
       )}
@@ -565,9 +593,11 @@ function FacebookPostCard({
   publishingId,
   retryingId,
   replacingId,
+  deletingId,
   onPublish,
   onRetry,
   onReplace,
+  onDelete,
   onSchedule,
   onOpen,
 }: {
@@ -575,9 +605,11 @@ function FacebookPostCard({
   publishingId: string | null;
   retryingId: string | null;
   replacingId: string | null;
+  deletingId: string | null;
   onPublish: (delivery: FacebookDeliveryOut) => void;
   onRetry: (content: FacebookContentOut) => void;
   onReplace: (content: FacebookContentOut, file: File) => void;
+  onDelete: (content: FacebookContentOut) => void;
   onSchedule: (delivery: FacebookDeliveryOut) => void;
   onOpen: () => void;
 }) {
@@ -608,7 +640,19 @@ function FacebookPostCard({
               </div>
               <h3 className="mt-2 text-lg font-semibold leading-6 text-white">{content.title}</h3>
             </div>
-            <button onClick={onOpen} className="rounded-lg p-2 text-slate-600 hover:bg-slate-800 hover:text-white"><MoreHorizontal size={17} /></button>
+            <div className="flex items-center gap-1">
+              {(content.status === "ready" || content.status === "failed") && (
+                <button
+                  onClick={() => onDelete(content)}
+                  disabled={deletingId === content.id}
+                  className="rounded-lg p-2 text-slate-600 transition hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50"
+                  title="Delete generation"
+                >
+                  {deletingId === content.id ? <Loader2 size={17} className="animate-spin" /> : <Trash2 size={17} />}
+                </button>
+              )}
+              <button onClick={onOpen} className="rounded-lg p-2 text-slate-600 hover:bg-slate-800 hover:text-white"><MoreHorizontal size={17} /></button>
+            </div>
           </div>
 
           {content.generated_images.length > 0 && (
@@ -692,15 +736,19 @@ function ContentDetail({
   content,
   retrying,
   replacing,
+  deleting,
   onRetry,
   onReplace,
+  onDelete,
   onClose,
 }: {
   content: FacebookContentOut;
   retrying: boolean;
   replacing: boolean;
+  deleting: boolean;
   onRetry: () => void;
   onReplace: (file: File) => void;
+  onDelete: () => void;
   onClose: () => void;
 }) {
   return (
@@ -711,7 +759,19 @@ function ContentDetail({
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#68a8ff]">Generated Facebook post</p>
             <h2 className="mt-2 text-2xl font-semibold text-white">{content.title}</h2>
           </div>
-          <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
+          <div className="flex items-center gap-1">
+            {(content.status === "ready" || content.status === "failed") && (
+              <button
+                onClick={onDelete}
+                disabled={deleting}
+                className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
+              >
+                {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                Delete
+              </button>
+            )}
+            <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
+          </div>
         </div>
         <div className="grid gap-6 p-6 md:grid-cols-[300px_1fr]">
           <div>
@@ -822,6 +882,7 @@ function FacebookSettings({
     { key: "keys" as SettingsTab, label: "API Keys", icon: KeyRound },
     { key: "ai_prompts" as SettingsTab, label: "AI Prompts", icon: MessageSquare },
     { key: "video_prompts" as SettingsTab, label: "Video Prompts", icon: MessageSquareText },
+    { key: "video_settings" as SettingsTab, label: "Video Settings", icon: SlidersHorizontal },
   ];
   return (
     <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
@@ -851,6 +912,7 @@ function FacebookSettings({
         {activeTab === "keys" && <FacebookKeysSettings contentProjectId={project.content_project_id} />}
         {activeTab === "ai_prompts" && <FacebookAiPromptSettings contentProjectId={project.content_project_id} />}
         {activeTab === "video_prompts" && <FacebookVideoPromptSettings contentProjectId={project.content_project_id} />}
+        {activeTab === "video_settings" && <FacebookVideoSettings project={project} onProject={onProject} />}
       </div>
     </div>
   );
@@ -871,6 +933,142 @@ function SettingsSection({
       <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
       <div className="mt-5">{children}</div>
     </section>
+  );
+}
+
+const VIDEO_FORMAT_OPTIONS: Array<{
+  value: FacebookVideoFormat;
+  label: string;
+  dimensions: string;
+  description: string;
+}> = [
+  { value: "2:3", label: "Portrait 2:3", dimensions: "1024 × 1536", description: "Current recipe-video format" },
+  { value: "9:16", label: "Reel 9:16", dimensions: "1080 × 1920", description: "Full-screen vertical Reel" },
+  { value: "4:5", label: "Feed 4:5", dimensions: "1080 × 1350", description: "Portrait Facebook feed" },
+  { value: "1:1", label: "Square 1:1", dimensions: "1080 × 1080", description: "Square feed post" },
+];
+
+function FacebookVideoSettings({
+  project,
+  onProject,
+}: {
+  project: FacebookProjectOut;
+  onProject: (project: FacebookProjectOut) => void;
+}) {
+  const toast = useToast();
+  const [format, setFormat] = useState<FacebookVideoFormat>(project.video_format);
+  const [introSeconds, setIntroSeconds] = useState(project.video_intro_seconds);
+  const [fps, setFps] = useState<24 | 30 | 60>(project.video_fps);
+  const [bitrate, setBitrate] = useState(project.video_bitrate_kbps);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setFormat(project.video_format);
+    setIntroSeconds(project.video_intro_seconds);
+    setFps(project.video_fps);
+    setBitrate(project.video_bitrate_kbps);
+  }, [project]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const updated = await api.updateFacebookProject(project.id, {
+        video_format: format,
+        video_intro_seconds: Math.min(15, Math.max(1, introSeconds)),
+        video_fps: fps,
+        video_bitrate_kbps: Math.min(20000, Math.max(1000, bitrate)),
+      });
+      onProject(updated);
+      toast.success("Video settings saved for this project");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save video settings");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SettingsSection
+      title="Video Settings"
+      description="These render settings apply only to this Facebook project. Existing generated videos are unchanged; retries use the new settings."
+    >
+      <div className="overflow-hidden rounded-[20px] border border-slate-800 bg-[#101827]">
+        <div className="border-b border-slate-800 px-5 py-4">
+          <h3 className="font-semibold text-white">Output format</h3>
+          <p className="mt-1 text-xs text-slate-500">The source is centered and cropped to fill the frame without black padding.</p>
+        </div>
+        <div className="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">
+          {VIDEO_FORMAT_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => setFormat(option.value)}
+              className={`rounded-xl border p-4 text-left transition ${
+                format === option.value
+                  ? "border-[#1877f2] bg-[#1877f2]/10"
+                  : "border-slate-700 bg-slate-950/25 hover:border-slate-600"
+              }`}
+            >
+              <span className="text-sm font-semibold text-white">{option.label}</span>
+              <span className="mt-2 block font-mono text-xs text-[#68a8ff]">{option.dimensions}</span>
+              <span className="mt-2 block text-[11px] leading-4 text-slate-500">{option.description}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="grid gap-5 border-t border-slate-800 p-5 md:grid-cols-3">
+          <label>
+            <span className="text-xs font-medium text-slate-300">Source-video intro</span>
+            <span className="mt-1 block text-[11px] text-slate-600">Seconds shown before the recipe card</span>
+            <div className="mt-3 flex items-center gap-3">
+              <input
+                type="range"
+                min={1}
+                max={15}
+                step={0.5}
+                value={introSeconds}
+                onChange={(event) => setIntroSeconds(Number(event.target.value))}
+                className="min-w-0 flex-1 accent-[#1877f2]"
+              />
+              <span className="w-12 rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1.5 text-center text-xs font-semibold text-white">{introSeconds}s</span>
+            </div>
+          </label>
+
+          <label>
+            <span className="text-xs font-medium text-slate-300">Frame rate</span>
+            <span className="mt-1 block text-[11px] text-slate-600">30 FPS is recommended for most videos</span>
+            <select value={fps} onChange={(event) => setFps(Number(event.target.value) as 24 | 30 | 60)} className="input-field mt-3">
+              <option value={24}>24 FPS</option>
+              <option value={30}>30 FPS</option>
+              <option value={60}>60 FPS</option>
+            </select>
+          </label>
+
+          <label>
+            <span className="text-xs font-medium text-slate-300">Video bitrate</span>
+            <span className="mt-1 block text-[11px] text-slate-600">Higher quality uses more server storage</span>
+            <div className="relative mt-3">
+              <input
+                type="number"
+                min={1000}
+                max={20000}
+                step={500}
+                value={bitrate}
+                onChange={(event) => setBitrate(Number(event.target.value))}
+                className="input-field pr-16"
+              />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-600">kbps</span>
+            </div>
+          </label>
+        </div>
+        <div className="flex justify-end border-t border-slate-800 px-5 py-4">
+          <button onClick={save} disabled={saving} className="btn-secondary inline-flex items-center gap-2">
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+            Save video settings
+          </button>
+        </div>
+      </div>
+    </SettingsSection>
   );
 }
 
@@ -1372,19 +1570,27 @@ const FACEBOOK_PROMPT_KEYS = ["facebook_video_script", "facebook_recipe_card"];
 
 function FacebookVideoPromptSettings({ contentProjectId }: { contentProjectId: string }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [prompts, setPrompts] = useState<PromptOut[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const load = useCallback(async () => {
+    const all = await api.getSettingsPrompts(contentProjectId);
+    const selected = all.filter((prompt) => FACEBOOK_PROMPT_KEYS.includes(prompt.key));
+    setPrompts(selected);
+    setValues(Object.fromEntries(selected.map((prompt) => [prompt.key, prompt.value])));
+  }, [contentProjectId]);
 
   useEffect(() => {
-    api.getSettingsPrompts(contentProjectId)
-      .then((all) => {
-        const selected = all.filter((prompt) => FACEBOOK_PROMPT_KEYS.includes(prompt.key));
-        setPrompts(selected);
-        setValues(Object.fromEntries(selected.map((prompt) => [prompt.key, prompt.value])));
-      })
-      .catch(() => {});
-  }, [contentProjectId]);
+    void load().catch((error) => {
+      toast.error(error instanceof Error ? error.message : "Could not load video prompts");
+    });
+    // ToastContext recreates its facade when notifications change; depending on
+    // that object here would reload prompts after every toast (and loop on errors).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load]);
 
   const save = async () => {
     setSaving(true);
@@ -1396,6 +1602,26 @@ function FacebookVideoPromptSettings({ contentProjectId }: { contentProjectId: s
       toast.error(error instanceof Error ? error.message : "Could not save prompts");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const reset = async () => {
+    const accepted = await confirm({
+      message:
+        "Reset only this Facebook project's video prompts to their built-in defaults? Other prompts and projects will not be changed.",
+      confirmLabel: "Reset video prompts",
+      danger: true,
+    });
+    if (!accepted) return;
+    setResetting(true);
+    try {
+      await api.resetSettingsPrompts(contentProjectId, FACEBOOK_PROMPT_KEYS);
+      await load();
+      toast.success("This project's video prompts were reset");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not reset video prompts");
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -1436,8 +1662,11 @@ function FacebookVideoPromptSettings({ contentProjectId }: { contentProjectId: s
           </div>
         ))}
       </div>
-      <div className="mt-5 flex justify-end">
-        <button onClick={save} disabled={saving || prompts.every((prompt) => values[prompt.key] === prompt.value)} className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
+      <div className="mt-5 flex flex-wrap justify-end gap-2">
+        <button onClick={reset} disabled={resetting || saving} className="btn-secondary inline-flex items-center gap-2 hover:border-red-700 hover:text-red-300 disabled:opacity-40">
+          {resetting ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />} Reset defaults
+        </button>
+        <button onClick={save} disabled={saving || resetting || prompts.every((prompt) => values[prompt.key] === prompt.value)} className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
           {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save prompts
         </button>
       </div>

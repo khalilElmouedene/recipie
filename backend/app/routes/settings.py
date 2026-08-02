@@ -162,16 +162,35 @@ async def reset_prompts(
     user: Annotated[User, Depends(require_owner)],
     db: Annotated[AsyncSession, Depends(get_db)],
     project_id: uuid.UUID = Query(...),
+    keys: list[str] | None = Query(default=None),
 ):
-    """Delete all custom prompt rows for this project so defaults are used."""
+    """Delete selected project overrides, or every override when keys are omitted."""
     await check_project_access(
         project_id, user, db, require_roles=[ProjectMemberRole.admin]
     )
-    result = await db.execute(
-        select(Prompt).where(Prompt.owner_id == user.id, Prompt.project_id == project_id)
+    selected_keys = set(keys) if keys is not None else None
+    if selected_keys is not None:
+        invalid_keys = sorted(selected_keys - DEFAULT_PROMPTS.keys())
+        if invalid_keys:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid prompt key: {invalid_keys[0]}",
+            )
+        if not selected_keys:
+            return
+
+    query = select(Prompt).where(
+        Prompt.owner_id == user.id,
+        Prompt.project_id == project_id,
     )
+    if selected_keys is not None:
+        query = query.where(Prompt.key.in_(selected_keys))
+    result = await db.execute(query)
     for row in result.scalars().all():
-        await db.delete(row)
+        # Keep this guard even with the SQL filter so a future query refactor
+        # cannot accidentally reset unrelated project prompts.
+        if selected_keys is None or row.key in selected_keys:
+            await db.delete(row)
     await db.commit()
 
 

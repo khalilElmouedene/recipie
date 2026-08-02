@@ -39,7 +39,7 @@ from ..services import facebook_api
 from ..services.email_service import send_facebook_spy_sheet_low_email
 from ..services.credentials_loader import load_credentials_for_job
 from ..services.facebook_generation import facebook_generation_manager
-from ..services.facebook_publisher import publish_facebook_delivery
+from ..services.facebook_publisher import delete_facebook_content_files, publish_facebook_delivery
 from ..services.facebook_video import validate_video_file
 from ..services.facebook_schedule import (
     FacebookSchedulePolicy,
@@ -64,6 +64,10 @@ class FacebookProjectCreate(BaseModel):
     description: str = Field(default="", max_length=5000)
     app_id: str = Field(min_length=1, max_length=255)
     app_secret: str = Field(min_length=1, max_length=1000)
+    video_format: Literal["2:3", "9:16", "4:5", "1:1"] = "2:3"
+    video_intro_seconds: float = Field(default=5.0, ge=1.0, le=15.0)
+    video_fps: Literal[24, 30, 60] = 30
+    video_bitrate_kbps: int = Field(default=8000, ge=1000, le=20000)
 
 
 class FacebookProjectUpdate(BaseModel):
@@ -71,6 +75,10 @@ class FacebookProjectUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=5000)
     app_id: str | None = Field(default=None, max_length=255)
     app_secret: str | None = None
+    video_format: Literal["2:3", "9:16", "4:5", "1:1"] | None = None
+    video_intro_seconds: float | None = Field(default=None, ge=1.0, le=15.0)
+    video_fps: Literal[24, 30, 60] | None = None
+    video_bitrate_kbps: int | None = Field(default=None, ge=1000, le=20000)
 
 
 class FacebookProjectOut(BaseModel):
@@ -81,6 +89,10 @@ class FacebookProjectOut(BaseModel):
     description: str
     app_id: str | None
     has_app_secret: bool
+    video_format: str
+    video_intro_seconds: float
+    video_fps: int
+    video_bitrate_kbps: int
     page_count: int
     content_count: int
     has_website: bool
@@ -282,6 +294,10 @@ async def _project_out(project: FacebookProject, db: AsyncSession) -> FacebookPr
         description=project.description or "",
         app_id=project.app_id or (settings.facebook_app_id or None),
         has_app_secret=bool(project.app_secret or settings.facebook_app_secret),
+        video_format=project.video_format,
+        video_intro_seconds=project.video_intro_seconds,
+        video_fps=project.video_fps,
+        video_bitrate_kbps=project.video_bitrate_kbps,
         page_count=page_count,
         content_count=content_count,
         has_website=has_website,
@@ -388,6 +404,10 @@ async def create_facebook_project(
         description=body.description.strip(),
         app_id=body.app_id.strip(),
         app_secret=encrypt(body.app_secret.strip()),
+        video_format=body.video_format,
+        video_intro_seconds=body.video_intro_seconds,
+        video_fps=body.video_fps,
+        video_bitrate_kbps=body.video_bitrate_kbps,
     )
     db.add(project)
     await db.commit()
@@ -1231,6 +1251,115 @@ async def list_facebook_contents(
             )
         )
     return output
+
+
+@router.delete(
+    "/facebook-contents/{content_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_facebook_content(
+    content_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    content = (
+        await db.execute(
+            select(FacebookContent)
+            .where(FacebookContent.id == content_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if content is None:
+        raise HTTPException(status_code=404, detail="Facebook content not found")
+    await _project(content.project_id, user, db)
+    if facebook_generation_manager.is_running(content.id):
+        raise HTTPException(
+            status_code=409,
+            detail="Stop this generation before deleting it.",
+        )
+    if content.status not in {
+        FacebookContentStatus.ready,
+        FacebookContentStatus.failed,
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail="Only a successful or failed generation can be deleted.",
+        )
+    publishing_count = int(
+        (
+            await db.execute(
+                select(func.count(FacebookDelivery.id)).where(
+                    FacebookDelivery.content_id == content.id,
+                    FacebookDelivery.status == FacebookDeliveryStatus.publishing,
+                )
+            )
+        ).scalar_one()
+    )
+    if publishing_count:
+        raise HTTPException(
+            status_code=409,
+            detail="A Facebook publication is currently running. Try again shortly.",
+        )
+
+    source_video_url = content.source_video_url
+    processed_video_url = content.processed_video_url
+    recipe_id = content.recipe_id
+    other_content_references = int(
+        (
+            await db.execute(
+                select(func.count(FacebookContent.id)).where(
+                    FacebookContent.id != content.id,
+                    FacebookContent.source_video_url == source_video_url,
+                )
+            )
+        ).scalar_one()
+    )
+    spy_sheet_references = int(
+        (
+            await db.execute(
+                select(func.count(FacebookSpyRow.id)).where(
+                    FacebookSpyRow.direct_link == source_video_url
+                )
+            )
+        ).scalar_one()
+    )
+    delete_source = other_content_references == 0 and spy_sheet_references == 0
+
+    await db.execute(
+        sql_delete(FacebookGenerationLog).where(
+            FacebookGenerationLog.content_id == content.id
+        )
+    )
+    await db.delete(content)
+    await db.flush()
+    if recipe_id is not None:
+        recipe = (
+            await db.execute(select(Recipe).where(Recipe.id == recipe_id))
+        ).scalar_one_or_none()
+        if recipe is not None:
+            await db.delete(recipe)
+    await db.commit()
+
+    deleted_count, deleted_bytes, failures = await asyncio.to_thread(
+        delete_facebook_content_files,
+        content_id,
+        source_video_url=source_video_url,
+        processed_video_url=processed_video_url,
+        delete_source=delete_source,
+    )
+    if failures:
+        logger.warning(
+            "Deleted Facebook content %s but could not remove assets: %s",
+            content_id,
+            ", ".join(failures),
+        )
+    else:
+        logger.info(
+            "Deleted Facebook content %s and %s local file(s), freeing %.1f MB",
+            content_id,
+            deleted_count,
+            deleted_bytes / (1024 * 1024),
+        )
 
 
 async def _queue_facebook_generation_retry(

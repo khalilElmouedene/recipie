@@ -156,6 +156,66 @@ def _delete_content_video_files(
     return deleted_count, deleted_bytes, failures
 
 
+def delete_facebook_content_files(
+    content_id: uuid.UUID,
+    *,
+    source_video_url: str,
+    processed_video_url: str | None,
+    delete_source: bool,
+) -> tuple[int, int, list[str]]:
+    """Remove every locally generated file for a manually deleted generation."""
+    candidates: set[Path] = set()
+    work_dir = (FACEBOOK_UPLOADS_ROOT / str(content_id)).resolve()
+    try:
+        work_dir.relative_to(FACEBOOK_UPLOADS_ROOT.resolve())
+    except ValueError:
+        return 0, 0, [str(work_dir)]
+    if work_dir.is_dir():
+        candidates.update(path.resolve() for path in work_dir.iterdir() if path.is_file())
+
+    processed_path = _local_upload_path(processed_video_url)
+    if processed_path is not None:
+        try:
+            processed_path.relative_to(FACEBOOK_UPLOADS_ROOT.resolve())
+            candidates.add(processed_path)
+        except ValueError:
+            pass
+
+    if delete_source:
+        source_path = _local_upload_path(source_video_url)
+        if source_path is not None:
+            try:
+                source_path.relative_to(FACEBOOK_SOURCE_ROOT.resolve())
+                candidates.add(source_path)
+            except ValueError:
+                pass
+
+    deleted_count = 0
+    deleted_bytes = 0
+    failures: list[str] = []
+    for path in candidates:
+        try:
+            exists = path.is_file()
+            size = path.stat().st_size if exists else 0
+            path.unlink(missing_ok=True)
+            if exists:
+                deleted_count += 1
+                deleted_bytes += size
+        except OSError:
+            failures.append(str(path))
+            logger.exception("Could not delete Facebook generation asset %s", path)
+    try:
+        work_dir.rmdir()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        # A future asset type or a transient file may still be present. The
+        # individual deletion failures are enough to diagnose the cleanup.
+        if work_dir.exists() and not any(work_dir.iterdir()):
+            failures.append(str(work_dir))
+    return deleted_count, deleted_bytes, failures
+
+
 async def cleanup_published_facebook_content_video(
     content_id: uuid.UUID,
     *,

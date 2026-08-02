@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (
-    String, Text, DateTime, Integer, BigInteger, ForeignKey, Enum as SAEnum, UniqueConstraint, Boolean, JSON
+    String, Text, DateTime, Integer, BigInteger, ForeignKey, Enum as SAEnum, UniqueConstraint, Boolean, Float, JSON
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -510,6 +510,10 @@ class FacebookProject(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     app_secret: Mapped[str | None] = mapped_column(Text, nullable=True)  # encrypted
+    video_format: Mapped[str] = mapped_column(String(16), nullable=False, default="2:3")
+    video_intro_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=5.0)
+    video_fps: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    video_bitrate_kbps: Mapped[int] = mapped_column(Integer, nullable=False, default=8000)
     generation_paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

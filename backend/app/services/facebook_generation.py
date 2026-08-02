@@ -44,6 +44,10 @@ class _GenerationContext:
     generate_recipe_json: bool
     credentials: dict[str, str]
     prompts: dict[str, str]
+    video_format: str
+    video_intro_seconds: float
+    video_fps: int
+    video_bitrate_kbps: int
 
 
 class FacebookGenerationManager:
@@ -191,6 +195,10 @@ class FacebookGenerationManager:
                 generate_recipe_json=bool(getattr(site, "generate_recipe_json", True)),
                 credentials=credentials,
                 prompts=prompts,
+                video_format=project.video_format,
+                video_intro_seconds=project.video_intro_seconds,
+                video_fps=project.video_fps,
+                video_bitrate_kbps=project.video_bitrate_kbps,
             )
 
     async def _load_content_payloads(
@@ -450,6 +458,10 @@ class FacebookGenerationManager:
                         openai_api_key=context.credentials["openai"],
                         script_prompt=context.prompts["facebook_video_script"],
                         recipe_card_prompt=context.prompts["facebook_recipe_card"],
+                        video_format=context.video_format,
+                        intro_seconds=context.video_intro_seconds,
+                        fps=context.video_fps,
+                        bitrate_kbps=context.video_bitrate_kbps,
                         log=lambda message: progress(message, stage="video"),
                     )
                     self._checkpoint(facebook_project_id)

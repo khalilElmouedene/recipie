@@ -309,8 +309,11 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ prompts }),
     }),
-  resetSettingsPrompts: (projectId: string) =>
-    request<void>(`/api/settings/prompts?project_id=${projectId}`, { method: "DELETE" }),
+  resetSettingsPrompts: (projectId: string, keys?: string[]) => {
+    const params = new URLSearchParams({ project_id: projectId });
+    keys?.forEach((key) => params.append("keys", key));
+    return request<void>(`/api/settings/prompts?${params.toString()}`, { method: "DELETE" });
+  },
   resetAllPrompts: () =>
     request<void>(`/api/settings/prompts/all`, { method: "DELETE" }),
 
@@ -763,7 +766,16 @@ export const api = {
     request<FacebookProjectOut>(`/api/facebook-projects/${projectId}`),
   updateFacebookProject: (
     projectId: string,
-    data: Partial<{ name: string; description: string; app_id: string; app_secret: string }>,
+    data: Partial<{
+      name: string;
+      description: string;
+      app_id: string;
+      app_secret: string;
+      video_format: FacebookVideoFormat;
+      video_intro_seconds: number;
+      video_fps: 24 | 30 | 60;
+      video_bitrate_kbps: number;
+    }>,
   ) =>
     request<FacebookProjectOut>(`/api/facebook-projects/${projectId}`, {
       method: "PATCH",
@@ -864,6 +876,8 @@ export const api = {
     }),
   getFacebookContents: (projectId: string) =>
     request<FacebookContentOut[]>(`/api/facebook-projects/${projectId}/contents`),
+  deleteFacebookContent: (contentId: string) =>
+    request<void>(`/api/facebook-contents/${contentId}`, { method: "DELETE" }),
   retryFacebookGeneration: (contentId: string) =>
     request<{ content_id: string; status: "processing" }>(
       `/api/facebook-contents/${contentId}/retry`,
@@ -1497,6 +1511,7 @@ export interface ThreadsPostOut {
 }
 
 export type FacebookCommentMode = "full_recipe" | "full_recipe_url";
+export type FacebookVideoFormat = "2:3" | "9:16" | "4:5" | "1:1";
 export type FacebookContentStatus = "processing" | "ready" | "failed";
 export type FacebookLogLevel = "info" | "success" | "warning" | "error";
 export type FacebookGenerationState = "idle" | "running" | "paused" | "cancelling";
@@ -1516,6 +1531,10 @@ export interface FacebookProjectOut {
   description: string;
   app_id: string | null;
   has_app_secret: boolean;
+  video_format: FacebookVideoFormat;
+  video_intro_seconds: number;
+  video_fps: 24 | 30 | 60;
+  video_bitrate_kbps: number;
   page_count: number;
   content_count: number;
   has_website: boolean;

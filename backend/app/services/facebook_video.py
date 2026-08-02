@@ -4,6 +4,7 @@ import base64
 import ipaddress
 import json
 import logging
+import math
 import os
 import shutil
 import socket
@@ -29,8 +30,12 @@ UPLOADS_ROOT = Path(os.getenv("UPLOADS_DIR", "/app/uploads"))
 FACEBOOK_UPLOADS = UPLOADS_ROOT / "facebook"
 MAX_VIDEO_BYTES = 500 * 1024 * 1024
 MAX_FACEBOOK_HTML_BYTES = 12 * 1024 * 1024
-VIDEO_WIDTH = 1024
-VIDEO_HEIGHT = 1536
+VIDEO_FORMAT_DIMENSIONS = {
+    "2:3": (1024, 1536),
+    "9:16": (1080, 1920),
+    "4:5": (1080, 1350),
+    "1:1": (1080, 1080),
+}
 FACEBOOK_VIDEO_HOSTS = {
     "facebook.com",
     "www.facebook.com",
@@ -45,6 +50,36 @@ class ProcessedFacebookVideo:
     screenshot_url: str
     processed_video_url: str
     voice_over: str
+
+
+def video_dimensions(video_format: str) -> tuple[int, int]:
+    """Return the validated even-sized output dimensions for a project preset."""
+    try:
+        return VIDEO_FORMAT_DIMENSIONS[video_format]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported Facebook video format: {video_format}") from exc
+
+
+def _cover_resize_dimensions(
+    source_width: float,
+    source_height: float,
+    target_width: int,
+    target_height: int,
+) -> tuple[int, int]:
+    """Scale a frame until it fully covers the target without black padding."""
+    if min(source_width, source_height, target_width, target_height) <= 0:
+        raise ValueError("Video dimensions must be positive.")
+    scale = max(target_width / source_width, target_height / source_height)
+    width = max(target_width, math.ceil(source_width * scale))
+    height = max(target_height, math.ceil(source_height * scale))
+    # libx264/yuv420p requires even dimensions.
+    return width + width % 2, height + height % 2
+
+
+def _recipe_card_size(width: int, height: int) -> str:
+    if width == height:
+        return "1024x1024"
+    return "1024x1536" if height > width else "1536x1024"
 
 
 def _public_upload_url(path: Path) -> str:
@@ -520,11 +555,19 @@ class FacebookVideoProcessor:
         openai_api_key: str,
         script_prompt: str,
         recipe_card_prompt: str,
+        video_format: str = "2:3",
+        intro_seconds: float = 5.0,
+        fps: int = 30,
+        bitrate_kbps: int = 8000,
         log: Callable[[str], None] | None = None,
     ) -> ProcessedFacebookVideo:
         emit = log or (lambda _message: None)
         if not openai_api_key:
             raise ValueError("OpenAI API key is required for Facebook video generation.")
+        video_width, video_height = video_dimensions(video_format)
+        intro_seconds = min(15.0, max(1.0, float(intro_seconds)))
+        fps = fps if fps in {24, 30, 60} else 30
+        bitrate_kbps = min(20000, max(1000, int(bitrate_kbps)))
 
         # Import lazily so the API can boot and report a clear pipeline error if
         # a worker image was deployed without its optional video dependencies.
@@ -568,7 +611,8 @@ class FacebookVideoProcessor:
                     str(silent_path),
                     codec="libx264",
                     audio=False,
-                    fps=clip.fps or 30,
+                    fps=fps,
+                    ffmpeg_params=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
                     logger=None,
                 )
                 emit("Removed the original video audio.")
@@ -601,14 +645,14 @@ class FacebookVideoProcessor:
                 image=screenshot,
                 prompt=_prompt(recipe_card_prompt, recipe_title),
                 quality="low",
-                size=f"{VIDEO_WIDTH}x{VIDEO_HEIGHT}",
+                size=_recipe_card_size(video_width, video_height),
             )
         image_base64 = image_result.data[0].b64_json
         if not image_base64:
             raise ValueError("OpenAI returned an empty Facebook recipe card.")
         image_bytes = base64.b64decode(image_base64)
         card = Image.open(BytesIO(image_bytes)).convert("RGB")
-        card = card.resize((VIDEO_WIDTH, VIDEO_HEIGHT), Image.Resampling.LANCZOS)
+        card = card.resize((video_width, video_height), Image.Resampling.LANCZOS)
         card.save(recipe_card_path, quality=96)
         emit("Generated the vertical recipe card.")
 
@@ -619,33 +663,46 @@ class FacebookVideoProcessor:
             duration = float(audio.duration or 0)
             if duration <= 0:
                 raise ValueError("Generated Facebook voice-over has no duration.")
-            lead_duration = min(5.0, duration, float(source.duration or 0))
-            lead = source.subclipped(0, lead_duration).resized(height=VIDEO_HEIGHT)
+            lead_duration = min(intro_seconds, duration, float(source.duration or 0))
+            resized_width, resized_height = _cover_resize_dimensions(
+                source.w,
+                source.h,
+                video_width,
+                video_height,
+            )
+            lead = source.subclipped(0, lead_duration).resized(
+                (resized_width, resized_height)
+            )
             lead = lead.cropped(
                 x_center=lead.w / 2,
                 y_center=lead.h / 2,
-                width=VIDEO_WIDTH,
-                height=VIDEO_HEIGHT,
+                width=video_width,
+                height=video_height,
             )
             layers.append(lead)
+            emit(
+                f"Fitted the source video to {video_width}x{video_height} "
+                "without black padding."
+            )
             remaining = max(0.0, duration - lead_duration)
             if remaining > 0:
                 card_clip = (
                     ImageClip(str(recipe_card_path))
                     .with_duration(remaining)
                     .with_start(lead_duration)
-                    .resized((VIDEO_WIDTH, VIDEO_HEIGHT))
+                    .resized((video_width, video_height))
                     .with_position(("center", "center"))
                 )
                 layers.append(card_clip)
-            final = CompositeVideoClip(layers, size=(VIDEO_WIDTH, VIDEO_HEIGHT)).with_audio(audio)
+            final = CompositeVideoClip(layers, size=(video_width, video_height)).with_audio(audio)
             try:
                 final.write_videofile(
                     str(output_path),
-                    fps=30,
+                    fps=fps,
                     codec="libx264",
                     audio_codec="aac",
-                    bitrate="8000k",
+                    bitrate=f"{bitrate_kbps}k",
+                    ffmpeg_params=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
                     logger=None,
                 )
                 emit("Rendered the final Facebook video.")
