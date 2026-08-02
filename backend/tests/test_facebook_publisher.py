@@ -11,6 +11,7 @@ from app.db_models import FacebookCommentMode
 from app.db_models import FacebookDeliveryStatus
 from app.services import facebook_api
 from app.services.facebook_publisher import (
+    _ensure_article_published,
     _delete_content_video_files,
     build_first_comment,
     cleanup_published_facebook_content_video,
@@ -56,6 +57,9 @@ class _ExecutionResult:
         return self._scalar
 
     def one(self):
+        return self._row
+
+    def one_or_none(self):
         return self._row
 
 
@@ -161,6 +165,32 @@ class FacebookRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retry_reuses_existing_wordpress_article(self):
+        content_id = uuid.uuid4()
+        article_url = "https://example.com/already-published-recipe"
+        content = SimpleNamespace(article_url=article_url)
+        session = _QueuedSession(
+            [
+                _ExecutionResult(
+                    row=(content, SimpleNamespace(), SimpleNamespace(), SimpleNamespace())
+                )
+            ]
+        )
+
+        with (
+            patch(
+                "app.services.facebook_publisher.SessionLocal",
+                return_value=session,
+            ),
+            patch(
+                "app.services.facebook_publisher.publish_recipe",
+                side_effect=AssertionError("WordPress article must not be published twice"),
+            ),
+        ):
+            result = await _ensure_article_published(content_id)
+
+        self.assertEqual(result, article_url)
+
     async def test_article_is_published_before_video_and_first_comment(self):
         delivery_id = uuid.uuid4()
         content_id = uuid.uuid4()

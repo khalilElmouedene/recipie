@@ -93,6 +93,22 @@ function localDateTimeInput(value: string | Date) {
   return local.toISOString().slice(0, 16);
 }
 
+function canPublishFacebookDelivery(
+  content: FacebookContentOut,
+  delivery: FacebookDeliveryOut,
+) {
+  if (content.status === "ready") return true;
+
+  // A Facebook delivery can fail after the article has already been published
+  // to WordPress. Older records may consequently carry a non-ready content
+  // status even though every reusable publication asset is present. Keep the
+  // Facebook retry available in that case, without offering it for a genuine
+  // video/article generation failure.
+  return delivery.status === "failed"
+    && Boolean(content.processed_video_url)
+    && Boolean(content.article_url || content.generated_article);
+}
+
 function FacebookMark({ className = "h-5 w-5" }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={`${className} fill-current`} aria-hidden>
@@ -957,7 +973,7 @@ function FacebookPostCard({
                   </div>
                   <p className="mt-1 text-[10px] text-slate-600">{formatDate(delivery.scheduled_at || delivery.published_at)}</p>
                 </div>
-                {content.status === "ready" && ["draft", "failed", "scheduled"].includes(delivery.status) && (
+                {canPublishFacebookDelivery(content, delivery) && ["draft", "failed", "scheduled"].includes(delivery.status) && (
                   <div className="flex items-center gap-1">
                     <button onClick={() => onSchedule(delivery)} className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-800 hover:text-amber-300" title="Schedule">
                       <Clock3 size={14} />
@@ -1009,7 +1025,8 @@ function ContentDetail({
   onClose: () => void;
 }) {
   const publishableDeliveries = content.deliveries.filter((delivery) =>
-    ["draft", "scheduled", "failed"].includes(delivery.status),
+    ["draft", "scheduled", "failed"].includes(delivery.status)
+      && canPublishFacebookDelivery(content, delivery),
   );
   const publishLabel = publishableDeliveries.length === 1
     ? `Publish to ${publishableDeliveries[0].page_name}`
@@ -1024,7 +1041,7 @@ function ContentDetail({
             <h2 className="mt-2 text-2xl font-semibold text-white">{content.title}</h2>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1">
-            {content.status === "ready" && publishableDeliveries.length > 0 && (
+            {publishableDeliveries.length > 0 && (
               <button
                 onClick={onPublish}
                 disabled={publishing || Boolean(publishingDeliveryId) || deleting}
@@ -1134,7 +1151,7 @@ function ContentDetail({
                         View Reel on Facebook <ExternalLink size={12} />
                       </a>
                     )}
-                    {content.status === "ready" && ["draft", "scheduled", "failed"].includes(delivery.status) && (
+                    {canPublishFacebookDelivery(content, delivery) && ["draft", "scheduled", "failed"].includes(delivery.status) && (
                       <button
                         type="button"
                         onClick={() => onPublishDelivery(delivery)}

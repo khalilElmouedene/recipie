@@ -90,6 +90,16 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function canPublishFacebookDelivery(
+  content: FacebookContentOut,
+  delivery: FacebookDeliveryOut,
+) {
+  if (content.status === "ready") return true;
+  return delivery.status === "failed"
+    && Boolean(content.processed_video_url)
+    && Boolean(content.article_url || content.generated_article);
+}
+
 export default function FacebookPublishingJobsPage() {
   const { id } = useParams<{ id: string }>();
   const toast = useToast();
@@ -259,6 +269,7 @@ export default function FacebookPublishingJobsPage() {
           const StatusIcon = copy.icon;
           const retryable = job.delivery.status === "failed";
           const publishable = retryable || job.delivery.status === "draft" || job.delivery.status === "scheduled";
+          const canRunPublication = publishable && canPublishFacebookDelivery(job.content, job.delivery);
           return (
             <article key={job.delivery.id} className={`overflow-hidden rounded-xl border bg-[#101827] ${retryable ? "border-red-900/60" : "border-slate-800"}`}>
               {job.delivery.status === "publishing" && (
@@ -305,7 +316,7 @@ export default function FacebookPublishingJobsPage() {
                   )}
                 </div>
 
-                {publishable && job.content.status === "ready" && (
+                {canRunPublication && (
                   <button
                     type="button"
                     onClick={() => void queuePublication(job)}
