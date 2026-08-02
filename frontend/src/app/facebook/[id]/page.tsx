@@ -33,6 +33,7 @@ import {
   Sheet,
   Sparkles,
   Trash2,
+  Upload,
   Users,
   Video,
   X,
@@ -289,6 +290,7 @@ function FacebookCalendar({
   const [selectedContent, setSelectedContent] = useState<FacebookContentOut | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [replacingId, setReplacingId] = useState<string | null>(null);
   const [scheduleDelivery, setScheduleDelivery] = useState<FacebookDeliveryOut | null>(null);
   const [scheduleAt, setScheduleAt] = useState("");
   const [savingSchedule, setSavingSchedule] = useState(false);
@@ -359,6 +361,21 @@ function FacebookCalendar({
       onRefresh();
     } finally {
       setRetryingId(null);
+    }
+  };
+
+  const replaceVideoAndRetry = async (content: FacebookContentOut, file: File) => {
+    setReplacingId(content.id);
+    try {
+      await api.replaceFacebookVideoAndRetry(content.id, file);
+      setSelectedContent(null);
+      toast.success(`Video replaced and generation restarted for ${content.title}`);
+      onRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not replace the source video");
+      onRefresh();
+    } finally {
+      setReplacingId(null);
     }
   };
 
@@ -491,8 +508,10 @@ function FacebookCalendar({
               content={content}
               publishingId={publishingId}
               retryingId={retryingId}
+              replacingId={replacingId}
               onPublish={publish}
               onRetry={retryGeneration}
+              onReplace={replaceVideoAndRetry}
               onSchedule={(delivery) => {
                 setScheduleDelivery(delivery);
                 setScheduleAt(delivery.scheduled_at ? localDateTimeInput(delivery.scheduled_at) : "");
@@ -507,7 +526,9 @@ function FacebookCalendar({
         <ContentDetail
           content={selectedContent}
           retrying={retryingId === selectedContent.id}
+          replacing={replacingId === selectedContent.id}
           onRetry={() => void retryGeneration(selectedContent)}
+          onReplace={(file) => void replaceVideoAndRetry(selectedContent, file)}
           onClose={() => setSelectedContent(null)}
         />
       )}
@@ -543,16 +564,20 @@ function FacebookPostCard({
   content,
   publishingId,
   retryingId,
+  replacingId,
   onPublish,
   onRetry,
+  onReplace,
   onSchedule,
   onOpen,
 }: {
   content: FacebookContentOut;
   publishingId: string | null;
   retryingId: string | null;
+  replacingId: string | null;
   onPublish: (delivery: FacebookDeliveryOut) => void;
   onRetry: (content: FacebookContentOut) => void;
+  onReplace: (content: FacebookContentOut, file: File) => void;
   onSchedule: (delivery: FacebookDeliveryOut) => void;
   onOpen: () => void;
 }) {
@@ -599,15 +624,32 @@ function FacebookPostCard({
             <div className="mt-4 rounded-xl border border-red-900/40 bg-red-950/20 p-3">
               <p className="text-xs leading-5 text-red-300">{content.error_message}</p>
               {content.status === "failed" && (
-                <button
-                  type="button"
-                  onClick={() => onRetry(content)}
-                  disabled={retryingId === content.id}
-                  className="mt-3 inline-flex items-center gap-2 rounded-lg border border-red-800/60 bg-red-950/40 px-3 py-2 text-[11px] font-semibold text-red-200 transition hover:bg-red-900/40 disabled:opacity-50"
-                >
-                  {retryingId === content.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
-                  Retry generation
-                </button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <label className={`inline-flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-[11px] font-semibold text-white transition hover:bg-red-500 ${replacingId === content.id ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
+                    {replacingId === content.id ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                    Upload video & retry
+                    <input
+                      type="file"
+                      accept="video/mp4,video/quicktime,video/webm"
+                      className="hidden"
+                      disabled={replacingId === content.id || retryingId === content.id}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) onReplace(content, file);
+                        event.target.value = "";
+                      }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => onRetry(content)}
+                    disabled={retryingId === content.id || replacingId === content.id}
+                    className="inline-flex items-center gap-2 rounded-lg border border-red-800/60 bg-red-950/40 px-3 py-2 text-[11px] font-semibold text-red-200 transition hover:bg-red-900/40 disabled:opacity-50"
+                  >
+                    {retryingId === content.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                    Retry same link
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -649,12 +691,16 @@ function FacebookPostCard({
 function ContentDetail({
   content,
   retrying,
+  replacing,
   onRetry,
+  onReplace,
   onClose,
 }: {
   content: FacebookContentOut;
   retrying: boolean;
+  replacing: boolean;
   onRetry: () => void;
+  onReplace: (file: File) => void;
   onClose: () => void;
 }) {
   return (
@@ -676,15 +722,32 @@ function ContentDetail({
                 <AlertCircle className="text-red-400" />
                 <p className="mt-3 text-sm font-medium text-red-200">Video generation failed</p>
                 {content.error_message && <p className="mt-2 text-xs leading-5 text-red-300/80">{content.error_message}</p>}
-                <button
-                  type="button"
-                  onClick={onRetry}
-                  disabled={retrying}
-                  className="mt-5 inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-red-500 disabled:opacity-50"
-                >
-                  {retrying ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
-                  Retry generation
-                </button>
+                <div className="mt-5 flex flex-wrap justify-center gap-2">
+                  <label className={`inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-red-500 ${replacing ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
+                    {replacing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                    Upload video & retry
+                    <input
+                      type="file"
+                      accept="video/mp4,video/quicktime,video/webm"
+                      className="hidden"
+                      disabled={replacing || retrying}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) onReplace(file);
+                        event.target.value = "";
+                      }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    disabled={retrying || replacing}
+                    className="inline-flex items-center gap-2 rounded-lg border border-red-800/60 bg-red-950/30 px-4 py-2.5 text-xs font-semibold text-red-200 transition hover:bg-red-900/40 disabled:opacity-50"
+                  >
+                    {retrying ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                    Retry same link
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="grid min-h-80 place-items-center rounded-2xl bg-slate-950"><Loader2 className="animate-spin text-[#68a8ff]" /></div>

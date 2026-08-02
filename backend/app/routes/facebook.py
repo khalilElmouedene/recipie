@@ -738,12 +738,7 @@ async def delete_facebook_spy_row(
     await db.commit()
 
 
-@router.post("/facebook/upload-video")
-async def upload_facebook_video(
-    file: Annotated[UploadFile, File(...)],
-    user: Annotated[User, Depends(get_current_user)],
-):
-    del user
+async def _store_facebook_video_upload(file: UploadFile) -> tuple[str, Path]:
     content_type = (file.content_type or "").lower()
     extension = ALLOWED_VIDEO_TYPES.get(content_type)
     if not extension:
@@ -765,9 +760,18 @@ async def upload_facebook_video(
     except Exception:
         destination.unlink(missing_ok=True)
         raise
-    return {
-        "url": f"{settings.server_base_url.rstrip('/')}/uploads/facebook/sources/{destination.name}"
-    }
+    url = f"{settings.server_base_url.rstrip('/')}/uploads/facebook/sources/{destination.name}"
+    return url, destination
+
+
+@router.post("/facebook/upload-video")
+async def upload_facebook_video(
+    file: Annotated[UploadFile, File(...)],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    del user
+    url, _destination = await _store_facebook_video_upload(file)
+    return {"url": url}
 
 
 @router.get(
@@ -1229,16 +1233,13 @@ async def list_facebook_contents(
     return output
 
 
-@router.post(
-    "/facebook-contents/{content_id}/retry",
-    response_model=FacebookGenerationRetryOut,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-async def retry_facebook_generation(
+async def _queue_facebook_generation_retry(
     content_id: uuid.UUID,
-    user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
+    user: User,
+    db: AsyncSession,
+    *,
+    replacement_source_url: str | None = None,
+) -> FacebookGenerationRetryOut:
     content = (
         await db.execute(
             select(FacebookContent)
@@ -1271,6 +1272,8 @@ async def retry_facebook_generation(
         )
 
     previous_recipe_id = content.recipe_id
+    if replacement_source_url is not None:
+        content.source_video_url = replacement_source_url
     content.recipe_id = None
     content.screenshot_url = None
     content.processed_video_url = None
@@ -1304,7 +1307,11 @@ async def retry_facebook_generation(
             content_id=content.id,
             level="info",
             stage="retry",
-            message="Generation retry queued.",
+            message=(
+                "Source video replaced and generation retry queued."
+                if replacement_source_url is not None
+                else "Generation retry queued."
+            ),
         )
     )
     await db.commit()
@@ -1315,6 +1322,61 @@ async def retry_facebook_generation(
         created_by=user.id,
     )
     return FacebookGenerationRetryOut(content_id=content.id, status="processing")
+
+
+@router.post(
+    "/facebook-contents/{content_id}/retry",
+    response_model=FacebookGenerationRetryOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_facebook_generation(
+    content_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    return await _queue_facebook_generation_retry(content_id, user, db)
+
+
+@router.post(
+    "/facebook-contents/{content_id}/replace-video-and-retry",
+    response_model=FacebookGenerationRetryOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def replace_facebook_video_and_retry(
+    content_id: uuid.UUID,
+    file: Annotated[UploadFile, File(...)],
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    # Reject unauthorized/non-failed content before accepting a potentially
+    # large upload. The locked retry path repeats every state check afterward.
+    content = (
+        await db.execute(select(FacebookContent).where(FacebookContent.id == content_id))
+    ).scalar_one_or_none()
+    if content is None:
+        raise HTTPException(status_code=404, detail="Facebook content not found")
+    await _project(content.project_id, user, db)
+    if content.generation_cancelled or content.status != FacebookContentStatus.failed:
+        raise HTTPException(
+            status_code=409,
+            detail="Only an active failed generation can replace its source video.",
+        )
+    # Do not hold an idle database transaction while a large file is uploaded.
+    await db.rollback()
+
+    source_url, destination = await _store_facebook_video_upload(file)
+    try:
+        return await _queue_facebook_generation_retry(
+            content_id,
+            user,
+            db,
+            replacement_source_url=source_url,
+        )
+    except HTTPException:
+        # A concurrent retry/pause can invalidate the operation after upload.
+        # This file is not referenced by content yet, so it is safe to remove.
+        destination.unlink(missing_ok=True)
+        raise
 
 
 @router.get(

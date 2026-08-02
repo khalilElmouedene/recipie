@@ -4,10 +4,14 @@ import threading
 import unittest
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.db_models import FacebookContentStatus, FacebookSpyRow
-from app.routes.facebook import cancel_facebook_generation, retry_facebook_generation
+from app.routes.facebook import (
+    cancel_facebook_generation,
+    replace_facebook_video_and_retry,
+    retry_facebook_generation,
+)
 from app.services.facebook_generation import (
     FacebookGenerationCancelled,
     FacebookGenerationManager,
@@ -37,6 +41,7 @@ class _CancelSession:
         self._results = iter(results)
         self.added = []
         self.commits = 0
+        self.rollbacks = 0
 
     async def execute(self, _statement):
         return next(self._results)
@@ -46,6 +51,9 @@ class _CancelSession:
 
     async def commit(self):
         self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
 
     async def flush(self):
         return None
@@ -161,6 +169,7 @@ class FacebookRetryGenerationTests(unittest.IsolatedAsyncioTestCase):
         content = SimpleNamespace(
             id=content_id,
             project_id=project_id,
+            source_video_url="https://www.facebook.com/reel/blocked",
             recipe_id=None,
             screenshot_url="/uploads/old-frame.jpg",
             processed_video_url=None,
@@ -204,6 +213,80 @@ class FacebookRetryGenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(content.error_message)
         self.assertIsNone(content.screenshot_url)
         self.assertEqual(result.content_id, content_id)
+        start_batch.assert_awaited_once_with(
+            facebook_project_id=project_id,
+            content_ids=[content_id],
+            created_by=owner_id,
+        )
+
+    async def test_replace_video_uploads_a_valid_source_and_retries(self):
+        project_id = uuid.uuid4()
+        owner_id = uuid.uuid4()
+        content_id = uuid.uuid4()
+        project = SimpleNamespace(
+            id=project_id,
+            owner_id=owner_id,
+            generation_paused=False,
+        )
+        content = SimpleNamespace(
+            id=content_id,
+            project_id=project_id,
+            source_video_url="https://www.facebook.com/reel/blocked",
+            recipe_id=None,
+            screenshot_url=None,
+            processed_video_url=None,
+            generated_images=None,
+            generated_article=None,
+            article_url=None,
+            status=FacebookContentStatus.failed,
+            error_message="Facebook login required",
+            generation_cancelled=False,
+        )
+        session = _CancelSession(
+            [
+                _Result(scalar=content),
+                _Result(scalar=project),
+                _Result(scalar=content),
+                _Result(scalar=project),
+                _Result(),
+            ]
+        )
+        start_batch = AsyncMock()
+        destination = MagicMock()
+        source_url = "https://example.com/uploads/facebook/sources/replacement.mp4"
+
+        with (
+            patch(
+                "app.routes.facebook._store_facebook_video_upload",
+                new=AsyncMock(return_value=(source_url, destination)),
+            ) as store_upload,
+            patch(
+                "app.routes.facebook.facebook_generation_manager.is_running",
+                return_value=False,
+            ),
+            patch(
+                "app.routes.facebook.facebook_generation_manager.is_cancelling",
+                return_value=False,
+            ),
+            patch(
+                "app.routes.facebook.facebook_generation_manager.start_batch",
+                start_batch,
+            ),
+        ):
+            result = await replace_facebook_video_and_retry(
+                content_id,
+                SimpleNamespace(filename="replacement.mp4"),
+                SimpleNamespace(id=owner_id),
+                session,
+            )
+
+        store_upload.assert_awaited_once()
+        destination.unlink.assert_not_called()
+        self.assertEqual(content.source_video_url, source_url)
+        self.assertEqual(content.status, FacebookContentStatus.processing)
+        self.assertEqual(result.content_id, content_id)
+        self.assertEqual(session.rollbacks, 1)
+        self.assertIn("Source video replaced", session.added[-1].message)
         start_batch.assert_awaited_once_with(
             facebook_project_id=project_id,
             content_ids=[content_id],

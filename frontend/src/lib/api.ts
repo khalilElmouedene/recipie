@@ -869,6 +869,28 @@ export const api = {
       `/api/facebook-contents/${contentId}/retry`,
       { method: "POST" },
     ),
+  replaceFacebookVideoAndRetry: async (
+    contentId: string,
+    file: File,
+  ): Promise<{ content_id: string; status: "processing" }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(
+      `${API_URL}/api/facebook-contents/${contentId}/replace-video-and-retry`,
+      {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      },
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(
+        typeof err.detail === "string" ? err.detail : "Video replacement failed",
+      );
+    }
+    return res.json();
+  },
   getFacebookGenerationLogs: (
     projectId: string,
     filters?: { level?: FacebookLogLevel; content_id?: string; limit?: number },

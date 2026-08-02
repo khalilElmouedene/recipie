@@ -17,6 +17,7 @@ import {
   RotateCcw,
   Search,
   SquareTerminal,
+  Upload,
 } from "lucide-react";
 import {
   api,
@@ -79,6 +80,7 @@ export default function FacebookGenerationLogsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [controlAction, setControlAction] = useState<"pause" | "resume" | "cancel" | null>(null);
   const [retryingContentId, setRetryingContentId] = useState<string | null>(null);
+  const [replacingContentId, setReplacingContentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (quiet = false) => {
@@ -196,6 +198,24 @@ export default function FacebookGenerationLogsPage() {
       await load(true);
     } finally {
       setRetryingContentId(null);
+    }
+  };
+
+  const replaceVideoAndRetry = async (
+    contentId: string,
+    title: string | null,
+    file: File,
+  ) => {
+    setReplacingContentId(contentId);
+    try {
+      await api.replaceFacebookVideoAndRetry(contentId, file);
+      toast.success(`Video replaced and generation restarted${title ? ` for ${title}` : ""}.`);
+      await load(true);
+    } catch (actionError) {
+      toast.error(actionError instanceof Error ? actionError.message : "Could not replace the source video");
+      await load(true);
+    } finally {
+      setReplacingContentId(null);
     }
   };
 
@@ -321,7 +341,9 @@ export default function FacebookGenerationLogsPage() {
               key={entry.id}
               entry={entry}
               retrying={retryingContentId === entry.content_id}
+              replacing={replacingContentId === entry.content_id}
               onRetry={(contentId, title) => void retryGeneration(contentId, title)}
+              onReplace={(contentId, title, file) => void replaceVideoAndRetry(contentId, title, file)}
             />
           ))}
           {!visibleLogs.length && !error && (
@@ -463,11 +485,15 @@ function Summary({
 function LogRow({
   entry,
   retrying,
+  replacing,
   onRetry,
+  onReplace,
 }: {
   entry: FacebookGenerationLogOut;
   retrying: boolean;
+  replacing: boolean;
   onRetry: (contentId: string, title: string | null) => void;
+  onReplace: (contentId: string, title: string | null, file: File) => void;
 }) {
   const style = LEVEL_STYLE[entry.level];
   const Icon = style.icon;
@@ -496,15 +522,34 @@ function LogRow({
           entry.content_id &&
           entry.content_status === "failed" &&
           !entry.content_cancelled && (
-            <button
-              type="button"
-              onClick={() => onRetry(entry.content_id as string, entry.content_title)}
-              disabled={retrying}
-              className="mt-3 inline-flex items-center gap-2 rounded-lg border border-red-800/60 bg-red-950/30 px-3 py-2 font-sans text-[11px] font-semibold text-red-200 transition hover:bg-red-900/40 disabled:opacity-50"
-            >
-              {retrying ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
-              Retry generation
-            </button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <label className={`inline-flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 font-sans text-[11px] font-semibold text-white transition hover:bg-red-500 ${replacing ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
+                {replacing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                Upload video & retry
+                <input
+                  type="file"
+                  accept="video/mp4,video/quicktime,video/webm"
+                  className="hidden"
+                  disabled={replacing || retrying}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      onReplace(entry.content_id as string, entry.content_title, file);
+                    }
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => onRetry(entry.content_id as string, entry.content_title)}
+                disabled={retrying || replacing}
+                className="inline-flex items-center gap-2 rounded-lg border border-red-800/60 bg-red-950/30 px-3 py-2 font-sans text-[11px] font-semibold text-red-200 transition hover:bg-red-900/40 disabled:opacity-50"
+              >
+                {retrying ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                Retry same link
+              </button>
+            </div>
           )}
       </div>
     </article>
