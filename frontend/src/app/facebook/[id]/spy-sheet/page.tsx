@@ -160,7 +160,7 @@ export default function FacebookSpySheetPage() {
             : `Only ${result.remaining_rows} Spy Sheet rows remain. Add more data soon.`,
         );
       }
-      router.push(`/facebook/${id}`);
+      router.push(`/facebook/${id}/logs`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not start generation");
     } finally {

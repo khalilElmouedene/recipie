@@ -30,6 +30,10 @@ from app.services.prompts import DEFAULT_PROMPTS
 logger = logging.getLogger(__name__)
 
 
+class FacebookGenerationCancelled(Exception):
+    """Raised at a safe pipeline checkpoint after a project cancellation."""
+
+
 @dataclass(frozen=True)
 class _GenerationContext:
     facebook_project_id: uuid.UUID
@@ -47,8 +51,83 @@ class FacebookGenerationManager:
 
     def __init__(self) -> None:
         self._running: set[uuid.UUID] = set()
+        self._project_running: dict[uuid.UUID, set[uuid.UUID]] = {}
+        self._resume_events: dict[uuid.UUID, threading.Event] = {}
+        self._cancel_events: dict[uuid.UUID, threading.Event] = {}
         self._guard = threading.Lock()
         self._video = FacebookVideoProcessor()
+
+    def _control_events_locked(
+        self, project_id: uuid.UUID
+    ) -> tuple[threading.Event, threading.Event]:
+        resume_event = self._resume_events.get(project_id)
+        if resume_event is None:
+            resume_event = threading.Event()
+            resume_event.set()
+            self._resume_events[project_id] = resume_event
+        cancel_event = self._cancel_events.setdefault(project_id, threading.Event())
+        return resume_event, cancel_event
+
+    def pause(self, project_id: uuid.UUID) -> None:
+        with self._guard:
+            resume_event, _cancel_event = self._control_events_locked(project_id)
+            resume_event.clear()
+
+    def resume(self, project_id: uuid.UUID) -> None:
+        with self._guard:
+            resume_event, _cancel_event = self._control_events_locked(project_id)
+            resume_event.set()
+
+    def cancel(self, project_id: uuid.UUID) -> None:
+        with self._guard:
+            resume_event, cancel_event = self._control_events_locked(project_id)
+            cancel_event.set()
+            resume_event.set()
+
+    def reset_cancel(self, project_id: uuid.UUID) -> None:
+        with self._guard:
+            resume_event, cancel_event = self._control_events_locked(project_id)
+            cancel_event.clear()
+            resume_event.set()
+
+    def is_cancelling(self, project_id: uuid.UUID) -> bool:
+        with self._guard:
+            cancel_event = self._cancel_events.get(project_id)
+            return bool(
+                cancel_event
+                and cancel_event.is_set()
+                and self._project_running.get(project_id)
+            )
+
+    def _cancel_requested(self, project_id: uuid.UUID) -> bool:
+        with self._guard:
+            cancel_event = self._cancel_events.get(project_id)
+            return bool(cancel_event and cancel_event.is_set())
+
+    def _checkpoint(self, project_id: uuid.UUID) -> None:
+        with self._guard:
+            resume_event, cancel_event = self._control_events_locked(project_id)
+        if cancel_event.is_set():
+            raise FacebookGenerationCancelled()
+        while not resume_event.wait(timeout=0.5):
+            if cancel_event.is_set():
+                raise FacebookGenerationCancelled()
+        if cancel_event.is_set():
+            raise FacebookGenerationCancelled()
+
+    def _release(self, project_id: uuid.UUID, content_id: uuid.UUID) -> None:
+        with self._guard:
+            self._running.discard(content_id)
+            project_running = self._project_running.get(project_id)
+            if project_running is None:
+                return
+            project_running.discard(content_id)
+            if project_running:
+                return
+            self._project_running.pop(project_id, None)
+            cancel_event = self._cancel_events.get(project_id)
+            if cancel_event is not None:
+                cancel_event.clear()
 
     async def _load_context(
         self, facebook_project_id: uuid.UUID, created_by: uuid.UUID
@@ -116,7 +195,11 @@ class FacebookGenerationManager:
         async with SessionLocal() as db:
             rows = await db.execute(
                 select(FacebookContent)
-                .where(FacebookContent.id.in_(content_ids))
+                .where(
+                    FacebookContent.id.in_(content_ids),
+                    FacebookContent.status == FacebookContentStatus.processing,
+                    FacebookContent.generation_cancelled.is_(False),
+                )
                 .order_by(FacebookContent.created_at.asc())
             )
             return [
@@ -141,9 +224,15 @@ class FacebookGenerationManager:
         async with SessionLocal() as db:
             content = (
                 await db.execute(
-                    select(FacebookContent).where(FacebookContent.id == content_id)
+                    select(FacebookContent).where(
+                        FacebookContent.id == content_id,
+                        FacebookContent.status == FacebookContentStatus.processing,
+                        FacebookContent.generation_cancelled.is_(False),
+                    ).with_for_update()
                 )
-            ).scalar_one()
+            ).scalar_one_or_none()
+            if content is None:
+                raise FacebookGenerationCancelled()
             recipe = Recipe(
                 site_id=site_id,
                 created_by=created_by,
@@ -167,6 +256,17 @@ class FacebookGenerationManager:
         original_title: str,
     ) -> None:
         async with SessionLocal() as db:
+            content = (
+                await db.execute(
+                    select(FacebookContent).where(
+                        FacebookContent.id == content_id,
+                        FacebookContent.status == FacebookContentStatus.processing,
+                        FacebookContent.generation_cancelled.is_(False),
+                    ).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if content is None:
+                raise FacebookGenerationCancelled()
             recipe = (
                 await db.execute(select(Recipe).where(Recipe.id == recipe_id))
             ).scalar_one()
@@ -191,11 +291,6 @@ class FacebookGenerationManager:
             recipe.status = RecipeStatus.generated
             recipe.error_message = None
 
-            content = (
-                await db.execute(
-                    select(FacebookContent).where(FacebookContent.id == content_id)
-                )
-            ).scalar_one()
             content.generated_images = generated.get("generated_images")
             content.generated_article = generated.get("generated_article")
             content.title = generated.get("seo_title") or original_title
@@ -228,7 +323,10 @@ class FacebookGenerationManager:
         async with SessionLocal() as db:
             await db.execute(
                 update(FacebookContent)
-                .where(FacebookContent.id == content_id)
+                .where(
+                    FacebookContent.id == content_id,
+                    FacebookContent.generation_cancelled.is_(False),
+                )
                 .values(status=FacebookContentStatus.failed, error_message=safe_message)
             )
             await db.execute(
@@ -255,8 +353,21 @@ class FacebookGenerationManager:
         created_by: uuid.UUID,
     ) -> None:
         with self._guard:
+            project_running = self._project_running.setdefault(
+                facebook_project_id, set()
+            )
+            _resume_event, cancel_event = self._control_events_locked(
+                facebook_project_id
+            )
+            if cancel_event.is_set() and project_running:
+                raise RuntimeError(
+                    "The previous Facebook generation cancellation is still finishing."
+                )
+            if not project_running:
+                cancel_event.clear()
             pending = [content_id for content_id in content_ids if content_id not in self._running]
             self._running.update(pending)
+            project_running.update(pending)
         if not pending:
             return
 
@@ -274,7 +385,20 @@ class FacebookGenerationManager:
                 )
                 await self._fail(content_id, str(exc))
             with self._guard:
-                self._running.difference_update(pending)
+                for content_id in pending:
+                    self._running.discard(content_id)
+                project_running = self._project_running.get(facebook_project_id)
+                if project_running is not None:
+                    project_running.difference_update(pending)
+                    if not project_running:
+                        self._project_running.pop(facebook_project_id, None)
+            return
+
+        loaded_ids = {uuid.UUID(payload["id"]) for payload in payloads}
+        for content_id in pending:
+            if content_id not in loaded_ids:
+                self._release(facebook_project_id, content_id)
+        if not payloads:
             return
 
         loop = asyncio.get_running_loop()
@@ -306,7 +430,14 @@ class FacebookGenerationManager:
             for payload in payloads:
                 content_id = uuid.UUID(payload["id"])
                 recipe_id: uuid.UUID | None = None
+
+                def progress(message: str, *, stage: str) -> None:
+                    self._checkpoint(facebook_project_id)
+                    emit(content_id, str(message), stage=stage)
+                    self._checkpoint(facebook_project_id)
+
                 try:
+                    self._checkpoint(facebook_project_id)
                     emit(content_id, "Generation worker started.", stage="setup")
                     processed = self._video.process(
                         content_id=content_id,
@@ -315,8 +446,9 @@ class FacebookGenerationManager:
                         openai_api_key=context.credentials["openai"],
                         script_prompt=context.prompts["facebook_video_script"],
                         recipe_card_prompt=context.prompts["facebook_recipe_card"],
-                        log=lambda message: emit(content_id, message, stage="video"),
+                        log=lambda message: progress(message, stage="video"),
                     )
+                    self._checkpoint(facebook_project_id)
                     recipe_id = asyncio.run_coroutine_threadsafe(
                         self._store_processed_video(
                             content_id,
@@ -328,6 +460,7 @@ class FacebookGenerationManager:
                         ),
                         loop,
                     ).result()
+                    self._checkpoint(facebook_project_id)
                     emit(content_id, "Starting article and image generation.", stage="article")
                     generated = generate_for_recipe(
                         recipe_id=str(recipe_id),
@@ -338,8 +471,10 @@ class FacebookGenerationManager:
                         prompts=context.prompts,
                         pinterest_url=context.pinterest_url,
                         generate_recipe_json=context.generate_recipe_json,
-                        log=lambda message: emit(content_id, str(message), stage="article"),
+                        log=lambda message: progress(str(message), stage="article"),
+                        should_stop=lambda: self._cancel_requested(facebook_project_id),
                     )
+                    self._checkpoint(facebook_project_id)
                     if generated.get("error_message") or not generated.get("generated_article"):
                         raise ValueError(
                             generated.get("error_message")
@@ -355,6 +490,13 @@ class FacebookGenerationManager:
                         stage="complete",
                         level="success",
                     )
+                except FacebookGenerationCancelled:
+                    emit(
+                        content_id,
+                        "Generation cancelled. The source was returned to Spy Sheet.",
+                        stage="cancelled",
+                        level="warning",
+                    )
                 except Exception as exc:
                     logger.exception("Facebook generation failed for content %s", content_id)
                     emit(
@@ -367,8 +509,7 @@ class FacebookGenerationManager:
                         self._fail(content_id, str(exc), recipe_id), loop
                     ).result()
                 finally:
-                    with self._guard:
-                        self._running.discard(content_id)
+                    self._release(facebook_project_id, content_id)
 
         threading.Thread(
             target=run,
@@ -379,8 +520,12 @@ class FacebookGenerationManager:
     async def resume_pending(self) -> None:
         async with SessionLocal() as db:
             rows = await db.execute(
-                select(FacebookContent).where(
-                    FacebookContent.status == FacebookContentStatus.processing
+                select(FacebookContent)
+                .join(FacebookProject, FacebookProject.id == FacebookContent.project_id)
+                .where(
+                    FacebookContent.status == FacebookContentStatus.processing,
+                    FacebookContent.generation_cancelled.is_(False),
+                    FacebookProject.generation_paused.is_(False),
                 )
             )
             by_project: dict[tuple[uuid.UUID, uuid.UUID], list[uuid.UUID]] = {}

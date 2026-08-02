@@ -877,6 +877,25 @@ export const api = {
       `/api/facebook-projects/${projectId}/logs${query ? `?${query}` : ""}`,
     );
   },
+  getFacebookGenerationControl: (projectId: string) =>
+    request<FacebookGenerationControlOut>(
+      `/api/facebook-projects/${projectId}/generation-control`,
+    ),
+  pauseFacebookGeneration: (projectId: string) =>
+    request<FacebookGenerationControlOut>(
+      `/api/facebook-projects/${projectId}/generation-control/pause`,
+      { method: "POST" },
+    ),
+  resumeFacebookGeneration: (projectId: string) =>
+    request<FacebookGenerationControlOut>(
+      `/api/facebook-projects/${projectId}/generation-control/resume`,
+      { method: "POST" },
+    ),
+  cancelFacebookGeneration: (projectId: string) =>
+    request<FacebookGenerationCancelOut>(
+      `/api/facebook-projects/${projectId}/generation-control/cancel`,
+      { method: "POST" },
+    ),
   scheduleFacebookDelivery: (deliveryId: string, scheduledAt: string | null) =>
     request<FacebookDeliveryOut>(`/api/facebook-deliveries/${deliveryId}/schedule`, {
       method: "PATCH",
@@ -1453,6 +1472,7 @@ export interface ThreadsPostOut {
 export type FacebookCommentMode = "full_recipe" | "full_recipe_url";
 export type FacebookContentStatus = "processing" | "ready" | "failed";
 export type FacebookLogLevel = "info" | "success" | "warning" | "error";
+export type FacebookGenerationState = "idle" | "running" | "paused" | "cancelling";
 export type FacebookDeliveryStatus =
   | "processing"
   | "draft"
@@ -1542,5 +1562,14 @@ export interface FacebookGenerationLogOut {
   stage: string;
   message: string;
   created_at: string;
+}
+
+export interface FacebookGenerationControlOut {
+  state: FacebookGenerationState;
+  processing_count: number;
+}
+
+export interface FacebookGenerationCancelOut extends FacebookGenerationControlOut {
+  restored_rows: number;
 }
 

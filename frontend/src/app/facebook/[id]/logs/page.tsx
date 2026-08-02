@@ -11,16 +11,22 @@ import {
   Circle,
   Clock3,
   Loader2,
+  Pause,
+  Play,
   RefreshCw,
+  RotateCcw,
   Search,
   SquareTerminal,
 } from "lucide-react";
 import {
   api,
+  FacebookGenerationControlOut,
   FacebookGenerationLogOut,
   FacebookLogLevel,
   FacebookProjectOut,
 } from "@/lib/api";
+import { useConfirm } from "@/components/ConfirmModal";
+import { useToast } from "@/contexts/ToastContext";
 
 const LEVEL_STYLE: Record<FacebookLogLevel, { dot: string; badge: string; icon: typeof Circle }> = {
   info: {
@@ -58,28 +64,37 @@ function formatTime(value: string) {
 
 export default function FacebookGenerationLogsPage() {
   const { id } = useParams<{ id: string }>();
+  const confirm = useConfirm();
+  const toast = useToast();
   const [project, setProject] = useState<FacebookProjectOut | null>(null);
   const [logs, setLogs] = useState<FacebookGenerationLogOut[]>([]);
+  const [control, setControl] = useState<FacebookGenerationControlOut>({
+    state: "idle",
+    processing_count: 0,
+  });
   const [level, setLevel] = useState<FacebookLogLevel | "">("");
   const [search, setSearch] = useState("");
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [controlAction, setControlAction] = useState<"pause" | "resume" | "cancel" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     else setRefreshing(true);
     try {
-      const [projectData, logData] = await Promise.all([
+      const [projectData, logData, controlData] = await Promise.all([
         project ? Promise.resolve(project) : api.getFacebookProject(id),
         api.getFacebookGenerationLogs(id, {
           level: level || undefined,
           limit: 1000,
         }),
+        api.getFacebookGenerationControl(id),
       ]);
       setProject(projectData);
       setLogs(logData);
+      setControl(controlData);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load generation logs");
@@ -112,6 +127,62 @@ export default function FacebookGenerationLogsPage() {
     errors: logs.filter((entry) => entry.level === "error").length,
     completed: logs.filter((entry) => entry.level === "success").length,
   }), [logs]);
+
+  const pauseGeneration = async () => {
+    setControlAction("pause");
+    try {
+      const next = await api.pauseFacebookGeneration(id);
+      setControl(next);
+      toast.warning(
+        next.state === "paused"
+          ? "Generation will stop at the next safe checkpoint."
+          : "There is no active generation to stop.",
+      );
+      await load(true);
+    } catch (actionError) {
+      toast.error(actionError instanceof Error ? actionError.message : "Could not stop generation");
+    } finally {
+      setControlAction(null);
+    }
+  };
+
+  const resumeGeneration = async () => {
+    setControlAction("resume");
+    try {
+      const next = await api.resumeFacebookGeneration(id);
+      setControl(next);
+      toast.success("Generation continued.");
+      await load(true);
+    } catch (actionError) {
+      toast.error(actionError instanceof Error ? actionError.message : "Could not continue generation");
+    } finally {
+      setControlAction(null);
+    }
+  };
+
+  const cancelGeneration = async () => {
+    const accepted = await confirm({
+      title: "Cancel this generation?",
+      message:
+        "All unfinished video links and titles will return to this project's Spy Sheet. Completed content will not be changed.",
+      confirmLabel: "Cancel and restore",
+      danger: true,
+    });
+    if (!accepted) return;
+    setControlAction("cancel");
+    try {
+      const next = await api.cancelFacebookGeneration(id);
+      setControl(next);
+      toast.success(
+        `${next.restored_rows} unfinished ${next.restored_rows === 1 ? "row was" : "rows were"} returned to Spy Sheet.`,
+      );
+      await load(true);
+    } catch (actionError) {
+      toast.error(actionError instanceof Error ? actionError.message : "Could not cancel generation");
+    } finally {
+      setControlAction(null);
+    }
+  };
 
   if (loading && !project) {
     return (
@@ -179,6 +250,14 @@ export default function FacebookGenerationLogsPage() {
         </div>
       </header>
 
+      <GenerationControl
+        control={control}
+        action={controlAction}
+        onPause={() => void pauseGeneration()}
+        onResume={() => void resumeGeneration()}
+        onCancel={() => void cancelGeneration()}
+      />
+
       <div className="grid gap-3 rounded-2xl border border-slate-800 bg-[#0d1422] p-4 md:grid-cols-[220px_1fr]">
         <select
           value={level}
@@ -239,6 +318,98 @@ export default function FacebookGenerationLogsPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+function GenerationControl({
+  control,
+  action,
+  onPause,
+  onResume,
+  onCancel,
+}: {
+  control: FacebookGenerationControlOut;
+  action: "pause" | "resume" | "cancel" | null;
+  onPause: () => void;
+  onResume: () => void;
+  onCancel: () => void;
+}) {
+  const busy = action !== null;
+  const copy = {
+    idle: {
+      title: "Generation idle",
+      detail: "Start a new batch from Spy Sheet when you are ready.",
+      dot: "bg-slate-500",
+    },
+    running: {
+      title: `${control.processing_count} ${control.processing_count === 1 ? "item" : "items"} generating`,
+      detail: "Stop safely before choosing whether to continue or cancel.",
+      dot: "animate-pulse bg-emerald-400",
+    },
+    paused: {
+      title: "Generation stopped",
+      detail: `${control.processing_count} unfinished ${control.processing_count === 1 ? "item is" : "items are"} waiting for your decision.`,
+      dot: "bg-amber-400",
+    },
+    cancelling: {
+      title: "Cancellation finishing",
+      detail: "The worker is closing safely. Restored rows are already available in Spy Sheet.",
+      dot: "animate-pulse bg-red-400",
+    },
+  }[control.state];
+
+  return (
+    <section className={`flex flex-col gap-4 rounded-2xl border px-5 py-4 md:flex-row md:items-center md:justify-between ${
+      control.state === "paused"
+        ? "border-amber-800/60 bg-amber-950/15"
+        : control.state === "cancelling"
+          ? "border-red-900/60 bg-red-950/15"
+          : "border-slate-800 bg-[#0d1422]"
+    }`}>
+      <div className="flex items-start gap-3">
+        <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${copy.dot}`} />
+        <div>
+          <h2 className="text-sm font-semibold text-white">{copy.title}</h2>
+          <p className="mt-1 text-xs leading-5 text-slate-500">{copy.detail}</p>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {control.state === "running" && (
+          <button
+            type="button"
+            onClick={onPause}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-xl border border-amber-700/60 bg-amber-950/30 px-4 py-2.5 text-xs font-semibold text-amber-300 transition hover:bg-amber-900/35 disabled:opacity-50"
+          >
+            {action === "pause" ? <Loader2 size={14} className="animate-spin" /> : <Pause size={14} />}
+            Stop generation
+          </button>
+        )}
+        {control.state === "paused" && (
+          <>
+            <button
+              type="button"
+              onClick={onResume}
+              disabled={busy}
+              className="inline-flex items-center gap-2 rounded-xl bg-[#1877f2] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[#2b85f5] disabled:opacity-50"
+            >
+              {action === "resume" ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+              Continue
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={busy}
+              className="inline-flex items-center gap-2 rounded-xl border border-red-800/60 bg-red-950/30 px-4 py-2.5 text-xs font-semibold text-red-300 transition hover:bg-red-900/35 disabled:opacity-50"
+            >
+              {action === "cancel" ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+              Cancel & restore to Spy Sheet
+            </button>
+          </>
+        )}
+        {control.state === "cancelling" && <Loader2 size={18} className="animate-spin text-red-400" />}
+      </div>
+    </section>
   );
 }
 

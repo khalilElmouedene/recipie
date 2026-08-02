@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
-from sqlalchemy import delete as sql_delete, func, select
+from sqlalchemy import delete as sql_delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -21,6 +21,7 @@ from ..database import get_db
 from ..db_models import (
     FacebookCommentMode,
     FacebookContent,
+    FacebookContentStatus,
     FacebookDelivery,
     FacebookDeliveryStatus,
     FacebookGenerationLog,
@@ -28,6 +29,8 @@ from ..db_models import (
     FacebookProject,
     FacebookSpyRow,
     Project,
+    Recipe,
+    RecipeStatus,
     Site,
     User,
 )
@@ -218,6 +221,15 @@ class FacebookGenerationLogOut(BaseModel):
     created_at: datetime
 
 
+class FacebookGenerationControlOut(BaseModel):
+    state: Literal["idle", "running", "paused", "cancelling"]
+    processing_count: int
+
+
+class FacebookGenerationCancelOut(FacebookGenerationControlOut):
+    restored_rows: int
+
+
 async def _project(
     project_id: uuid.UUID, user: User, db: AsyncSession
 ) -> FacebookProject:
@@ -244,7 +256,8 @@ async def _project_out(project: FacebookProject, db: AsyncSession) -> FacebookPr
         (
             await db.execute(
                 select(func.count(FacebookContent.id)).where(
-                    FacebookContent.project_id == project.id
+                    FacebookContent.project_id == project.id,
+                    FacebookContent.generation_cancelled.is_(False),
                 )
             )
         ).scalar_one()
@@ -266,6 +279,34 @@ async def _project_out(project: FacebookProject, db: AsyncSession) -> FacebookPr
         content_count=content_count,
         has_website=has_website,
         created_at=project.created_at,
+    )
+
+
+async def _generation_control_out(
+    project: FacebookProject, db: AsyncSession
+) -> FacebookGenerationControlOut:
+    processing_count = int(
+        (
+            await db.execute(
+                select(func.count(FacebookContent.id)).where(
+                    FacebookContent.project_id == project.id,
+                    FacebookContent.status == FacebookContentStatus.processing,
+                    FacebookContent.generation_cancelled.is_(False),
+                )
+            )
+        ).scalar_one()
+    )
+    if facebook_generation_manager.is_cancelling(project.id):
+        state = "cancelling"
+    elif processing_count and project.generation_paused:
+        state = "paused"
+    elif processing_count:
+        state = "running"
+    else:
+        state = "idle"
+    return FacebookGenerationControlOut(
+        state=state,
+        processing_count=processing_count,
     )
 
 
@@ -722,6 +763,196 @@ async def upload_facebook_video(
     }
 
 
+@router.get(
+    "/facebook-projects/{project_id}/generation-control",
+    response_model=FacebookGenerationControlOut,
+)
+async def get_facebook_generation_control(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    project = await _project(project_id, user, db)
+    return await _generation_control_out(project, db)
+
+
+@router.post(
+    "/facebook-projects/{project_id}/generation-control/pause",
+    response_model=FacebookGenerationControlOut,
+)
+async def pause_facebook_generation(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    project = await _project(project_id, user, db)
+    control = await _generation_control_out(project, db)
+    if control.processing_count == 0:
+        project.generation_paused = False
+        await db.commit()
+        facebook_generation_manager.resume(project.id)
+        return FacebookGenerationControlOut(state="idle", processing_count=0)
+
+    facebook_generation_manager.pause(project.id)
+    try:
+        project.generation_paused = True
+        db.add(
+            FacebookGenerationLog(
+                project_id=project.id,
+                level="warning",
+                stage="paused",
+                message=(
+                    "Generation stop requested. Active work will pause at the next safe checkpoint."
+                ),
+            )
+        )
+        await db.commit()
+    except Exception:
+        facebook_generation_manager.resume(project.id)
+        raise
+    await db.refresh(project)
+    return await _generation_control_out(project, db)
+
+
+@router.post(
+    "/facebook-projects/{project_id}/generation-control/resume",
+    response_model=FacebookGenerationControlOut,
+)
+async def resume_facebook_generation(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    project = await _project(project_id, user, db)
+    if facebook_generation_manager.is_cancelling(project.id):
+        raise HTTPException(
+            status_code=409,
+            detail="Cancellation is still finishing. Wait before continuing generation.",
+        )
+
+    project.generation_paused = False
+    db.add(
+        FacebookGenerationLog(
+            project_id=project.id,
+            level="info",
+            stage="resumed",
+            message="Generation continued.",
+        )
+    )
+    pending_rows = await db.execute(
+        select(FacebookContent.id).where(
+            FacebookContent.project_id == project.id,
+            FacebookContent.status == FacebookContentStatus.processing,
+            FacebookContent.generation_cancelled.is_(False),
+        )
+    )
+    pending_ids = list(pending_rows.scalars().all())
+    await db.commit()
+    facebook_generation_manager.resume(project.id)
+    if pending_ids:
+        await facebook_generation_manager.start_batch(
+            facebook_project_id=project.id,
+            content_ids=pending_ids,
+            created_by=user.id,
+        )
+    await db.refresh(project)
+    return await _generation_control_out(project, db)
+
+
+@router.post(
+    "/facebook-projects/{project_id}/generation-control/cancel",
+    response_model=FacebookGenerationCancelOut,
+)
+async def cancel_facebook_generation(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    project = await _project(project_id, user, db)
+    if not project.generation_paused:
+        raise HTTPException(
+            status_code=409,
+            detail="Stop the generation before cancelling it.",
+        )
+
+    facebook_generation_manager.cancel(project.id)
+    try:
+        pending_rows = await db.execute(
+            select(FacebookContent)
+            .where(
+                FacebookContent.project_id == project.id,
+                FacebookContent.status == FacebookContentStatus.processing,
+                FacebookContent.generation_cancelled.is_(False),
+            )
+            .order_by(FacebookContent.created_at.asc())
+            .with_for_update()
+        )
+        pending = list(pending_rows.scalars().all())
+        for content in pending:
+            db.add(
+                FacebookSpyRow(
+                    project_id=project.id,
+                    direct_link=content.source_video_url,
+                    post_title=content.title,
+                )
+            )
+            content.generation_cancelled = True
+            content.status = FacebookContentStatus.failed
+            content.error_message = (
+                "Generation cancelled; the source was returned to Spy Sheet."
+            )
+            db.add(
+                FacebookGenerationLog(
+                    project_id=project.id,
+                    content_id=content.id,
+                    level="warning",
+                    stage="cancelled",
+                    message="Generation cancelled; source returned to Spy Sheet.",
+                )
+            )
+        if pending:
+            await db.execute(
+                update(FacebookDelivery)
+                .where(
+                    FacebookDelivery.content_id.in_([content.id for content in pending]),
+                    FacebookDelivery.status == FacebookDeliveryStatus.processing,
+                )
+                .values(
+                    status=FacebookDeliveryStatus.failed,
+                    error_message="Generation cancelled; source returned to Spy Sheet.",
+                )
+            )
+            recipe_ids = [
+                content.recipe_id
+                for content in pending
+                if getattr(content, "recipe_id", None) is not None
+            ]
+            if recipe_ids:
+                await db.execute(
+                    update(Recipe)
+                    .where(
+                        Recipe.id.in_(recipe_ids),
+                        Recipe.status == RecipeStatus.generating,
+                    )
+                    .values(
+                        status=RecipeStatus.failed,
+                        error_message="Facebook generation was cancelled by the user.",
+                    )
+                )
+        project.generation_paused = False
+        await db.commit()
+    except Exception:
+        facebook_generation_manager.reset_cancel(project.id)
+        raise
+
+    control = await _generation_control_out(project, db)
+    return FacebookGenerationCancelOut(
+        state=control.state,
+        processing_count=control.processing_count,
+        restored_rows=len(pending),
+    )
+
+
 @router.post(
     "/facebook-projects/{project_id}/generate",
     response_model=FacebookGenerationStartOut,
@@ -734,6 +965,30 @@ async def start_facebook_generation(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     project = await _project(project_id, user, db)
+    if facebook_generation_manager.is_cancelling(project.id):
+        raise HTTPException(
+            status_code=409,
+            detail="The previous cancellation is still finishing. Try again in a moment.",
+        )
+    existing_processing = int(
+        (
+            await db.execute(
+                select(func.count(FacebookContent.id)).where(
+                    FacebookContent.project_id == project.id,
+                    FacebookContent.status == FacebookContentStatus.processing,
+                    FacebookContent.generation_cancelled.is_(False),
+                )
+            )
+        ).scalar_one()
+    )
+    if project.generation_paused and existing_processing:
+        raise HTTPException(
+            status_code=409,
+            detail="Continue or cancel the stopped generation before starting another batch.",
+        )
+    if project.generation_paused:
+        project.generation_paused = False
+        facebook_generation_manager.resume(project.id)
     site = (
         await db.execute(
             select(Site).where(Site.project_id == project.content_project_id).limit(1)
@@ -909,7 +1164,10 @@ async def list_facebook_contents(
         (
             await db.execute(
                 select(FacebookContent)
-                .where(FacebookContent.project_id == project_id)
+                .where(
+                    FacebookContent.project_id == project_id,
+                    FacebookContent.generation_cancelled.is_(False),
+                )
                 .order_by(FacebookContent.created_at.desc())
             )
         ).scalars()

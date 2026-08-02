@@ -510,6 +510,7 @@ class FacebookProject(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     app_secret: Mapped[str | None] = mapped_column(Text, nullable=True)  # encrypted
+    generation_paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -581,6 +582,7 @@ class FacebookContent(Base):
         nullable=False, default=FacebookContentStatus.processing,
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generation_cancelled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
