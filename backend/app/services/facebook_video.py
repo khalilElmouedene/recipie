@@ -10,12 +10,14 @@ import socket
 import subprocess
 import uuid
 from dataclasses import dataclass
+from http.cookiejar import LoadError, MozillaCookieJar
 from io import BytesIO
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
+from bs4 import BeautifulSoup
 from openai import OpenAI
 from PIL import Image
 
@@ -26,6 +28,7 @@ logger = logging.getLogger(__name__)
 UPLOADS_ROOT = Path(os.getenv("UPLOADS_DIR", "/app/uploads"))
 FACEBOOK_UPLOADS = UPLOADS_ROOT / "facebook"
 MAX_VIDEO_BYTES = 500 * 1024 * 1024
+MAX_FACEBOOK_HTML_BYTES = 12 * 1024 * 1024
 VIDEO_WIDTH = 1024
 VIDEO_HEIGHT = 1536
 FACEBOOK_VIDEO_HOSTS = {
@@ -94,6 +97,148 @@ def _is_facebook_video_url(raw_url: str) -> bool:
     return parsed.scheme in {"http", "https"} and hostname in FACEBOOK_VIDEO_HOSTS
 
 
+def _facebook_video_id(raw_url: str) -> str | None:
+    parts = [part for part in urlparse(raw_url).path.split("/") if part]
+    for marker in ("reel", "videos", "watch"):
+        if marker in parts:
+            index = parts.index(marker) + 1
+            if index < len(parts) and parts[index].isdigit():
+                return parts[index]
+    query_video_id = parse_qs(urlparse(raw_url).query).get("v", [""])[0]
+    return query_video_id if query_video_id.isdigit() else None
+
+
+def _is_facebook_cdn_video_url(raw_url: str) -> bool:
+    parsed = urlparse(raw_url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    return (
+        parsed.scheme == "https"
+        and (hostname == "fbcdn.net" or hostname.endswith(".fbcdn.net"))
+        and parsed.path.lower().endswith(".mp4")
+    )
+
+
+def _walk_json(value):
+    yield value
+    if isinstance(value, dict):
+        for child in value.values():
+            yield from _walk_json(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_json(child)
+
+
+def _extract_facebook_progressive_urls(html: str, target_video_id: str) -> list[str]:
+    """Return target Reel progressive MP4 URLs, highest advertised bitrate first."""
+    soup = BeautifulSoup(html, "html.parser")
+    target_nodes: list[dict] = []
+    identity_keys = {"id", "video_id", "root_video_id", "initial_node_id"}
+    for script in soup.find_all("script", attrs={"type": "application/json"}):
+        raw_json = script.string or script.get_text() or ""
+        try:
+            document = json.loads(raw_json)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        for item in _walk_json(document):
+            if not isinstance(item, dict):
+                continue
+            if any(str(item.get(key) or "") == target_video_id for key in identity_keys):
+                target_nodes.append(item)
+
+    candidates: dict[str, int] = {}
+    for node in target_nodes:
+        for item in _walk_json(node):
+            if not isinstance(item, dict):
+                continue
+            candidate = item.get("progressive_url")
+            if not isinstance(candidate, str) or not _is_facebook_cdn_video_url(candidate):
+                continue
+            raw_bitrate = parse_qs(urlparse(candidate).query).get("bitrate", ["0"])[0]
+            try:
+                bitrate = int(raw_bitrate)
+            except (TypeError, ValueError):
+                bitrate = 0
+            candidates[candidate] = max(candidates.get(candidate, 0), bitrate)
+    return [url for url, _bitrate in sorted(candidates.items(), key=lambda item: item[1], reverse=True)]
+
+
+def _fetch_authenticated_facebook_html(
+    raw_url: str,
+    cookie_path: Path,
+) -> str:
+    cookie_jar = MozillaCookieJar(str(cookie_path))
+    try:
+        cookie_jar.load(ignore_discard=True, ignore_expires=False)
+    except (LoadError, OSError) as exc:
+        raise ValueError(
+            "FACEBOOK_COOKIES_FILE is not a valid readable Netscape cookies.txt file."
+        ) from exc
+
+    session = requests.Session()
+    session.cookies.update(cookie_jar)
+    with session.get(
+        raw_url,
+        stream=True,
+        timeout=(15, 60),
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    ) as response:
+        response.raise_for_status()
+        media_type = (response.headers.get("Content-Type") or "").lower()
+        if "html" not in media_type:
+            raise ValueError("Facebook authenticated fallback did not return an HTML page.")
+        chunks: list[bytes] = []
+        written = 0
+        for chunk in response.iter_content(256 * 1024):
+            if not chunk:
+                continue
+            written += len(chunk)
+            if written > MAX_FACEBOOK_HTML_BYTES:
+                raise ValueError("Facebook HTML response exceeded the 12 MB safety limit.")
+            chunks.append(chunk)
+        encoding = response.encoding or "utf-8"
+        return b"".join(chunks).decode(encoding, errors="replace")
+
+
+def _download_facebook_html_fallback(
+    raw_url: str,
+    destination: Path,
+    *,
+    cookie_path: Path,
+    log: Callable[[str], None],
+) -> bool:
+    video_id = _facebook_video_id(raw_url)
+    if not video_id:
+        log("Could not identify the Facebook video ID for the HTML fallback.")
+        return False
+    log("Trying the authenticated Facebook HTML video fallback.")
+    html = _fetch_authenticated_facebook_html(raw_url, cookie_path)
+    candidates = _extract_facebook_progressive_urls(html, video_id)
+    if not candidates:
+        log("Authenticated Facebook HTML contained no progressive MP4 for this Reel.")
+        return False
+    log(f"Authenticated Facebook HTML exposed {len(candidates)} progressive MP4 candidate(s).")
+    for index, candidate in enumerate(candidates, 1):
+        destination.unlink(missing_ok=True)
+        try:
+            _download_source(candidate, destination, log=log)
+            log(f"Downloaded Facebook progressive MP4 candidate {index}.")
+            return True
+        except Exception as exc:
+            destination.unlink(missing_ok=True)
+            log(
+                f"Facebook progressive MP4 candidate {index} failed "
+                f"({type(exc).__name__}); trying the next quality."
+            )
+    return False
+
+
 class _YtDlpLogger:
     def __init__(self, emit: Callable[[str], None]) -> None:
         self._emit = emit
@@ -160,6 +305,7 @@ def _download_facebook_source(
         "/app/uploads/facebook/cookies.txt",
     ).strip()
     cookie_configured = False
+    cookie_path: Path | None = None
     if cookie_file:
         cookie_path = Path(cookie_file).resolve()
         if cookie_path.is_file():
@@ -187,6 +333,21 @@ def _download_facebook_source(
         technical = " ".join(str(exc).split())[-700:]
         if technical:
             log(f"Facebook Reel resolver failed: {technical}")
+        if cookie_configured and cookie_path is not None:
+            try:
+                if _download_facebook_html_fallback(
+                    raw_url,
+                    destination,
+                    cookie_path=cookie_path,
+                    log=log,
+                ):
+                    return
+            except Exception as fallback_exc:
+                destination.unlink(missing_ok=True)
+                log(
+                    "Authenticated Facebook HTML fallback failed "
+                    f"({type(fallback_exc).__name__})."
+                )
         if cookie_configured:
             guidance = (
                 "Facebook still denied the video while using the configured browser "
@@ -195,7 +356,9 @@ def _download_facebook_source(
             )
         else:
             guidance = (
-                "This Reel may require Facebook login or age verification (18+). "
+                "The Reel URL returned a Facebook web page instead of a video file; "
+                "HTTP 200 alone does not mean the response is an MP4. This Reel may "
+                "require Facebook login or age verification (18+). "
                 "Upload the video to the workspace, paste a direct video/CDN URL, or "
                 "configure FACEBOOK_COOKIES_FILE with a Netscape cookies.txt file."
             )
@@ -320,8 +483,9 @@ def _download_source(
                 "application/xml",
             }:
                 raise ValueError(
-                    f"Direct Link returned {media_type}, not a video file. Upload the "
-                    "video to the workspace and use its generated URL."
+                    f"Direct Link returned HTTP {response.status_code} with {media_type}, "
+                    "not a video file. A successful HTTP status does not prove the body "
+                    "is an MP4. Upload the video to the workspace and use its generated URL."
                 )
             content_length = int(response.headers.get("Content-Length") or 0)
             if content_length > MAX_VIDEO_BYTES:

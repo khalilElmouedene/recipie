@@ -3,12 +3,16 @@ from __future__ import annotations
 import subprocess
 import sys
 import unittest
+import json
 from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 from app.services.facebook_video import (
+    _download_facebook_html_fallback,
     _download_facebook_source,
     _download_source,
+    _extract_facebook_progressive_urls,
+    _facebook_video_id,
     _is_facebook_video_url,
     validate_video_file,
 )
@@ -229,6 +233,93 @@ class FacebookReelDownloadTests(unittest.TestCase):
             "/app/uploads/facebook/cookies.txt",
         )
         self.assertTrue(any("configured Facebook browser session" in message for message in messages))
+
+    def test_direct_downloader_rejects_http_200_html_before_writing_a_fake_mp4(self):
+        direct_url = "https://cdn.example.com/not-really-a-video.mp4"
+        destination = MagicMock()
+        response = MagicMock()
+        response.is_redirect = False
+        response.is_permanent_redirect = False
+        response.status_code = 200
+        response.headers = {"Content-Type": "text/html; charset=utf-8"}
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+
+        with (
+            patch("app.services.facebook_video._safe_workspace_path", return_value=None),
+            patch("app.services.facebook_video._is_public_http_url", return_value=True),
+            patch("app.services.facebook_video.requests.get", return_value=response),
+        ):
+            with self.assertRaisesRegex(ValueError, "HTTP 200 with text/html"):
+                _download_source(direct_url, destination)
+
+        destination.open.assert_not_called()
+
+    def test_extracts_target_reel_progressive_urls_in_bitrate_order(self):
+        low_url = "https://scontent.example.fbcdn.net/video.mp4?bitrate=316946&tag=sve_sd"
+        high_url = "https://scontent.example.fbcdn.net/video.mp4?bitrate=1001687&tag=720p"
+        unrelated_url = "https://scontent.example.fbcdn.net/other.mp4?bitrate=9000000"
+        target_payload = {
+            "id": self.reel_url.rsplit("/", 1)[-1],
+            "videoDeliveryResponseFragment": {
+                "videoDeliveryResponseResult": {
+                    "progressive_urls": [
+                        {"progressive_url": low_url},
+                        {"progressive_url": high_url},
+                    ]
+                }
+            },
+        }
+        unrelated_payload = {
+            "id": "999",
+            "progressive_urls": [{"progressive_url": unrelated_url}],
+        }
+        html = (
+            '<html><script type="application/json">'
+            f"{json.dumps(target_payload)}"
+            "</script>"
+            '<script type="application/json">'
+            f"{json.dumps(unrelated_payload)}"
+            "</script></html>"
+        )
+
+        self.assertEqual(_facebook_video_id(self.reel_url), "1050092727514659")
+        self.assertEqual(
+            _extract_facebook_progressive_urls(html, "1050092727514659"),
+            [high_url, low_url],
+        )
+
+    def test_authenticated_html_fallback_downloads_highest_bitrate_candidate(self):
+        low_url = "https://scontent.example.fbcdn.net/video.mp4?bitrate=300000"
+        high_url = "https://scontent.example.fbcdn.net/video.mp4?bitrate=1000000"
+        payload = {
+            "video_id": "1050092727514659",
+            "progressive_urls": [
+                {"progressive_url": low_url},
+                {"progressive_url": high_url},
+            ],
+        }
+        html = f'<script type="application/json">{json.dumps(payload)}</script>'
+        destination = MagicMock()
+        messages = []
+
+        with (
+            patch(
+                "app.services.facebook_video._fetch_authenticated_facebook_html",
+                return_value=html,
+            ),
+            patch("app.services.facebook_video._download_source") as download_source,
+        ):
+            downloaded = _download_facebook_html_fallback(
+                self.reel_url,
+                destination,
+                cookie_path=MagicMock(),
+                log=messages.append,
+            )
+
+        self.assertTrue(downloaded)
+        download_source.assert_called_once_with(high_url, destination, log=messages.append)
+        self.assertTrue(any("2 progressive MP4" in message for message in messages))
 
 
 if __name__ == "__main__":
