@@ -864,6 +864,19 @@ export const api = {
     }),
   getFacebookContents: (projectId: string) =>
     request<FacebookContentOut[]>(`/api/facebook-projects/${projectId}/contents`),
+  getFacebookGenerationLogs: (
+    projectId: string,
+    filters?: { level?: FacebookLogLevel; content_id?: string; limit?: number },
+  ) => {
+    const params = new URLSearchParams();
+    if (filters?.level) params.set("level", filters.level);
+    if (filters?.content_id) params.set("content_id", filters.content_id);
+    if (filters?.limit) params.set("limit", String(filters.limit));
+    const query = params.toString();
+    return request<FacebookGenerationLogOut[]>(
+      `/api/facebook-projects/${projectId}/logs${query ? `?${query}` : ""}`,
+    );
+  },
   scheduleFacebookDelivery: (deliveryId: string, scheduledAt: string | null) =>
     request<FacebookDeliveryOut>(`/api/facebook-deliveries/${deliveryId}/schedule`, {
       method: "PATCH",
@@ -1439,6 +1452,7 @@ export interface ThreadsPostOut {
 
 export type FacebookCommentMode = "full_recipe" | "full_recipe_url";
 export type FacebookContentStatus = "processing" | "ready" | "failed";
+export type FacebookLogLevel = "info" | "success" | "warning" | "error";
 export type FacebookDeliveryStatus =
   | "processing"
   | "draft"
@@ -1517,5 +1531,16 @@ export interface FacebookGenerationStartOut {
   removed_rows: number;
   remaining_rows: number;
   low_queue_email_sent: boolean;
+}
+
+export interface FacebookGenerationLogOut {
+  id: number;
+  project_id: string;
+  content_id: string | null;
+  content_title: string | null;
+  level: FacebookLogLevel;
+  stage: string;
+  message: string;
+  created_at: string;
 }
 

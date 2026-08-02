@@ -1,0 +1,299 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import {
+  Activity,
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  Circle,
+  Clock3,
+  Loader2,
+  RefreshCw,
+  Search,
+  SquareTerminal,
+} from "lucide-react";
+import {
+  api,
+  FacebookGenerationLogOut,
+  FacebookLogLevel,
+  FacebookProjectOut,
+} from "@/lib/api";
+
+const LEVEL_STYLE: Record<FacebookLogLevel, { dot: string; badge: string; icon: typeof Circle }> = {
+  info: {
+    dot: "bg-sky-400",
+    badge: "border-sky-900/70 bg-sky-950/35 text-sky-300",
+    icon: Circle,
+  },
+  success: {
+    dot: "bg-emerald-400",
+    badge: "border-emerald-900/70 bg-emerald-950/35 text-emerald-300",
+    icon: CheckCircle2,
+  },
+  warning: {
+    dot: "bg-amber-400",
+    badge: "border-amber-900/70 bg-amber-950/35 text-amber-300",
+    icon: AlertCircle,
+  },
+  error: {
+    dot: "bg-red-400",
+    badge: "border-red-900/70 bg-red-950/35 text-red-300",
+    icon: AlertCircle,
+  },
+};
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value));
+}
+
+export default function FacebookGenerationLogsPage() {
+  const { id } = useParams<{ id: string }>();
+  const [project, setProject] = useState<FacebookProjectOut | null>(null);
+  const [logs, setLogs] = useState<FacebookGenerationLogOut[]>([]);
+  const [level, setLevel] = useState<FacebookLogLevel | "">("");
+  const [search, setSearch] = useState("");
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
+    else setRefreshing(true);
+    try {
+      const [projectData, logData] = await Promise.all([
+        project ? Promise.resolve(project) : api.getFacebookProject(id),
+        api.getFacebookGenerationLogs(id, {
+          level: level || undefined,
+          limit: 1000,
+        }),
+      ]);
+      setProject(projectData);
+      setLogs(logData);
+      setError(null);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Could not load generation logs");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [id, level, project]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const timer = window.setInterval(() => void load(true), 5000);
+    return () => window.clearInterval(timer);
+  }, [autoRefresh, load]);
+
+  const visibleLogs = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return logs;
+    return logs.filter((entry) =>
+      [entry.message, entry.stage, entry.content_title || ""]
+        .some((value) => value.toLowerCase().includes(needle)),
+    );
+  }, [logs, search]);
+
+  const counts = useMemo(() => ({
+    errors: logs.filter((entry) => entry.level === "error").length,
+    completed: logs.filter((entry) => entry.level === "success").length,
+  }), [logs]);
+
+  if (loading && !project) {
+    return (
+      <div className="grid min-h-[60vh] place-items-center">
+        <Loader2 className="animate-spin text-[#68a8ff]" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-[1500px] space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link
+          href={`/facebook/${id}`}
+          className="inline-flex items-center gap-2 text-sm text-slate-500 transition hover:text-white"
+        >
+          <ArrowLeft size={16} />
+          Back to project
+        </Link>
+        <div className="flex items-center gap-3 text-xs text-slate-500">
+          <label className="flex cursor-pointer items-center gap-2">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoRefresh}
+              onClick={() => setAutoRefresh((current) => !current)}
+              className={`relative h-5 w-9 rounded-full transition ${autoRefresh ? "bg-[#1877f2]" : "bg-slate-700"}`}
+            >
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${autoRefresh ? "left-[18px]" : "left-0.5"}`} />
+            </button>
+            Live refresh
+          </label>
+          <button
+            type="button"
+            onClick={() => void load(true)}
+            disabled={refreshing}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white disabled:opacity-60"
+          >
+            <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <header className="relative overflow-hidden rounded-[26px] border border-slate-800 bg-[#0d1422] px-6 py-6 md:px-8">
+        <div className="pointer-events-none absolute -right-20 -top-28 h-72 w-72 rounded-full bg-[#1877f2]/15 blur-3xl" />
+        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-[#68a8ff]">
+              <SquareTerminal size={16} />
+              Generation observability
+            </div>
+            <h1 className="text-3xl font-semibold tracking-[-0.035em] text-white">
+              {project?.name || "Facebook"} logs
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+              Follow video processing, AI generation, and failures for this project only.
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <Summary label="Events" value={logs.length} icon={Activity} />
+            <Summary label="Completed" value={counts.completed} icon={CheckCircle2} tone="green" />
+            <Summary label="Errors" value={counts.errors} icon={AlertCircle} tone="red" />
+          </div>
+        </div>
+      </header>
+
+      <div className="grid gap-3 rounded-2xl border border-slate-800 bg-[#0d1422] p-4 md:grid-cols-[220px_1fr]">
+        <select
+          value={level}
+          onChange={(event) => setLevel(event.target.value as FacebookLogLevel | "")}
+          className="rounded-xl border border-slate-700 bg-[#111b2c] px-3 py-2.5 text-sm text-slate-300 outline-none transition focus:border-[#1877f2]"
+        >
+          <option value="">All levels</option>
+          <option value="info">Information</option>
+          <option value="success">Success</option>
+          <option value="warning">Warnings</option>
+          <option value="error">Errors</option>
+        </select>
+        <label className="flex items-center gap-2 rounded-xl border border-slate-700 bg-[#111b2c] px-3 text-slate-500 transition focus-within:border-[#1877f2]">
+          <Search size={15} />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search a title, stage, or message"
+            className="min-w-0 flex-1 bg-transparent py-2.5 text-sm text-slate-200 outline-none placeholder:text-slate-600"
+          />
+        </label>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-3 rounded-xl border border-red-900/60 bg-red-950/25 px-4 py-3 text-sm text-red-300">
+          <AlertCircle className="mt-0.5 shrink-0" size={16} />
+          {error}
+        </div>
+      )}
+
+      <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#080e19]">
+        <div className="flex items-center justify-between border-b border-slate-800 bg-[#0d1422] px-5 py-3">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+            <SquareTerminal size={14} />
+            Runtime stream
+          </div>
+          <span className="flex items-center gap-2 text-xs text-slate-600">
+            <span className={`h-1.5 w-1.5 rounded-full ${autoRefresh ? "animate-pulse bg-emerald-400" : "bg-slate-600"}`} />
+            {visibleLogs.length} visible
+          </span>
+        </div>
+
+        <div className="max-h-[68vh] min-h-[320px] overflow-auto">
+          {visibleLogs.map((entry) => (
+            <LogRow key={entry.id} entry={entry} />
+          ))}
+          {!visibleLogs.length && !error && (
+            <div className="grid min-h-[320px] place-items-center px-6 text-center">
+              <div>
+                <Clock3 className="mx-auto mb-3 text-slate-700" size={30} />
+                <p className="text-sm font-medium text-slate-400">No matching events yet</p>
+                <p className="mt-1 text-xs text-slate-600">
+                  Start a generation from Spy Sheet and its progress will appear here.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function Summary({
+  label,
+  value,
+  icon: Icon,
+  tone = "blue",
+}: {
+  label: string;
+  value: number;
+  icon: typeof Activity;
+  tone?: "blue" | "green" | "red";
+}) {
+  const tones = {
+    blue: "text-sky-300",
+    green: "text-emerald-300",
+    red: "text-red-300",
+  };
+  return (
+    <div className="min-w-[94px] rounded-xl border border-slate-800 bg-slate-950/45 px-3 py-2.5">
+      <div className={`flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider ${tones[tone]}`}>
+        <Icon size={12} />
+        {label}
+      </div>
+      <div className="mt-1 text-xl font-semibold text-white">{value}</div>
+    </div>
+  );
+}
+
+function LogRow({ entry }: { entry: FacebookGenerationLogOut }) {
+  const style = LEVEL_STYLE[entry.level];
+  const Icon = style.icon;
+  return (
+    <article className="grid gap-3 border-b border-slate-800/80 px-4 py-4 last:border-0 hover:bg-slate-900/35 md:grid-cols-[180px_120px_1fr] md:px-5">
+      <time className="flex items-center gap-2 font-mono text-[11px] text-slate-600">
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${style.dot}`} />
+        {formatTime(entry.created_at)}
+      </time>
+      <div>
+        <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${style.badge}`}>
+          <Icon size={11} />
+          {entry.stage}
+        </span>
+      </div>
+      <div className="min-w-0">
+        {entry.content_title && (
+          <div className="mb-1 truncate text-xs font-semibold text-slate-300" title={entry.content_title}>
+            {entry.content_title}
+          </div>
+        )}
+        <p className={`break-words font-mono text-xs leading-5 ${entry.level === "error" ? "text-red-300" : "text-slate-400"}`}>
+          {entry.message}
+        </p>
+      </div>
+    </article>
+  );
+}

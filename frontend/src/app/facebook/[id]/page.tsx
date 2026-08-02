@@ -26,6 +26,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  ScrollText,
   Send,
   Settings2,
   Sheet,
@@ -203,13 +204,22 @@ export default function FacebookProjectPage() {
               ))}
             </div>
           </div>
-          <Link
-            href={`/facebook/${project.id}/spy-sheet`}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#1877f2]/45 bg-[#1877f2]/10 px-5 py-3 text-sm font-semibold text-[#8bbcff] transition hover:bg-[#1877f2]/20"
-          >
-            <Sheet size={17} />
-            Spy Sheet
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href={`/facebook/${project.id}/logs`}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900/70 px-5 py-3 text-sm font-semibold text-slate-300 transition hover:border-slate-600 hover:bg-slate-800 hover:text-white"
+            >
+              <ScrollText size={17} />
+              Generation Logs
+            </Link>
+            <Link
+              href={`/facebook/${project.id}/spy-sheet`}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#1877f2]/45 bg-[#1877f2]/10 px-5 py-3 text-sm font-semibold text-[#8bbcff] transition hover:bg-[#1877f2]/20"
+            >
+              <Sheet size={17} />
+              Spy Sheet
+            </Link>
+          </div>
         </div>
       </header>
 

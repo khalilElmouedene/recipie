@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import base64
 import ipaddress
+import json
 import logging
 import os
 import shutil
 import socket
+import subprocess
 import uuid
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -78,9 +81,60 @@ def _is_public_http_url(raw_url: str) -> bool:
     return True
 
 
-def _download_source(raw_url: str, destination: Path) -> None:
+def validate_video_file(path: Path) -> float:
+    """Return video duration after ffprobe confirms the file is complete and decodable."""
+    if not path.is_file() or path.stat().st_size < 1024:
+        raise ValueError(
+            "The source video is empty or incomplete. Upload the original video again."
+        )
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffprobe is not installed in the backend container.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("The source video could not be inspected within 30 seconds.") from exc
+
+    if probe.returncode != 0:
+        technical = (probe.stderr or "ffprobe could not decode the file").strip()
+        technical = " ".join(technical.split())[-600:]
+        raise ValueError(
+            "The source file is not a valid or complete video. Re-upload the original "
+            f"MP4, MOV, or WebM file. ffprobe: {technical}"
+        )
+    try:
+        duration = float(json.loads(probe.stdout or "{}").get("format", {}).get("duration") or 0)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("The source video has no readable duration.") from exc
+    if duration <= 0:
+        raise ValueError("The source video has no readable duration.")
+    return duration
+
+
+def _download_source(
+    raw_url: str,
+    destination: Path,
+    *,
+    log: Callable[[str], None] | None = None,
+) -> None:
+    emit = log or (lambda _message: None)
     workspace_path = _safe_workspace_path(raw_url)
     if workspace_path is not None:
+        emit("Copying video from the workspace upload volume.")
         shutil.copyfile(workspace_path, destination)
         return
     current_url = raw_url
@@ -102,6 +156,20 @@ def _download_source(raw_url: str, destination: Path) -> None:
             continue
         with response:
             response.raise_for_status()
+            media_type = (
+                (response.headers.get("Content-Type") or "")
+                .split(";", 1)[0]
+                .strip()
+                .lower()
+            )
+            if media_type.startswith("text/") or media_type in {
+                "application/json",
+                "application/xml",
+            }:
+                raise ValueError(
+                    f"Direct Link returned {media_type}, not a video file. Upload the "
+                    "video to the workspace and use its generated URL."
+                )
             content_length = int(response.headers.get("Content-Length") or 0)
             if content_length > MAX_VIDEO_BYTES:
                 raise ValueError("Video exceeds the 500 MB limit.")
@@ -114,6 +182,7 @@ def _download_source(raw_url: str, destination: Path) -> None:
                     if written > MAX_VIDEO_BYTES:
                         raise ValueError("Video exceeds the 500 MB limit.")
                     output.write(chunk)
+            emit(f"Downloaded source video ({written / (1024 * 1024):.1f} MB).")
             return
     raise ValueError("Video download followed too many redirects.")
 
@@ -134,7 +203,9 @@ class FacebookVideoProcessor:
         openai_api_key: str,
         script_prompt: str,
         recipe_card_prompt: str,
+        log: Callable[[str], None] | None = None,
     ) -> ProcessedFacebookVideo:
+        emit = log or (lambda _message: None)
         if not openai_api_key:
             raise ValueError("OpenAI API key is required for Facebook video generation.")
 
@@ -154,14 +225,24 @@ class FacebookVideoProcessor:
         recipe_card_path = work_dir / "recipe-card.png"
         output_path = work_dir / "processed-video.mp4"
 
-        _download_source(source_url, source_path)
+        emit("Preparing source video.")
+        _download_source(source_url, source_path, log=emit)
+        duration = validate_video_file(source_path)
+        emit(f"Video validated ({duration:.1f} seconds).")
         client = OpenAI(api_key=openai_api_key)
 
-        clip = VideoFileClip(str(source_path))
+        try:
+            clip = VideoFileClip(str(source_path))
+        except Exception as exc:
+            raise ValueError(
+                "The validated source video could not be opened by MoviePy. "
+                "Re-encode it as H.264 MP4 and upload it again."
+            ) from exc
         try:
             frame_at = min(0.05, max(0.0, float(clip.duration or 0) / 2))
             frame = clip.get_frame(frame_at)
             Image.fromarray(frame).convert("RGB").save(screenshot_path, quality=94)
+            emit("Captured the first video frame.")
 
             # Always render a silent intermediate, even when no audio track exists.
             silent_clip = clip.without_audio()
@@ -173,6 +254,7 @@ class FacebookVideoProcessor:
                     fps=clip.fps or 30,
                     logger=None,
                 )
+                emit("Removed the original video audio.")
             finally:
                 silent_clip.close()
         finally:
@@ -186,6 +268,7 @@ class FacebookVideoProcessor:
         voice_over = (script_response.choices[0].message.content or "").strip()
         if not voice_over:
             raise ValueError("OpenAI returned an empty Facebook voice-over.")
+        emit("Generated the voice-over script.")
 
         with client.audio.speech.with_streaming_response.create(
             model="gpt-4o-mini-tts",
@@ -193,6 +276,7 @@ class FacebookVideoProcessor:
             input=voice_over,
         ) as response:
             response.stream_to_file(audio_path)
+        emit("Generated the voice-over audio.")
 
         with screenshot_path.open("rb") as screenshot:
             image_result = client.images.edit(
@@ -209,6 +293,7 @@ class FacebookVideoProcessor:
         card = Image.open(BytesIO(image_bytes)).convert("RGB")
         card = card.resize((VIDEO_WIDTH, VIDEO_HEIGHT), Image.Resampling.LANCZOS)
         card.save(recipe_card_path, quality=96)
+        emit("Generated the vertical recipe card.")
 
         audio = AudioFileClip(str(audio_path))
         source = VideoFileClip(str(silent_path))
@@ -246,6 +331,7 @@ class FacebookVideoProcessor:
                     bitrate="8000k",
                     logger=None,
                 )
+                emit("Rendered the final Facebook video.")
             finally:
                 final.close()
         finally:

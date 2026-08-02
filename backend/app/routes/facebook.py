@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ from ..db_models import (
     FacebookContent,
     FacebookDelivery,
     FacebookDeliveryStatus,
+    FacebookGenerationLog,
     FacebookPage,
     FacebookProject,
     FacebookSpyRow,
@@ -35,6 +37,7 @@ from ..services.email_service import send_facebook_spy_sheet_low_email
 from ..services.credentials_loader import load_credentials_for_job
 from ..services.facebook_generation import facebook_generation_manager
 from ..services.facebook_publisher import publish_facebook_delivery
+from ..services.facebook_video import validate_video_file
 from ..services.facebook_schedule import (
     FacebookSchedulePolicy,
     generate_schedule_slots,
@@ -202,6 +205,17 @@ class FacebookContentOut(BaseModel):
 
 class FacebookDeliveryScheduleUpdate(BaseModel):
     scheduled_at: datetime | None = None
+
+
+class FacebookGenerationLogOut(BaseModel):
+    id: int
+    project_id: uuid.UUID
+    content_id: uuid.UUID | None
+    content_title: str | None
+    level: str
+    stage: str
+    message: str
+    created_at: datetime
 
 
 async def _project(
@@ -696,6 +710,10 @@ async def upload_facebook_video(
                 if written > MAX_VIDEO_BYTES:
                     raise HTTPException(status_code=413, detail="Video exceeds the 500 MB limit.")
                 output.write(chunk)
+        try:
+            await asyncio.to_thread(validate_video_file, destination)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception:
         destination.unlink(missing_ok=True)
         raise
@@ -820,6 +838,15 @@ async def start_facebook_generation(
         db.add(content)
         await db.flush()
         contents.append(content)
+        db.add(
+            FacebookGenerationLog(
+                project_id=project.id,
+                content_id=content.id,
+                level="info",
+                stage="queue",
+                message=f'Queued generation for "{spy_row.post_title}".',
+            )
+        )
         for page in pages:
             db.add(
                 FacebookDelivery(
@@ -935,6 +962,47 @@ async def list_facebook_contents(
             )
         )
     return output
+
+
+@router.get(
+    "/facebook-projects/{project_id}/logs",
+    response_model=list[FacebookGenerationLogOut],
+)
+async def list_facebook_generation_logs(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    level: Literal["info", "success", "warning", "error"] | None = None,
+    content_id: uuid.UUID | None = None,
+    limit: int = Query(default=500, ge=1, le=1000),
+):
+    await _project(project_id, user, db)
+    query = (
+        select(FacebookGenerationLog, FacebookContent.title)
+        .outerjoin(FacebookContent, FacebookContent.id == FacebookGenerationLog.content_id)
+        .where(FacebookGenerationLog.project_id == project_id)
+    )
+    if level:
+        query = query.where(FacebookGenerationLog.level == level)
+    if content_id:
+        query = query.where(FacebookGenerationLog.content_id == content_id)
+    rows = await db.execute(
+        query.order_by(FacebookGenerationLog.created_at.desc(), FacebookGenerationLog.id.desc())
+        .limit(limit)
+    )
+    return [
+        FacebookGenerationLogOut(
+            id=entry.id,
+            project_id=entry.project_id,
+            content_id=entry.content_id,
+            content_title=content_title,
+            level=entry.level,
+            stage=entry.stage,
+            message=entry.message,
+            created_at=entry.created_at,
+        )
+        for entry, content_title in rows.all()
+    ]
 
 
 @router.patch(

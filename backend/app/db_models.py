@@ -613,6 +613,25 @@ class FacebookDelivery(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class FacebookGenerationLog(Base):
+    """Persistent, project-scoped progress log for Facebook content generation."""
+    __tablename__ = "facebook_generation_logs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("facebook_projects.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    content_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("facebook_contents.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    level: Mapped[str] = mapped_column(String(16), nullable=False, default="info")
+    stage: Mapped[str] = mapped_column(String(64), nullable=False, default="generation")
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
 class SystemCleanupState(Base):
     """Singleton tracking the last time the system-wide automatic cleanup ran."""
     __tablename__ = "system_cleanup_state"

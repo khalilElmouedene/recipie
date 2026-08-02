@@ -24,6 +24,7 @@ from app.db_models import (
 from app.services.article_generator import generate_for_recipe
 from app.services.credentials_loader import load_credentials_for_job
 from app.services.facebook_video import FacebookVideoProcessor
+from app.services.facebook_logs import write_facebook_log
 from app.services.prompts import DEFAULT_PROMPTS
 
 logger = logging.getLogger(__name__)
@@ -264,6 +265,13 @@ class FacebookGenerationManager:
             payloads = await self._load_content_payloads(pending)
         except Exception as exc:
             for content_id in pending:
+                await write_facebook_log(
+                    facebook_project_id,
+                    f"Could not initialize generation: {exc}",
+                    content_id=content_id,
+                    level="error",
+                    stage="setup",
+                )
                 await self._fail(content_id, str(exc))
             with self._guard:
                 self._running.difference_update(pending)
@@ -271,11 +279,35 @@ class FacebookGenerationManager:
 
         loop = asyncio.get_running_loop()
 
+        def emit(
+            content_id: uuid.UUID,
+            message: str,
+            *,
+            stage: str = "generation",
+            level: str = "info",
+        ) -> None:
+            log_method = logger.error if level == "error" else logger.info
+            log_method("[facebook:%s:%s] %s", content_id, stage, str(message)[:1000])
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    write_facebook_log(
+                        facebook_project_id,
+                        message,
+                        content_id=content_id,
+                        level=level,
+                        stage=stage,
+                    ),
+                    loop,
+                ).result(timeout=15)
+            except Exception:
+                logger.exception("Could not forward Facebook generation progress")
+
         def run() -> None:
             for payload in payloads:
                 content_id = uuid.UUID(payload["id"])
                 recipe_id: uuid.UUID | None = None
                 try:
+                    emit(content_id, "Generation worker started.", stage="setup")
                     processed = self._video.process(
                         content_id=content_id,
                         source_url=payload["source_url"],
@@ -283,6 +315,7 @@ class FacebookGenerationManager:
                         openai_api_key=context.credentials["openai"],
                         script_prompt=context.prompts["facebook_video_script"],
                         recipe_card_prompt=context.prompts["facebook_recipe_card"],
+                        log=lambda message: emit(content_id, message, stage="video"),
                     )
                     recipe_id = asyncio.run_coroutine_threadsafe(
                         self._store_processed_video(
@@ -295,6 +328,7 @@ class FacebookGenerationManager:
                         ),
                         loop,
                     ).result()
+                    emit(content_id, "Starting article and image generation.", stage="article")
                     generated = generate_for_recipe(
                         recipe_id=str(recipe_id),
                         recipe_text=payload["title"],
@@ -304,9 +338,7 @@ class FacebookGenerationManager:
                         prompts=context.prompts,
                         pinterest_url=context.pinterest_url,
                         generate_recipe_json=context.generate_recipe_json,
-                        log=lambda message: logger.info(
-                            "[facebook:%s] %s", content_id, str(message)[:1000]
-                        ),
+                        log=lambda message: emit(content_id, str(message), stage="article"),
                     )
                     if generated.get("error_message") or not generated.get("generated_article"):
                         raise ValueError(
@@ -317,8 +349,20 @@ class FacebookGenerationManager:
                         self._complete(content_id, recipe_id, generated, payload["title"]),
                         loop,
                     ).result()
+                    emit(
+                        content_id,
+                        "Generation completed. The shared content is ready for its Page deliveries.",
+                        stage="complete",
+                        level="success",
+                    )
                 except Exception as exc:
                     logger.exception("Facebook generation failed for content %s", content_id)
+                    emit(
+                        content_id,
+                        f"Generation failed: {exc}",
+                        stage="failed",
+                        level="error",
+                    )
                     asyncio.run_coroutine_threadsafe(
                         self._fail(content_id, str(exc), recipe_id), loop
                     ).result()
