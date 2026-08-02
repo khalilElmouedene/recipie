@@ -179,6 +179,11 @@ class FacebookGenerationStartOut(BaseModel):
     low_queue_email_sent: bool
 
 
+class FacebookGenerationRetryOut(BaseModel):
+    content_id: uuid.UUID
+    status: Literal["processing"]
+
+
 class FacebookDeliveryOut(BaseModel):
     id: uuid.UUID
     page_id: uuid.UUID
@@ -215,6 +220,8 @@ class FacebookGenerationLogOut(BaseModel):
     project_id: uuid.UUID
     content_id: uuid.UUID | None
     content_title: str | None
+    content_status: str | None
+    content_cancelled: bool
     level: str
     stage: str
     message: str
@@ -1222,6 +1229,94 @@ async def list_facebook_contents(
     return output
 
 
+@router.post(
+    "/facebook-contents/{content_id}/retry",
+    response_model=FacebookGenerationRetryOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_facebook_generation(
+    content_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    content = (
+        await db.execute(
+            select(FacebookContent)
+            .where(FacebookContent.id == content_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if content is None:
+        raise HTTPException(status_code=404, detail="Facebook content not found")
+    project = await _project(content.project_id, user, db)
+    if content.generation_cancelled:
+        raise HTTPException(
+            status_code=409,
+            detail="This source was cancelled and already returned to Spy Sheet.",
+        )
+    if content.status != FacebookContentStatus.failed:
+        raise HTTPException(
+            status_code=409,
+            detail="Only a failed generation can be retried.",
+        )
+    if facebook_generation_manager.is_running(content.id):
+        raise HTTPException(
+            status_code=409,
+            detail="The failed worker is still closing. Retry again in a moment.",
+        )
+    if project.generation_paused or facebook_generation_manager.is_cancelling(project.id):
+        raise HTTPException(
+            status_code=409,
+            detail="Continue or finish cancelling the current generation first.",
+        )
+
+    previous_recipe_id = content.recipe_id
+    content.recipe_id = None
+    content.screenshot_url = None
+    content.processed_video_url = None
+    content.generated_images = None
+    content.generated_article = None
+    content.article_url = None
+    content.status = FacebookContentStatus.processing
+    content.error_message = None
+    await db.execute(
+        update(FacebookDelivery)
+        .where(FacebookDelivery.content_id == content.id)
+        .values(
+            status=FacebookDeliveryStatus.processing,
+            published_at=None,
+            facebook_post_id=None,
+            first_comment_id=None,
+            error_message=None,
+        )
+    )
+    if previous_recipe_id is not None:
+        await db.flush()
+        await db.execute(
+            sql_delete(Recipe).where(
+                Recipe.id == previous_recipe_id,
+                Recipe.status.in_([RecipeStatus.generating, RecipeStatus.failed]),
+            )
+        )
+    db.add(
+        FacebookGenerationLog(
+            project_id=project.id,
+            content_id=content.id,
+            level="info",
+            stage="retry",
+            message="Generation retry queued.",
+        )
+    )
+    await db.commit()
+
+    await facebook_generation_manager.start_batch(
+        facebook_project_id=project.id,
+        content_ids=[content.id],
+        created_by=user.id,
+    )
+    return FacebookGenerationRetryOut(content_id=content.id, status="processing")
+
+
 @router.get(
     "/facebook-projects/{project_id}/logs",
     response_model=list[FacebookGenerationLogOut],
@@ -1236,7 +1331,12 @@ async def list_facebook_generation_logs(
 ):
     await _project(project_id, user, db)
     query = (
-        select(FacebookGenerationLog, FacebookContent.title)
+        select(
+            FacebookGenerationLog,
+            FacebookContent.title,
+            FacebookContent.status,
+            FacebookContent.generation_cancelled,
+        )
         .outerjoin(FacebookContent, FacebookContent.id == FacebookGenerationLog.content_id)
         .where(FacebookGenerationLog.project_id == project_id)
     )
@@ -1254,12 +1354,14 @@ async def list_facebook_generation_logs(
             project_id=entry.project_id,
             content_id=entry.content_id,
             content_title=content_title,
+            content_status=content_status.value if content_status else None,
+            content_cancelled=bool(content_cancelled),
             level=entry.level,
             stage=entry.stage,
             message=entry.message,
             created_at=entry.created_at,
         )
-        for entry, content_title in rows.all()
+        for entry, content_title, content_status, content_cancelled in rows.all()
     ]
 
 

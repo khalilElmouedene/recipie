@@ -99,6 +99,10 @@ class FacebookGenerationManager:
                 and self._project_running.get(project_id)
             )
 
+    def is_running(self, content_id: uuid.UUID) -> bool:
+        with self._guard:
+            return content_id in self._running
+
     def _cancel_requested(self, project_id: uuid.UUID) -> bool:
         with self._guard:
             cancel_event = self._cancel_events.get(project_id)

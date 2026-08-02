@@ -78,6 +78,7 @@ export default function FacebookGenerationLogsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [controlAction, setControlAction] = useState<"pause" | "resume" | "cancel" | null>(null);
+  const [retryingContentId, setRetryingContentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (quiet = false) => {
@@ -181,6 +182,20 @@ export default function FacebookGenerationLogsPage() {
       toast.error(actionError instanceof Error ? actionError.message : "Could not cancel generation");
     } finally {
       setControlAction(null);
+    }
+  };
+
+  const retryGeneration = async (contentId: string, title: string | null) => {
+    setRetryingContentId(contentId);
+    try {
+      await api.retryFacebookGeneration(contentId);
+      toast.success(`Generation restarted${title ? ` for ${title}` : ""}.`);
+      await load(true);
+    } catch (actionError) {
+      toast.error(actionError instanceof Error ? actionError.message : "Could not retry generation");
+      await load(true);
+    } finally {
+      setRetryingContentId(null);
     }
   };
 
@@ -302,7 +317,12 @@ export default function FacebookGenerationLogsPage() {
 
         <div className="max-h-[68vh] min-h-[320px] overflow-auto">
           {visibleLogs.map((entry) => (
-            <LogRow key={entry.id} entry={entry} />
+            <LogRow
+              key={entry.id}
+              entry={entry}
+              retrying={retryingContentId === entry.content_id}
+              onRetry={(contentId, title) => void retryGeneration(contentId, title)}
+            />
           ))}
           {!visibleLogs.length && !error && (
             <div className="grid min-h-[320px] place-items-center px-6 text-center">
@@ -440,7 +460,15 @@ function Summary({
   );
 }
 
-function LogRow({ entry }: { entry: FacebookGenerationLogOut }) {
+function LogRow({
+  entry,
+  retrying,
+  onRetry,
+}: {
+  entry: FacebookGenerationLogOut;
+  retrying: boolean;
+  onRetry: (contentId: string, title: string | null) => void;
+}) {
   const style = LEVEL_STYLE[entry.level];
   const Icon = style.icon;
   return (
@@ -464,6 +492,20 @@ function LogRow({ entry }: { entry: FacebookGenerationLogOut }) {
         <p className={`break-words font-mono text-xs leading-5 ${entry.level === "error" ? "text-red-300" : "text-slate-400"}`}>
           {entry.message}
         </p>
+        {entry.stage === "failed" &&
+          entry.content_id &&
+          entry.content_status === "failed" &&
+          !entry.content_cancelled && (
+            <button
+              type="button"
+              onClick={() => onRetry(entry.content_id as string, entry.content_title)}
+              disabled={retrying}
+              className="mt-3 inline-flex items-center gap-2 rounded-lg border border-red-800/60 bg-red-950/30 px-3 py-2 font-sans text-[11px] font-semibold text-red-200 transition hover:bg-red-900/40 disabled:opacity-50"
+            >
+              {retrying ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+              Retry generation
+            </button>
+          )}
       </div>
     </article>
   );

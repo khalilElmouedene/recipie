@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import unittest
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
-from app.services.facebook_video import validate_video_file
+from app.services.facebook_video import (
+    _download_facebook_source,
+    _download_source,
+    _is_facebook_video_url,
+    validate_video_file,
+)
 
 
 class FacebookVideoValidationTests(unittest.TestCase):
@@ -49,6 +56,77 @@ class FacebookVideoValidationTests(unittest.TestCase):
                 validate_video_file(source)
 
         run.assert_not_called()
+
+
+class FacebookReelDownloadTests(unittest.TestCase):
+    reel_url = "https://www.facebook.com/reel/1050092727514659"
+
+    def test_facebook_reel_is_sent_to_the_social_video_resolver(self):
+        destination = MagicMock()
+        with (
+            patch("app.services.facebook_video._safe_workspace_path", return_value=None),
+            patch("app.services.facebook_video._download_facebook_source") as download,
+            patch("app.services.facebook_video.requests.get") as direct_request,
+        ):
+            _download_source(self.reel_url, destination)
+
+        self.assertTrue(_is_facebook_video_url(self.reel_url))
+        download.assert_called_once()
+        direct_request.assert_not_called()
+
+    def test_facebook_resolver_uses_ytdlp_and_moves_the_downloaded_video(self):
+        captured_options = {}
+
+        class DownloadError(Exception):
+            pass
+
+        class FakeYoutubeDL:
+            def __init__(self, options):
+                captured_options.update(options)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def extract_info(self, url, download):
+                self.url = url
+                self.download = download
+
+        yt_dlp = ModuleType("yt_dlp")
+        yt_dlp.YoutubeDL = FakeYoutubeDL
+        yt_dlp_utils = ModuleType("yt_dlp.utils")
+        yt_dlp_utils.DownloadError = DownloadError
+
+        destination = MagicMock()
+        destination.stem = "source"
+        destination.with_name.return_value.__str__.return_value = (
+            "/app/uploads/facebook/item/source-facebook.%(ext)s"
+        )
+        destination.stat.return_value.st_size = 3 * 1024 * 1024
+        source = MagicMock()
+        source.is_file.return_value = True
+        source.suffix = ".mp4"
+        source.stat.return_value.st_size = 3 * 1024 * 1024
+        destination.parent.glob.side_effect = [[], [], [source]]
+        messages = []
+
+        with (
+            patch.dict(sys.modules, {"yt_dlp": yt_dlp, "yt_dlp.utils": yt_dlp_utils}),
+            patch("app.services.facebook_video._is_public_http_url", return_value=True),
+            patch("app.services.facebook_video.shutil.move") as move,
+        ):
+            _download_facebook_source(
+                self.reel_url,
+                destination,
+                log=messages.append,
+            )
+
+        move.assert_called_once_with(str(source), str(destination))
+        self.assertTrue(captured_options["noplaylist"])
+        self.assertEqual(captured_options["merge_output_format"], "mp4")
+        self.assertTrue(any("Resolving" in message for message in messages))
 
 
 if __name__ == "__main__":

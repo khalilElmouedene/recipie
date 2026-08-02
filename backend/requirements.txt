@@ -26,4 +26,5 @@ slowapi
 playwright
 moviepy>=2.0
 imageio-ffmpeg
+yt-dlp
 tzdata

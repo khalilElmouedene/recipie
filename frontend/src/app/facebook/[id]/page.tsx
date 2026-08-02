@@ -25,6 +25,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   ScrollText,
   Send,
@@ -287,6 +288,7 @@ function FacebookCalendar({
   });
   const [selectedContent, setSelectedContent] = useState<FacebookContentOut | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [scheduleDelivery, setScheduleDelivery] = useState<FacebookDeliveryOut | null>(null);
   const [scheduleAt, setScheduleAt] = useState("");
   const [savingSchedule, setSavingSchedule] = useState(false);
@@ -342,6 +344,21 @@ function FacebookCalendar({
       onRefresh();
     } finally {
       setPublishingId(null);
+    }
+  };
+
+  const retryGeneration = async (content: FacebookContentOut) => {
+    setRetryingId(content.id);
+    try {
+      await api.retryFacebookGeneration(content.id);
+      setSelectedContent(null);
+      toast.success(`Generation restarted for ${content.title}`);
+      onRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not retry generation");
+      onRefresh();
+    } finally {
+      setRetryingId(null);
     }
   };
 
@@ -473,7 +490,9 @@ function FacebookCalendar({
               key={content.id}
               content={content}
               publishingId={publishingId}
+              retryingId={retryingId}
               onPublish={publish}
+              onRetry={retryGeneration}
               onSchedule={(delivery) => {
                 setScheduleDelivery(delivery);
                 setScheduleAt(delivery.scheduled_at ? localDateTimeInput(delivery.scheduled_at) : "");
@@ -485,7 +504,12 @@ function FacebookCalendar({
       )}
 
       {selectedContent && (
-        <ContentDetail content={selectedContent} onClose={() => setSelectedContent(null)} />
+        <ContentDetail
+          content={selectedContent}
+          retrying={retryingId === selectedContent.id}
+          onRetry={() => void retryGeneration(selectedContent)}
+          onClose={() => setSelectedContent(null)}
+        />
       )}
 
       {scheduleDelivery && (
@@ -518,13 +542,17 @@ function FacebookCalendar({
 function FacebookPostCard({
   content,
   publishingId,
+  retryingId,
   onPublish,
+  onRetry,
   onSchedule,
   onOpen,
 }: {
   content: FacebookContentOut;
   publishingId: string | null;
+  retryingId: string | null;
   onPublish: (delivery: FacebookDeliveryOut) => void;
+  onRetry: (content: FacebookContentOut) => void;
   onSchedule: (delivery: FacebookDeliveryOut) => void;
   onOpen: () => void;
 }) {
@@ -568,7 +596,20 @@ function FacebookPostCard({
           )}
 
           {content.error_message && (
-            <p className="mt-4 rounded-lg border border-red-900/40 bg-red-950/20 px-3 py-2 text-xs text-red-300">{content.error_message}</p>
+            <div className="mt-4 rounded-xl border border-red-900/40 bg-red-950/20 p-3">
+              <p className="text-xs leading-5 text-red-300">{content.error_message}</p>
+              {content.status === "failed" && (
+                <button
+                  type="button"
+                  onClick={() => onRetry(content)}
+                  disabled={retryingId === content.id}
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg border border-red-800/60 bg-red-950/40 px-3 py-2 text-[11px] font-semibold text-red-200 transition hover:bg-red-900/40 disabled:opacity-50"
+                >
+                  {retryingId === content.id ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                  Retry generation
+                </button>
+              )}
+            </div>
           )}
 
           <div className="mt-4 space-y-2 border-t border-slate-800 pt-4">
@@ -605,7 +646,17 @@ function FacebookPostCard({
   );
 }
 
-function ContentDetail({ content, onClose }: { content: FacebookContentOut; onClose: () => void }) {
+function ContentDetail({
+  content,
+  retrying,
+  onRetry,
+  onClose,
+}: {
+  content: FacebookContentOut;
+  retrying: boolean;
+  onRetry: () => void;
+  onClose: () => void;
+}) {
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
       <div className="mx-auto my-8 max-w-4xl overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl">
@@ -625,6 +676,15 @@ function ContentDetail({ content, onClose }: { content: FacebookContentOut; onCl
                 <AlertCircle className="text-red-400" />
                 <p className="mt-3 text-sm font-medium text-red-200">Video generation failed</p>
                 {content.error_message && <p className="mt-2 text-xs leading-5 text-red-300/80">{content.error_message}</p>}
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  disabled={retrying}
+                  className="mt-5 inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-red-500 disabled:opacity-50"
+                >
+                  {retrying ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                  Retry generation
+                </button>
               </div>
             ) : (
               <div className="grid min-h-80 place-items-center rounded-2xl bg-slate-950"><Loader2 className="animate-spin text-[#68a8ff]" /></div>

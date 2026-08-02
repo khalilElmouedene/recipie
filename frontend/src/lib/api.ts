@@ -864,6 +864,11 @@ export const api = {
     }),
   getFacebookContents: (projectId: string) =>
     request<FacebookContentOut[]>(`/api/facebook-projects/${projectId}/contents`),
+  retryFacebookGeneration: (contentId: string) =>
+    request<{ content_id: string; status: "processing" }>(
+      `/api/facebook-contents/${contentId}/retry`,
+      { method: "POST" },
+    ),
   getFacebookGenerationLogs: (
     projectId: string,
     filters?: { level?: FacebookLogLevel; content_id?: string; limit?: number },
@@ -1558,6 +1563,8 @@ export interface FacebookGenerationLogOut {
   project_id: string;
   content_id: string | null;
   content_title: string | null;
+  content_status: FacebookContentStatus | null;
+  content_cancelled: boolean;
   level: FacebookLogLevel;
   stage: string;
   message: string;

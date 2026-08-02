@@ -4,10 +4,10 @@ import threading
 import unittest
 import uuid
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.db_models import FacebookContentStatus, FacebookSpyRow
-from app.routes.facebook import cancel_facebook_generation
+from app.routes.facebook import cancel_facebook_generation, retry_facebook_generation
 from app.services.facebook_generation import (
     FacebookGenerationCancelled,
     FacebookGenerationManager,
@@ -46,6 +46,9 @@ class _CancelSession:
 
     async def commit(self):
         self.commits += 1
+
+    async def flush(self):
+        return None
 
 
 class FacebookManagerControlTests(unittest.TestCase):
@@ -143,6 +146,69 @@ class FacebookCancelRestorationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(project.generation_paused)
         self.assertEqual(result.restored_rows, 1)
         self.assertEqual(result.state, "idle")
+
+
+class FacebookRetryGenerationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retry_resets_only_the_failed_content_and_starts_it_again(self):
+        project_id = uuid.uuid4()
+        owner_id = uuid.uuid4()
+        content_id = uuid.uuid4()
+        project = SimpleNamespace(
+            id=project_id,
+            owner_id=owner_id,
+            generation_paused=False,
+        )
+        content = SimpleNamespace(
+            id=content_id,
+            project_id=project_id,
+            recipe_id=None,
+            screenshot_url="/uploads/old-frame.jpg",
+            processed_video_url=None,
+            generated_images=None,
+            generated_article=None,
+            article_url=None,
+            status=FacebookContentStatus.failed,
+            error_message="Facebook returned HTML",
+            generation_cancelled=False,
+        )
+        session = _CancelSession(
+            [
+                _Result(scalar=content),
+                _Result(scalar=project),
+                _Result(),
+            ]
+        )
+        start_batch = AsyncMock()
+
+        with (
+            patch(
+                "app.routes.facebook.facebook_generation_manager.is_running",
+                return_value=False,
+            ),
+            patch(
+                "app.routes.facebook.facebook_generation_manager.is_cancelling",
+                return_value=False,
+            ),
+            patch(
+                "app.routes.facebook.facebook_generation_manager.start_batch",
+                start_batch,
+            ),
+        ):
+            result = await retry_facebook_generation(
+                content_id,
+                SimpleNamespace(id=owner_id),
+                session,
+            )
+
+        self.assertEqual(content.status, FacebookContentStatus.processing)
+        self.assertIsNone(content.error_message)
+        self.assertIsNone(content.screenshot_url)
+        self.assertEqual(result.content_id, content_id)
+        start_batch.assert_awaited_once_with(
+            facebook_project_id=project_id,
+            content_ids=[content_id],
+            created_by=owner_id,
+        )
 
 
 if __name__ == "__main__":

@@ -28,6 +28,13 @@ FACEBOOK_UPLOADS = UPLOADS_ROOT / "facebook"
 MAX_VIDEO_BYTES = 500 * 1024 * 1024
 VIDEO_WIDTH = 1024
 VIDEO_HEIGHT = 1536
+FACEBOOK_VIDEO_HOSTS = {
+    "facebook.com",
+    "www.facebook.com",
+    "m.facebook.com",
+    "web.facebook.com",
+    "fb.watch",
+}
 
 
 @dataclass(frozen=True)
@@ -79,6 +86,117 @@ def _is_public_http_url(raw_url: str) -> bool:
         ):
             return False
     return True
+
+
+def _is_facebook_video_url(raw_url: str) -> bool:
+    parsed = urlparse(raw_url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    return parsed.scheme in {"http", "https"} and hostname in FACEBOOK_VIDEO_HOSTS
+
+
+class _YtDlpLogger:
+    def __init__(self, emit: Callable[[str], None]) -> None:
+        self._emit = emit
+
+    def debug(self, _message: str) -> None:
+        return
+
+    def warning(self, message: str) -> None:
+        if message:
+            self._emit(f"Facebook resolver warning: {str(message)[:500]}")
+
+    def error(self, _message: str) -> None:
+        return
+
+
+def _download_facebook_source(
+    raw_url: str,
+    destination: Path,
+    *,
+    log: Callable[[str], None],
+) -> None:
+    if not _is_public_http_url(raw_url):
+        raise ValueError("Facebook Reel URL must resolve to a public HTTPS address.")
+    try:
+        from yt_dlp import YoutubeDL
+        from yt_dlp.utils import DownloadError
+    except ImportError as exc:
+        raise RuntimeError(
+            "Facebook Reel support is not installed in the backend container."
+        ) from exc
+
+    log("Resolving the public Facebook Reel video.")
+    download_template = destination.with_name(
+        f"{destination.stem}-facebook.%(ext)s"
+    )
+    options = {
+        "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
+        "outtmpl": str(download_template),
+        "merge_output_format": "mp4",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "overwrites": True,
+        "continuedl": False,
+        "retries": 3,
+        "fragment_retries": 3,
+        "socket_timeout": 30,
+        "max_filesize": MAX_VIDEO_BYTES,
+        "logger": _YtDlpLogger(log),
+    }
+    cookie_file = os.getenv(
+        "FACEBOOK_COOKIES_FILE",
+        "/app/uploads/facebook/cookies.txt",
+    ).strip()
+    if cookie_file:
+        cookie_path = Path(cookie_file).resolve()
+        if cookie_path.is_file():
+            options["cookiefile"] = str(cookie_path)
+
+    prefix = f"{destination.stem}-facebook."
+    destination.unlink(missing_ok=True)
+    for stale in destination.parent.glob(f"{prefix}*"):
+        if stale.is_file():
+            stale.unlink(missing_ok=True)
+    try:
+        with YoutubeDL(options) as downloader:
+            downloader.extract_info(raw_url, download=True)
+    except DownloadError as exc:
+        for artifact in destination.parent.glob(f"{prefix}*"):
+            if artifact.is_file():
+                artifact.unlink(missing_ok=True)
+        raise ValueError(
+            "Facebook could not provide the Reel video. Make sure the Reel is public, "
+            "or upload the video to the workspace. If Facebook requires a login, "
+            "configure FACEBOOK_COOKIES_FILE in the backend."
+        ) from exc
+    finally:
+        for partial in destination.parent.glob(f"{prefix}*.part"):
+            partial.unlink(missing_ok=True)
+
+    candidates = [
+        path
+        for path in destination.parent.glob(f"{prefix}*")
+        if path.is_file() and path.suffix.lower() not in {".part", ".ytdl", ".json"}
+    ]
+    if not candidates:
+        raise ValueError(
+            "Facebook Reel extraction finished without a downloadable video. "
+            "Upload the original video to the workspace."
+        )
+    source = max(candidates, key=lambda path: path.stat().st_size)
+    if source.stat().st_size > MAX_VIDEO_BYTES:
+        for candidate in candidates:
+            candidate.unlink(missing_ok=True)
+        raise ValueError("Video exceeds the 500 MB limit.")
+    shutil.move(str(source), str(destination))
+    for candidate in candidates:
+        if candidate != source:
+            candidate.unlink(missing_ok=True)
+    log(
+        f"Downloaded Facebook Reel "
+        f"({destination.stat().st_size / (1024 * 1024):.1f} MB)."
+    )
 
 
 def validate_video_file(path: Path) -> float:
@@ -136,6 +254,9 @@ def _download_source(
     if workspace_path is not None:
         emit("Copying video from the workspace upload volume.")
         shutil.copyfile(workspace_path, destination)
+        return
+    if _is_facebook_video_url(raw_url):
+        _download_facebook_source(raw_url, destination, log=emit)
         return
     current_url = raw_url
     for _ in range(6):
