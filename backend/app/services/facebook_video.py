@@ -135,23 +135,42 @@ def _download_facebook_source(
         "merge_output_format": "mp4",
         "noplaylist": True,
         "quiet": True,
-        "no_warnings": True,
+        # Route warnings through _YtDlpLogger so the project generation log
+        # explains resolver failures without writing cookies or tokens.
+        "no_warnings": False,
         "overwrites": True,
         "continuedl": False,
         "retries": 3,
         "fragment_retries": 3,
+        "extractor_retries": 3,
         "socket_timeout": 30,
         "max_filesize": MAX_VIDEO_BYTES,
         "logger": _YtDlpLogger(log),
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        },
     }
     cookie_file = os.getenv(
         "FACEBOOK_COOKIES_FILE",
         "/app/uploads/facebook/cookies.txt",
     ).strip()
+    cookie_configured = False
     if cookie_file:
         cookie_path = Path(cookie_file).resolve()
         if cookie_path.is_file():
             options["cookiefile"] = str(cookie_path)
+            cookie_configured = True
+            log("Using the configured Facebook browser session cookie file.")
+        elif "FACEBOOK_COOKIES_FILE" in os.environ:
+            log(
+                "FACEBOOK_COOKIES_FILE is configured, but the file is not available "
+                "inside the backend container."
+            )
 
     prefix = f"{destination.stem}-facebook."
     destination.unlink(missing_ok=True)
@@ -165,10 +184,23 @@ def _download_facebook_source(
         for artifact in destination.parent.glob(f"{prefix}*"):
             if artifact.is_file():
                 artifact.unlink(missing_ok=True)
+        technical = " ".join(str(exc).split())[-700:]
+        if technical:
+            log(f"Facebook Reel resolver failed: {technical}")
+        if cookie_configured:
+            guidance = (
+                "Facebook still denied the video while using the configured browser "
+                "session. Export a fresh Netscape cookies.txt file from a Facebook "
+                "account that can watch this Reel, or upload the video to the workspace."
+            )
+        else:
+            guidance = (
+                "This Reel may require Facebook login or age verification (18+). "
+                "Upload the video to the workspace, paste a direct video/CDN URL, or "
+                "configure FACEBOOK_COOKIES_FILE with a Netscape cookies.txt file."
+            )
         raise ValueError(
-            "Facebook could not provide the Reel video. Make sure the Reel is public, "
-            "or upload the video to the workspace. If Facebook requires a login, "
-            "configure FACEBOOK_COOKIES_FILE in the backend."
+            f"Facebook could not provide the Reel video. {guidance}"
         ) from exc
     finally:
         for partial in destination.parent.glob(f"{prefix}*.part"):
