@@ -15,6 +15,7 @@ from app.services.facebook_video import (
     _extract_facebook_progressive_urls,
     _facebook_video_id,
     _is_facebook_video_url,
+    validate_facebook_reel_file,
     validate_video_file,
     video_dimensions,
 )
@@ -86,6 +87,62 @@ class FacebookVideoValidationTests(unittest.TestCase):
                 validate_video_file(source)
 
         run.assert_not_called()
+
+    def test_validates_rendered_facebook_reel_metadata(self):
+        source = self._source_file()
+        completed = subprocess.CompletedProcess(
+            args=["ffprobe"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "streams": [
+                        {
+                            "width": 1080,
+                            "height": 1920,
+                            "avg_frame_rate": "30/1",
+                        }
+                    ],
+                    "format": {"duration": "15.25", "format_name": "mov,mp4"},
+                }
+            ),
+            stderr="",
+        )
+        with patch("app.services.facebook_video.subprocess.run", return_value=completed):
+            metadata = validate_facebook_reel_file(source)
+
+        self.assertEqual(metadata["width"], 1080)
+        self.assertEqual(metadata["height"], 1920)
+        self.assertEqual(metadata["fps"], 30.0)
+        self.assertEqual(metadata["duration"], 15.25)
+
+    def test_reel_validation_explains_every_incompatible_property(self):
+        source = self._source_file()
+        completed = subprocess.CompletedProcess(
+            args=["ffprobe"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "streams": [
+                        {
+                            "width": 500,
+                            "height": 750,
+                            "avg_frame_rate": "20/1",
+                        }
+                    ],
+                    "format": {"duration": "72"},
+                }
+            ),
+            stderr="",
+        )
+        with patch("app.services.facebook_video.subprocess.run", return_value=completed):
+            with self.assertRaisesRegex(ValueError, "not publishable") as raised:
+                validate_facebook_reel_file(source)
+
+        message = str(raised.exception)
+        self.assertIn("resolution is 500x750", message)
+        self.assertIn("require 9:16", message)
+        self.assertIn("duration is 72.0s", message)
+        self.assertIn("20.00 fps", message)
 
 
 class FacebookReelDownloadTests(unittest.TestCase):

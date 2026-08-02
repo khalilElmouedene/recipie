@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import requests
 
@@ -32,14 +32,119 @@ def _graph(path: str) -> str:
 
 
 def _error(response: requests.Response, action: str) -> ValueError:
+    payload: dict = {}
     try:
-        payload = response.json()
-        message = payload.get("error", {}).get("message") or payload.get("error_description")
+        parsed = response.json()
+        if isinstance(parsed, dict):
+            payload = parsed
     except Exception:
-        message = None
-    safe_message = str(message or response.reason or "request failed")[:500]
-    logger.warning("Facebook Graph API %s failed (%s): %s", action, response.status_code, safe_message)
-    return ValueError(f"Facebook {action} failed: {safe_message}")
+        pass
+
+    error = payload.get("error")
+    error_data = error if isinstance(error, dict) else {}
+
+    def meaningful(value: object) -> str:
+        text = str(value or "").strip()
+        return "" if text in {"", "-", "--", "null", "None"} else text
+
+    messages: list[str] = []
+    for value in (
+        error_data.get("error_user_title"),
+        error_data.get("error_user_msg"),
+        error_data.get("message"),
+        error if isinstance(error, str) else None,
+        payload.get("error_description"),
+        payload.get("message"),
+    ):
+        text = meaningful(value)
+        if text and text not in messages:
+            messages.append(text)
+
+    code = error_data.get("code") or payload.get("code")
+    subcode = error_data.get("error_subcode") or payload.get("error_subcode")
+    trace_id = (
+        meaningful(error_data.get("fbtrace_id"))
+        or meaningful(payload.get("fbtrace_id"))
+        or meaningful(response.headers.get("x-fb-request-id"))
+        or meaningful(response.headers.get("x-fb-trace-id"))
+    )
+    reason = meaningful(response.reason)
+    status_detail = f"HTTP {response.status_code}"
+    if reason:
+        status_detail += f" {reason}"
+    if code:
+        status_detail += f", Meta code {code}"
+    if subcode:
+        status_detail += f", subcode {subcode}"
+
+    if not messages and not payload:
+        body = meaningful(getattr(response, "text", ""))
+        content_type = str(response.headers.get("content-type") or "").lower()
+        if body and "html" not in content_type:
+            messages.append(body[:350])
+    if not messages:
+        messages.append("Meta returned no diagnostic message")
+
+    detail = f"{status_detail}: {' | '.join(messages)}"
+    if trace_id:
+        detail += f" (Meta request ID: {trace_id})"
+    safe_detail = detail[:1000]
+    logger.warning("Facebook Graph API %s failed: %s", action, safe_detail)
+    return ValueError(f"Facebook {action} failed: {safe_detail}")
+
+
+def validate_public_video_url(video_url: str) -> dict:
+    """Verify the exact URL Meta will download before starting an upload."""
+
+    parsed = urlparse(video_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(
+            "Facebook Reel video URL is not a valid public HTTP(S) URL: "
+            f"{video_url[:300]}"
+        )
+    try:
+        response = requests.get(
+            video_url,
+            headers={
+                "Range": "bytes=0-1023",
+                "User-Agent": "facebookexternalhit/1.1 (+https://www.facebook.com/externalhit_uatext.php)",
+            },
+            allow_redirects=True,
+            stream=True,
+            timeout=REQUEST_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        raise ValueError(
+            "Facebook cannot be given the generated video because its public URL "
+            f"could not be reached: {exc}"
+        ) from exc
+
+    try:
+        if not response.ok:
+            raise ValueError(
+                "The generated Reel URL is not publicly downloadable: "
+                f"HTTP {response.status_code} {response.reason or ''}. URL: {video_url[:300]}"
+            )
+        content_type = str(response.headers.get("Content-Type") or "").split(";", 1)[0].lower()
+        if content_type.startswith("text/") or content_type in {
+            "application/json",
+            "application/xhtml+xml",
+        }:
+            raise ValueError(
+                "The generated Reel URL returned "
+                f"{content_type or 'a text response'} instead of a video. "
+                "Check that /uploads is routed to the backend and is publicly accessible "
+                "without login. "
+                f"URL: {video_url[:300]}"
+            )
+        return {
+            "status_code": response.status_code,
+            "content_type": content_type,
+            "content_length": int(response.headers.get("Content-Length") or 0),
+            "final_url": str(getattr(response, "url", "") or video_url),
+        }
+    finally:
+        response.close()
 
 
 def get_oauth_url(*, app_id: str, redirect_uri: str, state: str) -> str:
@@ -258,9 +363,22 @@ def upload_hosted_reel(
         timeout=180,
     )
     if not response.ok:
-        raise _error(response, "Reel video upload")
-    if response.json().get("success") is not True:
-        raise ValueError("Facebook did not accept the hosted Reel video URL.")
+        failure = _error(response, "Reel video upload")
+        raise ValueError(
+            f"{failure} Hosted video URL sent to Meta: {video_url[:300]}"
+        ) from failure
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict) or payload.get("success") is not True:
+        # Some Meta upload responses use HTTP 200 even though the body reports
+        # a failed upload. Reuse the same detailed parser so the job keeps the
+        # code, subcode and request ID instead of a generic failure.
+        failure = _error(response, "Reel video upload")
+        raise ValueError(
+            f"{failure} Hosted video URL sent to Meta: {video_url[:300]}"
+        ) from failure
 
 
 def finish_reel_publish(

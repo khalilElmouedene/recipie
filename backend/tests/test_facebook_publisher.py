@@ -224,6 +224,9 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         )
         order: list[str] = []
 
+        async def validate_video_source(**_kwargs):
+            order.append("video-preflight")
+
         async def publish_article(_content_id):
             order.append("article")
             return "https://example.com/recipe"
@@ -257,6 +260,10 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch("app.services.facebook_publisher.decrypt", return_value="page-token"),
             patch(
+                "app.services.facebook_publisher._validate_reel_upload_source",
+                new=AsyncMock(side_effect=validate_video_source),
+            ),
+            patch(
                 "app.services.facebook_publisher._ensure_article_published",
                 new=AsyncMock(side_effect=publish_article),
             ),
@@ -280,6 +287,7 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             order,
             [
+                "video-preflight",
                 "article",
                 "reel-start",
                 "reel-upload",
@@ -289,6 +297,54 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         cleanup.assert_awaited_once_with(content_id)
+
+    async def test_invalid_reel_is_reported_before_wordpress_is_published(self):
+        delivery_id = uuid.uuid4()
+        content = SimpleNamespace(
+            id=uuid.uuid4(),
+            processed_video_url="https://example.com/uploads/facebook/video.mp4",
+            title="Recipe title",
+        )
+        delivery = SimpleNamespace(facebook_post_id=None, first_comment_id=None)
+        page = SimpleNamespace(
+            access_token="encrypted-page-token",
+            facebook_page_id="page-42",
+            comment_mode=FacebookCommentMode.full_recipe,
+        )
+        recipe = SimpleNamespace(generated_full_recipe="Ingredients\n- Garlic")
+        sessions = iter(
+            [
+                _QueuedSession([_ExecutionResult(scalar=delivery_id)]),
+                _QueuedSession([_ExecutionResult(row=(delivery, content, page, recipe))]),
+                _QueuedSession([_ExecutionResult()]),
+            ]
+        )
+        publish_article = AsyncMock(return_value="https://example.com/recipe")
+
+        with (
+            patch(
+                "app.services.facebook_publisher.SessionLocal",
+                side_effect=lambda: next(sessions),
+            ),
+            patch("app.services.facebook_publisher.decrypt", return_value="page-token"),
+            patch(
+                "app.services.facebook_publisher._validate_reel_upload_source",
+                new=AsyncMock(
+                    side_effect=ValueError(
+                        "Generated video is not publishable as a Facebook Reel: "
+                        "duration is 72.0s; Facebook Reels require 4-60s."
+                    )
+                ),
+            ),
+            patch(
+                "app.services.facebook_publisher._ensure_article_published",
+                new=publish_article,
+            ),
+        ):
+            published = await publish_facebook_delivery(delivery_id)
+
+        self.assertFalse(published)
+        publish_article.assert_not_awaited()
 
     async def test_interrupted_reel_upload_resumes_without_creating_a_duplicate(self):
         delivery_id = uuid.uuid4()

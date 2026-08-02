@@ -30,6 +30,11 @@ UPLOADS_ROOT = Path(os.getenv("UPLOADS_DIR", "/app/uploads"))
 FACEBOOK_UPLOADS = UPLOADS_ROOT / "facebook"
 MAX_VIDEO_BYTES = 500 * 1024 * 1024
 MAX_FACEBOOK_HTML_BYTES = 12 * 1024 * 1024
+FACEBOOK_REEL_MIN_WIDTH = 540
+FACEBOOK_REEL_MIN_HEIGHT = 960
+FACEBOOK_REEL_MIN_FPS = 23.0
+FACEBOOK_REEL_MIN_DURATION = 4.0
+FACEBOOK_REEL_MAX_DURATION = 60.0
 VIDEO_FORMAT_DIMENSIONS = {
     "2:3": (1024, 1536),
     "9:16": (1080, 1920),
@@ -471,6 +476,108 @@ def validate_video_file(path: Path) -> float:
     if duration <= 0:
         raise ValueError("The source video has no readable duration.")
     return duration
+
+
+def _frame_rate(value: object) -> float:
+    raw = str(value or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        numerator, separator, denominator = raw.partition("/")
+        if separator:
+            divisor = float(denominator)
+            return float(numerator) / divisor if divisor else 0.0
+        return float(raw)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def validate_facebook_reel_file(path: Path) -> dict:
+    """Validate the rendered asset against Meta's hosted-Reel requirements."""
+
+    if not path.is_file() or path.stat().st_size < 1024:
+        raise ValueError(
+            "The generated Reel video is missing or incomplete. Regenerate the video."
+        )
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                (
+                    "stream=width,height,avg_frame_rate,r_frame_rate,duration:"
+                    "format=duration,format_name"
+                ),
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffprobe is not installed in the backend container.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("The generated Reel could not be inspected within 30 seconds.") from exc
+
+    if probe.returncode != 0:
+        technical = (probe.stderr or "ffprobe could not decode the file").strip()
+        technical = " ".join(technical.split())[-600:]
+        raise ValueError(
+            "The generated Reel is not a valid or complete video. "
+            f"ffprobe: {technical}"
+        )
+    try:
+        payload = json.loads(probe.stdout or "{}")
+        stream = (payload.get("streams") or [])[0]
+        video_format = payload.get("format") or {}
+        width = int(stream.get("width") or 0)
+        height = int(stream.get("height") or 0)
+        duration = float(video_format.get("duration") or stream.get("duration") or 0)
+        fps = _frame_rate(stream.get("avg_frame_rate") or stream.get("r_frame_rate"))
+    except (IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("The generated Reel has no readable video metadata.") from exc
+
+    problems: list[str] = []
+    if width < FACEBOOK_REEL_MIN_WIDTH or height < FACEBOOK_REEL_MIN_HEIGHT:
+        problems.append(
+            f"resolution is {width}x{height}; minimum is "
+            f"{FACEBOOK_REEL_MIN_WIDTH}x{FACEBOOK_REEL_MIN_HEIGHT}"
+        )
+    expected_ratio = 9 / 16
+    actual_ratio = width / height if height else 0
+    if not actual_ratio or abs(actual_ratio - expected_ratio) > 0.01:
+        problems.append(f"aspect ratio is {width}:{height}; Facebook Reels require 9:16")
+    if duration < FACEBOOK_REEL_MIN_DURATION or duration > FACEBOOK_REEL_MAX_DURATION:
+        problems.append(
+            f"duration is {duration:.1f}s; Facebook Reels require "
+            f"{FACEBOOK_REEL_MIN_DURATION:.0f}-{FACEBOOK_REEL_MAX_DURATION:.0f}s"
+        )
+    if fps < FACEBOOK_REEL_MIN_FPS:
+        problems.append(
+            f"frame rate is {fps:.2f} fps; Facebook Reels require at least "
+            f"{FACEBOOK_REEL_MIN_FPS:.0f} fps"
+        )
+    if problems:
+        raise ValueError(
+            "Generated video is not publishable as a Facebook Reel: "
+            + "; ".join(problems)
+            + "."
+        )
+
+    return {
+        "width": width,
+        "height": height,
+        "duration": duration,
+        "fps": fps,
+        "format_name": str(video_format.get("format_name") or ""),
+    }
 
 
 def _download_source(

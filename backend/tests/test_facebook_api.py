@@ -32,6 +32,105 @@ class FacebookOAuthContractTests(unittest.TestCase):
 
 
 class FacebookPublishingContractTests(unittest.TestCase):
+    def test_meta_dash_error_keeps_http_status_and_request_id(self):
+        response = Mock(
+            ok=False,
+            status_code=400,
+            reason="Bad Request",
+            headers={"x-fb-request-id": "meta-request-123", "content-type": "application/json"},
+            text='{"error":{"message":"-"}}',
+        )
+        response.json.return_value = {"error": {"message": "-"}}
+
+        message = str(facebook_api._error(response, "Reel video upload"))
+
+        self.assertIn("HTTP 400 Bad Request", message)
+        self.assertIn("Meta returned no diagnostic message", message)
+        self.assertIn("meta-request-123", message)
+        self.assertNotEqual(message, "Facebook Reel video upload failed: -")
+
+    def test_meta_error_includes_user_message_code_subcode_and_trace(self):
+        response = Mock(
+            ok=False,
+            status_code=400,
+            reason="Bad Request",
+            headers={"content-type": "application/json"},
+            text="",
+        )
+        response.json.return_value = {
+            "error": {
+                "message": "Invalid upload",
+                "error_user_msg": "The video URL could not be downloaded.",
+                "code": 100,
+                "error_subcode": 1363030,
+                "fbtrace_id": "trace-456",
+            }
+        }
+
+        message = str(facebook_api._error(response, "Reel video upload"))
+
+        self.assertIn("Meta code 100", message)
+        self.assertIn("subcode 1363030", message)
+        self.assertIn("The video URL could not be downloaded.", message)
+        self.assertIn("trace-456", message)
+
+    def test_public_video_validation_rejects_html_upload_route(self):
+        response = Mock(
+            ok=True,
+            status_code=200,
+            reason="OK",
+            headers={"Content-Type": "text/html; charset=utf-8"},
+            url="https://example.com/uploads/facebook/video.mp4",
+        )
+        with patch.object(facebook_api.requests, "get", return_value=response):
+            with self.assertRaisesRegex(ValueError, "instead of a video") as raised:
+                facebook_api.validate_public_video_url(
+                    "https://example.com/uploads/facebook/video.mp4"
+                )
+
+        self.assertIn("/uploads", str(raised.exception))
+        response.close.assert_called_once()
+
+    def test_public_video_validation_accepts_public_mp4(self):
+        response = Mock(
+            ok=True,
+            status_code=206,
+            reason="Partial Content",
+            headers={"Content-Type": "video/mp4", "Content-Length": "1024"},
+            url="https://cdn.example.com/video.mp4",
+        )
+        with patch.object(facebook_api.requests, "get", return_value=response) as get:
+            result = facebook_api.validate_public_video_url(
+                "https://example.com/uploads/facebook/video.mp4"
+            )
+
+        self.assertEqual(result["content_type"], "video/mp4")
+        self.assertEqual(result["final_url"], "https://cdn.example.com/video.mp4")
+        self.assertEqual(get.call_args.kwargs["headers"]["Range"], "bytes=0-1023")
+        response.close.assert_called_once()
+
+    def test_reel_upload_failure_includes_the_hosted_video_url(self):
+        response = Mock(
+            ok=False,
+            status_code=400,
+            reason="Bad Request",
+            headers={"content-type": "application/json"},
+            text='{"error":{"message":"-"}}',
+        )
+        response.json.return_value = {"error": {"message": "-"}}
+        video_url = "https://example.com/uploads/facebook/video.mp4"
+
+        with patch.object(facebook_api.requests, "post", return_value=response):
+            with self.assertRaisesRegex(ValueError, "Hosted video URL") as raised:
+                facebook_api.upload_hosted_reel(
+                    upload_url="https://rupload.facebook.com/video-upload/v24.0/video-123",
+                    page_access_token="page-token",
+                    video_url=video_url,
+                )
+
+        self.assertIn("HTTP 400 Bad Request", str(raised.exception))
+        self.assertIn(video_url, str(raised.exception))
+
     def test_reel_ready_is_not_published_until_publishing_phase_completes(self):
         self.assertFalse(
             facebook_api.reel_is_published(

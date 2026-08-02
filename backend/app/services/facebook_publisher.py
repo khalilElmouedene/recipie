@@ -28,6 +28,7 @@ from app.db_models import (
     Site,
 )
 from app.services import facebook_api
+from app.services.facebook_video import validate_facebook_reel_file
 from app.services.publisher import publish_recipe
 from app.site_credentials import get_random_wp_credentials
 
@@ -462,6 +463,29 @@ async def _ensure_article_published(content_id: uuid.UUID) -> str:
         return article_url
 
 
+async def _validate_reel_upload_source(
+    *, stored_video_url: str, public_video_url: str
+) -> dict:
+    """Fail with an actionable reason before WordPress or Meta is mutated."""
+
+    # The stored URL can contain an older hostname after a deployment/domain
+    # change. Prefer the normalized current public URL, then fall back to it.
+    local_path = _local_upload_path(public_video_url) or _local_upload_path(
+        stored_video_url
+    )
+    if local_path is None:
+        raise ValueError(
+            "The generated Reel is not stored in this application's upload volume. "
+            "Regenerate it before publishing."
+        )
+    media = await asyncio.to_thread(validate_facebook_reel_file, local_path)
+    public = await asyncio.to_thread(
+        facebook_api.validate_public_video_url,
+        public_video_url,
+    )
+    return {"media": media, "public_url": public}
+
+
 async def publish_facebook_delivery(
     delivery_id: uuid.UUID,
     *,
@@ -511,7 +535,6 @@ async def publish_facebook_delivery(
             existing_comment_id = delivery.first_comment_id
             full_recipe = recipe.generated_full_recipe or ""
 
-        article_url = await _ensure_article_published(content_id)
         post_id = existing_post_id
         upload_url: str | None = None
         existing_status: dict = {}
@@ -525,6 +548,21 @@ async def publish_facebook_delivery(
             # replace its ID because Facebook never published that failed Reel.
             if facebook_api.reel_has_failed(existing_status):
                 post_id = None
+                existing_status = {}
+
+        # Validate only when Meta still needs to download the asset. This also
+        # keeps retries idempotent when a prior upload completed but publishing
+        # or the first comment was interrupted.
+        if not post_id or not facebook_api.reel_upload_is_complete(existing_status):
+            await _validate_reel_upload_source(
+                stored_video_url=content.processed_video_url,
+                public_video_url=video_url,
+            )
+
+        # Publishing the article remains the first external publication step,
+        # but invalid/private video URLs are now rejected before creating an
+        # otherwise orphaned WordPress post.
+        article_url = await _ensure_article_published(content_id)
 
         if not post_id:
             post_id, upload_url = await asyncio.to_thread(
