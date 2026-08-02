@@ -555,7 +555,7 @@ class FacebookVideoProcessor:
         openai_api_key: str,
         script_prompt: str,
         recipe_card_prompt: str,
-        video_format: str = "2:3",
+        video_format: str = "9:16",
         intro_seconds: float = 5.0,
         fps: int = 30,
         bitrate_kbps: int = 8000,

@@ -64,7 +64,7 @@ class FacebookProjectCreate(BaseModel):
     description: str = Field(default="", max_length=5000)
     app_id: str = Field(min_length=1, max_length=255)
     app_secret: str = Field(min_length=1, max_length=1000)
-    video_format: Literal["2:3", "9:16", "4:5", "1:1"] = "2:3"
+    video_format: Literal["2:3", "9:16", "4:5", "1:1"] = "9:16"
     video_intro_seconds: float = Field(default=5.0, ge=1.0, le=15.0)
     video_fps: Literal[24, 30, 60] = 30
     video_bitrate_kbps: int = Field(default=8000, ge=1000, le=20000)
@@ -145,6 +145,19 @@ class FacebookPageUpdate(BaseModel):
 class FacebookPageTokenAdd(BaseModel):
     access_token: str = Field(min_length=20)
     comment_mode: Literal["full_recipe", "full_recipe_url"] = "full_recipe"
+
+
+class FacebookPageHealthOut(BaseModel):
+    status: Literal["healthy", "warning", "error"]
+    token_valid: bool
+    token_type: str | None = None
+    app_matches: bool
+    page_matches: bool
+    permissions: list[str]
+    missing_permissions: list[str]
+    expires_at: datetime | None = None
+    data_access_expires_at: datetime | None = None
+    message: str
 
 
 class FacebookOAuthCallbackBody(BaseModel):
@@ -483,6 +496,84 @@ async def list_facebook_pages(
         .order_by(FacebookPage.created_at.asc())
     )
     return [FacebookPageOut.from_db(page) for page in rows.scalars().all()]
+
+
+def _facebook_epoch(value: int) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+@router.get("/facebook-pages/{page_id}/health", response_model=FacebookPageHealthOut)
+async def get_facebook_page_health(
+    page_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    page, project = await _page(page_id, user, db)
+    app_id, app_secret = _app_credentials(project)
+    try:
+        diagnostic = await asyncio.to_thread(
+            facebook_api.inspect_page_connection,
+            page_access_token=decrypt(page.access_token),
+            app_id=app_id,
+            app_secret=app_secret,
+            expected_page_id=page.facebook_page_id,
+        )
+    except Exception as exc:
+        # Return a structured result so the Settings UI can explain an expired,
+        # revoked, mismatched, or otherwise unreadable token in one place.
+        logger.warning("Facebook Page health check failed for %s: %s", page.id, exc)
+        return FacebookPageHealthOut(
+            status="error",
+            token_valid=False,
+            app_matches=False,
+            page_matches=False,
+            permissions=[],
+            missing_permissions=sorted(facebook_api.REQUIRED_PAGE_PERMISSIONS),
+            message=str(exc)[:500],
+        )
+
+    expires_at = _facebook_epoch(diagnostic["expires_at"])
+    data_access_expires_at = _facebook_epoch(diagnostic["data_access_expires_at"])
+    errors: list[str] = []
+    if not diagnostic["token_valid"]:
+        errors.append("The Page access token is invalid or revoked.")
+    if not diagnostic["app_matches"]:
+        errors.append("The token was issued for a different Meta application.")
+    if not diagnostic["page_matches"]:
+        errors.append("The token belongs to a different Facebook Page.")
+    if diagnostic["missing_permissions"]:
+        errors.append(
+            "Missing permissions: " + ", ".join(diagnostic["missing_permissions"]) + "."
+        )
+
+    current_time = datetime.now(timezone.utc)
+    warning = None
+    effective_expiry = expires_at or data_access_expires_at
+    if not errors and effective_expiry and effective_expiry <= current_time + timedelta(days=7):
+        warning = "The Facebook authorization expires within seven days. Reconnect the Page."
+
+    return FacebookPageHealthOut(
+        status="error" if errors else "warning" if warning else "healthy",
+        token_valid=diagnostic["token_valid"],
+        token_type=diagnostic["token_type"] or None,
+        app_matches=diagnostic["app_matches"],
+        page_matches=diagnostic["page_matches"],
+        permissions=diagnostic["permissions"],
+        missing_permissions=diagnostic["missing_permissions"],
+        expires_at=expires_at,
+        data_access_expires_at=data_access_expires_at,
+        message=(
+            " ".join(errors)
+            if errors
+            else warning
+            or "The Page token, Meta app, Page identity, and required permissions are valid."
+        ),
+    )
 
 
 @router.get("/facebook/oauth/url", response_model=OAuthUrlOut)
@@ -1580,6 +1671,15 @@ async def schedule_facebook_delivery(
         raise HTTPException(status_code=403, detail="Not the owner of this Facebook project")
     if content.status.value != "ready":
         raise HTTPException(status_code=400, detail="Content generation is not complete.")
+    if delivery.status not in {
+        FacebookDeliveryStatus.draft,
+        FacebookDeliveryStatus.scheduled,
+        FacebookDeliveryStatus.failed,
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail="Only a ready, scheduled, or failed publication can be rescheduled.",
+        )
     delivery.scheduled_at = body.scheduled_at
     delivery.status = (
         FacebookDeliveryStatus.scheduled

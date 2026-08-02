@@ -17,6 +17,7 @@ import {
   Globe2,
   Image as ImageIcon,
   KeyRound,
+  ListVideo,
   Loader2,
   MessageSquare,
   MessageSquareText,
@@ -28,6 +29,7 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
   ScrollText,
   Send,
   Settings2,
@@ -46,6 +48,7 @@ import {
   FacebookCommentMode,
   FacebookContentOut,
   FacebookDeliveryOut,
+  FacebookPageHealthOut,
   FacebookPageOut,
   FacebookProjectOut,
   FacebookVideoFormat,
@@ -56,7 +59,8 @@ import { useConfirm } from "@/components/ConfirmModal";
 import FacebookWebsiteSettings from "@/components/facebook/FacebookWebsiteSettings";
 import FacebookAiPromptSettings from "@/components/facebook/FacebookAiPromptSettings";
 
-type MainTab = "calendar" | "settings";
+type MainTab = "calendar" | "posts" | "settings";
+type PostFilter = "all" | "ready" | "processing" | "failed" | "published";
 type SettingsTab = "website" | "pages" | "keys" | "ai_prompts" | "video_prompts" | "video_settings";
 
 const STATUS_STYLE: Record<string, string> = {
@@ -238,6 +242,7 @@ export default function FacebookProjectPage() {
       <div className="mt-5 flex gap-1 border-b border-slate-800">
         {[
           { key: "calendar" as MainTab, label: "Calendar", icon: CalendarDays },
+          { key: "posts" as MainTab, label: "Posts", icon: ListVideo },
           { key: "settings" as MainTab, label: "Settings", icon: Settings2 },
         ].map((item) => (
           <button
@@ -254,11 +259,12 @@ export default function FacebookProjectPage() {
       </div>
 
       <div className="mt-6">
-        {tab === "calendar" ? (
+        {tab === "calendar" || tab === "posts" ? (
           <FacebookCalendar
             contents={contents}
             pages={pages}
             project={project}
+            viewMode={tab === "posts" ? "list" : "calendar"}
             onRefresh={() => load(true)}
             onOpenSettings={(next) => {
               setTab("settings");
@@ -284,12 +290,14 @@ function FacebookCalendar({
   contents,
   pages,
   project,
+  viewMode,
   onRefresh,
   onOpenSettings,
 }: {
   contents: FacebookContentOut[];
   pages: FacebookPageOut[];
   project: FacebookProjectOut;
+  viewMode: "calendar" | "list";
   onRefresh: () => void;
   onOpenSettings: (tab: SettingsTab) => void;
 }) {
@@ -307,9 +315,42 @@ function FacebookCalendar({
   const [scheduleDelivery, setScheduleDelivery] = useState<FacebookDeliveryOut | null>(null);
   const [scheduleAt, setScheduleAt] = useState("");
   const [savingSchedule, setSavingSchedule] = useState(false);
+  const [postQuery, setPostQuery] = useState("");
+  const [postFilter, setPostFilter] = useState<PostFilter>("all");
   const toast = useToast();
   const confirm = useConfirm();
   const selectedContentId = selectedContent?.id;
+
+  const postCounts = useMemo(() => ({
+    all: contents.length,
+    ready: contents.filter((content) => content.status === "ready").length,
+    processing: contents.filter((content) => content.status === "processing").length,
+    failed: contents.filter((content) =>
+      content.status === "failed" || content.deliveries.some((delivery) => delivery.status === "failed"),
+    ).length,
+    published: contents.filter((content) =>
+      content.deliveries.some((delivery) => delivery.status === "published"),
+    ).length,
+  }), [contents]);
+
+  const visibleContents = useMemo(() => {
+    const query = postQuery.trim().toLowerCase();
+    return contents.filter((content) => {
+      const matchesQuery = !query
+        || content.title.toLowerCase().includes(query)
+        || content.deliveries.some((delivery) => delivery.page_name.toLowerCase().includes(query));
+      if (!matchesQuery) return false;
+      if (postFilter === "ready") return content.status === "ready";
+      if (postFilter === "processing") return content.status === "processing";
+      if (postFilter === "failed") {
+        return content.status === "failed" || content.deliveries.some((delivery) => delivery.status === "failed");
+      }
+      if (postFilter === "published") {
+        return content.deliveries.some((delivery) => delivery.status === "published");
+      }
+      return true;
+    });
+  }, [contents, postFilter, postQuery]);
 
   useEffect(() => {
     if (!selectedContentId) return;
@@ -493,7 +534,8 @@ function FacebookCalendar({
 
   return (
     <>
-      <div className="overflow-hidden rounded-[20px] border border-slate-800 bg-[#101827]">
+      {viewMode === "calendar" && (
+        <div className="overflow-hidden rounded-[20px] border border-slate-800 bg-[#101827]">
         <div className="flex flex-col gap-4 border-b border-slate-800 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">Publication calendar</p>
@@ -550,17 +592,64 @@ function FacebookCalendar({
             );
           })}
         </div>
-      </div>
+        </div>
+      )}
 
-      <div className="mt-7 flex items-center justify-between">
+      <div className={`${viewMode === "calendar" ? "mt-7" : ""} flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between`}>
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">Generated content</p>
-          <h2 className="mt-1 text-lg font-semibold text-white">Facebook post queue</h2>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+            {viewMode === "list" ? "Content management" : "Generated content"}
+          </p>
+          <h2 className="mt-1 text-lg font-semibold text-white">
+            {viewMode === "list" ? "All Facebook posts" : "Facebook post queue"}
+          </h2>
+          {viewMode === "list" && <p className="mt-1 text-sm text-slate-500">Search, review and manage generated posts without navigating the calendar.</p>}
         </div>
         <button onClick={onRefresh} className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white" title="Refresh">
           <RefreshCw size={16} />
         </button>
       </div>
+
+      {viewMode === "list" && contents.length > 0 && (
+        <div className="mt-5 space-y-3 rounded-[18px] border border-slate-800 bg-[#101827] p-3 sm:p-4">
+          <div className="relative">
+            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
+            <input
+              type="search"
+              value={postQuery}
+              onChange={(event) => setPostQuery(event.target.value)}
+              placeholder="Search by post title or Facebook Page…"
+              className="input-field pl-10"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {([[
+              "all", "All",
+            ], [
+              "ready", "Ready",
+            ], [
+              "processing", "Processing",
+            ], [
+              "failed", "Needs attention",
+            ], [
+              "published", "Published",
+            ]] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setPostFilter(value)}
+                className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                  postFilter === value
+                    ? "bg-[#1877f2] text-white"
+                    : "bg-slate-900 text-slate-500 hover:bg-slate-800 hover:text-white"
+                }`}
+              >
+                {label} <span className="ml-1 opacity-70">{postCounts[value]}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {contents.length === 0 ? (
         <Link
@@ -568,9 +657,42 @@ function FacebookCalendar({
           className="mt-4 flex min-h-52 flex-col items-center justify-center rounded-[20px] border border-dashed border-slate-700 bg-[#101827] p-6 text-center transition hover:border-[#1877f2]/50"
         >
           <Sheet size={24} className="text-[#68a8ff]" />
-          <p className="mt-4 font-semibold text-white">The calendar is ready for its first post</p>
+          <p className="mt-4 font-semibold text-white">No Facebook posts yet</p>
           <p className="mt-2 text-sm text-slate-500">Add source videos to Spy Sheet and start generation.</p>
         </Link>
+      ) : viewMode === "list" ? (
+        visibleContents.length > 0 ? (
+          <div className="mt-4 overflow-hidden rounded-[18px] border border-slate-800 bg-[#101827]">
+            <div className="hidden grid-cols-[88px_minmax(260px,1fr)_150px_220px_130px] gap-4 border-b border-slate-800 bg-slate-950/25 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600 lg:grid">
+              <span>Media</span>
+              <span>Post</span>
+              <span>Generation</span>
+              <span>Page delivery</span>
+              <span className="text-right">Actions</span>
+            </div>
+            <div className="divide-y divide-slate-800">
+              {visibleContents.map((content) => (
+                <FacebookPostListRow
+                  key={content.id}
+                  content={content}
+                  retrying={retryingId === content.id}
+                  deleting={deletingId === content.id}
+                  onRetry={() => void retryGeneration(content)}
+                  onDelete={() => void deleteGeneration(content)}
+                  onOpen={() => setSelectedContent(content)}
+                />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 grid min-h-44 place-items-center rounded-[18px] border border-dashed border-slate-700 bg-[#101827] px-6 text-center">
+            <div>
+              <Search className="mx-auto text-slate-600" size={24} />
+              <p className="mt-3 text-sm font-medium text-slate-300">No posts match this search</p>
+              <button type="button" onClick={() => { setPostQuery(""); setPostFilter("all"); }} className="mt-2 text-xs font-medium text-[#68a8ff] hover:text-white">Clear filters</button>
+            </div>
+          </div>
+        )
       ) : (
         <div className="mt-4 grid gap-4 xl:grid-cols-2">
           {contents.map((content) => (
@@ -636,6 +758,82 @@ function FacebookCalendar({
         </div>
       )}
     </>
+  );
+}
+
+function FacebookPostListRow({
+  content,
+  retrying,
+  deleting,
+  onRetry,
+  onDelete,
+  onOpen,
+}: {
+  content: FacebookContentOut;
+  retrying: boolean;
+  deleting: boolean;
+  onRetry: () => void;
+  onDelete: () => void;
+  onOpen: () => void;
+}) {
+  const publishedCount = content.deliveries.filter((delivery) => delivery.status === "published").length;
+  const failedCount = content.deliveries.filter((delivery) => delivery.status === "failed").length;
+  const pendingCount = content.deliveries.filter((delivery) =>
+    ["processing", "draft", "scheduled", "publishing"].includes(delivery.status),
+  ).length;
+  const nextDate = content.deliveries
+    .map((delivery) => delivery.scheduled_at)
+    .filter((value): value is string => Boolean(value))
+    .sort()[0] || null;
+
+  return (
+    <article className="grid gap-4 px-4 py-4 transition hover:bg-slate-900/35 lg:grid-cols-[88px_minmax(260px,1fr)_150px_220px_130px] lg:items-center">
+      <button type="button" onClick={onOpen} className="relative h-20 w-20 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 text-slate-600">
+        {content.screenshot_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={content.screenshot_url} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <span className="grid h-full place-items-center"><Video size={20} /></span>
+        )}
+        {content.processed_video_url && <span className="absolute bottom-1.5 right-1.5 grid h-5 w-5 place-items-center rounded-full bg-black/75 text-white"><Video size={10} /></span>}
+      </button>
+
+      <div className="min-w-0">
+        <button type="button" onClick={onOpen} className="block max-w-full text-left">
+          <h3 className="truncate text-sm font-semibold text-white transition hover:text-[#8bbcff]" title={content.title}>{content.title}</h3>
+        </button>
+        <p className="mt-1 text-xs text-slate-600">Created {formatDate(content.created_at)}</p>
+        {nextDate && <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-amber-300/80"><Clock3 size={11} /> Next: {formatDate(nextDate)}</p>}
+      </div>
+
+      <div>
+        <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${STATUS_STYLE[content.status]}`}>
+          {content.status}
+        </span>
+        {content.error_message && <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-red-300" title={content.error_message}>{content.error_message}</p>}
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        {publishedCount > 0 && <span className="rounded-md border border-emerald-900/60 bg-emerald-950/25 px-2 py-1 text-[10px] font-medium text-emerald-300">{publishedCount} published</span>}
+        {pendingCount > 0 && <span className="rounded-md border border-blue-900/60 bg-blue-950/25 px-2 py-1 text-[10px] font-medium text-blue-300">{pendingCount} pending</span>}
+        {failedCount > 0 && <span className="rounded-md border border-red-900/60 bg-red-950/25 px-2 py-1 text-[10px] font-medium text-red-300">{failedCount} failed</span>}
+        {content.deliveries.length === 0 && <span className="text-xs text-slate-600">No Page delivery</span>}
+      </div>
+
+      <div className="flex items-center gap-1 lg:justify-end">
+        {content.status === "failed" && (
+          <button type="button" onClick={onRetry} disabled={retrying || deleting} className="rounded-lg p-2 text-red-400 transition hover:bg-red-500/10 disabled:opacity-50" title="Retry generation">
+            {retrying ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />}
+          </button>
+        )}
+        <button type="button" onClick={onOpen} className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-[#1877f2]/50 hover:text-[#8bbcff]">Manage</button>
+        {(content.status === "ready" || content.status === "failed") && (
+          <button type="button" onClick={onDelete} disabled={deleting || retrying} className="rounded-lg p-2 text-slate-600 transition hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50" title="Delete generation">
+            {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+          </button>
+        )}
+      </div>
+    </article>
   );
 }
 
@@ -926,6 +1124,16 @@ function ContentDetail({
                     </div>
                     <p className="mt-2 text-xs text-slate-600">{formatDate(delivery.scheduled_at || delivery.published_at)}</p>
                     {delivery.error_message && <p className="mt-2 text-xs text-red-300">{delivery.error_message}</p>}
+                    {delivery.status === "published" && delivery.facebook_post_id && (
+                      <a
+                        href={`https://www.facebook.com/reel/${delivery.facebook_post_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-[#8bbcff] transition hover:text-white"
+                      >
+                        View Reel on Facebook <ExternalLink size={12} />
+                      </a>
+                    )}
                     {content.status === "ready" && ["draft", "scheduled", "failed"].includes(delivery.status) && (
                       <button
                         type="button"
@@ -1043,8 +1251,8 @@ const VIDEO_FORMAT_OPTIONS: Array<{
   dimensions: string;
   description: string;
 }> = [
-  { value: "2:3", label: "Portrait 2:3", dimensions: "1024 × 1536", description: "Current recipe-video format" },
-  { value: "9:16", label: "Reel 9:16", dimensions: "1080 × 1920", description: "Full-screen vertical Reel" },
+  { value: "2:3", label: "Portrait 2:3", dimensions: "1024 × 1536", description: "Portrait creative format" },
+  { value: "9:16", label: "Reel 9:16", dimensions: "1080 × 1920", description: "Recommended for Facebook Reels" },
   { value: "4:5", label: "Feed 4:5", dimensions: "1080 × 1350", description: "Portrait Facebook feed" },
   { value: "1:1", label: "Square 1:1", dimensions: "1080 × 1080", description: "Square feed post" },
 ];
@@ -1116,6 +1324,12 @@ function FacebookVideoSettings({
             </button>
           ))}
         </div>
+
+        {format !== "9:16" && (
+          <div className="mx-5 mb-5 rounded-xl border border-amber-800/50 bg-amber-950/20 px-4 py-3 text-xs leading-5 text-amber-200">
+            Facebook Reels are designed for the 9:16 full-screen format. Other formats remain available for creative testing, but Meta may crop them or reject them during Reel processing.
+          </div>
+        )}
 
         <div className="grid gap-5 border-t border-slate-800 p-5 md:grid-cols-3">
           <label>
@@ -1194,6 +1408,8 @@ function FacebookPagesSettings({
   const [appId, setAppId] = useState(project.app_id || "");
   const [appSecret, setAppSecret] = useState("");
   const [savingApp, setSavingApp] = useState(false);
+  const [pageHealth, setPageHealth] = useState<Record<string, FacebookPageHealthOut>>({});
+  const [checkingPageId, setCheckingPageId] = useState<string | null>(null);
   const oauthPopupRef = useRef<Window | null>(null);
   const oauthPopupPollRef = useRef<number | null>(null);
   const oauthTimeoutRef = useRef<number | null>(null);
@@ -1316,6 +1532,21 @@ function FacebookPagesSettings({
     }
   };
 
+  const checkPageConnection = async (page: FacebookPageOut) => {
+    setCheckingPageId(page.id);
+    try {
+      const health = await api.getFacebookPageHealth(page.id);
+      setPageHealth((current) => ({ ...current, [page.id]: health }));
+      if (health.status === "healthy") toast.success(`${page.name} connection is healthy`);
+      else if (health.status === "warning") toast.warning(health.message);
+      else toast.error(health.message);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not check Facebook Page connection");
+    } finally {
+      setCheckingPageId(null);
+    }
+  };
+
   const removePage = async (page: FacebookPageOut) => {
     const accepted = await confirm({
       message: `Disconnect ${page.name} from this project?`,
@@ -1324,6 +1555,11 @@ function FacebookPagesSettings({
     });
     if (!accepted) return;
     await api.deleteFacebookPage(page.id);
+    setPageHealth((current) => {
+      const next = { ...current };
+      delete next[page.id];
+      return next;
+    });
     onRefresh();
   };
 
@@ -1357,6 +1593,9 @@ function FacebookPagesSettings({
           <Plus size={16} /> Connect Facebook Pages
         </button>
       </div>
+      <div className="mb-4 rounded-xl border border-[#1877f2]/25 bg-[#1877f2]/5 px-4 py-3 text-xs leading-5 text-slate-400">
+        Connection health validates the token, Page, Meta app, and required permissions. For a Reel to be visible to people outside your app roles, the Meta app must also be set to <strong className="text-white">Live</strong> in the Meta Developer dashboard.
+      </div>
 
       <div className="space-y-3">
         {pages.map((page) => (
@@ -1376,11 +1615,53 @@ function FacebookPagesSettings({
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => void checkPageConnection(page)}
+                  disabled={checkingPageId === page.id}
+                  className="btn-secondary inline-flex items-center gap-2"
+                >
+                  <RefreshCw size={14} className={checkingPageId === page.id ? "animate-spin" : ""} />
+                  Check connection
+                </button>
                 <button onClick={() => setEditingPage(page)} className="btn-secondary inline-flex items-center gap-2"><Pencil size={14} /> Schedule</button>
                 <button onClick={() => removePage(page)} className="rounded-lg border border-red-900/40 p-2.5 text-red-400 hover:bg-red-500/10"><Trash2 size={15} /></button>
               </div>
             </div>
+            {pageHealth[page.id] && (
+              <div
+                className={`mx-5 mb-4 rounded-xl border px-4 py-3 text-xs leading-5 ${
+                  pageHealth[page.id].status === "healthy"
+                    ? "border-emerald-800/50 bg-emerald-950/20 text-emerald-200"
+                    : pageHealth[page.id].status === "warning"
+                      ? "border-amber-800/50 bg-amber-950/20 text-amber-200"
+                      : "border-red-800/50 bg-red-950/20 text-red-200"
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  {pageHealth[page.id].status === "healthy" ? (
+                    <CheckCircle2 size={15} className="mt-0.5 shrink-0" />
+                  ) : (
+                    <AlertCircle size={15} className="mt-0.5 shrink-0" />
+                  )}
+                  <div>
+                    <p className="font-semibold">
+                      {pageHealth[page.id].status === "healthy"
+                        ? "Connection ready"
+                        : pageHealth[page.id].status === "warning"
+                          ? "Connection needs attention"
+                          : "Connection cannot publish reliably"}
+                    </p>
+                    <p className="mt-1 opacity-85">{pageHealth[page.id].message}</p>
+                    {(pageHealth[page.id].expires_at || pageHealth[page.id].data_access_expires_at) && (
+                      <p className="mt-1 opacity-70">
+                        Authorization expiry: {formatDate(pageHealth[page.id].expires_at || pageHealth[page.id].data_access_expires_at)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="grid gap-px bg-slate-800 sm:grid-cols-4">
               {[
                 ["Window", `${page.publish_start_time}–${page.publish_end_time}`],

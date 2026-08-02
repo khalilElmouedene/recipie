@@ -513,17 +513,28 @@ async def publish_facebook_delivery(
 
         article_url = await _ensure_article_published(content_id)
         post_id = existing_post_id
+        upload_url: str | None = None
+        existing_status: dict = {}
+        if post_id:
+            existing_status = await asyncio.to_thread(
+                facebook_api.get_reel_status,
+                video_id=post_id,
+                page_access_token=page_token,
+            )
+            # A failed Meta upload session cannot be resumed. It is safe to
+            # replace its ID because Facebook never published that failed Reel.
+            if facebook_api.reel_has_failed(existing_status):
+                post_id = None
+
         if not post_id:
-            post_id = await asyncio.to_thread(
-                facebook_api.publish_video,
+            post_id, upload_url = await asyncio.to_thread(
+                facebook_api.start_reel_upload,
                 page_id=page_id,
                 page_access_token=page_token,
-                video_url=video_url,
-                title=title,
-                description=title,
             )
-            # Persist immediately so a first-comment failure can be retried
-            # without publishing a duplicate main video.
+            # Persist as soon as Meta creates the upload session. A backend
+            # restart after this point resumes the same Reel instead of creating
+            # a duplicate publication.
             async with SessionLocal() as db:
                 await db.execute(
                     update(FacebookDelivery)
@@ -531,6 +542,32 @@ async def publish_facebook_delivery(
                     .values(facebook_post_id=post_id)
                 )
                 await db.commit()
+
+        if not facebook_api.reel_is_published(existing_status):
+            if not facebook_api.reel_upload_is_complete(existing_status):
+                await asyncio.to_thread(
+                    facebook_api.upload_hosted_reel,
+                    upload_url=upload_url or facebook_api.reel_upload_url(post_id),
+                    page_access_token=page_token,
+                    video_url=video_url,
+                )
+            if not facebook_api.reel_finish_has_started(existing_status):
+                await asyncio.to_thread(
+                    facebook_api.finish_reel_publish,
+                    page_id=page_id,
+                    page_access_token=page_token,
+                    video_id=post_id,
+                    title=title,
+                    description=title,
+                )
+        # Publishing a Reel is asynchronous. Wait for Meta to finish encoding
+        # before adding the first comment or reporting the delivery as complete.
+        # The ID has already been saved, so retries cannot upload a duplicate.
+        await asyncio.to_thread(
+            facebook_api.wait_for_reel_published,
+            video_id=post_id,
+            page_access_token=page_token,
+        )
         comment_id = existing_comment_id
         if not comment_id:
             comment_id = await asyncio.to_thread(

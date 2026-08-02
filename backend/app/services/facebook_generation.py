@@ -245,15 +245,53 @@ class FacebookGenerationManager:
             ).scalar_one_or_none()
             if content is None:
                 raise FacebookGenerationCancelled()
-            recipe = Recipe(
-                site_id=site_id,
-                created_by=created_by,
-                image_url=screenshot_url,
-                recipe_text=title,
-                status=RecipeStatus.generating,
-            )
-            db.add(recipe)
-            await db.flush()
+            recipe = None
+            if content.recipe_id is not None:
+                recipe = (
+                    await db.execute(select(Recipe).where(Recipe.id == content.recipe_id))
+                ).scalar_one_or_none()
+            if recipe is None:
+                recipe = Recipe(
+                    site_id=site_id,
+                    created_by=created_by,
+                    image_url=screenshot_url,
+                    recipe_text=title,
+                    status=RecipeStatus.generating,
+                )
+                db.add(recipe)
+                await db.flush()
+            else:
+                # A backend restart can resume a content item after video
+                # processing was already stored. Reuse and reset that partial
+                # recipe instead of leaking an orphan Recipe row on every restart.
+                recipe.site_id = site_id
+                recipe.created_by = created_by
+                recipe.image_url = screenshot_url
+                recipe.recipe_text = title
+                recipe.status = RecipeStatus.generating
+                recipe.error_message = None
+                for field in (
+                    "generated_article",
+                    "generated_json",
+                    "generated_full_recipe",
+                    "focus_keyword",
+                    "meta_description",
+                    "category",
+                    "generated_images",
+                    "wp_post_id",
+                    "wp_permalink",
+                    "pin_design_image",
+                    "pin_title",
+                    "pin_description",
+                    "pin_blog_link",
+                    "pin_template_id",
+                    "pin_url",
+                    "pin_board",
+                    "pin_tags",
+                    "seo_title",
+                    "wp_tags",
+                ):
+                    setattr(recipe, field, None)
             content.recipe_id = recipe.id
             content.screenshot_url = screenshot_url
             content.processed_video_url = processed_video_url

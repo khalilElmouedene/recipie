@@ -1,7 +1,16 @@
 from datetime import datetime, timezone
 import unittest
+import uuid
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+from fastapi import HTTPException
+
+from app.db_models import FacebookContentStatus, FacebookDeliveryStatus
+from app.routes.facebook import (
+    FacebookDeliveryScheduleUpdate,
+    schedule_facebook_delivery,
+)
 from app.services.facebook_schedule import (
     FacebookSchedulePolicy,
     generate_schedule_slots,
@@ -99,3 +108,56 @@ class FacebookScheduleTests(unittest.TestCase):
             with self.subTest(policy=policy):
                 with self.assertRaises(ValueError):
                     validate_policy(policy)
+
+
+class _ScheduleResult:
+    def __init__(self, record):
+        self.record = record
+
+    def one_or_none(self):
+        return self.record
+
+
+class _ScheduleSession:
+    def __init__(self, record):
+        self.record = record
+        self.commits = 0
+
+    async def execute(self, _statement):
+        return _ScheduleResult(self.record)
+
+    async def commit(self):
+        self.commits += 1
+
+    async def refresh(self, _value):
+        return None
+
+
+class FacebookDeliveryScheduleStateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_published_delivery_cannot_be_rescheduled(self):
+        owner_id = uuid.uuid4()
+        delivery = SimpleNamespace(
+            status=FacebookDeliveryStatus.published,
+            scheduled_at=None,
+            published_at=datetime.now(timezone.utc),
+            facebook_post_id="reel-123",
+            error_message=None,
+        )
+        content = SimpleNamespace(status=FacebookContentStatus.ready)
+        page = SimpleNamespace(id=uuid.uuid4(), name="Recipe Page")
+        project = SimpleNamespace(owner_id=owner_id)
+        session = _ScheduleSession((delivery, content, page, project))
+
+        with self.assertRaises(HTTPException) as raised:
+            await schedule_facebook_delivery(
+                uuid.uuid4(),
+                FacebookDeliveryScheduleUpdate(
+                    scheduled_at=datetime.now(timezone.utc),
+                ),
+                SimpleNamespace(id=owner_id),
+                session,
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(session.commits, 0)
+        self.assertEqual(delivery.status, FacebookDeliveryStatus.published)

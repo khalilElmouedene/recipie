@@ -198,9 +198,19 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
             order.append("article")
             return "https://example.com/recipe"
 
-        def publish_video(**_kwargs):
-            order.append("video")
-            return "video-123"
+        def start_reel(**_kwargs):
+            order.append("reel-start")
+            return "video-123", "https://rupload.facebook.com/video-upload/v24.0/video-123"
+
+        def upload_reel(**_kwargs):
+            order.append("reel-upload")
+
+        def finish_reel(**_kwargs):
+            order.append("reel-finish")
+
+        def wait_for_reel(**_kwargs):
+            order.append("reel-ready")
+            return {"video_status": "ready"}
 
         def publish_comment(**kwargs):
             order.append("comment")
@@ -220,7 +230,14 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 "app.services.facebook_publisher._ensure_article_published",
                 new=AsyncMock(side_effect=publish_article),
             ),
-            patch.object(facebook_api, "publish_video", side_effect=publish_video),
+            patch.object(facebook_api, "start_reel_upload", side_effect=start_reel),
+            patch.object(facebook_api, "upload_hosted_reel", side_effect=upload_reel),
+            patch.object(facebook_api, "finish_reel_publish", side_effect=finish_reel),
+            patch.object(
+                facebook_api,
+                "wait_for_reel_published",
+                side_effect=wait_for_reel,
+            ),
             patch.object(facebook_api, "add_first_comment", side_effect=publish_comment),
             patch(
                 "app.services.facebook_publisher.cleanup_published_facebook_content_video",
@@ -230,8 +247,120 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
             published = await publish_facebook_delivery(delivery_id)
 
         self.assertTrue(published)
-        self.assertEqual(order, ["article", "video", "comment"])
+        self.assertEqual(
+            order,
+            [
+                "article",
+                "reel-start",
+                "reel-upload",
+                "reel-finish",
+                "reel-ready",
+                "comment",
+            ],
+        )
         cleanup.assert_awaited_once_with(content_id)
+
+    async def test_interrupted_reel_upload_resumes_without_creating_a_duplicate(self):
+        delivery_id = uuid.uuid4()
+        content_id = uuid.uuid4()
+        delivery = SimpleNamespace(
+            facebook_post_id="video-existing",
+            first_comment_id=None,
+        )
+        content = SimpleNamespace(
+            id=content_id,
+            processed_video_url="https://example.com/uploads/facebook/video.mp4",
+            title="Recipe title",
+        )
+        page = SimpleNamespace(
+            access_token="encrypted-page-token",
+            facebook_page_id="page-42",
+            comment_mode=FacebookCommentMode.full_recipe,
+        )
+        recipe = SimpleNamespace(generated_full_recipe="Ingredients\n- Garlic\n\nInstructions\n1. Blend.")
+        sessions = iter(
+            [
+                _QueuedSession([_ExecutionResult(scalar=delivery_id)]),
+                _QueuedSession([_ExecutionResult(row=(delivery, content, page, recipe))]),
+                _QueuedSession([_ExecutionResult()]),
+            ]
+        )
+        order: list[str] = []
+        interrupted_status = {
+            "video_status": "processing",
+            "uploading_phase": {"status": "complete"},
+            "processing_phase": {"status": "not_started"},
+            "publishing_phase": {"status": "not_started"},
+        }
+
+        async def publish_article(_content_id):
+            order.append("article")
+            return "https://example.com/recipe"
+
+        def finish_reel(**kwargs):
+            order.append("reel-finish")
+            self.assertEqual(kwargs["video_id"], "video-existing")
+
+        def wait_for_reel(**_kwargs):
+            order.append("reel-ready")
+            return {"video_status": "ready"}
+
+        def publish_comment(**_kwargs):
+            order.append("comment")
+            return "comment-456"
+
+        with (
+            patch(
+                "app.services.facebook_publisher.SessionLocal",
+                side_effect=lambda: next(sessions),
+            ),
+            patch("app.services.facebook_publisher.decrypt", return_value="page-token"),
+            patch(
+                "app.services.facebook_publisher._ensure_article_published",
+                new=AsyncMock(side_effect=publish_article),
+            ),
+            patch.object(
+                facebook_api,
+                "get_reel_status",
+                return_value=interrupted_status,
+            ),
+            patch.object(
+                facebook_api,
+                "start_reel_upload",
+                side_effect=AssertionError("must not create a duplicate Reel"),
+            ),
+            patch.object(
+                facebook_api,
+                "upload_hosted_reel",
+                side_effect=AssertionError("completed upload must not be repeated"),
+            ),
+            patch.object(
+                facebook_api,
+                "finish_reel_publish",
+                side_effect=finish_reel,
+            ),
+            patch.object(
+                facebook_api,
+                "wait_for_reel_published",
+                side_effect=wait_for_reel,
+            ),
+            patch.object(
+                facebook_api,
+                "add_first_comment",
+                side_effect=publish_comment,
+            ),
+            patch(
+                "app.services.facebook_publisher.cleanup_published_facebook_content_video",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            published = await publish_facebook_delivery(delivery_id)
+
+        self.assertTrue(published)
+        self.assertEqual(
+            order,
+            ["article", "reel-finish", "reel-ready", "comment"],
+        )
 
 
 class FacebookPublishedVideoCleanupTests(unittest.IsolatedAsyncioTestCase):

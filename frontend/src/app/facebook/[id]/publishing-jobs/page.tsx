@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   CircleDot,
   Clock3,
+  ExternalLink,
   FileVideo2,
   Loader2,
   Radio,
@@ -60,13 +61,13 @@ const STATUS_COPY: Record<FacebookDeliveryStatus, {
   },
   publishing: {
     label: "Publishing",
-    description: "Publishing the article, Facebook video, and first comment.",
+    description: "Publishing the article, Facebook Reel, and first comment.",
     style: "border-[#1877f2]/60 bg-[#1877f2]/10 text-[#8bbcff]",
     icon: Loader2,
   },
   published: {
     label: "Published",
-    description: "The Facebook post and its first comment were published successfully.",
+    description: "Meta completed the Reel publishing phase and the first comment was added.",
     style: "border-emerald-800/60 bg-emerald-950/30 text-emerald-300",
     icon: CheckCircle2,
   },
@@ -211,6 +212,18 @@ export default function FacebookPublishingJobsPage() {
         </div>
       )}
 
+      {counts.published > 0 && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-900/50 bg-amber-950/20 px-4 py-3 text-xs leading-5 text-amber-200">
+          <AlertCircle className="mt-0.5 shrink-0" size={16} />
+          <p>
+            A completed Meta publication is not an audience check. If another
+            Facebook account sees a blank loading page, set the Meta app to
+            <strong className="mx-1 text-white">Live</strong>
+            and remove Page age, country, or audience restrictions before publishing a new Reel.
+          </p>
+        </div>
+      )}
+
       <div className="rounded-xl border border-slate-800 bg-[#101827] p-3">
         <div className="flex flex-wrap gap-2" aria-label="Filter publication jobs">
           {([[
@@ -280,6 +293,16 @@ export default function FacebookPublishingJobsPage() {
                   <p className="mt-1 text-xs text-slate-400">
                     {formatDate(job.delivery.published_at || job.delivery.scheduled_at || job.content.created_at)}
                   </p>
+                  {job.delivery.status === "published" && job.delivery.facebook_post_id && (
+                    <a
+                      href={`https://www.facebook.com/reel/${job.delivery.facebook_post_id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#8bbcff] transition hover:text-white"
+                    >
+                      View Reel <ExternalLink size={12} />
+                    </a>
+                  )}
                 </div>
 
                 {publishable && job.content.status === "ready" && (

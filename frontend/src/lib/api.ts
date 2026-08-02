@@ -825,6 +825,8 @@ export const api = {
     }),
   deleteFacebookPage: (pageId: string) =>
     request<void>(`/api/facebook-pages/${pageId}`, { method: "DELETE" }),
+  getFacebookPageHealth: (pageId: string) =>
+    request<FacebookPageHealthOut>(`/api/facebook-pages/${pageId}/health`),
 
   // -- Facebook Spy Sheet / Generation --------------------
   getFacebookSpyRows: (projectId: string) =>
@@ -1555,6 +1557,19 @@ export interface FacebookPageOut {
   interval_minutes: number;
   timezone: string;
   created_at: string;
+}
+
+export interface FacebookPageHealthOut {
+  status: "healthy" | "warning" | "error";
+  token_valid: boolean;
+  token_type: string | null;
+  app_matches: boolean;
+  page_matches: boolean;
+  permissions: string[];
+  missing_permissions: string[];
+  expires_at: string | null;
+  data_access_expires_at: string | null;
+  message: string;
 }
 
 export interface FacebookSpyRowOut {

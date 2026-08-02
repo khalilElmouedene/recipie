@@ -510,7 +510,7 @@ class FacebookProject(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     app_secret: Mapped[str | None] = mapped_column(Text, nullable=True)  # encrypted
-    video_format: Mapped[str] = mapped_column(String(16), nullable=False, default="2:3")
+    video_format: Mapped[str] = mapped_column(String(16), nullable=False, default="9:16")
     video_intro_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=5.0)
     video_fps: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     video_bitrate_kbps: Mapped[int] = mapped_column(Integer, nullable=False, default=8000)
