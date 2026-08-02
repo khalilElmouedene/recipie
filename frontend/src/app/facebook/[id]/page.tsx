@@ -291,6 +291,7 @@ function FacebookCalendar({
   });
   const [selectedContent, setSelectedContent] = useState<FacebookContentOut | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [publishingContentId, setPublishingContentId] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [replacingId, setReplacingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -299,6 +300,12 @@ function FacebookCalendar({
   const [savingSchedule, setSavingSchedule] = useState(false);
   const toast = useToast();
   const confirm = useConfirm();
+  const selectedContentId = selectedContent?.id;
+
+  useEffect(() => {
+    if (!selectedContentId) return;
+    setSelectedContent(contents.find((content) => content.id === selectedContentId) || null);
+  }, [contents, selectedContentId]);
 
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const gridStart = new Date(first);
@@ -350,6 +357,37 @@ function FacebookCalendar({
       onRefresh();
     } finally {
       setPublishingId(null);
+    }
+  };
+
+  const publishContent = async (content: FacebookContentOut) => {
+    const deliveries = content.deliveries.filter((delivery) =>
+      ["draft", "scheduled", "failed"].includes(delivery.status),
+    );
+    if (!deliveries.length) {
+      toast.warning("This post has no delivery waiting to be published.");
+      return;
+    }
+    setPublishingContentId(content.id);
+    try {
+      const results = await Promise.allSettled(
+        deliveries.map((delivery) => api.publishFacebookDelivery(delivery.id)),
+      );
+      const publishedCount = results.filter((result) => result.status === "fulfilled").length;
+      const failedCount = results.length - publishedCount;
+      if (publishedCount) {
+        toast.success(
+          `Published to ${publishedCount} Facebook Page${publishedCount === 1 ? "" : "s"}.`,
+        );
+      }
+      if (failedCount) {
+        toast.error(
+          `${failedCount} Page publication${failedCount === 1 ? "" : "s"} failed. Open Page deliveries for details.`,
+        );
+      }
+      onRefresh();
+    } finally {
+      setPublishingContentId(null);
     }
   };
 
@@ -554,9 +592,11 @@ function FacebookCalendar({
           retrying={retryingId === selectedContent.id}
           replacing={replacingId === selectedContent.id}
           deleting={deletingId === selectedContent.id}
+          publishing={publishingContentId === selectedContent.id}
           onRetry={() => void retryGeneration(selectedContent)}
           onReplace={(file) => void replaceVideoAndRetry(selectedContent, file)}
           onDelete={() => void deleteGeneration(selectedContent)}
+          onPublish={() => void publishContent(selectedContent)}
           onClose={() => setSelectedContent(null)}
         />
       )}
@@ -737,33 +777,54 @@ function ContentDetail({
   retrying,
   replacing,
   deleting,
+  publishing,
   onRetry,
   onReplace,
   onDelete,
+  onPublish,
   onClose,
 }: {
   content: FacebookContentOut;
   retrying: boolean;
   replacing: boolean;
   deleting: boolean;
+  publishing: boolean;
   onRetry: () => void;
   onReplace: (file: File) => void;
   onDelete: () => void;
+  onPublish: () => void;
   onClose: () => void;
 }) {
+  const publishableDeliveries = content.deliveries.filter((delivery) =>
+    ["draft", "scheduled", "failed"].includes(delivery.status),
+  );
+  const publishLabel = publishableDeliveries.length === 1
+    ? `Publish to ${publishableDeliveries[0].page_name}`
+    : `Publish to ${publishableDeliveries.length} Pages`;
+
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
       <div className="mx-auto my-8 max-w-4xl overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl">
-        <div className="flex items-start justify-between border-b border-slate-800 px-6 py-5">
-          <div>
+        <div className="flex flex-col gap-4 border-b border-slate-800 px-6 py-5 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#68a8ff]">Generated Facebook post</p>
             <h2 className="mt-2 text-2xl font-semibold text-white">{content.title}</h2>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 flex-wrap items-center gap-1">
+            {content.status === "ready" && publishableDeliveries.length > 0 && (
+              <button
+                onClick={onPublish}
+                disabled={publishing || deleting}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-3.5 py-2 text-xs font-semibold text-white shadow-[0_8px_24px_rgba(24,119,242,0.2)] transition hover:bg-[#2f86f6] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {publishing ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+                {publishing ? "Publishing…" : publishLabel}
+              </button>
+            )}
             {(content.status === "ready" || content.status === "failed") && (
               <button
                 onClick={onDelete}
-                disabled={deleting}
+                disabled={deleting || publishing}
                 className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
               >
                 {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
