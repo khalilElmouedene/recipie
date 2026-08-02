@@ -593,10 +593,12 @@ function FacebookCalendar({
           replacing={replacingId === selectedContent.id}
           deleting={deletingId === selectedContent.id}
           publishing={publishingContentId === selectedContent.id}
+          publishingDeliveryId={publishingId}
           onRetry={() => void retryGeneration(selectedContent)}
           onReplace={(file) => void replaceVideoAndRetry(selectedContent, file)}
           onDelete={() => void deleteGeneration(selectedContent)}
           onPublish={() => void publishContent(selectedContent)}
+          onPublishDelivery={(delivery) => void publish(delivery)}
           onClose={() => setSelectedContent(null)}
         />
       )}
@@ -759,7 +761,7 @@ function FacebookPostCard({
                       className="inline-flex items-center gap-1.5 rounded-lg bg-[#1877f2] px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"
                     >
                       {publishingId === delivery.id ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-                      Publish
+                      {delivery.status === "failed" ? "Retry" : "Publish"}
                     </button>
                   </div>
                 )}
@@ -778,10 +780,12 @@ function ContentDetail({
   replacing,
   deleting,
   publishing,
+  publishingDeliveryId,
   onRetry,
   onReplace,
   onDelete,
   onPublish,
+  onPublishDelivery,
   onClose,
 }: {
   content: FacebookContentOut;
@@ -789,10 +793,12 @@ function ContentDetail({
   replacing: boolean;
   deleting: boolean;
   publishing: boolean;
+  publishingDeliveryId: string | null;
   onRetry: () => void;
   onReplace: (file: File) => void;
   onDelete: () => void;
   onPublish: () => void;
+  onPublishDelivery: (delivery: FacebookDeliveryOut) => void;
   onClose: () => void;
 }) {
   const publishableDeliveries = content.deliveries.filter((delivery) =>
@@ -814,7 +820,7 @@ function ContentDetail({
             {content.status === "ready" && publishableDeliveries.length > 0 && (
               <button
                 onClick={onPublish}
-                disabled={publishing || deleting}
+                disabled={publishing || Boolean(publishingDeliveryId) || deleting}
                 className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-3.5 py-2 text-xs font-semibold text-white shadow-[0_8px_24px_rgba(24,119,242,0.2)] transition hover:bg-[#2f86f6] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {publishing ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
@@ -824,7 +830,7 @@ function ContentDetail({
             {(content.status === "ready" || content.status === "failed") && (
               <button
                 onClick={onDelete}
-                disabled={deleting || publishing}
+                disabled={deleting || publishing || Boolean(publishingDeliveryId)}
                 className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
               >
                 {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
@@ -911,6 +917,31 @@ function ContentDetail({
                     </div>
                     <p className="mt-2 text-xs text-slate-600">{formatDate(delivery.scheduled_at || delivery.published_at)}</p>
                     {delivery.error_message && <p className="mt-2 text-xs text-red-300">{delivery.error_message}</p>}
+                    {content.status === "ready" && ["draft", "scheduled", "failed"].includes(delivery.status) && (
+                      <button
+                        type="button"
+                        onClick={() => onPublishDelivery(delivery)}
+                        disabled={publishing || Boolean(publishingDeliveryId)}
+                        className={`mt-3 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                          delivery.status === "failed"
+                            ? "border border-red-800/60 bg-red-950/30 text-red-200 hover:bg-red-900/40"
+                            : "bg-[#1877f2] text-white hover:bg-[#2f86f6]"
+                        }`}
+                      >
+                        {publishingDeliveryId === delivery.id ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : delivery.status === "failed" ? (
+                          <RotateCcw size={14} />
+                        ) : (
+                          <Send size={14} />
+                        )}
+                        {publishingDeliveryId === delivery.id
+                          ? "Publishing…"
+                          : delivery.status === "failed"
+                            ? "Retry publication"
+                            : "Publish now"}
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
