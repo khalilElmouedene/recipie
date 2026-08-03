@@ -591,16 +591,28 @@ async def facebook_oauth_url(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     comment_mode: Literal["full_recipe", "full_recipe_url"] = Query(default="full_recipe"),
+    reconnect_page_id: uuid.UUID | None = Query(default=None),
 ):
     project = await _project(project_id, user, db)
+    reconnect_page = None
+    if reconnect_page_id is not None:
+        reconnect_page, _page_project = await _page(reconnect_page_id, user, db)
+        if reconnect_page.project_id != project.id:
+            raise HTTPException(
+                status_code=400,
+                detail="The Facebook Page does not belong to this project.",
+            )
     app_id, _app_secret = _app_credentials(project)
+    state_payload = {
+        "facebook_project_id": str(project.id),
+        "user_id": str(user.id),
+        "comment_mode": comment_mode,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+    }
+    if reconnect_page is not None:
+        state_payload["reconnect_page_id"] = str(reconnect_page.id)
     state = jwt.encode(
-        {
-            "facebook_project_id": str(project.id),
-            "user_id": str(user.id),
-            "comment_mode": comment_mode,
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
-        },
+        state_payload,
         settings.jwt_secret_key,
         algorithm=settings.jwt_algorithm,
     )
@@ -631,9 +643,29 @@ async def facebook_oauth_callback(
         if uuid.UUID(state["user_id"]) != user.id:
             raise ValueError("OAuth state user mismatch")
         mode = FacebookCommentMode(state.get("comment_mode", "full_recipe"))
+        reconnect_page_id = (
+            uuid.UUID(state["reconnect_page_id"])
+            if state.get("reconnect_page_id")
+            else None
+        )
     except (JWTError, KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="Invalid or expired Facebook OAuth state") from exc
     project = await _project(project_id, user, db)
+    reconnect_page = None
+    if reconnect_page_id is not None:
+        reconnect_page = (
+            await db.execute(
+                select(FacebookPage).where(
+                    FacebookPage.id == reconnect_page_id,
+                    FacebookPage.project_id == project.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if reconnect_page is None:
+            raise HTTPException(
+                status_code=400,
+                detail="The Facebook Page selected for reconnection no longer exists.",
+            )
     app_id, app_secret = _app_credentials(project)
     try:
         token_data = facebook_api.exchange_code_for_user_token(
@@ -661,6 +693,32 @@ async def facebook_oauth_callback(
         token_expires_at = datetime.now(timezone.utc) + timedelta(
             seconds=int(token_data["expires_in"])
         )
+
+    if reconnect_page is not None:
+        page_data = next(
+            (
+                candidate
+                for candidate in managed_pages
+                if str(candidate.get("id") or "") == reconnect_page.facebook_page_id
+            ),
+            None,
+        )
+        if page_data is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{reconnect_page.name} was not returned by this Facebook account. "
+                    "Log in with an account that manages this Page and grant all requested permissions."
+                ),
+            )
+        reconnect_page.name = page_data["name"]
+        reconnect_page.picture_url = page_data["picture_url"]
+        reconnect_page.access_token = encrypt(page_data["access_token"])
+        reconnect_page.token_expires_at = token_expires_at
+        await db.commit()
+        await db.refresh(reconnect_page)
+        return [FacebookPageOut.from_db(reconnect_page)]
+
     for page_data in managed_pages:
         existing = (
             await db.execute(

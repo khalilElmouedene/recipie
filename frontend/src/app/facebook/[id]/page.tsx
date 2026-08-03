@@ -17,6 +17,7 @@ import {
   Globe2,
   Image as ImageIcon,
   KeyRound,
+  Link2,
   ListVideo,
   Loader2,
   MessageSquare,
@@ -1755,6 +1756,7 @@ function FacebookPagesSettings({
   const [commentMode, setCommentMode] = useState<FacebookCommentMode>("full_recipe");
   const [token, setToken] = useState("");
   const [connecting, setConnecting] = useState(false);
+  const [reconnectingPageId, setReconnectingPageId] = useState<string | null>(null);
   const [editingPage, setEditingPage] = useState<FacebookPageOut | null>(null);
   const [appId, setAppId] = useState(project.app_id || "");
   const [appSecret, setAppSecret] = useState("");
@@ -1764,6 +1766,7 @@ function FacebookPagesSettings({
   const oauthPopupRef = useRef<Window | null>(null);
   const oauthPopupPollRef = useRef<number | null>(null);
   const oauthTimeoutRef = useRef<number | null>(null);
+  const reconnectingPageRef = useRef<FacebookPageOut | null>(null);
 
   const clearOAuthWindow = useCallback((closePopup = false) => {
     if (oauthPopupPollRef.current !== null) {
@@ -1783,6 +1786,8 @@ function FacebookPagesSettings({
   const stopOAuth = useCallback((closePopup = false) => {
     clearOAuthWindow(closePopup);
     setConnecting(false);
+    reconnectingPageRef.current = null;
+    setReconnectingPageId(null);
   }, [clearOAuthWindow]);
 
   useEffect(() => {
@@ -1792,21 +1797,44 @@ function FacebookPagesSettings({
 
       // The callback was reached, so popup polling is no longer needed. Keep the
       // loading state active while the backend exchanges the authorization code.
+      const reconnectingPage = reconnectingPageRef.current;
       clearOAuthWindow(false);
       if (event.data.error) {
         toast.error(event.data.error);
         setConnecting(false);
+        reconnectingPageRef.current = null;
+        setReconnectingPageId(null);
         return;
       }
       try {
         const connected = await api.connectFacebookPages({ code: event.data.code, state: event.data.state });
-        toast.success(`${connected.length} Facebook Page${connected.length === 1 ? "" : "s"} connected`);
+        if (reconnectingPage) {
+          try {
+            const health = await api.getFacebookPageHealth(reconnectingPage.id);
+            setPageHealth((current) => ({ ...current, [reconnectingPage.id]: health }));
+            if (health.status === "healthy") {
+              toast.success(`${reconnectingPage.name} reconnected and verified`);
+            } else if (health.status === "warning") {
+              toast.warning(health.message);
+            } else {
+              toast.error(health.message);
+            }
+          } catch {
+            // The token exchange succeeded. A transient health-check failure
+            // should not misreport the reconnection itself as failed.
+            toast.success(`${reconnectingPage.name} reconnected successfully`);
+          }
+        } else {
+          toast.success(`${connected.length} Facebook Page${connected.length === 1 ? "" : "s"} connected`);
+        }
         setShowConnect(false);
         onRefresh();
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Could not connect Facebook Pages");
       } finally {
         setConnecting(false);
+        reconnectingPageRef.current = null;
+        setReconnectingPageId(null);
       }
     };
     window.addEventListener("message", receive);
@@ -1815,11 +1843,17 @@ function FacebookPagesSettings({
 
   useEffect(() => () => clearOAuthWindow(true), [clearOAuthWindow]);
 
-  const connectOAuth = async () => {
+  const connectOAuth = async (page?: FacebookPageOut) => {
     stopOAuth(true);
+    reconnectingPageRef.current = page || null;
+    setReconnectingPageId(page?.id || null);
     setConnecting(true);
     try {
-      const { url } = await api.getFacebookOAuthUrl(project.id, commentMode);
+      const { url } = await api.getFacebookOAuthUrl(
+        project.id,
+        page?.comment_mode || commentMode,
+        page?.id,
+      );
       const popup = window.open(url, "facebook-oauth", "width=720,height=760,resizable=yes,scrollbars=yes");
       if (!popup) throw new Error("Allow popups to connect Facebook Pages.");
       oauthPopupRef.current = popup;
@@ -1975,6 +2009,23 @@ function FacebookPagesSettings({
                   <RefreshCw size={14} className={checkingPageId === page.id ? "animate-spin" : ""} />
                   Check connection
                 </button>
+                <button
+                  onClick={() => void connectOAuth(page)}
+                  disabled={connecting}
+                  className={`inline-flex items-center gap-2 rounded-lg border px-3.5 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                    pageHealth[page.id]?.status && pageHealth[page.id].status !== "healthy"
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15"
+                      : "border-[#1877f2]/35 bg-[#1877f2]/10 text-[#8fc0ff] hover:border-[#1877f2]/60 hover:bg-[#1877f2]/15 hover:text-white"
+                  }`}
+                  title="Renew this Page authorization without changing its settings"
+                >
+                  {reconnectingPageId === page.id ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Link2 size={14} />
+                  )}
+                  {reconnectingPageId === page.id ? "Reconnecting..." : "Reconnect"}
+                </button>
                 <button onClick={() => setEditingPage(page)} className="btn-secondary inline-flex items-center gap-2"><Pencil size={14} /> Schedule</button>
                 <button onClick={() => removePage(page)} className="rounded-lg border border-red-900/40 p-2.5 text-red-400 hover:bg-red-500/10"><Trash2 size={15} /></button>
               </div>
@@ -2042,7 +2093,7 @@ function FacebookPagesSettings({
           token={token}
           onToken={setToken}
           connecting={connecting}
-          onOAuth={connectOAuth}
+          onOAuth={() => void connectOAuth()}
           onCancelOAuth={cancelOAuth}
           onTokenConnect={connectToken}
           onClose={closeConnectModal}

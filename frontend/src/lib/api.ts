@@ -790,10 +790,17 @@ export const api = {
   getFacebookOAuthUrl: (
     projectId: string,
     commentMode: FacebookCommentMode,
-  ) =>
-    request<{ url: string }>(
-      `/api/facebook/oauth/url?project_id=${projectId}&comment_mode=${commentMode}`,
-    ),
+    reconnectPageId?: string,
+  ) => {
+    const params = new URLSearchParams({
+      project_id: projectId,
+      comment_mode: commentMode,
+    });
+    if (reconnectPageId) params.set("reconnect_page_id", reconnectPageId);
+    return request<{ url: string }>(
+      `/api/facebook/oauth/url?${params.toString()}`,
+    );
+  },
   connectFacebookPages: (data: { code: string; state: string }) =>
     request<FacebookPageOut[]>("/api/facebook/oauth/callback", {
       method: "POST",
