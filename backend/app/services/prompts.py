@@ -430,11 +430,28 @@ Return only the voice-over script.""",
         "description": "Facebook video voice-over - placeholder: {recipe_title}",
     },
     "facebook_recipe_card": {
-        "value": """Transform this exact food screenshot into a premium infographic recipe card.
+        "value": """Transform this EXACT food image into a premium infographic recipe card.
 
-Keep the exact dish, camera angle, composition, plating, and food styling.
-Add only an elegant recipe-card layout, an ingredients section, and realistic shadows.
-Use a premium food-magazine look, vertical composition, and crisp readable typography.
+IMPORTANT:
+- Keep the EXACT same food image
+- Keep the same dish
+- Keep the same camera angle
+- Keep the same composition
+- Keep the same plating
+- Keep the same food styling
+
+Add only:
+- elegant recipe card layout
+- infographic style
+- ingredients section
+- realistic shadows
+
+Style:
+- premium Pinterest recipe infographic
+- luxury food magazine
+- ultra realistic
+- vertical composition
+- high quality
 
 Recipe title:
 {recipe_title}""",
