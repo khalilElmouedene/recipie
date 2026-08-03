@@ -226,6 +226,7 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
         async def validate_video_source(**_kwargs):
             order.append("video-preflight")
+            return {"local_path": "/app/uploads/facebook/content/processed-video.mp4"}
 
         async def publish_article(_content_id):
             order.append("article")
@@ -268,7 +269,7 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(side_effect=publish_article),
             ),
             patch.object(facebook_api, "start_reel_upload", side_effect=start_reel),
-            patch.object(facebook_api, "upload_hosted_reel", side_effect=upload_reel),
+            patch.object(facebook_api, "upload_local_reel", side_effect=upload_reel),
             patch.object(facebook_api, "finish_reel_publish", side_effect=finish_reel),
             patch.object(
                 facebook_api,
@@ -417,7 +418,7 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 facebook_api,
-                "upload_hosted_reel",
+                "upload_local_reel",
                 side_effect=AssertionError("completed upload must not be repeated"),
             ),
             patch.object(

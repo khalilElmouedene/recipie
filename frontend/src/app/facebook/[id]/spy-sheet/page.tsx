@@ -362,9 +362,9 @@ export default function FacebookSpySheetPage() {
       </p>
 
       {showLaunch && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-xl overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-800 px-6 py-5">
+        <div className="fixed inset-0 z-50 grid place-items-center overflow-hidden bg-black/75 p-3 backdrop-blur-sm sm:p-4">
+          <div className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-xl flex-col overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl sm:max-h-[calc(100dvh-2rem)]">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-800 px-6 py-5">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#68a8ff]">Generation plan</p>
                 <h2 className="mt-1 text-xl font-semibold text-white">Prepare {selected.size} post{selected.size === 1 ? "" : "s"}</h2>
@@ -373,7 +373,7 @@ export default function FacebookSpySheetPage() {
                 <X size={18} />
               </button>
             </div>
-            <div className="space-y-5 px-6 py-6">
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-6 py-6 [scrollbar-color:#334155_transparent] [scrollbar-gutter:stable] [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-700 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-2">
               <div className="grid gap-3 sm:grid-cols-2">
                 <button
                   onClick={() => setLaunchMode("draft")}
@@ -446,7 +446,7 @@ export default function FacebookSpySheetPage() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center justify-between border-t border-slate-800 bg-slate-950/30 px-6 py-4">
+            <div className="flex shrink-0 flex-col gap-3 border-t border-slate-800 bg-slate-950/30 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-slate-600">Content is generated once and reused for every selected Page.</p>
               <button
                 onClick={startGeneration}

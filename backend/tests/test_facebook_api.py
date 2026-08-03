@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from io import BytesIO
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
@@ -130,6 +131,42 @@ class FacebookPublishingContractTests(unittest.TestCase):
 
         self.assertIn("HTTP 400 Bad Request", str(raised.exception))
         self.assertIn(video_url, str(raised.exception))
+
+    def test_local_reel_upload_streams_binary_with_meta_resumable_headers(self):
+        response = Mock(ok=True)
+        response.json.return_value = {"success": True}
+        captured = {}
+        payload = b"video-bytes" * 512
+        video_path = Mock()
+        video_path.is_file.return_value = True
+        video_path.stat.return_value.st_size = len(payload)
+        video_path.open.return_value = BytesIO(payload)
+
+        def post(_url, **kwargs):
+            captured["headers"] = kwargs["headers"]
+            captured["body"] = kwargs["data"].read()
+            captured["timeout"] = kwargs["timeout"]
+            return response
+
+        with (
+            patch.object(facebook_api, "Path", return_value=video_path),
+            patch.object(facebook_api.requests, "post", side_effect=post),
+        ):
+            facebook_api.upload_local_reel(
+                upload_url="https://rupload.facebook.com/video-upload/v24.0/video-123",
+                page_access_token="page-token",
+                video_path="/app/uploads/facebook/content/reel.mp4",
+            )
+
+        self.assertEqual(captured["headers"]["Authorization"], "OAuth page-token")
+        self.assertEqual(captured["headers"]["offset"], "0")
+        self.assertEqual(
+            captured["headers"]["file_size"],
+            str(len(payload)),
+        )
+        self.assertEqual(captured["headers"]["Content-Type"], "application/octet-stream")
+        self.assertEqual(captured["body"], payload)
+        self.assertEqual(captured["timeout"], (facebook_api.REQUEST_TIMEOUT, 600))
 
     def test_reel_ready_is_not_published_until_publishing_phase_completes(self):
         self.assertFalse(

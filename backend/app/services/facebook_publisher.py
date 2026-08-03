@@ -479,11 +479,20 @@ async def _validate_reel_upload_source(
             "Regenerate it before publishing."
         )
     media = await asyncio.to_thread(validate_facebook_reel_file, local_path)
-    public = await asyncio.to_thread(
-        facebook_api.validate_public_video_url,
-        public_video_url,
-    )
-    return {"media": media, "public_url": public}
+    try:
+        public = await asyncio.to_thread(
+            facebook_api.validate_public_video_url,
+            public_video_url,
+        )
+    except ValueError as exc:
+        # Direct binary upload does not require Meta to fetch this URL. Keep the
+        # preview/CDN diagnostic for logs without blocking a valid local file.
+        logger.warning(
+            "Facebook public video URL preflight failed; direct upload will continue: %s",
+            exc,
+        )
+        public = {"warning": str(exc)}
+    return {"media": media, "public_url": public, "local_path": local_path}
 
 
 async def publish_facebook_delivery(
@@ -537,6 +546,7 @@ async def publish_facebook_delivery(
 
         post_id = existing_post_id
         upload_url: str | None = None
+        upload_source: dict | None = None
         existing_status: dict = {}
         if post_id:
             existing_status = await asyncio.to_thread(
@@ -550,17 +560,17 @@ async def publish_facebook_delivery(
                 post_id = None
                 existing_status = {}
 
-        # Validate only when Meta still needs to download the asset. This also
+        # Validate only when Meta still needs the asset. This also
         # keeps retries idempotent when a prior upload completed but publishing
         # or the first comment was interrupted.
         if not post_id or not facebook_api.reel_upload_is_complete(existing_status):
-            await _validate_reel_upload_source(
+            upload_source = await _validate_reel_upload_source(
                 stored_video_url=content.processed_video_url,
                 public_video_url=video_url,
             )
 
         # Publishing the article remains the first external publication step,
-        # but invalid/private video URLs are now rejected before creating an
+        # but invalid or missing video files are rejected before creating an
         # otherwise orphaned WordPress post.
         article_url = await _ensure_article_published(content_id)
 
@@ -583,11 +593,15 @@ async def publish_facebook_delivery(
 
         if not facebook_api.reel_is_published(existing_status):
             if not facebook_api.reel_upload_is_complete(existing_status):
+                if not upload_source or not upload_source.get("local_path"):
+                    raise ValueError(
+                        "Facebook Reel direct upload failed: the validated local video path is missing."
+                    )
                 await asyncio.to_thread(
-                    facebook_api.upload_hosted_reel,
+                    facebook_api.upload_local_reel,
                     upload_url=upload_url or facebook_api.reel_upload_url(post_id),
                     page_access_token=page_token,
-                    video_url=video_url,
+                    video_path=upload_source["local_path"],
                 )
             if not facebook_api.reel_finish_has_started(existing_status):
                 await asyncio.to_thread(

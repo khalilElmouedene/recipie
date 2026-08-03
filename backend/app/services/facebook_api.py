@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from urllib.parse import urlencode, urlparse
 
 import requests
@@ -378,6 +379,50 @@ def upload_hosted_reel(
         failure = _error(response, "Reel video upload")
         raise ValueError(
             f"{failure} Hosted video URL sent to Meta: {video_url[:300]}"
+        ) from failure
+
+
+def upload_local_reel(
+    *, upload_url: str, page_access_token: str, video_path: Path | str
+) -> None:
+    """Stream a local Reel directly to Meta's resumable upload endpoint."""
+
+    path = Path(video_path)
+    if not path.is_file():
+        raise ValueError(
+            "Facebook Reel direct upload failed: the generated video file is missing."
+        )
+    file_size = path.stat().st_size
+    if file_size < 1024:
+        raise ValueError(
+            "Facebook Reel direct upload failed: the generated video file is empty or incomplete."
+        )
+
+    with path.open("rb") as source:
+        response = requests.post(
+            upload_url,
+            headers={
+                "Authorization": f"OAuth {page_access_token}",
+                "offset": "0",
+                "file_size": str(file_size),
+                "Content-Type": "application/octet-stream",
+            },
+            data=source,
+            timeout=(REQUEST_TIMEOUT, 600),
+        )
+    if not response.ok:
+        failure = _error(response, "Reel direct video upload")
+        raise ValueError(
+            f"{failure} Direct upload size: {file_size} bytes."
+        ) from failure
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict) or payload.get("success") is not True:
+        failure = _error(response, "Reel direct video upload")
+        raise ValueError(
+            f"{failure} Direct upload size: {file_size} bytes."
         ) from failure
 
 
