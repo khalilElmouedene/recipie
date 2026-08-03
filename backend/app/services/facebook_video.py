@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 from openai import OpenAI
-from PIL import Image
+from PIL import Image, ImageFilter, ImageOps
 
 from app.config import settings
 
@@ -82,9 +82,27 @@ def _cover_resize_dimensions(
 
 
 def _recipe_card_size(width: int, height: int) -> str:
-    if width == height:
-        return "1024x1024"
-    return "1024x1536" if height > width else "1536x1024"
+    """Return a gpt-image-2 size at least as large as the final video frame."""
+
+    if width <= 0 or height <= 0:
+        raise ValueError("Recipe card dimensions must be positive.")
+    aligned_width = math.ceil(width / 16) * 16
+    aligned_height = math.ceil(height / 16) * 16
+    return f"{aligned_width}x{aligned_height}"
+
+
+def _prepare_recipe_card(card: Image.Image, width: int, height: int) -> Image.Image:
+    """Crop without distortion and apply restrained output sharpening."""
+
+    fitted = ImageOps.fit(
+        card.convert("RGB"),
+        (width, height),
+        method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.5),
+    )
+    return fitted.filter(
+        ImageFilter.UnsharpMask(radius=1.0, percent=115, threshold=3)
+    )
 
 
 def _public_upload_url(path: Path) -> str:
@@ -751,7 +769,7 @@ class FacebookVideoProcessor:
                 model="gpt-image-2",
                 image=screenshot,
                 prompt=_prompt(recipe_card_prompt, recipe_title),
-                quality="low",
+                quality="high",
                 size=_recipe_card_size(video_width, video_height),
             )
         image_base64 = image_result.data[0].b64_json
@@ -759,9 +777,12 @@ class FacebookVideoProcessor:
             raise ValueError("OpenAI returned an empty Facebook recipe card.")
         image_bytes = base64.b64decode(image_base64)
         card = Image.open(BytesIO(image_bytes)).convert("RGB")
-        card = card.resize((video_width, video_height), Image.Resampling.LANCZOS)
-        card.save(recipe_card_path, quality=96)
-        emit("Generated the vertical recipe card.")
+        card = _prepare_recipe_card(card, video_width, video_height)
+        card.save(recipe_card_path, format="PNG", optimize=True)
+        emit(
+            f"Generated and sharpened the high-quality recipe card at "
+            f"{video_width}x{video_height}."
+        )
 
         audio = AudioFileClip(str(audio_path))
         source = VideoFileClip(str(silent_path))
@@ -797,7 +818,6 @@ class FacebookVideoProcessor:
                     ImageClip(str(recipe_card_path))
                     .with_duration(remaining)
                     .with_start(lead_duration)
-                    .resized((video_width, video_height))
                     .with_position(("center", "center"))
                 )
                 layers.append(card_clip)

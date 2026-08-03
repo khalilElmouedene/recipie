@@ -7,6 +7,8 @@ import json
 from types import ModuleType
 from unittest.mock import MagicMock, patch
 
+from PIL import Image
+
 from app.services.facebook_video import (
     _cover_resize_dimensions,
     _download_facebook_html_fallback,
@@ -15,6 +17,8 @@ from app.services.facebook_video import (
     _extract_facebook_progressive_urls,
     _facebook_video_id,
     _is_facebook_video_url,
+    _prepare_recipe_card,
+    _recipe_card_size,
     validate_facebook_reel_file,
     validate_video_file,
     video_dimensions,
@@ -45,6 +49,17 @@ class FacebookVideoValidationTests(unittest.TestCase):
     def test_unknown_video_format_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unsupported Facebook video format"):
             video_dimensions("16:9")
+
+    def test_recipe_card_uses_near_native_gpt_image_2_dimensions(self):
+        self.assertEqual(_recipe_card_size(1080, 1920), "1088x1920")
+        self.assertEqual(_recipe_card_size(1080, 1350), "1088x1360")
+        self.assertEqual(_recipe_card_size(1024, 1536), "1024x1536")
+
+    def test_recipe_card_is_cropped_to_target_without_aspect_distortion(self):
+        source = Image.new("RGB", (1088, 1920), "white")
+        prepared = _prepare_recipe_card(source, 1080, 1920)
+
+        self.assertEqual(prepared.size, (1080, 1920))
 
     def _source_file(self, size: int = 2048) -> MagicMock:
         path = MagicMock()

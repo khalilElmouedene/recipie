@@ -10,7 +10,20 @@ import { ConfirmProvider } from "@/components/ConfirmModal";
 import { JobActivityProvider } from "@/contexts/JobActivityContext";
 import JobActivityCenter from "./JobActivityCenter";
 
-const PUBLIC = ["/login", "/register", "/auth/google/callback", "/facebook/callback", "/setup-password", "/forgot-password", "/reset-password"];
+const PUBLIC = [
+  "/login",
+  "/register",
+  "/auth/google/callback",
+  "/facebook/callback",
+  "/setup-password",
+  "/forgot-password",
+  "/reset-password",
+  "/privacy",
+  "/terms",
+  "/data-deletion",
+];
+
+const PUBLIC_DOCUMENTS = ["/privacy", "/terms", "/data-deletion"];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -50,6 +63,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       setSidebarOpen(false);
     }
   }, [pathname]);
+
+  // Legal documents must be present in the initial HTML so third-party
+  // reviewers such as Meta can read them without authentication or JavaScript.
+  if (PUBLIC_DOCUMENTS.includes(pathname)) {
+    return <>{children}</>;
+  }
 
   if (!ready) return null;
 
