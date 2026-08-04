@@ -266,8 +266,8 @@ export default function FacebookProjectPage() {
 
       <div className="mt-5 flex gap-1 border-b border-slate-800">
         {[
-          { key: "calendar" as MainTab, label: "Calendar", icon: CalendarDays },
           { key: "posts" as MainTab, label: "Posts", icon: ListVideo },
+          { key: "calendar" as MainTab, label: "Calendar", icon: CalendarDays },
           { key: "settings" as MainTab, label: "Settings", icon: Settings2 },
         ].map((item) => (
           <button

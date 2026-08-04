@@ -44,12 +44,9 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const role = getUserRole();
   const email = (getUserEmail() || "").trim().toLowerCase();
   const isAuditViewer = email === "khalil@gmail.com";
-  const visibleNav = isAuditViewer
-    ? NAV
-    : NAV.filter((item) => item.href !== "/facebook");
   const baseItems = role === "owner"
-    ? [...visibleNav, { href: "/users", label: "Users", icon: Users }, { href: "/settings", label: "Settings", icon: Settings }]
-    : [...visibleNav, { href: "/settings", label: "Settings", icon: Settings }];
+    ? [...NAV, { href: "/users", label: "Users", icon: Users }, { href: "/settings", label: "Settings", icon: Settings }]
+    : [...NAV, { href: "/settings", label: "Settings", icon: Settings }];
   const withLogs = isAuditViewer
     ? [...baseItems, { href: "/logs", label: "Logs", icon: ScrollText }]
     : baseItems;
