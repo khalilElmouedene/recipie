@@ -25,11 +25,6 @@ import { useToast } from "@/contexts/ToastContext";
 
 type LaunchMode = "draft" | "schedule";
 
-function localDateTimeValue(date = new Date(Date.now() + 60 * 60 * 1000)) {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-}
-
 export default function FacebookSpySheetPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -44,7 +39,6 @@ export default function FacebookSpySheetPage() {
   const [uploading, setUploading] = useState<string | null>(null);
   const [showLaunch, setShowLaunch] = useState(false);
   const [launchMode, setLaunchMode] = useState<LaunchMode>("draft");
-  const [startAt, setStartAt] = useState(localDateTimeValue);
   const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set());
   const [launching, setLaunching] = useState(false);
   const newFileRef = useRef<HTMLInputElement>(null);
@@ -143,8 +137,6 @@ export default function FacebookSpySheetPage() {
       const result = await api.startFacebookGeneration(id, {
         row_ids: selectedRows.map((row) => row.id),
         schedule: launchMode === "schedule",
-        start_at:
-          launchMode === "schedule" ? new Date(startAt).toISOString() : undefined,
         page_ids: [...selectedPages],
       });
       setRows((current) => current.filter((row) => !selected.has(row.id)));
@@ -397,19 +389,6 @@ export default function FacebookSpySheetPage() {
                 </button>
               </div>
 
-              {launchMode === "schedule" && (
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-300">Start scheduling from</label>
-                  <input
-                    type="datetime-local"
-                    value={startAt}
-                    onChange={(event) => setStartAt(event.target.value)}
-                    min={localDateTimeValue(new Date())}
-                    className="input-field"
-                  />
-                </div>
-              )}
-
               <div>
                 <p className="mb-2 text-sm font-medium text-slate-300">Publish to Pages</p>
                 <div className="space-y-2">
@@ -450,7 +429,7 @@ export default function FacebookSpySheetPage() {
               <p className="text-xs text-slate-600">Content is generated once and reused for every selected Page.</p>
               <button
                 onClick={startGeneration}
-                disabled={launching || selectedPages.size === 0 || (launchMode === "schedule" && !startAt)}
+                disabled={launching || selectedPages.size === 0}
                 className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-40"
               >
                 {launching ? <Loader2 size={16} className="animate-spin" /> : <Rocket size={16} />}
