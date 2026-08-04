@@ -134,7 +134,7 @@ export default function FacebookProjectPage() {
   const [project, setProject] = useState<FacebookProjectOut | null>(null);
   const [pages, setPages] = useState<FacebookPageOut[]>([]);
   const [contents, setContents] = useState<FacebookContentOut[]>([]);
-  const [tab, setTab] = useState<MainTab>("calendar");
+  const [tab, setTab] = useState<MainTab>("posts");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("website");
   const [loading, setLoading] = useState(true);
 
