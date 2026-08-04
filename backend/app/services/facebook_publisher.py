@@ -47,17 +47,17 @@ def build_first_comment(
     full_recipe: str,
     article_url: str,
 ) -> str:
-    recipe = (full_recipe or "").strip()
-    if not recipe:
-        raise ValueError(
-            "The generated full recipe is missing. Regenerate this content before publishing."
-        )
     value = mode.value if hasattr(mode, "value") else str(mode)
     if value == FacebookCommentMode.full_recipe_url.value:
         url = (article_url or "").strip()
         if not url:
             raise ValueError("The WordPress recipe URL is missing.")
-        return f"{recipe}\n\n{url}"
+        return f"Full Recipe : {url}"
+    recipe = (full_recipe or "").strip()
+    if not recipe:
+        raise ValueError(
+            "The generated full recipe is missing. Regenerate this content before publishing."
+        )
     return recipe
 
 

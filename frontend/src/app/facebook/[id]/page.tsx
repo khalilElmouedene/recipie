@@ -1996,7 +1996,7 @@ function FacebookPagesSettings({
                 <div>
                   <h3 className="font-semibold text-white">{page.name}</h3>
                   <p className="mt-1 text-xs text-slate-500">
-                    First comment: {page.comment_mode === "full_recipe_url" ? "Generated recipe + WordPress URL" : "Generated recipe"}
+                    First comment: {page.comment_mode === "full_recipe_url" ? "Full Recipe : WordPress URL" : "Generated recipe"}
                   </p>
                 </div>
               </div>
@@ -2141,7 +2141,7 @@ function ConnectPageModal({
           <div className="grid gap-3 sm:grid-cols-2">
             {[
               { mode: "full_recipe" as FacebookCommentMode, title: "Full Recipe", sample: "Ingredients\n- 2 cups ...\n\nInstructions\n1. Mix ..." },
-              { mode: "full_recipe_url" as FacebookCommentMode, title: "Full Recipe + URL", sample: "Ingredients\n- 2 cups ...\n\nInstructions\n1. Mix ...\n\nhttps://your-site.com/article" },
+              { mode: "full_recipe_url" as FacebookCommentMode, title: "Full Recipe + URL", sample: "Full Recipe : https://your-site.com/article" },
             ].map((option) => (
               <button
                 key={option.mode}
@@ -2244,7 +2244,7 @@ function PageScheduleModal({
             <label className="mb-2 block text-xs font-medium text-slate-500">First comment</label>
             <select value={form.comment_mode} onChange={(event) => setForm({ ...form, comment_mode: event.target.value as FacebookCommentMode })} className="input-field">
               <option value="full_recipe">Full Recipe</option>
-              <option value="full_recipe_url">Full Recipe + WordPress article URL</option>
+              <option value="full_recipe_url">Full Recipe : WordPress article URL</option>
             </select>
           </div>
           <div className="sm:col-span-2 rounded-xl border border-slate-800 bg-slate-950/30 p-4 text-xs leading-5 text-slate-500">

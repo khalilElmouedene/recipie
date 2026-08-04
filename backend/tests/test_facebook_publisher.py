@@ -130,7 +130,7 @@ class FacebookFirstCommentTests(unittest.TestCase):
             recipe,
         )
 
-    def test_full_recipe_url_mode_includes_published_article_url(self):
+    def test_full_recipe_url_mode_returns_only_label_and_published_article_url(self):
         recipe = "Creamy Garlic Sauce\n\nIngredients\n- 2 cloves garlic\n\nInstructions\n1. Blend."
         self.assertEqual(
             build_first_comment(
@@ -138,7 +138,17 @@ class FacebookFirstCommentTests(unittest.TestCase):
                 recipe,
                 "https://example.com/recipe",
             ),
-            f"{recipe}\n\nhttps://example.com/recipe",
+            "Full Recipe : https://example.com/recipe",
+        )
+
+    def test_full_recipe_url_mode_does_not_require_generated_recipe_text(self):
+        self.assertEqual(
+            build_first_comment(
+                FacebookCommentMode.full_recipe_url,
+                "",
+                "https://example.com/recipe",
+            ),
+            "Full Recipe : https://example.com/recipe",
         )
 
     def test_missing_generated_recipe_is_rejected(self):
@@ -250,7 +260,7 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
             order.append("comment")
             self.assertEqual(
                 kwargs["message"],
-                f"{recipe.generated_full_recipe}\n\nhttps://example.com/recipe",
+                "Full Recipe : https://example.com/recipe",
             )
             return "comment-456"
 
