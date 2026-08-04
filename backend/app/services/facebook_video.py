@@ -563,10 +563,6 @@ def validate_facebook_reel_file(path: Path) -> dict:
             f"resolution is {width}x{height}; minimum is "
             f"{FACEBOOK_REEL_MIN_WIDTH}x{FACEBOOK_REEL_MIN_HEIGHT}"
         )
-    expected_ratio = 9 / 16
-    actual_ratio = width / height if height else 0
-    if not actual_ratio or abs(actual_ratio - expected_ratio) > 0.01:
-        problems.append(f"aspect ratio is {width}:{height}; Facebook Reels require 9:16")
     if duration < FACEBOOK_REEL_MIN_DURATION or duration > FACEBOOK_REEL_MAX_DURATION:
         problems.append(
             f"duration is {duration:.1f}s; Facebook Reels require "
