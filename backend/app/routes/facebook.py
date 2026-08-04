@@ -62,8 +62,6 @@ ALLOWED_VIDEO_TYPES = {
 class FacebookProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str = Field(default="", max_length=5000)
-    app_id: str = Field(min_length=1, max_length=255)
-    app_secret: str = Field(min_length=1, max_length=1000)
     video_format: Literal["2:3", "9:16", "4:5", "1:1"] = "9:16"
     video_intro_seconds: float = Field(default=5.0, ge=1.0, le=15.0)
     video_fps: Literal[24, 30, 60] = 30
@@ -424,8 +422,6 @@ async def create_facebook_project(
         content_project_id=content_project.id,
         name=body.name.strip(),
         description=body.description.strip(),
-        app_id=body.app_id.strip(),
-        app_secret=encrypt(body.app_secret.strip()),
         video_format=body.video_format,
         video_intro_seconds=body.video_intro_seconds,
         video_fps=body.video_fps,

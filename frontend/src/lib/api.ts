@@ -755,8 +755,6 @@ export const api = {
   createFacebookProject: (data: {
     name: string;
     description: string;
-    app_id: string;
-    app_secret: string;
   }) =>
     request<FacebookProjectOut>("/api/facebook-projects", {
       method: "POST",

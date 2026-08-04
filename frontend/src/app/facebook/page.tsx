@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, CalendarDays, FileVideo2, KeyRound, Plus, Trash2, X } from "lucide-react";
+import { ArrowRight, CalendarDays, FileVideo2, Plus, Trash2, X } from "lucide-react";
 import { api, FacebookProjectOut } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
@@ -24,8 +24,6 @@ export default function FacebookProjectsPage() {
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [appId, setAppId] = useState("");
-  const [appSecret, setAppSecret] = useState("");
 
   const load = async () => {
     try {
@@ -48,14 +46,10 @@ export default function FacebookProjectsPage() {
       const created = await api.createFacebookProject({
         name: name.trim(),
         description: description.trim(),
-        app_id: appId.trim(),
-        app_secret: appSecret.trim(),
       });
       setProjects((current) => [created, ...current]);
       setName("");
       setDescription("");
-      setAppId("");
-      setAppSecret("");
       setShowCreate(false);
       toast.success("Facebook project created");
     } catch (error) {
@@ -69,8 +63,6 @@ export default function FacebookProjectsPage() {
     setShowCreate(false);
     setName("");
     setDescription("");
-    setAppId("");
-    setAppSecret("");
   };
 
   const deleteProject = async (project: FacebookProjectOut) => {
@@ -237,55 +229,10 @@ export default function FacebookProjectsPage() {
                   placeholder="What this publishing pipeline is for…"
                 />
               </div>
-              <div className="rounded-2xl border border-[#1877f2]/20 bg-[#1877f2]/5 p-4">
-                <div className="mb-4 flex items-start gap-3">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#1877f2]/15 text-[#68a8ff]">
-                    <KeyRound size={17} />
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold text-white">Meta application credentials</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Stored for this project. The App Secret is encrypted before it is saved.
-                    </p>
-                  </div>
-                </div>
-                <div className="space-y-4">
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-300">
-                      Facebook App ID <span className="text-[#68a8ff]">*</span>
-                    </label>
-                    <input
-                      value={appId}
-                      onChange={(event) => setAppId(event.target.value)}
-                      required
-                      maxLength={255}
-                      inputMode="numeric"
-                      autoComplete="off"
-                      className="input-field font-mono"
-                      placeholder="From Meta Developer Console"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-300">
-                      Facebook App Secret <span className="text-[#68a8ff]">*</span>
-                    </label>
-                    <input
-                      type="password"
-                      value={appSecret}
-                      onChange={(event) => setAppSecret(event.target.value)}
-                      required
-                      maxLength={1000}
-                      autoComplete="new-password"
-                      className="input-field font-mono"
-                      placeholder="Stored encrypted"
-                    />
-                  </div>
-                </div>
-              </div>
             </div>
             <div className="flex justify-end gap-3 border-t border-slate-800 bg-slate-950/30 px-6 py-4">
               <button type="button" onClick={closeCreate} className="btn-secondary">Cancel</button>
-              <button disabled={saving || !name.trim() || !appId.trim() || !appSecret.trim()} className="rounded-lg bg-[#1877f2] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50">
+              <button disabled={saving || !name.trim()} className="rounded-lg bg-[#1877f2] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50">
                 {saving ? "Creating…" : "Create project"}
               </button>
             </div>
