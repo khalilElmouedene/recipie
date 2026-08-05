@@ -2274,8 +2274,11 @@ const KEY_GROUPS = [
     icon: ImageIcon,
     fields: [
       { key: "discord_auth", label: "Discord Authorization", placeholder: "Authorization token", type: "password" },
+      { key: "discord_app_id", label: "Discord Application ID", placeholder: "App ID", type: "text" },
+      { key: "discord_guild", label: "Discord Guild ID", placeholder: "Server ID", type: "text" },
       { key: "discord_channel", label: "Discord Channel ID", placeholder: "Channel ID", type: "text" },
-      { key: "discord_app_id", label: "Discord Application ID", placeholder: "Application ID", type: "text" },
+      { key: "mj_version", label: "Midjourney Version", placeholder: "e.g. 6", type: "text" },
+      { key: "mj_id", label: "Midjourney ID", placeholder: "Bot ID", type: "text" },
     ],
   },
 ];
