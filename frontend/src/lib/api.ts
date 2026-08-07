@@ -787,12 +787,11 @@ export const api = {
     request<FacebookPageOut[]>(`/api/facebook-projects/${projectId}/pages`),
   getFacebookOAuthUrl: (
     projectId: string,
-    commentMode: FacebookCommentMode,
     reconnectPageId?: string,
   ) => {
     const params = new URLSearchParams({
       project_id: projectId,
-      comment_mode: commentMode,
+      comment_mode: "full_recipe",
     });
     if (reconnectPageId) params.set("reconnect_page_id", reconnectPageId);
     return request<{ url: string }>(
@@ -807,11 +806,10 @@ export const api = {
   addFacebookPageByToken: (
     projectId: string,
     accessToken: string,
-    commentMode: FacebookCommentMode,
   ) =>
     request<FacebookPageOut>(`/api/facebook-projects/${projectId}/pages/token`, {
       method: "POST",
-      body: JSON.stringify({ access_token: accessToken, comment_mode: commentMode }),
+      body: JSON.stringify({ access_token: accessToken }),
     }),
   updateFacebookPage: (
     pageId: string,

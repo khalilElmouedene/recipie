@@ -1788,7 +1788,6 @@ function FacebookPagesSettings({
   const toast = useToast();
   const confirm = useConfirm();
   const [showConnect, setShowConnect] = useState(false);
-  const [commentMode, setCommentMode] = useState<FacebookCommentMode>("full_recipe");
   const [token, setToken] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [reconnectingPageId, setReconnectingPageId] = useState<string | null>(null);
@@ -1888,7 +1887,6 @@ function FacebookPagesSettings({
     try {
       const { url } = await api.getFacebookOAuthUrl(
         project.id,
-        page?.comment_mode || commentMode,
         page?.id,
       );
       const popup = window.open(url, "facebook-oauth", "width=720,height=760,resizable=yes,scrollbars=yes");
@@ -1925,7 +1923,7 @@ function FacebookPagesSettings({
     if (!token.trim()) return;
     setConnecting(true);
     try {
-      await api.addFacebookPageByToken(project.id, token.trim(), commentMode);
+      await api.addFacebookPageByToken(project.id, token.trim());
       setToken("");
       setShowConnect(false);
       toast.success("Facebook Page connected. Use Configure to customize its generation.");
@@ -2127,8 +2125,6 @@ function FacebookPagesSettings({
 
       {showConnect && (
         <ConnectPageModal
-          commentMode={commentMode}
-          onCommentMode={setCommentMode}
           token={token}
           onToken={setToken}
           connecting={connecting}
@@ -2146,8 +2142,6 @@ function FacebookPagesSettings({
 }
 
 function ConnectPageModal({
-  commentMode,
-  onCommentMode,
   token,
   onToken,
   connecting,
@@ -2156,8 +2150,6 @@ function ConnectPageModal({
   onTokenConnect,
   onClose,
 }: {
-  commentMode: FacebookCommentMode;
-  onCommentMode: (mode: FacebookCommentMode) => void;
   token: string;
   onToken: (value: string) => void;
   connecting: boolean;
@@ -2178,31 +2170,9 @@ function ConnectPageModal({
           <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
         </div>
         <div className="space-y-6 overflow-y-auto p-6">
-          <section>
-            <div className="mb-3 flex items-center gap-2">
-              <MessageSquareText size={16} className="text-[#68a8ff]" />
-              <h3 className="text-sm font-semibold text-white">First comment</h3>
-            </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {[
-              { mode: "full_recipe" as FacebookCommentMode, title: "Full Recipe", sample: "Ingredients\n- 2 cups ...\n\nInstructions\n1. Mix ..." },
-              { mode: "full_recipe_url" as FacebookCommentMode, title: "Full Recipe + URL", sample: "Full Recipe : https://your-site.com/article" },
-            ].map((option) => (
-              <button
-                key={option.mode}
-                onClick={() => onCommentMode(option.mode)}
-                className={`rounded-2xl border p-4 text-left transition ${
-                  commentMode === option.mode ? "border-[#1877f2] bg-[#1877f2]/10" : "border-slate-700 hover:border-slate-600"
-                }`}
-              >
-                <MessageSquareText size={18} className={commentMode === option.mode ? "text-[#68a8ff]" : "text-slate-600"} />
-                <p className="mt-3 text-sm font-semibold text-white">{option.title}</p>
-                <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-slate-950/50 p-2 text-[10px] leading-4 text-slate-500">{option.sample}</pre>
-              </button>
-            ))}
+          <div className="rounded-2xl border border-[#1877f2]/25 bg-[#1877f2]/5 px-4 py-3 text-xs leading-5 text-slate-400">
+            After Facebook returns your managed Pages, use <strong className="text-white">Configure</strong> on each Page to choose its first comment, voice, and Recipe Card settings.
           </div>
-          </section>
-
           <button onClick={onOAuth} disabled={connecting} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877f2] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50">
             {connecting ? <Loader2 size={17} className="animate-spin" /> : <FacebookMark className="h-4 w-4" />}
             {connecting ? "Waiting for Facebook..." : "Continue with Facebook"}
