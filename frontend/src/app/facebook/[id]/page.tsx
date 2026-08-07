@@ -2232,21 +2232,21 @@ function PageScheduleModal({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-5">
+      <div className="flex max-h-[95vh] w-full max-w-6xl flex-col overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-5 lg:px-8">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#68a8ff]">Page generation & publishing</p>
             <h2 className="mt-1 text-xl font-semibold text-white">{page.name}</h2>
           </div>
           <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
         </div>
-        <div className="grid gap-4 overflow-y-auto p-6 sm:grid-cols-2">
-          <div className="sm:col-span-2 rounded-2xl border border-[#1877f2]/25 bg-[#1877f2]/5 p-4">
+        <div className="grid gap-5 overflow-y-auto p-6 sm:grid-cols-2 lg:p-8">
+          <div className="sm:col-span-2 rounded-2xl border border-[#1877f2]/25 bg-[#1877f2]/5 p-5 lg:p-6">
             <div className="mb-4 flex items-center gap-2">
               <AudioLines size={16} className="text-[#68a8ff]" />
               <h3 className="text-sm font-semibold text-white">Generation for this Page</h3>
             </div>
-            <div className="grid gap-4 sm:grid-cols-[220px_1fr]">
+            <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
               <div>
                 <label className="mb-2 block text-xs font-medium text-slate-400">Voice-over voice</label>
                 <select
@@ -2262,13 +2262,13 @@ function PageScheduleModal({
               </div>
               <div>
                 <label className="mb-2 block text-xs font-medium text-slate-400">Recipe card image</label>
-                <div className="mb-3 grid gap-3 sm:grid-cols-2">
+                <div className="mb-4 grid gap-4 md:grid-cols-2">
                   <div>
                     <label className="mb-1.5 block text-[11px] font-medium text-slate-500">Image model</label>
                     <select
                       value={form.recipe_card_model}
                       onChange={(event) => setForm({ ...form, recipe_card_model: event.target.value as FacebookRecipeCardModel })}
-                      className="input-field text-xs"
+                      className="input-field min-w-0 text-xs"
                     >
                       {FACEBOOK_RECIPE_CARD_MODELS.map((model) => (
                         <option key={model.value} value={model.value}>{model.name}</option>
@@ -2280,7 +2280,7 @@ function PageScheduleModal({
                     <select
                       value={form.recipe_card_quality}
                       onChange={(event) => setForm({ ...form, recipe_card_quality: event.target.value as FacebookRecipeCardQuality })}
-                      className="input-field text-xs"
+                      className="input-field min-w-0 text-xs"
                     >
                       {FACEBOOK_RECIPE_CARD_QUALITIES.map((quality) => (
                         <option key={quality.value} value={quality.value}>{quality.name}</option>
@@ -2291,9 +2291,9 @@ function PageScheduleModal({
                 <textarea
                   value={form.recipe_card_prompt}
                   onChange={(event) => setForm({ ...form, recipe_card_prompt: event.target.value })}
-                  rows={9}
+                  rows={14}
                   maxLength={12000}
-                  className="input-field resize-y font-mono text-xs leading-5"
+                  className="input-field min-h-[320px] resize-y font-mono text-xs leading-5"
                 />
                 <p className="mt-2 text-[11px] text-slate-600">Use {"{recipe_title}"} to insert the recipe title.</p>
               </div>
@@ -2330,7 +2330,7 @@ function PageScheduleModal({
             Example: 12:00–19:00 with a 180-minute interval produces 12:00, 15:00, and 18:00. Remaining posts continue the next day.
           </div>
         </div>
-        <div className="flex justify-end border-t border-slate-800 px-6 py-4">
+        <div className="flex justify-end border-t border-slate-800 px-6 py-4 lg:px-8">
           <button onClick={save} disabled={saving || !form.recipe_card_prompt.trim()} className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
             {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save Page settings
           </button>
