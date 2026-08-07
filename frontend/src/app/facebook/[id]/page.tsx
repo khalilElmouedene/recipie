@@ -99,32 +99,6 @@ const FACEBOOK_RECIPE_CARD_QUALITIES: {
   { value: "auto", name: "Auto — selected by OpenAI" },
 ];
 
-const DEFAULT_FACEBOOK_RECIPE_CARD_PROMPT = `Transform this EXACT food image into a premium infographic recipe card.
-
-IMPORTANT:
-- Keep the EXACT same food image
-- Keep the same dish
-- Keep the same camera angle
-- Keep the same composition
-- Keep the same plating
-- Keep the same food styling
-
-Add only:
-- elegant recipe card layout
-- infographic style
-- ingredients section
-- realistic shadows
-
-Style:
-- premium Pinterest recipe infographic
-- luxury food magazine
-- ultra realistic
-- vertical composition
-- high quality
-
-Recipe title:
-{recipe_title}`;
-
 const STATUS_STYLE: Record<string, string> = {
   processing: "border-sky-800/50 bg-sky-950/30 text-sky-300",
   ready: "border-emerald-800/50 bg-emerald-950/30 text-emerald-300",
@@ -1815,10 +1789,6 @@ function FacebookPagesSettings({
   const confirm = useConfirm();
   const [showConnect, setShowConnect] = useState(false);
   const [commentMode, setCommentMode] = useState<FacebookCommentMode>("full_recipe");
-  const [ttsVoice, setTtsVoice] = useState<FacebookTtsVoice>("nova");
-  const [recipeCardPrompt, setRecipeCardPrompt] = useState(DEFAULT_FACEBOOK_RECIPE_CARD_PROMPT);
-  const [recipeCardModel, setRecipeCardModel] = useState<FacebookRecipeCardModel>("gpt-image-2");
-  const [recipeCardQuality, setRecipeCardQuality] = useState<FacebookRecipeCardQuality>("low");
   const [token, setToken] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [reconnectingPageId, setReconnectingPageId] = useState<string | null>(null);
@@ -1890,15 +1860,9 @@ function FacebookPagesSettings({
             toast.success(`${reconnectingPage.name} reconnected successfully`);
           }
         } else {
-          await Promise.all(
-            connected.map((page) => api.updateFacebookPage(page.id, {
-              tts_voice: ttsVoice,
-              recipe_card_prompt: recipeCardPrompt.trim(),
-              recipe_card_model: recipeCardModel,
-              recipe_card_quality: recipeCardQuality,
-            })),
+          toast.success(
+            `${connected.length} Facebook Page${connected.length === 1 ? "" : "s"} connected. Use Configure on each Page to customize its generation.`,
           );
-          toast.success(`${connected.length} Facebook Page${connected.length === 1 ? "" : "s"} connected`);
         }
         setShowConnect(false);
         onRefresh();
@@ -1912,7 +1876,7 @@ function FacebookPagesSettings({
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [clearOAuthWindow, onRefresh, recipeCardModel, recipeCardPrompt, recipeCardQuality, toast, ttsVoice]);
+  }, [clearOAuthWindow, onRefresh, toast]);
 
   useEffect(() => () => clearOAuthWindow(true), [clearOAuthWindow]);
 
@@ -1961,18 +1925,10 @@ function FacebookPagesSettings({
     if (!token.trim()) return;
     setConnecting(true);
     try {
-      await api.addFacebookPageByToken(
-        project.id,
-        token.trim(),
-        commentMode,
-        ttsVoice,
-        recipeCardPrompt.trim(),
-        recipeCardModel,
-        recipeCardQuality,
-      );
+      await api.addFacebookPageByToken(project.id, token.trim(), commentMode);
       setToken("");
       setShowConnect(false);
-      toast.success("Facebook Page connected");
+      toast.success("Facebook Page connected. Use Configure to customize its generation.");
       onRefresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not connect Page");
@@ -2107,7 +2063,7 @@ function FacebookPagesSettings({
                   )}
                   {reconnectingPageId === page.id ? "Reconnecting..." : "Reconnect"}
                 </button>
-                <button onClick={() => setEditingPage(page)} className="btn-secondary inline-flex items-center gap-2"><Pencil size={14} /> Page settings</button>
+                <button onClick={() => setEditingPage(page)} className="btn-secondary inline-flex items-center gap-2"><Pencil size={14} /> Configure</button>
                 <button onClick={() => removePage(page)} className="rounded-lg border border-red-900/40 p-2.5 text-red-400 hover:bg-red-500/10"><Trash2 size={15} /></button>
               </div>
             </div>
@@ -2173,14 +2129,6 @@ function FacebookPagesSettings({
         <ConnectPageModal
           commentMode={commentMode}
           onCommentMode={setCommentMode}
-          ttsVoice={ttsVoice}
-          onTtsVoice={setTtsVoice}
-          recipeCardPrompt={recipeCardPrompt}
-          onRecipeCardPrompt={setRecipeCardPrompt}
-          recipeCardModel={recipeCardModel}
-          onRecipeCardModel={setRecipeCardModel}
-          recipeCardQuality={recipeCardQuality}
-          onRecipeCardQuality={setRecipeCardQuality}
           token={token}
           onToken={setToken}
           connecting={connecting}
@@ -2200,14 +2148,6 @@ function FacebookPagesSettings({
 function ConnectPageModal({
   commentMode,
   onCommentMode,
-  ttsVoice,
-  onTtsVoice,
-  recipeCardPrompt,
-  onRecipeCardPrompt,
-  recipeCardModel,
-  onRecipeCardModel,
-  recipeCardQuality,
-  onRecipeCardQuality,
   token,
   onToken,
   connecting,
@@ -2218,14 +2158,6 @@ function ConnectPageModal({
 }: {
   commentMode: FacebookCommentMode;
   onCommentMode: (mode: FacebookCommentMode) => void;
-  ttsVoice: FacebookTtsVoice;
-  onTtsVoice: (voice: FacebookTtsVoice) => void;
-  recipeCardPrompt: string;
-  onRecipeCardPrompt: (value: string) => void;
-  recipeCardModel: FacebookRecipeCardModel;
-  onRecipeCardModel: (value: FacebookRecipeCardModel) => void;
-  recipeCardQuality: FacebookRecipeCardQuality;
-  onRecipeCardQuality: (value: FacebookRecipeCardQuality) => void;
   token: string;
   onToken: (value: string) => void;
   connecting: boolean;
@@ -2236,12 +2168,12 @@ function ConnectPageModal({
 }) {
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl">
+      <div className="flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl">
         <div className="flex items-start justify-between border-b border-slate-800 px-6 py-5">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#68a8ff]">Connect a Page</p>
-            <h2 className="mt-1 text-xl font-semibold text-white">Configure this Page&apos;s generation</h2>
-            <p className="mt-1 text-xs text-slate-500">These choices apply only to the Facebook Pages connected now.</p>
+            <h2 className="mt-1 text-xl font-semibold text-white">Connect your Facebook Pages</h2>
+            <p className="mt-1 text-xs text-slate-500">After connection, configure every Page separately from its own card.</p>
           </div>
           <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
         </div>
@@ -2271,67 +2203,7 @@ function ConnectPageModal({
           </div>
           </section>
 
-          <section className="grid gap-4 rounded-2xl border border-slate-800 bg-slate-950/25 p-4 sm:grid-cols-[220px_1fr]">
-            <div>
-              <div className="mb-2 flex items-center gap-2">
-                <AudioLines size={16} className="text-[#68a8ff]" />
-                <label className="text-sm font-semibold text-white">Voice-over voice</label>
-              </div>
-              <p className="mb-3 text-xs leading-5 text-slate-500">Built-in voices for <code className="text-slate-400">gpt-4o-mini-tts</code>.</p>
-              <select
-                value={ttsVoice}
-                onChange={(event) => onTtsVoice(event.target.value as FacebookTtsVoice)}
-                className="input-field"
-              >
-                {FACEBOOK_TTS_VOICES.map((voice) => (
-                  <option key={voice.value} value={voice.value}>{voice.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div className="mb-2 flex items-center gap-2">
-                <ImageIcon size={16} className="text-[#68a8ff]" />
-                <label className="text-sm font-semibold text-white">Recipe card image</label>
-              </div>
-              <div className="mb-3 grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1.5 block text-[11px] font-medium text-slate-500">Image model</label>
-                  <select
-                    value={recipeCardModel}
-                    onChange={(event) => onRecipeCardModel(event.target.value as FacebookRecipeCardModel)}
-                    className="input-field text-xs"
-                  >
-                    {FACEBOOK_RECIPE_CARD_MODELS.map((model) => (
-                      <option key={model.value} value={model.value}>{model.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-[11px] font-medium text-slate-500">Image quality</label>
-                  <select
-                    value={recipeCardQuality}
-                    onChange={(event) => onRecipeCardQuality(event.target.value as FacebookRecipeCardQuality)}
-                    className="input-field text-xs"
-                  >
-                    {FACEBOOK_RECIPE_CARD_QUALITIES.map((quality) => (
-                      <option key={quality.value} value={quality.value}>{quality.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <textarea
-                value={recipeCardPrompt}
-                onChange={(event) => onRecipeCardPrompt(event.target.value)}
-                rows={9}
-                maxLength={12000}
-                className="input-field resize-y font-mono text-xs leading-5"
-                placeholder="Describe the recipe card image..."
-              />
-              <p className="mt-2 text-[11px] text-slate-600">Use {"{recipe_title}"} to insert the generated recipe title.</p>
-            </div>
-          </section>
-
-          <button onClick={onOAuth} disabled={connecting || !recipeCardPrompt.trim()} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877f2] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50">
+          <button onClick={onOAuth} disabled={connecting} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877f2] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50">
             {connecting ? <Loader2 size={17} className="animate-spin" /> : <FacebookMark className="h-4 w-4" />}
             {connecting ? "Waiting for Facebook..." : "Continue with Facebook"}
           </button>
@@ -2343,7 +2215,7 @@ function ConnectPageModal({
           <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.16em] text-slate-700"><span className="h-px flex-1 bg-slate-800" /> or paste a Page token <span className="h-px flex-1 bg-slate-800" /></div>
           <div className="flex gap-2">
             <input value={token} onChange={(event) => onToken(event.target.value)} type="password" className="input-field font-mono text-xs" placeholder="Page access token" />
-            <button onClick={onTokenConnect} disabled={connecting || !token.trim() || !recipeCardPrompt.trim()} className="btn-secondary shrink-0">Connect</button>
+            <button onClick={onTokenConnect} disabled={connecting || !token.trim()} className="btn-secondary shrink-0">Connect</button>
           </div>
         </div>
       </div>

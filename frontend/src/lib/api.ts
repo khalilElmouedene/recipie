@@ -808,21 +808,10 @@ export const api = {
     projectId: string,
     accessToken: string,
     commentMode: FacebookCommentMode,
-    ttsVoice: FacebookTtsVoice,
-    recipeCardPrompt: string,
-    recipeCardModel: FacebookRecipeCardModel,
-    recipeCardQuality: FacebookRecipeCardQuality,
   ) =>
     request<FacebookPageOut>(`/api/facebook-projects/${projectId}/pages/token`, {
       method: "POST",
-      body: JSON.stringify({
-        access_token: accessToken,
-        comment_mode: commentMode,
-        tts_voice: ttsVoice,
-        recipe_card_prompt: recipeCardPrompt,
-        recipe_card_model: recipeCardModel,
-        recipe_card_quality: recipeCardQuality,
-      }),
+      body: JSON.stringify({ access_token: accessToken, comment_mode: commentMode }),
     }),
   updateFacebookPage: (
     pageId: string,

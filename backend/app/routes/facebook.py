@@ -171,12 +171,12 @@ class FacebookPageTokenAdd(BaseModel):
     tts_voice: Literal[
         "alloy", "ash", "ballad", "coral", "echo", "fable", "onyx",
         "nova", "sage", "shimmer", "verse", "marin", "cedar",
-    ] = "nova"
+    ] | None = None
     recipe_card_prompt: str | None = Field(default=None, min_length=1, max_length=12000)
     recipe_card_model: Literal[
         "gpt-image-2", "gpt-image-2-2026-04-21"
-    ] = "gpt-image-2"
-    recipe_card_quality: Literal["auto", "low", "medium", "high"] = "low"
+    ] | None = None
+    recipe_card_quality: Literal["auto", "low", "medium", "high"] | None = None
 
 
 class FacebookPageHealthOut(BaseModel):
@@ -826,10 +826,10 @@ async def add_facebook_page_by_token(
             picture_url=page_data["picture_url"],
             access_token=encrypt(body.access_token.strip()),
             comment_mode=FacebookCommentMode(body.comment_mode),
-            tts_voice=body.tts_voice,
+            tts_voice=body.tts_voice or "nova",
             recipe_card_prompt=recipe_card_prompt,
-            recipe_card_model=body.recipe_card_model,
-            recipe_card_quality=body.recipe_card_quality,
+            recipe_card_model=body.recipe_card_model or "gpt-image-2",
+            recipe_card_quality=body.recipe_card_quality or "low",
         )
         db.add(page)
     else:
@@ -837,10 +837,14 @@ async def add_facebook_page_by_token(
         page.picture_url = page_data["picture_url"]
         page.access_token = encrypt(body.access_token.strip())
         page.comment_mode = FacebookCommentMode(body.comment_mode)
-        page.tts_voice = body.tts_voice
-        page.recipe_card_prompt = recipe_card_prompt
-        page.recipe_card_model = body.recipe_card_model
-        page.recipe_card_quality = body.recipe_card_quality
+        if body.tts_voice is not None:
+            page.tts_voice = body.tts_voice
+        if body.recipe_card_prompt is not None:
+            page.recipe_card_prompt = recipe_card_prompt
+        if body.recipe_card_model is not None:
+            page.recipe_card_model = body.recipe_card_model
+        if body.recipe_card_quality is not None:
+            page.recipe_card_quality = body.recipe_card_quality
     await db.commit()
     await db.refresh(page)
     return FacebookPageOut.from_db(page)
