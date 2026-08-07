@@ -808,15 +808,30 @@ export const api = {
     projectId: string,
     accessToken: string,
     commentMode: FacebookCommentMode,
+    ttsVoice: FacebookTtsVoice,
+    recipeCardPrompt: string,
+    recipeCardModel: FacebookRecipeCardModel,
+    recipeCardQuality: FacebookRecipeCardQuality,
   ) =>
     request<FacebookPageOut>(`/api/facebook-projects/${projectId}/pages/token`, {
       method: "POST",
-      body: JSON.stringify({ access_token: accessToken, comment_mode: commentMode }),
+      body: JSON.stringify({
+        access_token: accessToken,
+        comment_mode: commentMode,
+        tts_voice: ttsVoice,
+        recipe_card_prompt: recipeCardPrompt,
+        recipe_card_model: recipeCardModel,
+        recipe_card_quality: recipeCardQuality,
+      }),
     }),
   updateFacebookPage: (
     pageId: string,
     data: Partial<{
       comment_mode: FacebookCommentMode;
+      tts_voice: FacebookTtsVoice;
+      recipe_card_prompt: string;
+      recipe_card_model: FacebookRecipeCardModel;
+      recipe_card_quality: FacebookRecipeCardQuality;
       publish_start_time: string;
       publish_end_time: string;
       max_posts_per_day: number;
@@ -1522,6 +1537,24 @@ export interface ThreadsPostOut {
 }
 
 export type FacebookCommentMode = "full_recipe" | "full_recipe_url";
+export type FacebookTtsVoice =
+  | "alloy"
+  | "ash"
+  | "ballad"
+  | "coral"
+  | "echo"
+  | "fable"
+  | "onyx"
+  | "nova"
+  | "sage"
+  | "shimmer"
+  | "verse"
+  | "marin"
+  | "cedar";
+export type FacebookRecipeCardModel =
+  | "gpt-image-2"
+  | "gpt-image-2-2026-04-21";
+export type FacebookRecipeCardQuality = "auto" | "low" | "medium" | "high";
 export type FacebookVideoFormat = "2:3" | "9:16" | "4:5" | "1:1";
 export type FacebookContentStatus = "processing" | "ready" | "failed";
 export type FacebookLogLevel = "info" | "success" | "warning" | "error";
@@ -1560,6 +1593,10 @@ export interface FacebookPageOut {
   picture_url: string | null;
   token_expires_at: string | null;
   comment_mode: FacebookCommentMode;
+  tts_voice: FacebookTtsVoice;
+  recipe_card_prompt: string;
+  recipe_card_model: FacebookRecipeCardModel;
+  recipe_card_quality: FacebookRecipeCardQuality;
   publish_start_time: string;
   publish_end_time: string;
   max_posts_per_day: number;
@@ -1597,6 +1634,7 @@ export interface FacebookDeliveryOut {
   scheduled_at: string | null;
   published_at: string | null;
   facebook_post_id: string | null;
+  processed_video_url: string | null;
   error_message: string | null;
 }
 

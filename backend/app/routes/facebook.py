@@ -41,6 +41,7 @@ from ..services.credentials_loader import load_credentials_for_job
 from ..services.facebook_generation import facebook_generation_manager
 from ..services.facebook_publisher import delete_facebook_content_files, publish_facebook_delivery
 from ..services.facebook_video import validate_video_file
+from ..services.prompts import DEFAULT_PROMPTS
 from ..services.facebook_schedule import (
     FacebookSchedulePolicy,
     generate_schedule_slots,
@@ -105,6 +106,10 @@ class FacebookPageOut(BaseModel):
     picture_url: str | None
     token_expires_at: datetime | None
     comment_mode: str
+    tts_voice: str
+    recipe_card_prompt: str
+    recipe_card_model: str
+    recipe_card_quality: str
     publish_start_time: str
     publish_end_time: str
     max_posts_per_day: int
@@ -122,6 +127,17 @@ class FacebookPageOut(BaseModel):
             picture_url=page.picture_url,
             token_expires_at=page.token_expires_at,
             comment_mode=page.comment_mode.value,
+            tts_voice=getattr(page, "tts_voice", "nova") or "nova",
+            recipe_card_prompt=(
+                getattr(page, "recipe_card_prompt", None)
+                or DEFAULT_PROMPTS["facebook_recipe_card"]["value"]
+            ),
+            recipe_card_model=(
+                getattr(page, "recipe_card_model", "gpt-image-2") or "gpt-image-2"
+            ),
+            recipe_card_quality=(
+                getattr(page, "recipe_card_quality", "low") or "low"
+            ),
             publish_start_time=page.publish_start_time,
             publish_end_time=page.publish_end_time,
             max_posts_per_day=page.max_posts_per_day,
@@ -133,6 +149,15 @@ class FacebookPageOut(BaseModel):
 
 class FacebookPageUpdate(BaseModel):
     comment_mode: Literal["full_recipe", "full_recipe_url"] | None = None
+    tts_voice: Literal[
+        "alloy", "ash", "ballad", "coral", "echo", "fable", "onyx",
+        "nova", "sage", "shimmer", "verse", "marin", "cedar",
+    ] | None = None
+    recipe_card_prompt: str | None = Field(default=None, min_length=1, max_length=12000)
+    recipe_card_model: Literal[
+        "gpt-image-2", "gpt-image-2-2026-04-21"
+    ] | None = None
+    recipe_card_quality: Literal["auto", "low", "medium", "high"] | None = None
     publish_start_time: str | None = None
     publish_end_time: str | None = None
     max_posts_per_day: int | None = Field(default=None, ge=1, le=100)
@@ -143,6 +168,15 @@ class FacebookPageUpdate(BaseModel):
 class FacebookPageTokenAdd(BaseModel):
     access_token: str = Field(min_length=20)
     comment_mode: Literal["full_recipe", "full_recipe_url"] = "full_recipe"
+    tts_voice: Literal[
+        "alloy", "ash", "ballad", "coral", "echo", "fable", "onyx",
+        "nova", "sage", "shimmer", "verse", "marin", "cedar",
+    ] = "nova"
+    recipe_card_prompt: str | None = Field(default=None, min_length=1, max_length=12000)
+    recipe_card_model: Literal[
+        "gpt-image-2", "gpt-image-2-2026-04-21"
+    ] = "gpt-image-2"
+    recipe_card_quality: Literal["auto", "low", "medium", "high"] = "low"
 
 
 class FacebookPageHealthOut(BaseModel):
@@ -215,6 +249,7 @@ class FacebookDeliveryOut(BaseModel):
     scheduled_at: datetime | None
     published_at: datetime | None
     facebook_post_id: str | None
+    processed_video_url: str | None
     error_message: str | None
 
 
@@ -767,6 +802,14 @@ async def add_facebook_page_by_token(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not page_data["id"]:
         raise HTTPException(status_code=400, detail="Token does not identify a Facebook Page")
+    recipe_card_prompt = (
+        body.recipe_card_prompt.strip() if body.recipe_card_prompt is not None else None
+    )
+    if body.recipe_card_prompt is not None and not recipe_card_prompt:
+        raise HTTPException(
+            status_code=400,
+            detail="Recipe card image prompt cannot be empty.",
+        )
     page = (
         await db.execute(
             select(FacebookPage).where(
@@ -783,6 +826,10 @@ async def add_facebook_page_by_token(
             picture_url=page_data["picture_url"],
             access_token=encrypt(body.access_token.strip()),
             comment_mode=FacebookCommentMode(body.comment_mode),
+            tts_voice=body.tts_voice,
+            recipe_card_prompt=recipe_card_prompt,
+            recipe_card_model=body.recipe_card_model,
+            recipe_card_quality=body.recipe_card_quality,
         )
         db.add(page)
     else:
@@ -790,6 +837,10 @@ async def add_facebook_page_by_token(
         page.picture_url = page_data["picture_url"]
         page.access_token = encrypt(body.access_token.strip())
         page.comment_mode = FacebookCommentMode(body.comment_mode)
+        page.tts_voice = body.tts_voice
+        page.recipe_card_prompt = recipe_card_prompt
+        page.recipe_card_model = body.recipe_card_model
+        page.recipe_card_quality = body.recipe_card_quality
     await db.commit()
     await db.refresh(page)
     return FacebookPageOut.from_db(page)
@@ -818,6 +869,13 @@ async def update_facebook_page(
     for key, value in values.items():
         if key == "comment_mode":
             value = FacebookCommentMode(value)
+        elif key == "recipe_card_prompt":
+            value = value.strip()
+            if not value:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Recipe card image prompt cannot be empty.",
+                )
         setattr(page, key, value)
     await db.commit()
     await db.refresh(page)
@@ -1376,6 +1434,7 @@ async def list_facebook_contents(
                 scheduled_at=delivery.scheduled_at,
                 published_at=delivery.published_at,
                 facebook_post_id=delivery.facebook_post_id,
+                processed_video_url=delivery.processed_video_url,
                 error_message=delivery.error_message,
             )
         )
@@ -1573,6 +1632,7 @@ async def _queue_facebook_generation_retry(
             published_at=None,
             facebook_post_id=None,
             first_comment_id=None,
+            processed_video_url=None,
             error_message=None,
         )
     )
@@ -1760,6 +1820,7 @@ async def schedule_facebook_delivery(
         scheduled_at=delivery.scheduled_at,
         published_at=delivery.published_at,
         facebook_post_id=delivery.facebook_post_id,
+        processed_video_url=delivery.processed_video_url,
         error_message=delivery.error_message,
     )
 

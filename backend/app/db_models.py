@@ -538,6 +538,14 @@ class FacebookPage(Base):
         SAEnum(FacebookCommentMode, name="facebook_comment_mode"),
         nullable=False, default=FacebookCommentMode.full_recipe,
     )
+    tts_voice: Mapped[str] = mapped_column(String(32), nullable=False, default="nova")
+    recipe_card_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recipe_card_model: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="gpt-image-2"
+    )
+    recipe_card_quality: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="low"
+    )
     publish_start_time: Mapped[str] = mapped_column(String(5), nullable=False, default="12:00")
     publish_end_time: Mapped[str] = mapped_column(String(5), nullable=False, default="19:00")
     max_posts_per_day: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
@@ -592,7 +600,7 @@ class FacebookContent(Base):
 
 
 class FacebookDelivery(Base):
-    """One publication of shared content to one connected Facebook page."""
+    """One Page-specific video and publication of shared recipe content."""
     __tablename__ = "facebook_deliveries"
     __table_args__ = (
         UniqueConstraint("content_id", "page_id", name="uq_facebook_content_page"),
@@ -615,6 +623,7 @@ class FacebookDelivery(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     facebook_post_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     first_comment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    processed_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

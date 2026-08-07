@@ -246,25 +246,42 @@ async def cleanup_published_facebook_content_video(
                 .with_for_update()
             )
         ).scalar_one_or_none()
-        if content is None or not content.processed_video_url:
+        if content is None:
             return False
 
         delivery_rows = (
             await db.execute(
-                select(FacebookDelivery.status, FacebookDelivery.published_at).where(
-                    FacebookDelivery.content_id == content_id
-                )
+                select(
+                    FacebookDelivery.status,
+                    FacebookDelivery.published_at,
+                    FacebookDelivery.processed_video_url,
+                ).where(FacebookDelivery.content_id == content_id)
             )
         ).all()
+        # Keep cleanup tolerant of deliveries created before Page-specific
+        # video URLs existed (and of interrupted deployments during migration).
+        delivery_rows = [
+            (
+                row[0],
+                row[1],
+                row[2] if len(row) > 2 else None,
+            )
+            for row in delivery_rows
+        ]
+        if not content.processed_video_url and not any(
+            processed_video_url
+            for _delivery_status, _published_at, processed_video_url in delivery_rows
+        ):
+            return False
         if not delivery_rows or any(
             delivery_status != FacebookDeliveryStatus.published
-            for delivery_status, _published_at in delivery_rows
+            for delivery_status, _published_at, _processed_video_url in delivery_rows
         ):
             return False
 
         published_times = [
             published_at
-            for _delivery_status, published_at in delivery_rows
+            for _delivery_status, published_at, _processed_video_url in delivery_rows
             if published_at is not None
         ]
         if not published_times:
@@ -329,6 +346,12 @@ async def cleanup_published_facebook_content_video(
             return False
 
         content.processed_video_url = None
+        if any(row[2] for row in delivery_rows):
+            await db.execute(
+                update(FacebookDelivery)
+                .where(FacebookDelivery.content_id == content_id)
+                .values(processed_video_url=None)
+            )
         freed_mb = deleted_bytes / (1024 * 1024)
         source_note = (
             "unshared local source released"
@@ -532,13 +555,17 @@ async def publish_facebook_delivery(
                 .where(FacebookDelivery.id == delivery_id)
             )
             delivery, content, page, recipe = row.one()
-            if not content.processed_video_url:
+            stored_video_url = (
+                getattr(delivery, "processed_video_url", None)
+                or content.processed_video_url
+            )
+            if not stored_video_url:
                 raise ValueError("Processed video is not ready.")
             page_token = decrypt(page.access_token)
             page_id = page.facebook_page_id
             page_mode = page.comment_mode
             title = content.title
-            video_url = _absolute_media_url(content.processed_video_url)
+            video_url = _absolute_media_url(stored_video_url)
             content_id = content.id
             existing_post_id = delivery.facebook_post_id
             existing_comment_id = delivery.first_comment_id
@@ -565,7 +592,7 @@ async def publish_facebook_delivery(
         # or the first comment was interrupted.
         if not post_id or not facebook_api.reel_upload_is_complete(existing_status):
             upload_source = await _validate_reel_upload_source(
-                stored_video_url=content.processed_video_url,
+                stored_video_url=stored_video_url,
                 public_video_url=video_url,
             )
 

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   AlertCircle,
+  AudioLines,
   ArrowLeft,
   CalendarDays,
   CheckCircle2,
@@ -52,6 +53,9 @@ import {
   FacebookPageHealthOut,
   FacebookPageOut,
   FacebookProjectOut,
+  FacebookRecipeCardModel,
+  FacebookRecipeCardQuality,
+  FacebookTtsVoice,
   FacebookVideoFormat,
   PromptOut,
 } from "@/lib/api";
@@ -63,6 +67,63 @@ import FacebookAiPromptSettings from "@/components/facebook/FacebookAiPromptSett
 type MainTab = "calendar" | "posts" | "settings";
 type PostFilter = "all" | "ready" | "processing" | "failed" | "published";
 type SettingsTab = "website" | "pages" | "keys" | "ai_prompts" | "video_prompts" | "video_settings";
+
+const FACEBOOK_TTS_VOICES: { value: FacebookTtsVoice; name: string }[] = [
+  { value: "alloy", name: "Alloy" },
+  { value: "ash", name: "Ash" },
+  { value: "ballad", name: "Ballad" },
+  { value: "coral", name: "Coral" },
+  { value: "echo", name: "Echo" },
+  { value: "fable", name: "Fable" },
+  { value: "onyx", name: "Onyx" },
+  { value: "nova", name: "Nova" },
+  { value: "sage", name: "Sage" },
+  { value: "shimmer", name: "Shimmer" },
+  { value: "verse", name: "Verse" },
+  { value: "marin", name: "Marin" },
+  { value: "cedar", name: "Cedar" },
+];
+
+const FACEBOOK_RECIPE_CARD_MODELS: { value: FacebookRecipeCardModel; name: string }[] = [
+  { value: "gpt-image-2", name: "GPT Image 2 — Latest (recommended)" },
+  { value: "gpt-image-2-2026-04-21", name: "GPT Image 2 — Pinned 2026-04-21" },
+];
+
+const FACEBOOK_RECIPE_CARD_QUALITIES: {
+  value: FacebookRecipeCardQuality;
+  name: string;
+}[] = [
+  { value: "high", name: "High — best text readability" },
+  { value: "medium", name: "Medium — balanced" },
+  { value: "low", name: "Low — faster and lower cost" },
+  { value: "auto", name: "Auto — selected by OpenAI" },
+];
+
+const DEFAULT_FACEBOOK_RECIPE_CARD_PROMPT = `Transform this EXACT food image into a premium infographic recipe card.
+
+IMPORTANT:
+- Keep the EXACT same food image
+- Keep the same dish
+- Keep the same camera angle
+- Keep the same composition
+- Keep the same plating
+- Keep the same food styling
+
+Add only:
+- elegant recipe card layout
+- infographic style
+- ingredients section
+- realistic shadows
+
+Style:
+- premium Pinterest recipe infographic
+- luxury food magazine
+- ultra realistic
+- vertical composition
+- high quality
+
+Recipe title:
+{recipe_title}`;
 
 const STATUS_STYLE: Record<string, string> = {
   processing: "border-sky-800/50 bg-sky-950/30 text-sky-300",
@@ -1754,6 +1815,10 @@ function FacebookPagesSettings({
   const confirm = useConfirm();
   const [showConnect, setShowConnect] = useState(false);
   const [commentMode, setCommentMode] = useState<FacebookCommentMode>("full_recipe");
+  const [ttsVoice, setTtsVoice] = useState<FacebookTtsVoice>("nova");
+  const [recipeCardPrompt, setRecipeCardPrompt] = useState(DEFAULT_FACEBOOK_RECIPE_CARD_PROMPT);
+  const [recipeCardModel, setRecipeCardModel] = useState<FacebookRecipeCardModel>("gpt-image-2");
+  const [recipeCardQuality, setRecipeCardQuality] = useState<FacebookRecipeCardQuality>("low");
   const [token, setToken] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [reconnectingPageId, setReconnectingPageId] = useState<string | null>(null);
@@ -1825,6 +1890,14 @@ function FacebookPagesSettings({
             toast.success(`${reconnectingPage.name} reconnected successfully`);
           }
         } else {
+          await Promise.all(
+            connected.map((page) => api.updateFacebookPage(page.id, {
+              tts_voice: ttsVoice,
+              recipe_card_prompt: recipeCardPrompt.trim(),
+              recipe_card_model: recipeCardModel,
+              recipe_card_quality: recipeCardQuality,
+            })),
+          );
           toast.success(`${connected.length} Facebook Page${connected.length === 1 ? "" : "s"} connected`);
         }
         setShowConnect(false);
@@ -1839,7 +1912,7 @@ function FacebookPagesSettings({
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [clearOAuthWindow, onRefresh, toast]);
+  }, [clearOAuthWindow, onRefresh, recipeCardModel, recipeCardPrompt, recipeCardQuality, toast, ttsVoice]);
 
   useEffect(() => () => clearOAuthWindow(true), [clearOAuthWindow]);
 
@@ -1888,7 +1961,15 @@ function FacebookPagesSettings({
     if (!token.trim()) return;
     setConnecting(true);
     try {
-      await api.addFacebookPageByToken(project.id, token.trim(), commentMode);
+      await api.addFacebookPageByToken(
+        project.id,
+        token.trim(),
+        commentMode,
+        ttsVoice,
+        recipeCardPrompt.trim(),
+        recipeCardModel,
+        recipeCardQuality,
+      );
       setToken("");
       setShowConnect(false);
       toast.success("Facebook Page connected");
@@ -1949,7 +2030,7 @@ function FacebookPagesSettings({
   };
 
   return (
-    <SettingsSection title="Facebook Pages" description="Connect one or more managed Pages. Content is generated once, then delivered according to each Page’s own schedule and first-comment rule.">
+    <SettingsSection title="Facebook Pages" description="Connect managed Pages and give each one its own voice, recipe-card image, schedule, and first-comment rule.">
       <div className="mb-5 overflow-hidden rounded-[20px] border border-slate-800 bg-[#101827]">
         <div className="border-b border-slate-800 px-5 py-4">
           <h3 className="font-semibold text-white">Facebook App</h3>
@@ -2026,7 +2107,7 @@ function FacebookPagesSettings({
                   )}
                   {reconnectingPageId === page.id ? "Reconnecting..." : "Reconnect"}
                 </button>
-                <button onClick={() => setEditingPage(page)} className="btn-secondary inline-flex items-center gap-2"><Pencil size={14} /> Schedule</button>
+                <button onClick={() => setEditingPage(page)} className="btn-secondary inline-flex items-center gap-2"><Pencil size={14} /> Page settings</button>
                 <button onClick={() => removePage(page)} className="rounded-lg border border-red-900/40 p-2.5 text-red-400 hover:bg-red-500/10"><Trash2 size={15} /></button>
               </div>
             </div>
@@ -2064,8 +2145,10 @@ function FacebookPagesSettings({
                 </div>
               </div>
             )}
-            <div className="grid gap-px bg-slate-800 sm:grid-cols-4">
+            <div className="grid gap-px bg-slate-800 sm:grid-cols-6">
               {[
+                ["Voice", page.tts_voice.charAt(0).toUpperCase() + page.tts_voice.slice(1)],
+                ["Card quality", page.recipe_card_quality.charAt(0).toUpperCase() + page.recipe_card_quality.slice(1)],
                 ["Window", `${page.publish_start_time}–${page.publish_end_time}`],
                 ["Maximum", `${page.max_posts_per_day}/day`],
                 ["Interval", `${page.interval_minutes} min`],
@@ -2090,6 +2173,14 @@ function FacebookPagesSettings({
         <ConnectPageModal
           commentMode={commentMode}
           onCommentMode={setCommentMode}
+          ttsVoice={ttsVoice}
+          onTtsVoice={setTtsVoice}
+          recipeCardPrompt={recipeCardPrompt}
+          onRecipeCardPrompt={setRecipeCardPrompt}
+          recipeCardModel={recipeCardModel}
+          onRecipeCardModel={setRecipeCardModel}
+          recipeCardQuality={recipeCardQuality}
+          onRecipeCardQuality={setRecipeCardQuality}
           token={token}
           onToken={setToken}
           connecting={connecting}
@@ -2109,6 +2200,14 @@ function FacebookPagesSettings({
 function ConnectPageModal({
   commentMode,
   onCommentMode,
+  ttsVoice,
+  onTtsVoice,
+  recipeCardPrompt,
+  onRecipeCardPrompt,
+  recipeCardModel,
+  onRecipeCardModel,
+  recipeCardQuality,
+  onRecipeCardQuality,
   token,
   onToken,
   connecting,
@@ -2119,6 +2218,14 @@ function ConnectPageModal({
 }: {
   commentMode: FacebookCommentMode;
   onCommentMode: (mode: FacebookCommentMode) => void;
+  ttsVoice: FacebookTtsVoice;
+  onTtsVoice: (voice: FacebookTtsVoice) => void;
+  recipeCardPrompt: string;
+  onRecipeCardPrompt: (value: string) => void;
+  recipeCardModel: FacebookRecipeCardModel;
+  onRecipeCardModel: (value: FacebookRecipeCardModel) => void;
+  recipeCardQuality: FacebookRecipeCardQuality;
+  onRecipeCardQuality: (value: FacebookRecipeCardQuality) => void;
   token: string;
   onToken: (value: string) => void;
   connecting: boolean;
@@ -2128,16 +2235,22 @@ function ConnectPageModal({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/75 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-xl overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl">
         <div className="flex items-start justify-between border-b border-slate-800 px-6 py-5">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#68a8ff]">Connect a Page</p>
-            <h2 className="mt-1 text-xl font-semibold text-white">How should the first comment work?</h2>
+            <h2 className="mt-1 text-xl font-semibold text-white">Configure this Page&apos;s generation</h2>
+            <p className="mt-1 text-xs text-slate-500">These choices apply only to the Facebook Pages connected now.</p>
           </div>
           <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
         </div>
-        <div className="space-y-5 p-6">
+        <div className="space-y-6 overflow-y-auto p-6">
+          <section>
+            <div className="mb-3 flex items-center gap-2">
+              <MessageSquareText size={16} className="text-[#68a8ff]" />
+              <h3 className="text-sm font-semibold text-white">First comment</h3>
+            </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {[
               { mode: "full_recipe" as FacebookCommentMode, title: "Full Recipe", sample: "Ingredients\n- 2 cups ...\n\nInstructions\n1. Mix ..." },
@@ -2156,7 +2269,69 @@ function ConnectPageModal({
               </button>
             ))}
           </div>
-          <button onClick={onOAuth} disabled={connecting} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877f2] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50">
+          </section>
+
+          <section className="grid gap-4 rounded-2xl border border-slate-800 bg-slate-950/25 p-4 sm:grid-cols-[220px_1fr]">
+            <div>
+              <div className="mb-2 flex items-center gap-2">
+                <AudioLines size={16} className="text-[#68a8ff]" />
+                <label className="text-sm font-semibold text-white">Voice-over voice</label>
+              </div>
+              <p className="mb-3 text-xs leading-5 text-slate-500">Built-in voices for <code className="text-slate-400">gpt-4o-mini-tts</code>.</p>
+              <select
+                value={ttsVoice}
+                onChange={(event) => onTtsVoice(event.target.value as FacebookTtsVoice)}
+                className="input-field"
+              >
+                {FACEBOOK_TTS_VOICES.map((voice) => (
+                  <option key={voice.value} value={voice.value}>{voice.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div className="mb-2 flex items-center gap-2">
+                <ImageIcon size={16} className="text-[#68a8ff]" />
+                <label className="text-sm font-semibold text-white">Recipe card image</label>
+              </div>
+              <div className="mb-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-medium text-slate-500">Image model</label>
+                  <select
+                    value={recipeCardModel}
+                    onChange={(event) => onRecipeCardModel(event.target.value as FacebookRecipeCardModel)}
+                    className="input-field text-xs"
+                  >
+                    {FACEBOOK_RECIPE_CARD_MODELS.map((model) => (
+                      <option key={model.value} value={model.value}>{model.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[11px] font-medium text-slate-500">Image quality</label>
+                  <select
+                    value={recipeCardQuality}
+                    onChange={(event) => onRecipeCardQuality(event.target.value as FacebookRecipeCardQuality)}
+                    className="input-field text-xs"
+                  >
+                    {FACEBOOK_RECIPE_CARD_QUALITIES.map((quality) => (
+                      <option key={quality.value} value={quality.value}>{quality.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <textarea
+                value={recipeCardPrompt}
+                onChange={(event) => onRecipeCardPrompt(event.target.value)}
+                rows={9}
+                maxLength={12000}
+                className="input-field resize-y font-mono text-xs leading-5"
+                placeholder="Describe the recipe card image..."
+              />
+              <p className="mt-2 text-[11px] text-slate-600">Use {"{recipe_title}"} to insert the generated recipe title.</p>
+            </div>
+          </section>
+
+          <button onClick={onOAuth} disabled={connecting || !recipeCardPrompt.trim()} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877f2] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50">
             {connecting ? <Loader2 size={17} className="animate-spin" /> : <FacebookMark className="h-4 w-4" />}
             {connecting ? "Waiting for Facebook..." : "Continue with Facebook"}
           </button>
@@ -2168,7 +2343,7 @@ function ConnectPageModal({
           <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.16em] text-slate-700"><span className="h-px flex-1 bg-slate-800" /> or paste a Page token <span className="h-px flex-1 bg-slate-800" /></div>
           <div className="flex gap-2">
             <input value={token} onChange={(event) => onToken(event.target.value)} type="password" className="input-field font-mono text-xs" placeholder="Page access token" />
-            <button onClick={onTokenConnect} disabled={connecting || !token.trim()} className="btn-secondary shrink-0">Connect</button>
+            <button onClick={onTokenConnect} disabled={connecting || !token.trim() || !recipeCardPrompt.trim()} className="btn-secondary shrink-0">Connect</button>
           </div>
         </div>
       </div>
@@ -2193,6 +2368,10 @@ function PageScheduleModal({
     interval_minutes: page.interval_minutes,
     timezone: page.timezone,
     comment_mode: page.comment_mode,
+    tts_voice: page.tts_voice,
+    recipe_card_prompt: page.recipe_card_prompt,
+    recipe_card_model: page.recipe_card_model,
+    recipe_card_quality: page.recipe_card_quality,
   });
   const [saving, setSaving] = useState(false);
 
@@ -2200,10 +2379,10 @@ function PageScheduleModal({
     setSaving(true);
     try {
       await api.updateFacebookPage(page.id, form);
-      toast.success(`${page.name} schedule saved`);
+      toast.success(`${page.name} settings saved`);
       onSaved();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save schedule");
+      toast.error(error instanceof Error ? error.message : "Could not save Page settings");
     } finally {
       setSaving(false);
     }
@@ -2211,15 +2390,73 @@ function PageScheduleModal({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl">
+      <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-800 px-6 py-5">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#68a8ff]">Page publishing rules</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#68a8ff]">Page generation & publishing</p>
             <h2 className="mt-1 text-xl font-semibold text-white">{page.name}</h2>
           </div>
           <button onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
         </div>
-        <div className="grid gap-4 p-6 sm:grid-cols-2">
+        <div className="grid gap-4 overflow-y-auto p-6 sm:grid-cols-2">
+          <div className="sm:col-span-2 rounded-2xl border border-[#1877f2]/25 bg-[#1877f2]/5 p-4">
+            <div className="mb-4 flex items-center gap-2">
+              <AudioLines size={16} className="text-[#68a8ff]" />
+              <h3 className="text-sm font-semibold text-white">Generation for this Page</h3>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-[220px_1fr]">
+              <div>
+                <label className="mb-2 block text-xs font-medium text-slate-400">Voice-over voice</label>
+                <select
+                  value={form.tts_voice}
+                  onChange={(event) => setForm({ ...form, tts_voice: event.target.value as FacebookTtsVoice })}
+                  className="input-field"
+                >
+                  {FACEBOOK_TTS_VOICES.map((voice) => (
+                    <option key={voice.value} value={voice.value}>{voice.name}</option>
+                  ))}
+                </select>
+                <p className="mt-2 text-[11px] leading-4 text-slate-600">Used by future videos generated for {page.name}.</p>
+              </div>
+              <div>
+                <label className="mb-2 block text-xs font-medium text-slate-400">Recipe card image</label>
+                <div className="mb-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-[11px] font-medium text-slate-500">Image model</label>
+                    <select
+                      value={form.recipe_card_model}
+                      onChange={(event) => setForm({ ...form, recipe_card_model: event.target.value as FacebookRecipeCardModel })}
+                      className="input-field text-xs"
+                    >
+                      {FACEBOOK_RECIPE_CARD_MODELS.map((model) => (
+                        <option key={model.value} value={model.value}>{model.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-[11px] font-medium text-slate-500">Image quality</label>
+                    <select
+                      value={form.recipe_card_quality}
+                      onChange={(event) => setForm({ ...form, recipe_card_quality: event.target.value as FacebookRecipeCardQuality })}
+                      className="input-field text-xs"
+                    >
+                      {FACEBOOK_RECIPE_CARD_QUALITIES.map((quality) => (
+                        <option key={quality.value} value={quality.value}>{quality.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <textarea
+                  value={form.recipe_card_prompt}
+                  onChange={(event) => setForm({ ...form, recipe_card_prompt: event.target.value })}
+                  rows={9}
+                  maxLength={12000}
+                  className="input-field resize-y font-mono text-xs leading-5"
+                />
+                <p className="mt-2 text-[11px] text-slate-600">Use {"{recipe_title}"} to insert the recipe title.</p>
+              </div>
+            </div>
+          </div>
           <div>
             <label className="mb-2 block text-xs font-medium text-slate-500">Publishing start</label>
             <input type="time" value={form.publish_start_time} onChange={(event) => setForm({ ...form, publish_start_time: event.target.value })} className="input-field" />
@@ -2252,8 +2489,8 @@ function PageScheduleModal({
           </div>
         </div>
         <div className="flex justify-end border-t border-slate-800 px-6 py-4">
-          <button onClick={save} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
-            {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save rules
+          <button onClick={save} disabled={saving || !form.recipe_card_prompt.trim()} className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save Page settings
           </button>
         </div>
       </div>
@@ -2353,7 +2590,7 @@ function FacebookKeysSettings({ contentProjectId }: { contentProjectId: string }
   );
 }
 
-const FACEBOOK_PROMPT_KEYS = ["facebook_video_script", "facebook_recipe_card"];
+const FACEBOOK_PROMPT_KEYS = ["facebook_video_script"];
 
 function FacebookVideoPromptSettings({ contentProjectId }: { contentProjectId: string }) {
   const toast = useToast();
@@ -2413,7 +2650,7 @@ function FacebookVideoPromptSettings({ contentProjectId }: { contentProjectId: s
   };
 
   return (
-    <SettingsSection title="Video Prompts" description="Edit every AI prompt introduced by the converted video-generation service. Use {recipe_title} where the source title should be inserted.">
+    <SettingsSection title="Video Prompts" description="Edit the shared voice-over script instructions. Voice selection and Recipe card image are configured separately for each connected Facebook Page.">
       <div className="space-y-4">
         {[
           {
@@ -2421,12 +2658,6 @@ function FacebookVideoPromptSettings({ contentProjectId }: { contentProjectId: s
             title: "Voice-over script",
             description: "Creates the short viral audio spoken over the processed video.",
             icon: MonitorPlay,
-          },
-          {
-            key: "facebook_recipe_card",
-            title: "Recipe card image",
-            description: "Transforms the first video frame into the vertical recipe-card segment.",
-            icon: ImageIcon,
           },
         ].map((item) => (
           <div key={item.key} className="overflow-hidden rounded-[18px] border border-slate-800 bg-[#101827]">
@@ -2442,7 +2673,7 @@ function FacebookVideoPromptSettings({ contentProjectId }: { contentProjectId: s
               <textarea
                 value={values[item.key] || ""}
                 onChange={(event) => setValues({ ...values, [item.key]: event.target.value })}
-                rows={item.key === "facebook_recipe_card" ? 12 : 10}
+                rows={10}
                 className="input-field resize-y font-mono text-xs leading-5"
               />
             </div>

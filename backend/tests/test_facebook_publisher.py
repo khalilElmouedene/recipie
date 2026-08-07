@@ -207,10 +207,13 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         delivery = SimpleNamespace(
             facebook_post_id=None,
             first_comment_id=None,
+            processed_video_url=(
+                "https://example.com/uploads/facebook/content/page-video.mp4"
+            ),
         )
         content = SimpleNamespace(
             id=content_id,
-            processed_video_url="https://example.com/uploads/facebook/video.mp4",
+            processed_video_url="https://example.com/uploads/facebook/legacy-video.mp4",
             title="Recipe title",
         )
         page = SimpleNamespace(
@@ -234,8 +237,12 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         )
         order: list[str] = []
 
-        async def validate_video_source(**_kwargs):
+        async def validate_video_source(**kwargs):
             order.append("video-preflight")
+            self.assertEqual(
+                kwargs["stored_video_url"],
+                "https://example.com/uploads/facebook/content/page-video.mp4",
+            )
             return {"local_path": "/app/uploads/facebook/content/processed-video.mp4"}
 
         async def publish_article(_content_id):

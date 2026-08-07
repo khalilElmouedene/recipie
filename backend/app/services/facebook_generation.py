@@ -14,6 +14,7 @@ from app.db_models import (
     FacebookContentStatus,
     FacebookDelivery,
     FacebookDeliveryStatus,
+    FacebookPage,
     FacebookProject,
     Project,
     Prompt,
@@ -51,7 +52,7 @@ class _GenerationContext:
 
 
 class FacebookGenerationManager:
-    """Run the video and existing article pipeline once per shared content item."""
+    """Generate Page-specific videos while keeping the article content shared."""
 
     def __init__(self) -> None:
         self._running: set[uuid.UUID] = set()
@@ -203,7 +204,7 @@ class FacebookGenerationManager:
 
     async def _load_content_payloads(
         self, content_ids: list[uuid.UUID]
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, object]]:
         async with SessionLocal() as db:
             rows = await db.execute(
                 select(FacebookContent)
@@ -214,14 +215,67 @@ class FacebookGenerationManager:
                 )
                 .order_by(FacebookContent.created_at.asc())
             )
+            contents = rows.scalars().all()
+            if not contents:
+                return []
+            delivery_rows = await db.execute(
+                select(FacebookDelivery, FacebookPage)
+                .join(FacebookPage, FacebookPage.id == FacebookDelivery.page_id)
+                .where(
+                    FacebookDelivery.content_id.in_([content.id for content in contents]),
+                    FacebookDelivery.status == FacebookDeliveryStatus.processing,
+                )
+                .order_by(FacebookDelivery.created_at.asc())
+            )
+            deliveries_by_content: dict[uuid.UUID, list[dict[str, str]]] = {}
+            default_card_prompt = DEFAULT_PROMPTS["facebook_recipe_card"]["value"]
+            for delivery, page in delivery_rows.all():
+                deliveries_by_content.setdefault(delivery.content_id, []).append(
+                    {
+                        "id": str(delivery.id),
+                        "page_name": page.name,
+                        "tts_voice": page.tts_voice or "nova",
+                        "recipe_card_prompt": (
+                            page.recipe_card_prompt or default_card_prompt
+                        ),
+                        "recipe_card_model": (
+                            page.recipe_card_model or "gpt-image-2"
+                        ),
+                        "recipe_card_quality": (
+                            page.recipe_card_quality or "low"
+                        ),
+                    }
+                )
             return [
                 {
                     "id": str(content.id),
                     "title": content.title,
                     "source_url": content.source_video_url,
+                    "deliveries": deliveries_by_content.get(content.id, []),
                 }
-                for content in rows.scalars().all()
+                for content in contents
             ]
+
+    async def _store_delivery_video(
+        self,
+        content_id: uuid.UUID,
+        delivery_id: uuid.UUID,
+        processed_video_url: str,
+    ) -> None:
+        async with SessionLocal() as db:
+            result = await db.execute(
+                update(FacebookDelivery)
+                .where(
+                    FacebookDelivery.id == delivery_id,
+                    FacebookDelivery.content_id == content_id,
+                    FacebookDelivery.status == FacebookDeliveryStatus.processing,
+                )
+                .values(processed_video_url=processed_video_url)
+            )
+            if not result.rowcount:
+                await db.rollback()
+                raise FacebookGenerationCancelled()
+            await db.commit()
 
     async def _store_processed_video(
         self,
@@ -444,7 +498,7 @@ class FacebookGenerationManager:
                         self._project_running.pop(facebook_project_id, None)
             return
 
-        loaded_ids = {uuid.UUID(payload["id"]) for payload in payloads}
+        loaded_ids = {uuid.UUID(str(payload["id"])) for payload in payloads}
         for content_id in pending:
             if content_id not in loaded_ids:
                 self._release(facebook_project_id, content_id)
@@ -478,7 +532,7 @@ class FacebookGenerationManager:
 
         def run() -> None:
             for payload in payloads:
-                content_id = uuid.UUID(payload["id"])
+                content_id = uuid.UUID(str(payload["id"]))
                 recipe_id: uuid.UUID | None = None
 
                 def progress(message: str, *, stage: str) -> None:
@@ -489,19 +543,58 @@ class FacebookGenerationManager:
                 try:
                     self._checkpoint(facebook_project_id)
                     emit(content_id, "Generation worker started.", stage="setup")
-                    processed = self._video.process(
-                        content_id=content_id,
-                        source_url=payload["source_url"],
-                        recipe_title=payload["title"],
-                        openai_api_key=context.credentials["openai"],
-                        script_prompt=context.prompts["facebook_video_script"],
-                        recipe_card_prompt=context.prompts["facebook_recipe_card"],
-                        video_format=context.video_format,
-                        intro_seconds=context.video_intro_seconds,
-                        fps=context.video_fps,
-                        bitrate_kbps=context.video_bitrate_kbps,
-                        log=lambda message: progress(message, stage="video"),
-                    )
+                    delivery_payloads = list(payload.get("deliveries") or [])
+                    if not delivery_payloads:
+                        raise ValueError(
+                            "Select at least one connected Facebook Page for this generation."
+                        )
+                    processed = None
+                    for delivery_payload in delivery_payloads:
+                        delivery_id = uuid.UUID(str(delivery_payload["id"]))
+                        page_name = str(delivery_payload["page_name"])
+                        voice = str(delivery_payload["tts_voice"])
+                        emit(
+                            content_id,
+                            f"Generating the video for {page_name} with {voice.title()} voice.",
+                            stage="video",
+                        )
+                        page_video = self._video.process(
+                            content_id=content_id,
+                            variant_id=delivery_id,
+                            source_url=str(payload["source_url"]),
+                            recipe_title=str(payload["title"]),
+                            openai_api_key=context.credentials["openai"],
+                            script_prompt=context.prompts["facebook_video_script"],
+                            recipe_card_prompt=str(
+                                delivery_payload["recipe_card_prompt"]
+                            ),
+                            recipe_card_model=str(
+                                delivery_payload["recipe_card_model"]
+                            ),
+                            recipe_card_quality=str(
+                                delivery_payload["recipe_card_quality"]
+                            ),
+                            tts_voice=voice,
+                            video_format=context.video_format,
+                            intro_seconds=context.video_intro_seconds,
+                            fps=context.video_fps,
+                            bitrate_kbps=context.video_bitrate_kbps,
+                            log=lambda message, name=page_name: progress(
+                                f"{name}: {message}", stage="video"
+                            ),
+                        )
+                        asyncio.run_coroutine_threadsafe(
+                            self._store_delivery_video(
+                                content_id,
+                                delivery_id,
+                                page_video.processed_video_url,
+                            ),
+                            loop,
+                        ).result()
+                        if processed is None:
+                            processed = page_video
+                    if processed is None:
+                        raise ValueError("No Page video was generated.")
                     self._checkpoint(facebook_project_id)
                     recipe_id = asyncio.run_coroutine_threadsafe(
                         self._store_processed_video(
@@ -510,7 +603,7 @@ class FacebookGenerationManager:
                             processed_video_url=processed.processed_video_url,
                             site_id=context.site_id,
                             created_by=created_by,
-                            title=payload["title"],
+                            title=str(payload["title"]),
                         ),
                         loop,
                     ).result()
@@ -518,7 +611,7 @@ class FacebookGenerationManager:
                     emit(content_id, "Starting article and image generation.", stage="article")
                     generated = generate_for_recipe(
                         recipe_id=str(recipe_id),
-                        recipe_text=payload["title"],
+                        recipe_text=str(payload["title"]),
                         image_url=processed.screenshot_url,
                         site_domain=context.site_domain,
                         credentials=context.credentials,
@@ -535,12 +628,14 @@ class FacebookGenerationManager:
                             or "Article generation did not return an article."
                         )
                     asyncio.run_coroutine_threadsafe(
-                        self._complete(content_id, recipe_id, generated, payload["title"]),
+                        self._complete(
+                            content_id, recipe_id, generated, str(payload["title"])
+                        ),
                         loop,
                     ).result()
                     emit(
                         content_id,
-                        "Generation completed. The shared content is ready for its Page deliveries.",
+                        "Generation completed. Each Page video is ready for delivery.",
                         stage="complete",
                         level="success",
                     )

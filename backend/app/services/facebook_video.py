@@ -659,6 +659,28 @@ def _prompt(template: str, title: str) -> str:
     return template.replace("{recipe_title}", title)
 
 
+OPENAI_TTS_VOICES = (
+    "alloy",
+    "ash",
+    "ballad",
+    "coral",
+    "echo",
+    "fable",
+    "onyx",
+    "nova",
+    "sage",
+    "shimmer",
+    "verse",
+    "marin",
+    "cedar",
+)
+OPENAI_RECIPE_CARD_MODELS = (
+    "gpt-image-2",
+    "gpt-image-2-2026-04-21",
+)
+OPENAI_RECIPE_CARD_QUALITIES = ("auto", "low", "medium", "high")
+
+
 class FacebookVideoProcessor:
     """FastAPI-facing version of the supplied imagetovideo V2.py pipeline."""
 
@@ -671,6 +693,10 @@ class FacebookVideoProcessor:
         openai_api_key: str,
         script_prompt: str,
         recipe_card_prompt: str,
+        recipe_card_model: str = "gpt-image-2",
+        recipe_card_quality: str = "low",
+        tts_voice: str = "nova",
+        variant_id: uuid.UUID | None = None,
         video_format: str = "9:16",
         intro_seconds: float = 5.0,
         fps: int = 30,
@@ -684,6 +710,19 @@ class FacebookVideoProcessor:
         intro_seconds = min(15.0, max(1.0, float(intro_seconds)))
         fps = fps if fps in {24, 30, 60} else 30
         bitrate_kbps = min(20000, max(1000, int(bitrate_kbps)))
+        tts_voice = str(tts_voice or "nova").strip().lower()
+        if tts_voice not in OPENAI_TTS_VOICES:
+            raise ValueError(f"Unsupported OpenAI voice: {tts_voice}.")
+        if not recipe_card_prompt.strip():
+            raise ValueError("Recipe card image prompt is required.")
+        recipe_card_model = str(recipe_card_model or "gpt-image-2").strip()
+        if recipe_card_model not in OPENAI_RECIPE_CARD_MODELS:
+            raise ValueError(f"Unsupported OpenAI recipe card model: {recipe_card_model}.")
+        recipe_card_quality = str(recipe_card_quality or "low").strip().lower()
+        if recipe_card_quality not in OPENAI_RECIPE_CARD_QUALITIES:
+            raise ValueError(
+                f"Unsupported OpenAI recipe card quality: {recipe_card_quality}."
+            )
 
         # Import lazily so the API can boot and report a clear pipeline error if
         # a worker image was deployed without its optional video dependencies.
@@ -694,12 +733,13 @@ class FacebookVideoProcessor:
 
         work_dir = FACEBOOK_UPLOADS / str(content_id)
         work_dir.mkdir(parents=True, exist_ok=True)
+        variant_suffix = f"-{variant_id}" if variant_id is not None else ""
         source_path = work_dir / "source.mp4"
-        silent_path = work_dir / "source-silent.mp4"
-        screenshot_path = work_dir / "first-frame.jpg"
-        audio_path = work_dir / "voice-over.mp3"
-        recipe_card_path = work_dir / "recipe-card.png"
-        output_path = work_dir / "processed-video.mp4"
+        silent_path = work_dir / f"source-silent{variant_suffix}.mp4"
+        screenshot_path = work_dir / f"first-frame{variant_suffix}.jpg"
+        audio_path = work_dir / f"voice-over{variant_suffix}.mp3"
+        recipe_card_path = work_dir / f"recipe-card{variant_suffix}.png"
+        output_path = work_dir / f"processed-video{variant_suffix}.mp4"
 
         emit("Preparing source video.")
         _download_source(source_url, source_path, log=emit)
@@ -749,18 +789,18 @@ class FacebookVideoProcessor:
 
         with client.audio.speech.with_streaming_response.create(
             model="gpt-4o-mini-tts",
-            voice="nova",
+            voice=tts_voice,
             input=voice_over,
         ) as response:
             response.stream_to_file(audio_path)
-        emit("Generated the voice-over audio.")
+        emit(f"Generated the voice-over audio with {tts_voice.title()}.")
 
         with screenshot_path.open("rb") as screenshot:
             image_result = client.images.edit(
-                model="gpt-image-2",
+                model=recipe_card_model,
                 image=screenshot,
                 prompt=_prompt(recipe_card_prompt, recipe_title),
-                quality="low",
+                quality=recipe_card_quality,
                 size=_recipe_card_size(video_width, video_height),
             )
         image_base64 = image_result.data[0].b64_json
@@ -770,7 +810,10 @@ class FacebookVideoProcessor:
         card = Image.open(BytesIO(image_bytes)).convert("RGB")
         card = _prepare_recipe_card(card, video_width, video_height)
         card.save(recipe_card_path, format="PNG", quality=100)
-        emit(f"Generated the recipe card at {video_width}x{video_height}.")
+        emit(
+            f"Generated the recipe card with {recipe_card_model} "
+            f"({recipe_card_quality} quality) at {video_width}x{video_height}."
+        )
 
         audio = AudioFileClip(str(audio_path))
         source = VideoFileClip(str(silent_path))
