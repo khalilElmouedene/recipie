@@ -125,6 +125,7 @@ class MidjourneyIntegrationTests(unittest.TestCase):
         )
         api.message_id = "grid-1"
         api.upscale_baseline_id = "0"
+        api.expected_upscale_count = 1
 
         response = _mock_response(
             json_data=[
@@ -173,8 +174,140 @@ class MidjourneyIntegrationTests(unittest.TestCase):
             patch.object(api, "_interruptible_sleep", return_value=None),
             patch.object(midjourney.requests, "get", return_value=response),
         ):
-            with self.assertRaisesRegex(ValueError, "No upscaled images found"):
+            with self.assertRaisesRegex(ValueError, "Expected 4 upscaled images"):
                 api.download_image(post_upscale_wait=10, poll_interval=10)
+
+    def test_download_image_waits_for_all_images_linked_to_grid(self) -> None:
+        api = midjourney.MidjourneyApi(
+            prompt="Recipe: Tacos Image: https://example.com/image.png",
+            application_id="app",
+            guild_id="guild",
+            channel_id="channel",
+            version="version",
+            mj_id="command",
+            authorization="token",
+            recipe_name="Tacos",
+            source_img_url="https://example.com/image.png",
+            log=lambda _msg: None,
+        )
+        api.message_id = "grid-1"
+        api.upscale_baseline_id = "0"
+
+        first_poll = _mock_response(
+            json_data=[
+                {
+                    "id": "11",
+                    "attachments": [{"url": "https://cdn.example.com/one.webp"}],
+                    "message_reference": {"message_id": "grid-1"},
+                },
+                {
+                    "id": "90",
+                    "content": "Unrelated generation",
+                    "attachments": [{"url": "https://cdn.example.com/unrelated.webp"}],
+                    "message_reference": {"message_id": "other-grid"},
+                },
+            ]
+        )
+        second_poll = _mock_response(
+            json_data=[
+                {
+                    "id": str(10 + number),
+                    "attachments": [{"url": f"https://cdn.example.com/{number}.webp"}],
+                    "message_reference": {"message_id": "grid-1"},
+                }
+                for number in range(1, 5)
+            ]
+        )
+
+        with (
+            patch.object(api, "_interruptible_sleep", return_value=None),
+            patch.object(midjourney.requests, "get", side_effect=[first_poll, second_poll]) as get_mock,
+        ):
+            result = api.download_image(post_upscale_wait=20, poll_interval=10)
+
+        self.assertEqual(get_mock.call_count, 2)
+        self.assertEqual(
+            result,
+            [f"https://cdn.example.com/{number}.webp" for number in range(1, 5)],
+        )
+        self.assertNotIn("https://cdn.example.com/unrelated.webp", result)
+
+    def test_download_image_rejects_same_prompt_without_grid_reference(self) -> None:
+        api = midjourney.MidjourneyApi(
+            prompt="Recipe: Tacos Image: https://example.com/image.png",
+            application_id="app",
+            guild_id="guild",
+            channel_id="channel",
+            version="version",
+            mj_id="command",
+            authorization="token",
+            recipe_name="Tacos",
+            source_img_url="https://example.com/image.png",
+            log=lambda _msg: None,
+        )
+        api.message_id = "grid-1"
+        api.upscale_baseline_id = "0"
+        api.expected_upscale_count = 1
+        response = _mock_response(
+            json_data=[
+                {
+                    "id": "11",
+                    "content": "Recipe: Tacos Image: https://example.com/image.png",
+                    "attachments": [{"url": "https://cdn.example.com/wrong.webp"}],
+                }
+            ]
+        )
+
+        with (
+            patch.object(api, "_interruptible_sleep", return_value=None),
+            patch.object(midjourney.requests, "get", return_value=response),
+        ):
+            with self.assertRaisesRegex(ValueError, "received 0"):
+                api.download_image(post_upscale_wait=10, poll_interval=10)
+
+    def test_grid_poll_tracks_one_progress_message_by_id(self) -> None:
+        api = midjourney.MidjourneyApi(
+            prompt="Recipe: Tacos Image: https://example.com/image.png",
+            application_id="app",
+            guild_id="guild",
+            channel_id="channel",
+            version="version",
+            mj_id="command",
+            authorization="token",
+            recipe_name="Tacos",
+            source_img_url="https://example.com/image.png",
+            log=lambda _msg: None,
+        )
+        api.baseline_id = "100"
+        progress = _mock_response(
+            json_data=[
+                {
+                    "id": "101",
+                    "content": "Recipe: Tacos Image: https://example.com/image.png (31%)",
+                }
+            ]
+        )
+        completed = _mock_response(
+            json_data={
+                "id": "101",
+                "content": "Recipe: Tacos Image: https://example.com/image.png",
+                "attachments": [{"url": "https://cdn.example.com/grid.webp"}],
+                "components": [{
+                    "components": [
+                        {"label": f"U{number}", "custom_id": f"button-{number}"}
+                        for number in range(1, 5)
+                    ]
+                }],
+            }
+        )
+
+        with patch.object(midjourney.requests, "get", side_effect=[progress, completed]) as get_mock:
+            self.assertFalse(api._poll_grid_once())
+            self.assertEqual(api.tracked_message_id, "101")
+            self.assertTrue(api._poll_grid_once())
+
+        self.assertEqual(api.message_id, "101")
+        self.assertIn("/messages/101", get_mock.call_args_list[1].args[0])
 
     def test_cache_image_keeps_real_extension(self) -> None:
         response = _mock_response(

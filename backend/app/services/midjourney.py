@@ -107,8 +107,11 @@ class MidjourneyApi:
         self.wait_time = wait_time
         self.upscale_gap_seconds = max(1, min(120, upscale_gap_seconds))
         self.session_id = str(uuid.uuid4())
+        self.tracked_message_id = ""
         self.message_id = ""
         self.custom_ids: list[str] = []
+        self.grid_job_tokens: set[str] = set()
+        self.expected_upscale_count = 4
         self._log = log or print
         self._should_stop = should_stop or (lambda: False)
 
@@ -185,12 +188,54 @@ class MidjourneyApi:
             return False
         return any(marker in text for marker in self._job_markers())
 
+    @staticmethod
+    def _component_custom_ids(msg: dict) -> list[str]:
+        """Return every component custom_id, including nested action rows."""
+        custom_ids: list[str] = []
+        pending = list(msg.get("components", []) or [])
+        while pending:
+            component = pending.pop()
+            if not isinstance(component, dict):
+                continue
+            custom_id = component.get("custom_id")
+            if custom_id:
+                custom_ids.append(str(custom_id))
+            pending.extend(component.get("components", []) or [])
+        return custom_ids
+
+    @staticmethod
+    def _midjourney_job_tokens(custom_ids: list[str]) -> set[str]:
+        """Extract Midjourney job tokens as a secondary correlation signal."""
+        tokens: set[str] = set()
+        for custom_id in custom_ids:
+            parts = [part.strip() for part in str(custom_id).split("::") if part.strip()]
+            if len(parts) < 2 or parts[0].upper() != "MJ":
+                continue
+            for part in reversed(parts):
+                normalized = part.lower()
+                if re.fullmatch(r"[0-9a-f]{8}-[0-9a-f-]{27,}", normalized):
+                    tokens.add(normalized)
+                    break
+        return tokens
+
+    def _message_matches_grid_job_token(self, msg: dict) -> bool:
+        if not self.grid_job_tokens:
+            return False
+        haystack = " ".join(
+            [self._message_text(msg), *self._component_custom_ids(msg)]
+        ).lower()
+        return any(token in haystack for token in self.grid_job_tokens)
+
     def _message_references_grid(self, msg: dict) -> bool:
+        if not self.message_id:
+            return False
         ref = msg.get("message_reference") or {}
         if str(ref.get("message_id", "")) == self.message_id:
             return True
         referenced = msg.get("referenced_message") or {}
-        return str(referenced.get("id", "")) == self.message_id
+        if str(referenced.get("id", "")) == self.message_id:
+            return True
+        return self._message_matches_grid_job_token(msg)
 
     @staticmethod
     def _message_sort_id(msg: dict) -> int:
@@ -272,15 +317,24 @@ class MidjourneyApi:
         candidates: list[tuple[int, dict, list[dict]]] = []
         for msg in messages:
             try:
+                msg_id = str(msg.get("id", ""))
+                if self.tracked_message_id and msg_id != self.tracked_message_id:
+                    continue
                 comps = msg.get("components", [])
                 if not comps:
                     continue
                 buttons = [
-                    c for c in comps[0].get("components", [])
+                    c for row in comps
+                    for c in row.get("components", [])
                     if c.get("label") in ["U1", "U2", "U3", "U4"]
                 ]
                 if len(buttons) >= 4:
-                    score = 2 if self._message_matches_job(msg) else 0
+                    exact_message = bool(
+                        self.tracked_message_id and msg_id == self.tracked_message_id
+                    )
+                    score = 4 if exact_message else 0
+                    if self._message_matches_job(msg):
+                        score += 2
                     if msg.get("attachments"):
                         score += 1
                     candidates.append((score, msg, buttons))
@@ -290,15 +344,44 @@ class MidjourneyApi:
             return False
         candidates.sort(key=lambda item: (item[0], self._message_sort_id(item[1])), reverse=True)
         best_score, best_msg, best_buttons = candidates[0]
-        if best_score <= 0 and len(candidates) > 1:
-            self._log("Found multiple Midjourney grid candidates without a prompt match; waiting for a clearer match...")
+        if best_score < 2:
+            self._log("Ignoring Midjourney grid candidate without an exact prompt or message-ID match.")
             return False
-        self.message_id = best_msg["id"]
+        self.message_id = str(best_msg["id"])
+        self.tracked_message_id = self.message_id
         self.custom_ids = [b["custom_id"] for b in best_buttons]
+        self.grid_job_tokens = self._midjourney_job_tokens(self.custom_ids)
+        return True
+
+    def _track_progress_message(self, messages: list) -> bool:
+        """Capture the first exact progress message and keep tracking only its ID."""
+        if self.tracked_message_id:
+            return True
+        candidates = [
+            msg for msg in messages
+            if msg.get("id") and self._message_matches_job(msg)
+        ]
+        if not candidates:
+            return False
+        candidates.sort(key=self._message_sort_id)
+        self.tracked_message_id = str(candidates[0]["id"])
+        self._log(f"Tracking Midjourney Discord message {self.tracked_message_id}.")
         return True
 
     def _poll_grid_once(self) -> bool:
         """Single Discord channel read to check for a grid message. Returns True if found."""
+        if self.tracked_message_id:
+            response = requests.get(
+                f"https://discord.com/api/v9/channels/{self.channel_id}/messages/{self.tracked_message_id}",
+                headers=self._headers(),
+                timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
+            )
+            if self._check_rate_limit(response):
+                return False
+            if response.status_code == 200:
+                payload = response.json()
+                return self._find_grid_in_messages([payload] if isinstance(payload, dict) else [])
+
         response = requests.get(
             f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
             headers=self._headers(),
@@ -307,9 +390,13 @@ class MidjourneyApi:
         )
         if self._check_rate_limit(response):
             return False
-        return self._find_grid_in_messages(response.json())
+        messages = response.json()
+        if self._find_grid_in_messages(messages):
+            return True
+        self._track_progress_message(messages)
+        return False
 
-    def get_message(self, poll_interval: int = 30, grace_seconds: int = GRID_GRACE_PERIOD_SECONDS) -> None:
+    def get_message(self, poll_interval: int = 5, grace_seconds: int = GRID_GRACE_PERIOD_SECONDS) -> None:
         """Poll Discord every poll_interval seconds until the grid appears or wait_time expires.
         After wait_time, sleeps grace_seconds and makes one final attempt before giving up."""
         self._log(f"Waiting up to {self.wait_time}s for Midjourney grid...")
@@ -403,15 +490,19 @@ class MidjourneyApi:
             raise ValueError("All 4 upscale buttons failed — Discord may be down")
         if failed:
             self._log(f"Warning: {failed}/4 upscale buttons failed — continuing with partial upscales")
+        self.expected_upscale_count = 4 - failed
         self._log(f"Upscale requests sent ({4 - failed}/4 succeeded)")
 
     def download_image(self, post_upscale_wait: int = 120, poll_interval: int = 30) -> list[str]:
-        """Poll Discord every poll_interval seconds until upscaled images appear or post_upscale_wait expires."""
+        """Return only images linked to this generation's exact grid message."""
         after_id = getattr(self, "upscale_baseline_id", self.message_id)
+        expected_count = max(1, int(getattr(self, "expected_upscale_count", 4)))
+        linked_messages: dict[str, list[str]] = {}
         elapsed = 0
         while elapsed < post_upscale_wait:
-            self._interruptible_sleep(min(poll_interval, post_upscale_wait - elapsed))
-            elapsed += poll_interval
+            step = min(poll_interval, post_upscale_wait - elapsed)
+            self._interruptible_sleep(step)
+            elapsed += step
             try:
                 response = requests.get(
                     f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
@@ -421,32 +512,46 @@ class MidjourneyApi:
                 )
                 if self._check_rate_limit(response):
                     continue
-                strict_urls: list[str] = []
-                fallback_urls: list[str] = []
                 for msg in response.json():
                     try:
-                        if not msg.get("attachments"):
+                        if not msg.get("attachments") or not self._message_references_grid(msg):
                             continue
-                        attachment_url = msg["attachments"][0]["url"]
-                        if self._message_references_grid(msg) or self._message_matches_job(msg):
-                            strict_urls.append(attachment_url)
-                        else:
-                            fallback_urls.append(attachment_url)
-                        if len(strict_urls) >= 4:
-                            break
-                    except (KeyError, IndexError):
+                        urls = [
+                            str(attachment["url"])
+                            for attachment in msg["attachments"]
+                            if isinstance(attachment, dict) and attachment.get("url")
+                        ]
+                        if urls:
+                            message_key = str(msg.get("id") or urls[0])
+                            linked_messages[message_key] = urls
+                    except (KeyError, IndexError, TypeError):
                         continue
-                img_urls = strict_urls
-                if not img_urls and len(fallback_urls) == 1:
-                    self._log("Only one upscaled image candidate found without a direct match; accepting it.")
-                    img_urls = fallback_urls
-                if img_urls:
-                    self._log(f"Got {len(img_urls)} upscaled image(s) after {elapsed}s")
-                    return img_urls
-                self._log(f"Upscaled images not ready yet ({elapsed}/{post_upscale_wait}s)...")
+                ordered_messages = sorted(
+                    linked_messages.items(),
+                    key=lambda item: self._message_sort_id({"id": item[0]}),
+                )
+                img_urls = list(dict.fromkeys(
+                    url
+                    for _message_id, urls in ordered_messages
+                    for url in urls
+                ))
+                if len(img_urls) >= expected_count:
+                    self._log(
+                        f"Got all {expected_count} upscaled image(s) linked to grid "
+                        f"{self.message_id} after {elapsed}s"
+                    )
+                    return img_urls[:expected_count]
+                self._log(
+                    f"Upscaled images linked to grid {self.message_id}: "
+                    f"{len(img_urls)}/{expected_count} ({elapsed}/{post_upscale_wait}s)..."
+                )
             except Exception as e:
                 self._log(f"Image download poll error (will retry): {e}")
-        raise ValueError(f"No upscaled images found after {post_upscale_wait}s")
+        received_count = sum(len(urls) for urls in linked_messages.values())
+        raise ValueError(
+            f"Expected {expected_count} upscaled images linked to Midjourney grid "
+            f"{self.message_id}, but received {received_count} after {post_upscale_wait}s"
+        )
 
 
 def generate_images(
