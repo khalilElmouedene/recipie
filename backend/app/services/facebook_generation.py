@@ -162,6 +162,10 @@ class FacebookGenerationManager:
             credentials = await load_credentials_for_job(db, project.content_project_id, created_by)
             if not credentials.get("openai"):
                 raise ValueError("Configure an OpenAI API key before starting Facebook generation.")
+            if getattr(project, "post_type", "video") == "image":
+                # Image Posts never use or forward Discord/Midjourney credentials,
+                # including when optional article generation is enabled.
+                credentials = {"openai": credentials["openai"]}
 
             prompts: dict[str, str] = {
                 key: item["value"] for key, item in DEFAULT_PROMPTS.items()

@@ -1615,7 +1615,7 @@ function FacebookSettings({
         {activeTab === "pages" && (
           <FacebookPagesSettings project={project} pages={pages} onRefresh={onRefresh} onProject={onProject} />
         )}
-        {activeTab === "keys" && <FacebookKeysSettings contentProjectId={project.content_project_id} />}
+        {activeTab === "keys" && <FacebookKeysSettings contentProjectId={project.content_project_id} projectType={project.post_type} />}
         {activeTab === "ai_prompts" && <FacebookAiPromptSettings contentProjectId={project.content_project_id} />}
         {project.post_type === "video" && activeTab === "video_prompts" && <FacebookVideoPromptSettings contentProjectId={project.content_project_id} />}
         {project.post_type === "video" && activeTab === "video_settings" && <FacebookVideoSettings project={project} onProject={onProject} />}
@@ -2377,11 +2377,18 @@ const KEY_GROUPS = [
   },
 ];
 
-function FacebookKeysSettings({ contentProjectId }: { contentProjectId: string }) {
+function FacebookKeysSettings({
+  contentProjectId,
+  projectType,
+}: {
+  contentProjectId: string;
+  projectType: "video" | "image";
+}) {
   const toast = useToast();
   const [credentials, setCredentials] = useState<CredentialOut[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const visibleGroups = projectType === "image" ? KEY_GROUPS.slice(0, 1) : KEY_GROUPS;
 
   useEffect(() => {
     api.getCredentials(contentProjectId).then(setCredentials).catch(() => {});
@@ -2407,12 +2414,12 @@ function FacebookKeysSettings({ contentProjectId }: { contentProjectId: string }
   };
 
   return (
-    <SettingsSection title="API Keys" description="These credentials are stored on the linked content project and use the same encrypted implementation as the existing Projects page.">
+    <SettingsSection title="API Keys" description={projectType === "image" ? "Only OpenAI is used for GPT Image 2 and optional article generation. Midjourney and Discord are not used by Image Posts." : "These credentials are stored on the linked content project and use the same encrypted implementation as the existing Projects page."}>
       <div className="mb-4 rounded-xl border border-blue-900/50 bg-blue-950/20 px-4 py-3 text-sm text-blue-200">
         These API keys are specific to this project and do not affect other projects.
       </div>
       <div className="space-y-4">
-        {KEY_GROUPS.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.title} className="overflow-hidden rounded-[18px] border border-slate-800 bg-[#101827]">
             <div className="flex items-center gap-3 border-b border-slate-800 px-5 py-4">
               <span className="grid h-9 w-9 place-items-center rounded-xl bg-slate-800 text-slate-400"><group.icon size={17} /></span>
