@@ -518,6 +518,114 @@ async def _validate_reel_upload_source(
     return {"media": media, "public_url": public, "local_path": local_path}
 
 
+async def _publish_facebook_image_delivery(delivery_id: uuid.UUID) -> bool:
+    try:
+        async with SessionLocal() as db:
+            row = await db.execute(
+                select(FacebookDelivery, FacebookContent, FacebookPage, Recipe)
+                .join(FacebookContent, FacebookContent.id == FacebookDelivery.content_id)
+                .join(FacebookPage, FacebookPage.id == FacebookDelivery.page_id)
+                .outerjoin(Recipe, Recipe.id == FacebookContent.recipe_id)
+                .where(FacebookDelivery.id == delivery_id)
+            )
+            record = row.one_or_none()
+            if record is None:
+                raise ValueError("Generated Facebook image content was not found.")
+            delivery, content, page, recipe = record
+            image_url = delivery.generated_image_url
+            if not image_url:
+                raise ValueError("Generated Page image is not ready.")
+            image_path = _local_upload_path(image_url)
+            if image_path is None or not image_path.is_file():
+                raise ValueError("Generated Page image is missing from the server.")
+            page_token = decrypt(page.access_token)
+            page_id = page.facebook_page_id
+            page_mode = page.comment_mode
+            content_id = content.id
+            existing_post_id = delivery.facebook_post_id
+            existing_comment_id = delivery.first_comment_id
+            recipe_post = (content.recipe_post or "").strip()
+            if not recipe_post:
+                raise ValueError("Recipe Post is missing. Regenerate this image post.")
+            generate_article = bool(content.generate_article)
+            allow_without_url = bool(delivery.allow_without_article_url)
+            title = content.title
+
+        article_url = ""
+        if generate_article:
+            article_url = await _ensure_article_published(content_id)
+        elif (
+            page_mode == FacebookCommentMode.full_recipe_url
+            and not allow_without_url
+        ):
+            raise ValueError(
+                "The article was not generated, so this Page cannot add an article URL. "
+                "Confirm publishing without the link and retry."
+            )
+
+        post_id = existing_post_id
+        if not post_id:
+            post_id = await asyncio.to_thread(
+                facebook_api.publish_page_photo,
+                page_id=page_id,
+                page_access_token=page_token,
+                caption=title,
+                image_path=image_path,
+            )
+            async with SessionLocal() as db:
+                await db.execute(
+                    update(FacebookDelivery)
+                    .where(FacebookDelivery.id == delivery_id)
+                    .values(facebook_post_id=post_id)
+                )
+                await db.commit()
+
+        comment_id = existing_comment_id
+        if not comment_id:
+            effective_mode = (
+                FacebookCommentMode.full_recipe
+                if not article_url
+                else page_mode
+            )
+            comment_id = await asyncio.to_thread(
+                facebook_api.add_first_comment,
+                post_id=post_id,
+                page_access_token=page_token,
+                message=build_first_comment(
+                    effective_mode,
+                    recipe_post,
+                    article_url,
+                ),
+            )
+        async with SessionLocal() as db:
+            await db.execute(
+                update(FacebookDelivery)
+                .where(FacebookDelivery.id == delivery_id)
+                .values(
+                    status=FacebookDeliveryStatus.published,
+                    published_at=datetime.now(timezone.utc),
+                    facebook_post_id=post_id,
+                    first_comment_id=comment_id,
+                    error_message=None,
+                )
+            )
+            await db.commit()
+        return True
+    except Exception as exc:
+        logger.exception("Facebook image delivery %s failed", delivery_id)
+        async with SessionLocal() as db:
+            await db.execute(
+                update(FacebookDelivery)
+                .where(FacebookDelivery.id == delivery_id)
+                .values(
+                    status=FacebookDeliveryStatus.failed,
+                    error_message=str(exc)[:2000],
+                )
+            )
+            await db.commit()
+        return False
+
+
 async def publish_facebook_delivery(
     delivery_id: uuid.UUID,
     *,
@@ -555,6 +663,8 @@ async def publish_facebook_delivery(
                 .where(FacebookDelivery.id == delivery_id)
             )
             delivery, content, page, recipe = row.one()
+            if getattr(content, "post_type", "video") == "image":
+                return await _publish_facebook_image_delivery(delivery_id)
             stored_video_url = (
                 getattr(delivery, "processed_video_url", None)
                 or content.processed_video_url

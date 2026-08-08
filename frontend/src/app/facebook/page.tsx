@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, CalendarDays, FileVideo2, Plus, Trash2, X } from "lucide-react";
+import { ArrowRight, CalendarDays, FileImage, FileVideo2, Plus, Trash2, X } from "lucide-react";
 import { api, FacebookProjectOut } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
@@ -24,10 +24,17 @@ export default function FacebookProjectsPage() {
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [postType, setPostType] = useState<"video" | "image">("video");
+  const [canUseImagePosts, setCanUseImagePosts] = useState(false);
 
   const load = async () => {
     try {
-      setProjects(await api.getFacebookProjects());
+      const [loadedProjects, currentUser] = await Promise.all([
+        api.getFacebookProjects(),
+        api.me(),
+      ]);
+      setProjects(loadedProjects);
+      setCanUseImagePosts(currentUser.email.trim().toLowerCase() === "khalil@gmail.com");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not load Facebook projects");
     } finally {
@@ -46,10 +53,12 @@ export default function FacebookProjectsPage() {
       const created = await api.createFacebookProject({
         name: name.trim(),
         description: description.trim(),
+        post_type: postType,
       });
       setProjects((current) => [created, ...current]);
       setName("");
       setDescription("");
+      setPostType("video");
       setShowCreate(false);
       toast.success("Facebook project created");
     } catch (error) {
@@ -63,6 +72,7 @@ export default function FacebookProjectsPage() {
     setShowCreate(false);
     setName("");
     setDescription("");
+    setPostType("video");
   };
 
   const deleteProject = async (project: FacebookProjectOut) => {
@@ -90,12 +100,12 @@ export default function FacebookProjectsPage() {
               Social publishing
             </div>
             <h1 className="max-w-3xl text-3xl font-semibold tracking-[-0.04em] text-white md:text-5xl">
-              Turn source videos into a{" "}
+              Turn source ideas into a{" "}
               <span className="text-[#68a8ff]">publishing system.</span>
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400 md:text-base">
-              Generate one polished recipe package, then schedule it across every connected
-              Facebook Page without duplicating the creative work.
+              Generate polished video or image recipe posts, then publish or schedule them
+              across every connected Facebook Page.
             </p>
           </div>
           <button
@@ -127,7 +137,7 @@ export default function FacebookProjectsPage() {
           </span>
           <span className="mt-4 text-lg font-semibold text-white">Build your first Facebook pipeline</span>
           <span className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-            Connect a WordPress site and one or more Pages, then feed the Spy Sheet with videos.
+            Choose video or image posts, connect your Pages, then feed the dedicated Spy Sheet.
           </span>
         </button>
       ) : (
@@ -152,6 +162,10 @@ export default function FacebookProjectsPage() {
                 </button>
               </div>
               <Link href={`/facebook/${project.id}`} className="relative mt-5 block">
+                <span className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-[#1877f2]/25 bg-[#1877f2]/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8bbcff]">
+                  {project.post_type === "image" ? <FileImage size={12} /> : <FileVideo2 size={12} />}
+                  {project.post_type === "image" ? "Image Posts" : "Video Posts"}
+                </span>
                 <h2 className="text-lg font-semibold text-white transition group-hover:text-[#8bbcff]">
                   {project.name}
                 </h2>
@@ -168,8 +182,8 @@ export default function FacebookProjectsPage() {
                     <p className="text-[10px] uppercase tracking-wider text-slate-500">Posts</p>
                   </div>
                   <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2.5">
-                    <p className={`text-lg font-semibold ${project.has_website ? "text-emerald-400" : "text-amber-400"}`}>
-                      {project.has_website ? "Ready" : "Setup"}
+                    <p className={`text-lg font-semibold ${project.has_website || project.post_type === "image" ? "text-emerald-400" : "text-amber-400"}`}>
+                      {project.has_website ? "Ready" : project.post_type === "image" ? "Optional" : "Setup"}
                     </p>
                     <p className="text-[10px] uppercase tracking-wider text-slate-500">Website</p>
                   </div>
@@ -203,6 +217,31 @@ export default function FacebookProjectsPage() {
               </button>
             </div>
             <div className="space-y-5 px-6 py-6">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">Post type</label>
+                <div className={`grid gap-3 ${canUseImagePosts ? "sm:grid-cols-2" : ""}`}>
+                  <button
+                    type="button"
+                    onClick={() => setPostType("video")}
+                    className={`rounded-xl border p-4 text-left transition ${postType === "video" ? "border-[#1877f2] bg-[#1877f2]/10" : "border-slate-700 bg-slate-950/25 hover:border-slate-600"}`}
+                  >
+                    <FileVideo2 className="mb-3 text-[#68a8ff]" size={21} />
+                    <span className="block text-sm font-semibold text-white">Video Posts</span>
+                    <span className="mt-1 block text-xs leading-5 text-slate-500">Process source videos and publish Reels.</span>
+                  </button>
+                  {canUseImagePosts && (
+                    <button
+                      type="button"
+                      onClick={() => setPostType("image")}
+                      className={`rounded-xl border p-4 text-left transition ${postType === "image" ? "border-[#1877f2] bg-[#1877f2]/10" : "border-slate-700 bg-slate-950/25 hover:border-slate-600"}`}
+                    >
+                      <FileImage className="mb-3 text-[#68a8ff]" size={21} />
+                      <span className="block text-sm font-semibold text-white">Image Posts</span>
+                      <span className="mt-1 block text-xs leading-5 text-slate-500">Template + source image, generated per Page.</span>
+                    </button>
+                  )}
+                </div>
+              </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-300">
                   Project Name <span className="text-[#68a8ff]">*</span>

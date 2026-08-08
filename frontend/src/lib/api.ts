@@ -755,6 +755,7 @@ export const api = {
   createFacebookProject: (data: {
     name: string;
     description: string;
+    post_type: "video" | "image";
   }) =>
     request<FacebookProjectOut>("/api/facebook-projects", {
       method: "POST",
@@ -840,7 +841,13 @@ export const api = {
     request<FacebookSpyRowOut[]>(`/api/facebook-projects/${projectId}/spy-sheet`),
   createFacebookSpyRow: (
     projectId: string,
-    data: { direct_link: string; post_title: string },
+    data: {
+      direct_link?: string;
+      post_title?: string;
+      template_image_url?: string;
+      source_image_url?: string;
+      recipe_post?: string;
+    },
   ) =>
     request<FacebookSpyRowOut>(`/api/facebook-projects/${projectId}/spy-sheet`, {
       method: "POST",
@@ -848,7 +855,13 @@ export const api = {
     }),
   updateFacebookSpyRow: (
     rowId: string,
-    data: Partial<{ direct_link: string; post_title: string }>,
+    data: Partial<{
+      direct_link: string;
+      post_title: string;
+      template_image_url: string;
+      source_image_url: string;
+      recipe_post: string;
+    }>,
   ) =>
     request<FacebookSpyRowOut>(`/api/facebook-spy-rows/${rowId}`, {
       method: "PATCH",
@@ -870,12 +883,27 @@ export const api = {
     }
     return res.json();
   },
+  uploadFacebookImage: async (file: File): Promise<{ url: string }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`${API_URL}/api/facebook/upload-image`, {
+      method: "POST",
+      body: formData,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(typeof err.detail === "string" ? err.detail : "Image upload failed");
+    }
+    return res.json();
+  },
   startFacebookGeneration: (
     projectId: string,
     data: {
       row_ids: string[];
       schedule: boolean;
       page_ids?: string[];
+      generate_article?: boolean;
     },
   ) =>
     request<FacebookGenerationStartOut>(`/api/facebook-projects/${projectId}/generate`, {
@@ -1560,6 +1588,7 @@ export interface FacebookProjectOut {
   content_project_id: string;
   name: string;
   description: string;
+  post_type: "video" | "image";
   app_id: string | null;
   has_app_secret: boolean;
   video_format: FacebookVideoFormat;
@@ -1610,6 +1639,9 @@ export interface FacebookSpyRowOut {
   project_id: string;
   direct_link: string;
   post_title: string;
+  template_image_url: string | null;
+  source_image_url: string | null;
+  recipe_post: string | null;
   created_at: string;
 }
 
@@ -1622,6 +1654,7 @@ export interface FacebookDeliveryOut {
   published_at: string | null;
   facebook_post_id: string | null;
   processed_video_url: string | null;
+  generated_image_url: string | null;
   error_message: string | null;
 }
 
@@ -1634,7 +1667,12 @@ export interface FacebookContentOut {
   id: string;
   project_id: string;
   title: string;
+  post_type: "video" | "image";
   source_video_url: string;
+  template_image_url: string | null;
+  source_image_url: string | null;
+  recipe_post: string | null;
+  generate_article: boolean;
   screenshot_url: string | null;
   processed_video_url: string | null;
   generated_images: string[];

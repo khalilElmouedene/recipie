@@ -564,6 +564,7 @@ class FacebookProject(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
+    post_type: Mapped[str] = mapped_column(String(16), nullable=False, default="video")
     app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     app_secret: Mapped[str | None] = mapped_column(Text, nullable=True)  # encrypted
     video_format: Mapped[str] = mapped_column(String(16), nullable=False, default="9:16")
@@ -620,6 +621,9 @@ class FacebookSpyRow(Base):
     )
     direct_link: Mapped[str] = mapped_column(Text, nullable=False)
     post_title: Mapped[str] = mapped_column(String(500), nullable=False)
+    template_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recipe_post: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -639,6 +643,11 @@ class FacebookContent(Base):
         UUID(as_uuid=True), ForeignKey("recipes.id", ondelete="SET NULL"), nullable=True, index=True
     )
     source_video_url: Mapped[str] = mapped_column(Text, nullable=False)
+    post_type: Mapped[str] = mapped_column(String(16), nullable=False, default="video")
+    template_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recipe_post: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generate_article: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     screenshot_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     processed_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -680,6 +689,10 @@ class FacebookDelivery(Base):
     facebook_post_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     first_comment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     processed_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generated_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    allow_without_article_url: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

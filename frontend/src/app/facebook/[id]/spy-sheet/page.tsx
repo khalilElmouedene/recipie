@@ -8,6 +8,7 @@ import {
   CalendarClock,
   Check,
   CloudUpload,
+  FileImage,
   Loader2,
   Plus,
   Rocket,
@@ -35,12 +36,16 @@ export default function FacebookSpySheetPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [newLink, setNewLink] = useState("");
   const [newTitle, setNewTitle] = useState("");
+  const [newTemplateImage, setNewTemplateImage] = useState("");
+  const [newSourceImage, setNewSourceImage] = useState("");
+  const [newRecipePost, setNewRecipePost] = useState("");
   const [adding, setAdding] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
   const [showLaunch, setShowLaunch] = useState(false);
   const [launchMode, setLaunchMode] = useState<LaunchMode>("draft");
   const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set());
   const [launching, setLaunching] = useState(false);
+  const [generateArticle, setGenerateArticle] = useState(true);
   const newFileRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
@@ -71,16 +76,29 @@ export default function FacebookSpySheetPage() {
 
   const addRow = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!newLink.trim() || !newTitle.trim()) return;
+    const isImage = project?.post_type === "image";
+    if (
+      isImage
+        ? !newTemplateImage.trim() || !newSourceImage.trim() || !newRecipePost.trim()
+        : !newLink.trim() || !newTitle.trim()
+    ) return;
     setAdding(true);
     try {
       const created = await api.createFacebookSpyRow(id, {
-        direct_link: newLink.trim(),
-        post_title: newTitle.trim(),
+        ...(isImage
+          ? {
+              template_image_url: newTemplateImage.trim(),
+              source_image_url: newSourceImage.trim(),
+              recipe_post: newRecipePost.trim(),
+            }
+          : { direct_link: newLink.trim(), post_title: newTitle.trim() }),
       });
       setRows((current) => [...current, created]);
       setNewLink("");
       setNewTitle("");
+      setNewTemplateImage("");
+      setNewSourceImage("");
+      setNewRecipePost("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not add row");
     } finally {
@@ -90,7 +108,7 @@ export default function FacebookSpySheetPage() {
 
   const patchRow = async (
     row: FacebookSpyRowOut,
-    data: Partial<Pick<FacebookSpyRowOut, "direct_link" | "post_title">>,
+    data: Partial<Record<"direct_link" | "post_title" | "template_image_url" | "source_image_url" | "recipe_post", string>>,
   ) => {
     const value = Object.values(data)[0];
     if (!value?.trim()) return;
@@ -131,6 +149,31 @@ export default function FacebookSpySheetPage() {
     }
   };
 
+  const uploadImage = async (
+    file: File,
+    target: "template_image_url" | "source_image_url",
+    row?: FacebookSpyRowOut,
+  ) => {
+    const uploadKey = row ? `${row.id}:${target}` : `new:${target}`;
+    setUploading(uploadKey);
+    try {
+      const { url } = await api.uploadFacebookImage(file);
+      if (row) {
+        const updated = await api.updateFacebookSpyRow(row.id, { [target]: url });
+        setRows((current) => current.map((item) => (item.id === row.id ? updated : item)));
+      } else if (target === "template_image_url") {
+        setNewTemplateImage(url);
+      } else {
+        setNewSourceImage(url);
+      }
+      toast.success(target === "template_image_url" ? "Template Image uploaded" : "Source Image uploaded");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Image upload failed");
+    } finally {
+      setUploading(null);
+    }
+  };
+
   const startGeneration = async () => {
     setLaunching(true);
     try {
@@ -138,12 +181,13 @@ export default function FacebookSpySheetPage() {
         row_ids: selectedRows.map((row) => row.id),
         schedule: launchMode === "schedule",
         page_ids: [...selectedPages],
+        generate_article: project?.post_type === "image" ? generateArticle : true,
       });
       setRows((current) => current.filter((row) => !selected.has(row.id)));
       setSelected(new Set());
       setShowLaunch(false);
       toast.success(
-        `Generation started for ${result.removed_rows} video${result.removed_rows === 1 ? "" : "s"}.`,
+        `Generation started for ${result.removed_rows} ${project?.post_type === "image" ? "image post" : "video"}${result.removed_rows === 1 ? "" : "s"}.`,
       );
       if (result.remaining_rows <= 2) {
         toast.warning(
@@ -167,7 +211,7 @@ export default function FacebookSpySheetPage() {
         className="mb-5 flex items-center gap-2 text-sm text-slate-500 transition hover:text-white"
       >
         <ArrowLeft size={16} />
-        Back to Calendar
+        Back to Posts
       </button>
 
       <div className="flex flex-col gap-5 rounded-[24px] border border-slate-800 bg-[#0d1422] p-6 md:flex-row md:items-end md:justify-between">
@@ -178,7 +222,7 @@ export default function FacebookSpySheetPage() {
           </div>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">Spy Sheet</h1>
           <p className="mt-2 text-sm text-slate-500">
-            {project?.name || "Facebook project"} · Add a workspace video and the post title you want to develop.
+            {project?.name || "Facebook project"} · {project?.post_type === "image" ? "Add Template Image, Source Image, and Recipe Post." : "Add a workspace video and the post title you want to develop."}
           </p>
         </div>
         <button
@@ -201,6 +245,146 @@ export default function FacebookSpySheetPage() {
         </div>
       )}
 
+      {project?.post_type === "image" && (
+        <div className="mt-5 overflow-hidden rounded-[20px] border border-slate-800 bg-[#101827]">
+          <div className="grid grid-cols-[48px_minmax(190px,.8fr)_minmax(190px,.8fr)_minmax(320px,1.4fr)_60px] items-center border-b border-slate-800 bg-slate-950/40 px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            <label className="grid place-items-center">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((row) => row.id)))}
+                className="rounded border-slate-600 bg-slate-900 text-[#1877f2] focus:ring-[#1877f2]"
+                aria-label="Select all rows"
+              />
+            </label>
+            <span>Template Image</span>
+            <span>Source Image</span>
+            <span>Recipe Post</span>
+            <span />
+          </div>
+
+          {rows.map((row, index) => (
+            <div
+              key={row.id}
+              className={`grid grid-cols-[48px_minmax(190px,.8fr)_minmax(190px,.8fr)_minmax(320px,1.4fr)_60px] items-stretch px-3 py-3 transition ${index !== rows.length - 1 ? "border-b border-slate-800/80" : ""} ${selected.has(row.id) ? "bg-[#1877f2]/[0.055]" : "hover:bg-white/[0.018]"}`}
+            >
+              <label className="grid place-items-center">
+                <input
+                  type="checkbox"
+                  checked={selected.has(row.id)}
+                  onChange={() => setSelected((current) => {
+                    const next = new Set(current);
+                    next.has(row.id) ? next.delete(row.id) : next.add(row.id);
+                    return next;
+                  })}
+                  className="rounded border-slate-600 bg-slate-900 text-[#1877f2] focus:ring-[#1877f2]"
+                />
+              </label>
+              {(["template_image_url", "source_image_url"] as const).map((field) => (
+                <div key={field} className="pr-3">
+                  <div className="flex h-24 items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/35 p-2">
+                    {row[field] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={row[field] || ""} alt="" className="h-20 w-20 shrink-0 rounded-lg object-cover" />
+                    ) : (
+                      <span className="grid h-20 w-20 shrink-0 place-items-center rounded-lg bg-slate-900 text-slate-600"><FileImage size={20} /></span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <input
+                        value={row[field] || ""}
+                        onChange={(event) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, [field]: event.target.value } : item))}
+                        onBlur={(event) => patchRow(row, { [field]: event.target.value })}
+                        className="w-full truncate bg-transparent text-xs text-slate-400 outline-none"
+                        placeholder="Paste image URL"
+                      />
+                      <label className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-700 px-2 py-1.5 text-[11px] font-medium text-slate-300 transition hover:border-[#1877f2]/60 hover:text-[#68a8ff]">
+                        {uploading === `${row.id}:${field}` ? <Loader2 size={13} className="animate-spin" /> : <CloudUpload size={13} />}
+                        Replace
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          className="hidden"
+                          disabled={uploading !== null}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) uploadImage(file, field, row);
+                            event.target.value = "";
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <textarea
+                value={row.recipe_post || ""}
+                onChange={(event) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, recipe_post: event.target.value } : item))}
+                onBlur={(event) => patchRow(row, { recipe_post: event.target.value })}
+                rows={4}
+                className="min-h-24 resize-y rounded-xl border border-slate-800 bg-slate-950/35 px-3 py-2 text-sm leading-5 text-slate-200 outline-none transition focus:border-[#1877f2]/60"
+              />
+              <button onClick={() => deleteRow(row.id)} className="m-auto rounded-lg p-2 text-slate-600 transition hover:bg-red-500/10 hover:text-red-400" title="Delete row">
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))}
+
+          <form onSubmit={addRow} className="grid grid-cols-[48px_minmax(190px,.8fr)_minmax(190px,.8fr)_minmax(320px,1.4fr)_60px] items-stretch border-t border-slate-800 bg-slate-950/20 px-3 py-3">
+            <span className="grid place-items-center text-slate-700"><Plus size={16} /></span>
+            {(["template_image_url", "source_image_url"] as const).map((field) => {
+              const value = field === "template_image_url" ? newTemplateImage : newSourceImage;
+              return (
+                <div key={field} className="pr-3">
+                  <label className="flex h-24 cursor-pointer items-center gap-3 rounded-xl border border-dashed border-slate-700 bg-slate-950/35 p-2 transition hover:border-[#1877f2]/60">
+                    {value ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={value} alt="" className="h-20 w-20 shrink-0 rounded-lg object-cover" />
+                    ) : (
+                      <span className="grid h-20 w-20 shrink-0 place-items-center rounded-lg bg-slate-900 text-slate-600"><FileImage size={20} /></span>
+                    )}
+                    <span className="text-xs font-medium text-slate-400">
+                      {uploading === `new:${field}` ? "Uploading…" : field === "template_image_url" ? "Upload template" : "Upload source"}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      disabled={uploading !== null}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) uploadImage(file, field);
+                        event.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+              );
+            })}
+            <textarea
+              value={newRecipePost}
+              onChange={(event) => setNewRecipePost(event.target.value)}
+              rows={4}
+              className="min-h-24 resize-y rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm leading-5 text-white outline-none transition focus:border-[#1877f2]"
+              placeholder="First line = Facebook post title. Add the full Recipe Post here…"
+            />
+            <button
+              disabled={adding || !newTemplateImage || !newSourceImage || !newRecipePost.trim()}
+              className="m-auto grid h-10 w-10 place-items-center rounded-lg bg-[#1877f2] text-white transition hover:bg-[#2f86f6] disabled:opacity-30"
+              title="Add row"
+            >
+              {adding ? <Loader2 size={16} className="animate-spin" /> : <Check size={17} />}
+            </button>
+          </form>
+
+          {rows.length === 0 && (
+            <div className="border-t border-slate-800 px-6 py-10 text-center text-sm text-slate-600">
+              Your intake queue is empty. Add Template Image, Source Image, and Recipe Post above.
+            </div>
+          )}
+        </div>
+      )}
+
+      {project?.post_type !== "image" && (
       <div className="mt-5 overflow-hidden rounded-[20px] border border-slate-800 bg-[#101827]">
         <div className="grid grid-cols-[48px_minmax(260px,1.25fr)_minmax(240px,1fr)_92px] items-center border-b border-slate-800 bg-slate-950/40 px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
           <label className="grid place-items-center">
@@ -348,6 +532,7 @@ export default function FacebookSpySheetPage() {
           </div>
         )}
       </div>
+      )}
 
       <p className="mt-3 text-xs text-slate-600">
         Selected rows are removed from the Spy Sheet as soon as generation begins. A reminder email is sent when two or fewer rows remain.
@@ -366,6 +551,41 @@ export default function FacebookSpySheetPage() {
               </button>
             </div>
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-6 py-6 [scrollbar-color:#334155_transparent] [scrollbar-gutter:stable] [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-700 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-2">
+              {project?.post_type === "image" && (
+                <div>
+                  <p className="mb-2 text-sm font-medium text-slate-300">Generate a WordPress article?</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setGenerateArticle(true)}
+                      className={`rounded-2xl border p-4 text-left transition ${generateArticle ? "border-[#1877f2] bg-[#1877f2]/10" : "border-slate-700 hover:border-slate-600"}`}
+                    >
+                      <p className="text-sm font-semibold text-white">Yes, image + article</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">Generate the Page image, then use that same image in the article.</p>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGenerateArticle(false)}
+                      className={`rounded-2xl border p-4 text-left transition ${!generateArticle ? "border-[#1877f2] bg-[#1877f2]/10" : "border-slate-700 hover:border-slate-600"}`}
+                    >
+                      <p className="text-sm font-semibold text-white">No, image only</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">Skip article generation and keep Recipe Post as the first comment.</p>
+                    </button>
+                  </div>
+                  {generateArticle && !project.has_website && (
+                    <div className="mt-3 flex gap-2 rounded-xl border border-amber-700/40 bg-amber-950/20 px-3 py-2.5 text-xs leading-5 text-amber-200">
+                      <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-400" />
+                      Configure Website settings before generating an article.
+                    </div>
+                  )}
+                  {!generateArticle && pages.some((page) => selectedPages.has(page.id) && page.comment_mode === "full_recipe_url") && (
+                    <div className="mt-3 flex gap-2 rounded-xl border border-amber-700/40 bg-amber-950/20 px-3 py-2.5 text-xs leading-5 text-amber-200">
+                      <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-400" />
+                      No article URL will exist. Pages configured for “Full Recipe + URL” will publish the Recipe Post without the link.
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="grid gap-3 sm:grid-cols-2">
                 <button
                   onClick={() => setLaunchMode("draft")}
@@ -426,10 +646,12 @@ export default function FacebookSpySheetPage() {
               </div>
             </div>
             <div className="flex shrink-0 flex-col gap-3 border-t border-slate-800 bg-slate-950/30 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs text-slate-600">Content is generated once and reused for every selected Page.</p>
+              <p className="text-xs text-slate-600">
+                {project?.post_type === "image" ? "Each Page uses its own Recipe card image prompt, model, and quality." : "Content is generated once and reused for every selected Page."}
+              </p>
               <button
                 onClick={startGeneration}
-                disabled={launching || selectedPages.size === 0}
+                disabled={launching || selectedPages.size === 0 || (project?.post_type === "image" && generateArticle && !project.has_website)}
                 className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-40"
               >
                 {launching ? <Loader2 size={16} className="animate-spin" /> : <Rocket size={16} />}

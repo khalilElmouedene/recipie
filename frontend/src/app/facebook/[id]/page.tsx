@@ -141,8 +141,13 @@ function canPublishFacebookDelivery(
   // Facebook retry available in that case, without offering it for a genuine
   // video/article generation failure.
   return delivery.status === "failed"
-    && Boolean(content.processed_video_url)
-    && Boolean(content.article_url || content.generated_article);
+    && (
+      content.post_type === "image"
+        ? Boolean(delivery.generated_image_url)
+          && (!content.generate_article || Boolean(content.article_url || content.generated_article))
+        : Boolean(content.processed_video_url)
+          && Boolean(content.article_url || content.generated_article)
+    );
 }
 
 function publishableFacebookDeliveries(content: FacebookContentOut) {
@@ -226,7 +231,7 @@ export default function FacebookProjectPage() {
   }
 
   const setupSteps = [
-    { label: "Website", done: project.has_website, tab: "website" as SettingsTab },
+    { label: project.post_type === "image" ? "Website optional" : "Website", done: project.post_type === "image" || project.has_website, tab: "website" as SettingsTab },
     { label: "Facebook Pages", done: pages.length > 0, tab: "pages" as SettingsTab },
     { label: "Content queue", done: contents.length > 0, tab: null },
   ];
@@ -1436,15 +1441,18 @@ function ContentDetail({
         </div>
         <div className="grid gap-6 p-6 md:grid-cols-[300px_1fr]">
           <div>
-            {content.processed_video_url ? (
+            {content.post_type === "image" && content.screenshot_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={content.screenshot_url} alt="" className="max-h-[520px] w-full rounded-2xl bg-black object-contain" />
+            ) : content.processed_video_url ? (
               <video src={content.processed_video_url} controls className="max-h-[520px] w-full rounded-2xl bg-black object-contain" />
             ) : content.status === "failed" ? (
               <div className="flex min-h-80 flex-col items-center justify-center rounded-2xl border border-red-900/40 bg-red-950/15 px-6 text-center">
                 <AlertCircle className="text-red-400" />
-                <p className="mt-3 text-sm font-medium text-red-200">Video generation failed</p>
+                <p className="mt-3 text-sm font-medium text-red-200">{content.post_type === "image" ? "Image post generation failed" : "Video generation failed"}</p>
                 {content.error_message && <p className="mt-2 text-xs leading-5 text-red-300/80">{content.error_message}</p>}
                 <div className="mt-5 flex flex-wrap justify-center gap-2">
-                  <label className={`inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-red-500 ${replacing ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
+                  {content.post_type === "video" && <label className={`inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-red-500 ${replacing ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
                     {replacing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                     Upload video & retry
                     <input
@@ -1458,7 +1466,7 @@ function ContentDetail({
                         event.target.value = "";
                       }}
                     />
-                  </label>
+                  </label>}
                   <button
                     type="button"
                     onClick={onRetry}
@@ -1466,7 +1474,7 @@ function ContentDetail({
                     className="inline-flex items-center gap-2 rounded-lg border border-red-800/60 bg-red-950/30 px-4 py-2.5 text-xs font-semibold text-red-200 transition hover:bg-red-900/40 disabled:opacity-50"
                   >
                     {retrying ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
-                    Retry same link
+                    {content.post_type === "image" ? "Retry generation" : "Retry same link"}
                   </button>
                 </div>
               </div>
@@ -1577,8 +1585,10 @@ function FacebookSettings({
     { key: "pages" as SettingsTab, label: "Facebook Pages", icon: Users },
     { key: "keys" as SettingsTab, label: "API Keys", icon: KeyRound },
     { key: "ai_prompts" as SettingsTab, label: "AI Prompts", icon: MessageSquare },
-    { key: "video_prompts" as SettingsTab, label: "Video Prompts", icon: MessageSquareText },
-    { key: "video_settings" as SettingsTab, label: "Video Settings", icon: SlidersHorizontal },
+    ...(project.post_type === "video" ? [
+      { key: "video_prompts" as SettingsTab, label: "Video Prompts", icon: MessageSquareText },
+      { key: "video_settings" as SettingsTab, label: "Video Settings", icon: SlidersHorizontal },
+    ] : []),
   ];
   return (
     <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
@@ -1598,7 +1608,7 @@ function FacebookSettings({
       </nav>
       <div className="min-w-0">
         {activeTab === "website" && (
-          <SettingsSection title="Publishing website" description="This is the existing Projects website configuration, reused directly by the Facebook pipeline.">
+          <SettingsSection title="Publishing website" description={project.post_type === "image" ? "Optional for image-only posts. Configure it when you want to generate and publish WordPress articles." : "This is the existing Projects website configuration, reused directly by the Facebook pipeline."}>
             <FacebookWebsiteSettings contentProjectId={project.content_project_id} onChanged={onRefresh} />
           </SettingsSection>
         )}
@@ -1607,8 +1617,8 @@ function FacebookSettings({
         )}
         {activeTab === "keys" && <FacebookKeysSettings contentProjectId={project.content_project_id} />}
         {activeTab === "ai_prompts" && <FacebookAiPromptSettings contentProjectId={project.content_project_id} />}
-        {activeTab === "video_prompts" && <FacebookVideoPromptSettings contentProjectId={project.content_project_id} />}
-        {activeTab === "video_settings" && <FacebookVideoSettings project={project} onProject={onProject} />}
+        {project.post_type === "video" && activeTab === "video_prompts" && <FacebookVideoPromptSettings contentProjectId={project.content_project_id} />}
+        {project.post_type === "video" && activeTab === "video_settings" && <FacebookVideoSettings project={project} onProject={onProject} />}
       </div>
     </div>
   );
@@ -2101,7 +2111,7 @@ function FacebookPagesSettings({
             )}
             <div className="grid gap-px bg-slate-800 sm:grid-cols-6">
               {[
-                ["Voice", page.tts_voice.charAt(0).toUpperCase() + page.tts_voice.slice(1)],
+                [project.post_type === "image" ? "Image model" : "Voice", project.post_type === "image" ? page.recipe_card_model : page.tts_voice.charAt(0).toUpperCase() + page.tts_voice.slice(1)],
                 ["Card quality", page.recipe_card_quality.charAt(0).toUpperCase() + page.recipe_card_quality.slice(1)],
                 ["Window", `${page.publish_start_time}–${page.publish_end_time}`],
                 ["Maximum", `${page.max_posts_per_day}/day`],
@@ -2125,6 +2135,7 @@ function FacebookPagesSettings({
 
       {showConnect && (
         <ConnectPageModal
+          projectType={project.post_type}
           token={token}
           onToken={setToken}
           connecting={connecting}
@@ -2135,13 +2146,14 @@ function FacebookPagesSettings({
         />
       )}
       {editingPage && (
-        <PageScheduleModal page={editingPage} onClose={() => setEditingPage(null)} onSaved={() => { setEditingPage(null); onRefresh(); }} />
+        <PageScheduleModal projectType={project.post_type} page={editingPage} onClose={() => setEditingPage(null)} onSaved={() => { setEditingPage(null); onRefresh(); }} />
       )}
     </SettingsSection>
   );
 }
 
 function ConnectPageModal({
+  projectType,
   token,
   onToken,
   connecting,
@@ -2150,6 +2162,7 @@ function ConnectPageModal({
   onTokenConnect,
   onClose,
 }: {
+  projectType: "video" | "image";
   token: string;
   onToken: (value: string) => void;
   connecting: boolean;
@@ -2171,7 +2184,7 @@ function ConnectPageModal({
         </div>
         <div className="space-y-6 overflow-y-auto p-6">
           <div className="rounded-2xl border border-[#1877f2]/25 bg-[#1877f2]/5 px-4 py-3 text-xs leading-5 text-slate-400">
-            After Facebook returns your managed Pages, use <strong className="text-white">Configure</strong> on each Page to choose its first comment, voice, and Recipe Card settings.
+            After Facebook returns your managed Pages, use <strong className="text-white">Configure</strong> on each Page to choose its first comment and {projectType === "image" ? "Image Prompt, model, and quality" : "voice and Recipe Card settings"}.
           </div>
           <button onClick={onOAuth} disabled={connecting} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877f2] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50">
             {connecting ? <Loader2 size={17} className="animate-spin" /> : <FacebookMark className="h-4 w-4" />}
@@ -2194,10 +2207,12 @@ function ConnectPageModal({
 }
 
 function PageScheduleModal({
+  projectType,
   page,
   onClose,
   onSaved,
 }: {
+  projectType: "video" | "image";
   page: FacebookPageOut;
   onClose: () => void;
   onSaved: () => void;
@@ -2246,8 +2261,8 @@ function PageScheduleModal({
               <AudioLines size={16} className="text-[#68a8ff]" />
               <h3 className="text-sm font-semibold text-white">Generation for this Page</h3>
             </div>
-            <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-              <div>
+            <div className={`grid gap-6 ${projectType === "video" ? "lg:grid-cols-[280px_minmax(0,1fr)]" : "grid-cols-1"}`}>
+              {projectType === "video" && <div>
                 <label className="mb-2 block text-xs font-medium text-slate-400">Voice-over voice</label>
                 <select
                   value={form.tts_voice}
@@ -2259,9 +2274,9 @@ function PageScheduleModal({
                   ))}
                 </select>
                 <p className="mt-2 text-[11px] leading-4 text-slate-600">Used by future videos generated for {page.name}.</p>
-              </div>
+              </div>}
               <div>
-                <label className="mb-2 block text-xs font-medium text-slate-400">Recipe card image</label>
+                <label className="mb-2 block text-xs font-medium text-slate-400">{projectType === "image" ? "Image Prompt" : "Recipe card image"}</label>
                 <div className="mb-4 grid gap-4 md:grid-cols-2">
                   <div>
                     <label className="mb-1.5 block text-[11px] font-medium text-slate-500">Image model</label>
@@ -2295,7 +2310,7 @@ function PageScheduleModal({
                   maxLength={12000}
                   className="input-field min-h-[320px] resize-y font-mono text-xs leading-5"
                 />
-                <p className="mt-2 text-[11px] text-slate-600">Use {"{recipe_title}"} to insert the recipe title.</p>
+                <p className="mt-2 text-[11px] text-slate-600">Use {"{recipe_title}"} for the title and {"{recipe_post}"} for the complete Recipe Post.</p>
               </div>
             </div>
           </div>

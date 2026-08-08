@@ -59,6 +59,86 @@ class _GenerationSession:
 
 
 class FacebookGenerationStartTests(unittest.IsolatedAsyncioTestCase):
+    async def test_image_project_uses_three_columns_and_allows_image_only_without_site(self):
+        project_id = uuid.uuid4()
+        content_project_id = uuid.uuid4()
+        owner_id = uuid.uuid4()
+        page_id = uuid.uuid4()
+        row_id = uuid.uuid4()
+        project = SimpleNamespace(
+            id=project_id,
+            owner_id=owner_id,
+            content_project_id=content_project_id,
+            name="Image recipes",
+            post_type="image",
+            generation_paused=False,
+        )
+        page = SimpleNamespace(id=page_id, created_at=1)
+        spy_row = SimpleNamespace(
+            id=row_id,
+            direct_link="",
+            post_title="",
+            template_image_url="https://example.com/template.png",
+            source_image_url="https://example.com/source.png",
+            recipe_post="Creamy Garlic Sauce\nIngredients\n- Garlic",
+            created_at=1,
+        )
+        session = _GenerationSession(
+            [
+                _Result(scalar=project),
+                _Result(scalar=0),
+                _Result(scalar=None),
+                _Result(values=[page]),
+                _Result(values=[spy_row]),
+                _Result(),
+                _Result(scalar=5),
+            ]
+        )
+        start_batch = AsyncMock()
+
+        with (
+            patch(
+                "app.routes.facebook.facebook_generation_manager.is_cancelling",
+                return_value=False,
+            ),
+            patch(
+                "app.routes.facebook.facebook_generation_manager.start_batch",
+                start_batch,
+            ),
+            patch(
+                "app.routes.facebook.load_credentials_for_job",
+                new=AsyncMock(return_value={"openai": "project-openai-key"}),
+            ),
+        ):
+            result = await start_facebook_generation(
+                project_id,
+                FacebookGenerationStart(
+                    row_ids=[row_id],
+                    schedule=False,
+                    page_ids=[page_id],
+                    generate_article=False,
+                ),
+                SimpleNamespace(
+                    id=owner_id,
+                    email="khalil@gmail.com",
+                    full_name="Khalil",
+                ),
+                session,
+            )
+
+        content = next(item for item in session.added if isinstance(item, FacebookContent))
+        delivery = next(item for item in session.added if isinstance(item, FacebookDelivery))
+        self.assertEqual(content.post_type, "image")
+        self.assertEqual(content.title, "Creamy Garlic Sauce")
+        self.assertEqual(content.source_video_url, "")
+        self.assertEqual(content.template_image_url, spy_row.template_image_url)
+        self.assertEqual(content.source_image_url, spy_row.source_image_url)
+        self.assertEqual(content.recipe_post, spy_row.recipe_post)
+        self.assertFalse(content.generate_article)
+        self.assertTrue(delivery.allow_without_article_url)
+        self.assertEqual(result.remaining_rows, 5)
+        start_batch.assert_awaited_once()
+
     async def test_batch_generates_content_once_and_creates_one_delivery_per_page(self):
         project_id = uuid.uuid4()
         content_project_id = uuid.uuid4()

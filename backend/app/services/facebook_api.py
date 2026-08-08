@@ -567,3 +567,35 @@ def add_first_comment(*, post_id: str, page_access_token: str, message: str) -> 
         raise _error(response, "first comment")
     comment_id = response.json().get("id")
     return str(comment_id) if comment_id else None
+
+
+def publish_page_photo(
+    *,
+    page_id: str,
+    page_access_token: str,
+    caption: str,
+    image_path: Path | str,
+) -> str:
+    """Publish a local image as a public Facebook Page photo post."""
+
+    path = Path(image_path)
+    if not path.is_file() or path.stat().st_size < 1024:
+        raise ValueError("Facebook image publishing failed: generated image is missing or empty.")
+    with path.open("rb") as image:
+        response = requests.post(
+            _graph(f"{page_id}/photos"),
+            data={
+                "access_token": page_access_token,
+                "caption": caption,
+                "published": "true",
+            },
+            files={"source": (path.name, image, "image/png")},
+            timeout=(REQUEST_TIMEOUT, 300),
+        )
+    if not response.ok:
+        raise _error(response, "Page image publishing")
+    payload = response.json()
+    post_id = str(payload.get("post_id") or payload.get("id") or "")
+    if not post_id:
+        raise ValueError("Facebook published the image but returned no post ID.")
+    return post_id

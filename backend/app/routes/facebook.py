@@ -11,6 +11,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from jose import JWTError, jwt
+from PIL import Image
 from pydantic import BaseModel, Field
 from sqlalchemy import delete as sql_delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,17 +53,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["facebook"])
 UPLOADS_ROOT = Path(os.getenv("UPLOADS_DIR", "/app/uploads"))
 FACEBOOK_SOURCE_DIR = UPLOADS_ROOT / "facebook" / "sources"
+FACEBOOK_IMAGE_SOURCE_DIR = UPLOADS_ROOT / "facebook" / "image-sources"
+IMAGE_POST_ALLOWED_EMAIL = "khalil@gmail.com"
 MAX_VIDEO_BYTES = 500 * 1024 * 1024
+MAX_IMAGE_BYTES = 25 * 1024 * 1024
 ALLOWED_VIDEO_TYPES = {
     "video/mp4": ".mp4",
     "video/quicktime": ".mov",
     "video/webm": ".webm",
+}
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
 }
 
 
 class FacebookProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str = Field(default="", max_length=5000)
+    post_type: Literal["video", "image"] = "video"
     video_format: Literal["2:3", "9:16", "4:5", "1:1"] = "9:16"
     video_intro_seconds: float = Field(default=5.0, ge=1.0, le=15.0)
     video_fps: Literal[24, 30, 60] = 30
@@ -86,6 +96,7 @@ class FacebookProjectOut(BaseModel):
     content_project_id: uuid.UUID
     name: str
     description: str
+    post_type: str
     app_id: str | None
     has_app_secret: bool
     video_format: str
@@ -202,13 +213,19 @@ class OAuthUrlOut(BaseModel):
 
 
 class FacebookSpyRowCreate(BaseModel):
-    direct_link: str = Field(min_length=1, max_length=4000)
-    post_title: str = Field(min_length=1, max_length=500)
+    direct_link: str = Field(default="", max_length=4000)
+    post_title: str = Field(default="", max_length=500)
+    template_image_url: str | None = Field(default=None, max_length=4000)
+    source_image_url: str | None = Field(default=None, max_length=4000)
+    recipe_post: str | None = Field(default=None, max_length=20000)
 
 
 class FacebookSpyRowUpdate(BaseModel):
     direct_link: str | None = Field(default=None, min_length=1, max_length=4000)
     post_title: str | None = Field(default=None, min_length=1, max_length=500)
+    template_image_url: str | None = Field(default=None, min_length=1, max_length=4000)
+    source_image_url: str | None = Field(default=None, min_length=1, max_length=4000)
+    recipe_post: str | None = Field(default=None, min_length=1, max_length=20000)
 
 
 class FacebookSpyRowOut(BaseModel):
@@ -216,6 +233,9 @@ class FacebookSpyRowOut(BaseModel):
     project_id: uuid.UUID
     direct_link: str
     post_title: str
+    template_image_url: str | None
+    source_image_url: str | None
+    recipe_post: str | None
     created_at: datetime
 
     class Config:
@@ -227,6 +247,7 @@ class FacebookGenerationStart(BaseModel):
     schedule: bool = False
     start_at: datetime | None = None
     page_ids: list[uuid.UUID] | None = None
+    generate_article: bool = True
 
 
 class FacebookGenerationStartOut(BaseModel):
@@ -250,6 +271,7 @@ class FacebookDeliveryOut(BaseModel):
     published_at: datetime | None
     facebook_post_id: str | None
     processed_video_url: str | None
+    generated_image_url: str | None
     error_message: str | None
 
 
@@ -257,7 +279,12 @@ class FacebookContentOut(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
     title: str
+    post_type: str
     source_video_url: str
+    template_image_url: str | None
+    source_image_url: str | None
+    recipe_post: str | None
+    generate_article: bool
     screenshot_url: str | None
     processed_video_url: str | None
     generated_images: list[str]
@@ -315,6 +342,11 @@ async def _project(
         raise HTTPException(status_code=404, detail="Facebook project not found")
     if project.owner_id != user.id:
         raise HTTPException(status_code=403, detail="Not the owner of this Facebook project")
+    if (
+        getattr(project, "post_type", "video") == "image"
+        and user.email.strip().lower() != IMAGE_POST_ALLOWED_EMAIL
+    ):
+        raise HTTPException(status_code=404, detail="Facebook project not found")
     return project
 
 
@@ -347,6 +379,7 @@ async def _project_out(project: FacebookProject, db: AsyncSession) -> FacebookPr
         content_project_id=project.content_project_id,
         name=project.name,
         description=project.description or "",
+        post_type=getattr(project, "post_type", "video") or "video",
         app_id=project.app_id or (settings.facebook_app_id or None),
         has_app_secret=bool(project.app_secret or settings.facebook_app_secret),
         video_format=project.video_format,
@@ -432,7 +465,13 @@ async def list_facebook_projects(
         .where(FacebookProject.owner_id == user.id)
         .order_by(FacebookProject.created_at.desc())
     )
-    return [await _project_out(project, db) for project in rows.scalars().all()]
+    projects = list(rows.scalars().all())
+    if user.email.strip().lower() != IMAGE_POST_ALLOWED_EMAIL:
+        projects = [
+            project for project in projects
+            if getattr(project, "post_type", "video") != "image"
+        ]
+    return [await _project_out(project, db) for project in projects]
 
 
 @router.post(
@@ -445,6 +484,8 @@ async def create_facebook_project(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    if body.post_type == "image" and user.email.strip().lower() != IMAGE_POST_ALLOWED_EMAIL:
+        raise HTTPException(status_code=404, detail="Facebook project type not found")
     content_project = Project(
         name=f"{body.name} - Facebook Content",
         description=body.description,
@@ -457,6 +498,7 @@ async def create_facebook_project(
         content_project_id=content_project.id,
         name=body.name.strip(),
         description=body.description.strip(),
+        post_type=body.post_type,
         video_format=body.video_format,
         video_intro_seconds=body.video_intro_seconds,
         video_fps=body.video_fps,
@@ -926,11 +968,23 @@ async def create_facebook_spy_row(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    await _project(project_id, user, db)
+    project = await _project(project_id, user, db)
+    if project.post_type == "image":
+        if not (body.template_image_url or "").strip():
+            raise HTTPException(status_code=400, detail="Template Image is required.")
+        if not (body.source_image_url or "").strip():
+            raise HTTPException(status_code=400, detail="Source Image is required.")
+        if not (body.recipe_post or "").strip():
+            raise HTTPException(status_code=400, detail="Recipe Post is required.")
+    elif not body.direct_link.strip() or not body.post_title.strip():
+        raise HTTPException(status_code=400, detail="Direct Link and Post Title are required.")
     row = FacebookSpyRow(
         project_id=project_id,
         direct_link=body.direct_link.strip(),
         post_title=body.post_title.strip(),
+        template_image_url=(body.template_image_url or "").strip() or None,
+        source_image_url=(body.source_image_url or "").strip() or None,
+        recipe_post=(body.recipe_post or "").strip() or None,
     )
     db.add(row)
     await db.commit()
@@ -952,7 +1006,7 @@ async def update_facebook_spy_row(
         raise HTTPException(status_code=404, detail="Spy Sheet row not found")
     await _project(row.project_id, user, db)
     for key, value in body.model_dump(exclude_unset=True).items():
-        setattr(row, key, value.strip())
+        setattr(row, key, value.strip() if isinstance(value, str) else value)
     await db.commit()
     await db.refresh(row)
     return row
@@ -1008,6 +1062,43 @@ async def upload_facebook_video(
     del user
     url, _destination = await _store_facebook_video_upload(file)
     return {"url": url}
+
+
+@router.post("/facebook/upload-image")
+async def upload_facebook_image(
+    file: Annotated[UploadFile, File(...)],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    if user.email.strip().lower() != IMAGE_POST_ALLOWED_EMAIL:
+        raise HTTPException(status_code=404, detail="Not found")
+    content_type = (file.content_type or "").lower()
+    extension = ALLOWED_IMAGE_TYPES.get(content_type)
+    if extension is None:
+        raise HTTPException(status_code=400, detail="Upload a JPG, PNG, or WebP image.")
+    FACEBOOK_IMAGE_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+    destination = FACEBOOK_IMAGE_SOURCE_DIR / f"{uuid.uuid4()}{extension}"
+    written = 0
+    try:
+        with destination.open("wb") as output:
+            while chunk := await file.read(1024 * 1024):
+                written += len(chunk)
+                if written > MAX_IMAGE_BYTES:
+                    raise HTTPException(status_code=413, detail="Image exceeds the 25 MB limit.")
+                output.write(chunk)
+        try:
+            with Image.open(destination) as image:
+                image.verify()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="The uploaded file is not a valid image.") from exc
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    return {
+        "url": (
+            f"{settings.server_base_url.rstrip('/')}/uploads/facebook/"
+            f"image-sources/{destination.name}"
+        )
+    }
 
 
 @router.get(
@@ -1141,6 +1232,9 @@ async def cancel_facebook_generation(
                     project_id=project.id,
                     direct_link=content.source_video_url,
                     post_title=content.title,
+                    template_image_url=getattr(content, "template_image_url", None),
+                    source_image_url=getattr(content, "source_image_url", None),
+                    recipe_post=getattr(content, "recipe_post", None),
                 )
             )
             content.generation_cancelled = True
@@ -1241,7 +1335,9 @@ async def start_facebook_generation(
             select(Site).where(Site.project_id == project.content_project_id).limit(1)
         )
     ).scalar_one_or_none()
-    if site is None:
+    project_type = getattr(project, "post_type", "video") or "video"
+    is_image_project = project_type == "image"
+    if site is None and (not is_image_project or body.generate_article):
         raise HTTPException(status_code=400, detail="Configure the website before generation.")
     credentials = await load_credentials_for_job(db, project.content_project_id, user.id)
     if not credentials.get("openai"):
@@ -1277,6 +1373,21 @@ async def start_facebook_generation(
     )
     if len(selected_rows) != len(set(body.row_ids)):
         raise HTTPException(status_code=404, detail="One or more selected Spy Sheet rows were not found.")
+    if is_image_project:
+        invalid_row = next(
+            (
+                row for row in selected_rows
+                if not (row.template_image_url or "").strip()
+                or not (row.source_image_url or "").strip()
+                or not (row.recipe_post or "").strip()
+            ),
+            None,
+        )
+        if invalid_row is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Every selected row needs Template Image, Source Image, and Recipe Post.",
+            )
 
     schedule_map: dict[uuid.UUID, list[datetime | None]] = {}
     if body.schedule:
@@ -1331,11 +1442,21 @@ async def start_facebook_generation(
 
     contents: list[FacebookContent] = []
     for index, spy_row in enumerate(selected_rows):
+        recipe_post = (getattr(spy_row, "recipe_post", None) or "").strip()
+        image_title = next(
+            (line.strip() for line in recipe_post.splitlines() if line.strip()),
+            "Facebook image post",
+        )
         content = FacebookContent(
             project_id=project.id,
             created_by=user.id,
-            source_video_url=spy_row.direct_link,
-            title=spy_row.post_title,
+            source_video_url=spy_row.direct_link if not is_image_project else "",
+            post_type=project_type,
+            template_image_url=getattr(spy_row, "template_image_url", None) if is_image_project else None,
+            source_image_url=getattr(spy_row, "source_image_url", None) if is_image_project else None,
+            recipe_post=recipe_post if is_image_project else None,
+            generate_article=body.generate_article if is_image_project else True,
+            title=image_title[:500] if is_image_project else spy_row.post_title,
         )
         db.add(content)
         await db.flush()
@@ -1346,7 +1467,11 @@ async def start_facebook_generation(
                 content_id=content.id,
                 level="info",
                 stage="queue",
-                message=f'Queued generation for "{spy_row.post_title}".',
+                message=(
+                    f'Queued image generation for "{image_title}".'
+                    if is_image_project
+                    else f'Queued generation for "{spy_row.post_title}".'
+                ),
             )
         )
         for page in pages:
@@ -1356,6 +1481,9 @@ async def start_facebook_generation(
                     page_id=page.id,
                     status=FacebookDeliveryStatus.processing,
                     scheduled_at=schedule_map[page.id][index],
+                    allow_without_article_url=(
+                        is_image_project and not body.generate_article
+                    ),
                 )
             )
 
@@ -1439,6 +1567,7 @@ async def list_facebook_contents(
                 published_at=delivery.published_at,
                 facebook_post_id=delivery.facebook_post_id,
                 processed_video_url=delivery.processed_video_url,
+                generated_image_url=delivery.generated_image_url,
                 error_message=delivery.error_message,
             )
         )
@@ -1455,7 +1584,12 @@ async def list_facebook_contents(
                 id=content.id,
                 project_id=content.project_id,
                 title=content.title,
+                post_type=getattr(content, "post_type", "video") or "video",
                 source_video_url=content.source_video_url,
+                template_image_url=content.template_image_url,
+                source_image_url=content.source_image_url,
+                recipe_post=content.recipe_post,
+                generate_article=bool(content.generate_article),
                 screenshot_url=content.screenshot_url,
                 processed_video_url=content.processed_video_url,
                 generated_images=[str(item) for item in images if item],
@@ -1638,6 +1772,7 @@ async def _queue_facebook_generation_retry(
             facebook_post_id=None,
             first_comment_id=None,
             processed_video_url=None,
+            generated_image_url=None,
             error_message=None,
         )
     )
@@ -1658,7 +1793,11 @@ async def _queue_facebook_generation_retry(
             message=(
                 "Source video replaced and generation retry queued."
                 if replacement_source_url is not None
-                else "Generation retry queued."
+                else (
+                    "Image generation retry queued."
+                    if getattr(content, "post_type", "video") == "image"
+                    else "Generation retry queued."
+                )
             ),
         )
     )
@@ -1826,6 +1965,7 @@ async def schedule_facebook_delivery(
         published_at=delivery.published_at,
         facebook_post_id=delivery.facebook_post_id,
         processed_video_url=delivery.processed_video_url,
+        generated_image_url=delivery.generated_image_url,
         error_message=delivery.error_message,
     )
 

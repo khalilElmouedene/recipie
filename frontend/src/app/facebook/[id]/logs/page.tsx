@@ -45,7 +45,7 @@ interface FacebookJob {
   entries: FacebookGenerationLogOut[];
 }
 
-const PIPELINE_STEPS = ["Queued", "Video", "Article & images", "Ready"];
+const PIPELINE_STEPS = ["Queued", "Creative", "Article", "Ready"];
 
 const STATE_COPY: Record<JobState, { label: string; badge: string; icon: typeof Circle }> = {
   queued: {
@@ -90,6 +90,7 @@ function stageLabel(stage: string) {
     retry: "Retry requested",
     setup: "Preparing generation",
     video: "Processing video",
+    image: "Generating Page image",
     article: "Generating article and images",
     complete: "Generation completed",
     failed: "Generation failed",
@@ -125,7 +126,7 @@ function friendlyError(message: string) {
 function readableProgress(entry: FacebookGenerationLogOut, state: JobState) {
   if (state === "failed") return friendlyError(entry.message);
   if (state === "cancelled") return "Stopped by the user and returned to Spy Sheet.";
-  if (state === "completed") return "Video, article and images are ready for publishing.";
+  if (state === "completed") return "The generated Facebook content is ready for publishing.";
 
   const normalized = entry.message.toLowerCase();
   if (entry.stage === "queue") return "Waiting for generation to start.";
@@ -137,6 +138,7 @@ function readableProgress(entry: FacebookGenerationLogOut, state: JobState) {
     }
     return "Preparing the video and its cover image.";
   }
+  if (entry.stage === "image") return "Generating the post image with this Page’s prompt, model, and quality.";
   if (entry.stage === "article") {
     if (normalized.includes("midjourney") || normalized.includes("image")) {
       return "Generating the article images.";
@@ -150,7 +152,7 @@ function stepIndex(entries: FacebookGenerationLogOut[], state: JobState) {
   if (state === "completed") return PIPELINE_STEPS.length - 1;
   const stages = new Set(entries.map((entry) => entry.stage));
   if (stages.has("article") || stages.has("complete")) return 2;
-  if (stages.has("video")) return 1;
+  if (stages.has("video") || stages.has("image")) return 1;
   return 0;
 }
 
@@ -293,7 +295,7 @@ export default function FacebookGenerationLogsPage() {
     const accepted = await confirm({
       title: "Cancel this generation?",
       message:
-        "All unfinished video links and titles will return to this project's Spy Sheet. Completed content will not be changed.",
+        "All unfinished sources will return to this project's Spy Sheet. Completed content will not be changed.",
       confirmLabel: "Cancel and restore",
       danger: true,
     });
@@ -384,7 +386,7 @@ export default function FacebookGenerationLogsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Generation Jobs</h1>
           <p className="mt-1 text-sm text-gray-400">
-            {project?.name || "Facebook"} · Follow each video from import to ready content.
+            {project?.name || "Facebook"} · Follow each {project?.post_type === "image" ? "image post" : "video"} from import to ready content.
           </p>
         </div>
         <button
@@ -450,6 +452,7 @@ export default function FacebookGenerationLogsPage() {
             onRetry={() => void retryGeneration(job.id, job.title)}
             onReplace={(file) => void replaceVideoAndRetry(job.id, job.title, file)}
             onDelete={() => void deleteGeneration(job.id, job.title)}
+            isImageProject={project?.post_type === "image"}
           />
         ))}
 
@@ -571,6 +574,7 @@ function JobCard({
   onRetry,
   onReplace,
   onDelete,
+  isImageProject,
 }: {
   job: FacebookJob;
   expanded: boolean;
@@ -581,6 +585,7 @@ function JobCard({
   onRetry: () => void;
   onReplace: (file: File) => void;
   onDelete: () => void;
+  isImageProject: boolean;
 }) {
   const state = STATE_COPY[job.state];
   const StatusIcon = state.icon;
@@ -638,7 +643,7 @@ function JobCard({
           <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
             {job.state === "failed" && (
               <>
-                <label className={`btn-primary inline-flex items-center gap-2 px-3 py-2 text-xs ${replacing ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
+                {!isImageProject && <label className={`btn-primary inline-flex items-center gap-2 px-3 py-2 text-xs ${replacing ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
                   {replacing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                   Upload & retry
                   <input
@@ -652,7 +657,7 @@ function JobCard({
                       event.target.value = "";
                     }}
                   />
-                </label>
+                </label>}
                 <button
                   type="button"
                   onClick={onRetry}
@@ -660,7 +665,7 @@ function JobCard({
                   className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-xs disabled:opacity-50"
                 >
                   {retrying ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
-                  Retry link
+                  {isImageProject ? "Retry generation" : "Retry link"}
                 </button>
               </>
             )}

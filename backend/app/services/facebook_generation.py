@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import uuid
@@ -25,6 +26,7 @@ from app.db_models import (
 from app.services.article_generator import generate_for_recipe
 from app.services.credentials_loader import load_credentials_for_job
 from app.services.facebook_video import FacebookVideoProcessor
+from app.services.facebook_image import FacebookImagePostGenerator
 from app.services.facebook_logs import write_facebook_log
 from app.services.prompts import DEFAULT_PROMPTS
 
@@ -39,7 +41,7 @@ class FacebookGenerationCancelled(Exception):
 class _GenerationContext:
     facebook_project_id: uuid.UUID
     content_project_id: uuid.UUID
-    site_id: uuid.UUID
+    site_id: uuid.UUID | None
     site_domain: str
     pinterest_url: str
     generate_recipe_json: bool
@@ -49,6 +51,7 @@ class _GenerationContext:
     video_intro_seconds: float
     video_fps: int
     video_bitrate_kbps: int
+    post_type: str
 
 
 class FacebookGenerationManager:
@@ -61,6 +64,7 @@ class FacebookGenerationManager:
         self._cancel_events: dict[uuid.UUID, threading.Event] = {}
         self._guard = threading.Lock()
         self._video = FacebookVideoProcessor()
+        self._image = FacebookImagePostGenerator()
 
     def _control_events_locked(
         self, project_id: uuid.UUID
@@ -155,9 +159,6 @@ class FacebookGenerationManager:
                     .limit(1)
                 )
             ).scalar_one_or_none()
-            if site is None:
-                raise ValueError("Configure the project website before starting generation.")
-
             credentials = await load_credentials_for_job(db, project.content_project_id, created_by)
             if not credentials.get("openai"):
                 raise ValueError("Configure an OpenAI API key before starting Facebook generation.")
@@ -190,16 +191,19 @@ class FacebookGenerationManager:
             return _GenerationContext(
                 facebook_project_id=project.id,
                 content_project_id=project.content_project_id,
-                site_id=site.id,
-                site_domain=site.domain,
-                pinterest_url=site.pinterest_url or "",
-                generate_recipe_json=bool(getattr(site, "generate_recipe_json", True)),
+                site_id=site.id if site else None,
+                site_domain=site.domain if site else "",
+                pinterest_url=(site.pinterest_url or "") if site else "",
+                generate_recipe_json=(
+                    bool(getattr(site, "generate_recipe_json", True)) if site else True
+                ),
                 credentials=credentials,
                 prompts=prompts,
                 video_format=project.video_format,
                 video_intro_seconds=project.video_intro_seconds,
                 video_fps=project.video_fps,
                 video_bitrate_kbps=project.video_bitrate_kbps,
+                post_type=getattr(project, "post_type", "video") or "video",
             )
 
     async def _load_content_payloads(
@@ -251,6 +255,11 @@ class FacebookGenerationManager:
                     "id": str(content.id),
                     "title": content.title,
                     "source_url": content.source_video_url,
+                    "post_type": getattr(content, "post_type", "video") or "video",
+                    "template_image_url": content.template_image_url,
+                    "source_image_url": content.source_image_url,
+                    "recipe_post": content.recipe_post,
+                    "generate_article": bool(content.generate_article),
                     "deliveries": deliveries_by_content.get(content.id, []),
                 }
                 for content in contents
@@ -271,6 +280,27 @@ class FacebookGenerationManager:
                     FacebookDelivery.status == FacebookDeliveryStatus.processing,
                 )
                 .values(processed_video_url=processed_video_url)
+            )
+            if not result.rowcount:
+                await db.rollback()
+                raise FacebookGenerationCancelled()
+            await db.commit()
+
+    async def _store_delivery_image(
+        self,
+        content_id: uuid.UUID,
+        delivery_id: uuid.UUID,
+        generated_image_url: str,
+    ) -> None:
+        async with SessionLocal() as db:
+            result = await db.execute(
+                update(FacebookDelivery)
+                .where(
+                    FacebookDelivery.id == delivery_id,
+                    FacebookDelivery.content_id == content_id,
+                    FacebookDelivery.status == FacebookDeliveryStatus.processing,
+                )
+                .values(generated_image_url=generated_image_url)
             )
             if not result.rowcount:
                 await db.rollback()
@@ -352,6 +382,120 @@ class FacebookGenerationManager:
             await db.commit()
             return recipe.id
 
+    async def _prepare_image_recipe(
+        self,
+        content_id: uuid.UUID,
+        *,
+        site_id: uuid.UUID,
+        created_by: uuid.UUID,
+        generated_image_url: str,
+        recipe_post: str,
+    ) -> uuid.UUID:
+        async with SessionLocal() as db:
+            content = (
+                await db.execute(
+                    select(FacebookContent)
+                    .where(
+                        FacebookContent.id == content_id,
+                        FacebookContent.status == FacebookContentStatus.processing,
+                        FacebookContent.generation_cancelled.is_(False),
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if content is None:
+                raise FacebookGenerationCancelled()
+            recipe = None
+            if content.recipe_id is not None:
+                recipe = (
+                    await db.execute(select(Recipe).where(Recipe.id == content.recipe_id))
+                ).scalar_one_or_none()
+            if recipe is None:
+                recipe = Recipe(
+                    site_id=site_id,
+                    created_by=created_by,
+                    image_url=generated_image_url,
+                    recipe_text=recipe_post,
+                    status=RecipeStatus.generating,
+                )
+                db.add(recipe)
+                await db.flush()
+            else:
+                recipe.site_id = site_id
+                recipe.created_by = created_by
+                recipe.image_url = generated_image_url
+                recipe.recipe_text = recipe_post
+                recipe.status = RecipeStatus.generating
+                recipe.error_message = None
+                for field in (
+                    "generated_article",
+                    "generated_json",
+                    "generated_full_recipe",
+                    "focus_keyword",
+                    "meta_description",
+                    "category",
+                    "generated_images",
+                    "wp_post_id",
+                    "wp_permalink",
+                    "seo_title",
+                    "wp_tags",
+                ):
+                    setattr(recipe, field, None)
+            content.recipe_id = recipe.id
+            content.screenshot_url = generated_image_url
+            await db.commit()
+            return recipe.id
+
+    async def _complete_image_only(
+        self,
+        content_id: uuid.UUID,
+        generated_image_urls: list[str],
+    ) -> None:
+        async with SessionLocal() as db:
+            content = (
+                await db.execute(
+                    select(FacebookContent)
+                    .where(
+                        FacebookContent.id == content_id,
+                        FacebookContent.status == FacebookContentStatus.processing,
+                        FacebookContent.generation_cancelled.is_(False),
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if content is None:
+                raise FacebookGenerationCancelled()
+            content.generated_images = json.dumps(generated_image_urls)
+            content.generated_article = None
+            content.article_url = None
+            content.screenshot_url = generated_image_urls[0] if generated_image_urls else None
+            content.status = FacebookContentStatus.ready
+            content.error_message = None
+            await self._mark_deliveries_ready(db, content_id)
+            await db.commit()
+
+    async def _mark_deliveries_ready(
+        self, db, content_id: uuid.UUID
+    ) -> None:
+        await db.execute(
+            update(FacebookDelivery)
+            .where(
+                FacebookDelivery.content_id == content_id,
+                FacebookDelivery.status == FacebookDeliveryStatus.processing,
+                FacebookDelivery.scheduled_at.is_not(None),
+            )
+            .values(status=FacebookDeliveryStatus.scheduled)
+        )
+        await db.execute(
+            update(FacebookDelivery)
+            .where(
+                FacebookDelivery.content_id == content_id,
+                FacebookDelivery.status == FacebookDeliveryStatus.processing,
+                FacebookDelivery.scheduled_at.is_(None),
+            )
+            .values(status=FacebookDeliveryStatus.draft)
+        )
+
     async def _complete(
         self,
         content_id: uuid.UUID,
@@ -395,29 +539,22 @@ class FacebookGenerationManager:
             recipe.status = RecipeStatus.generated
             recipe.error_message = None
 
-            content.generated_images = generated.get("generated_images")
+            generated_images = generated.get("generated_images")
+            if content.post_type == "image":
+                image_rows = await db.execute(
+                    select(FacebookDelivery.generated_image_url).where(
+                        FacebookDelivery.content_id == content_id,
+                        FacebookDelivery.generated_image_url.is_not(None),
+                    )
+                )
+                generated_images = json.dumps(list(image_rows.scalars().all()))
+            content.generated_images = generated_images
             content.generated_article = generated.get("generated_article")
-            content.title = generated.get("seo_title") or original_title
+            if content.post_type != "image":
+                content.title = generated.get("seo_title") or original_title
             content.status = FacebookContentStatus.ready
             content.error_message = None
-            await db.execute(
-                update(FacebookDelivery)
-                .where(
-                    FacebookDelivery.content_id == content_id,
-                    FacebookDelivery.status == FacebookDeliveryStatus.processing,
-                    FacebookDelivery.scheduled_at.is_not(None),
-                )
-                .values(status=FacebookDeliveryStatus.scheduled)
-            )
-            await db.execute(
-                update(FacebookDelivery)
-                .where(
-                    FacebookDelivery.content_id == content_id,
-                    FacebookDelivery.status == FacebookDeliveryStatus.processing,
-                    FacebookDelivery.scheduled_at.is_(None),
-                )
-                .values(status=FacebookDeliveryStatus.draft)
-            )
+            await self._mark_deliveries_ready(db, content_id)
             await db.commit()
 
     async def _fail(
@@ -547,6 +684,122 @@ class FacebookGenerationManager:
                     if not delivery_payloads:
                         raise ValueError(
                             "Select at least one connected Facebook Page for this generation."
+                        )
+                    if str(payload.get("post_type") or "video") == "image":
+                        template_image_url = str(payload.get("template_image_url") or "").strip()
+                        source_image_url = str(payload.get("source_image_url") or "").strip()
+                        recipe_post = str(payload.get("recipe_post") or "").strip()
+                        if not template_image_url or not source_image_url or not recipe_post:
+                            raise ValueError(
+                                "Template Image, Source Image, and Recipe Post are required."
+                            )
+                        generated_image_urls: list[str] = []
+                        for delivery_payload in delivery_payloads:
+                            delivery_id = uuid.UUID(str(delivery_payload["id"]))
+                            page_name = str(delivery_payload["page_name"])
+                            emit(
+                                content_id,
+                                f"Generating the image post for {page_name}.",
+                                stage="image",
+                            )
+                            image_url = self._image.generate(
+                                content_id=content_id,
+                                delivery_id=delivery_id,
+                                template_image_url=template_image_url,
+                                source_image_url=source_image_url,
+                                recipe_post=recipe_post,
+                                recipe_title=str(payload["title"]),
+                                prompt=str(delivery_payload["recipe_card_prompt"]),
+                                model=str(delivery_payload["recipe_card_model"]),
+                                quality=str(delivery_payload["recipe_card_quality"]),
+                                openai_api_key=context.credentials["openai"],
+                                log=lambda message, name=page_name: progress(
+                                    f"{name}: {message}", stage="image"
+                                ),
+                            )
+                            generated_image_urls.append(image_url)
+                            asyncio.run_coroutine_threadsafe(
+                                self._store_delivery_image(
+                                    content_id, delivery_id, image_url
+                                ),
+                                loop,
+                            ).result()
+
+                        if bool(payload.get("generate_article")):
+                            if context.site_id is None:
+                                raise ValueError(
+                                    "Configure the project website before generating an article."
+                                )
+                            emit(
+                                content_id,
+                                "Starting article generation with the generated image.",
+                                stage="article",
+                            )
+                            recipe_id = asyncio.run_coroutine_threadsafe(
+                                self._prepare_image_recipe(
+                                    content_id,
+                                    site_id=context.site_id,
+                                    created_by=created_by,
+                                    generated_image_url=generated_image_urls[0],
+                                    recipe_post=recipe_post,
+                                ),
+                                loop,
+                            ).result()
+                            article_credentials = dict(context.credentials)
+                            article_credentials["discord_auth"] = ""
+                            generated = generate_for_recipe(
+                                recipe_id=str(recipe_id),
+                                recipe_text=recipe_post,
+                                image_url=generated_image_urls[0],
+                                site_domain=context.site_domain,
+                                credentials=article_credentials,
+                                prompts=context.prompts,
+                                pinterest_url=context.pinterest_url,
+                                generate_recipe_json=context.generate_recipe_json,
+                                log=lambda message: progress(
+                                    str(message), stage="article"
+                                ),
+                                should_stop=lambda: self._cancel_requested(
+                                    facebook_project_id
+                                ),
+                            )
+                            if generated.get("error_message") or not generated.get(
+                                "generated_article"
+                            ):
+                                raise ValueError(
+                                    generated.get("error_message")
+                                    or "Article generation did not return an article."
+                                )
+                            generated["generated_images"] = json.dumps(
+                                [generated_image_urls[0]]
+                            )
+                            asyncio.run_coroutine_threadsafe(
+                                self._complete(
+                                    content_id,
+                                    recipe_id,
+                                    generated,
+                                    str(payload["title"]),
+                                ),
+                                loop,
+                            ).result()
+                        else:
+                            asyncio.run_coroutine_threadsafe(
+                                self._complete_image_only(
+                                    content_id, generated_image_urls
+                                ),
+                                loop,
+                            ).result()
+                        emit(
+                            content_id,
+                            "Image post generation completed for every selected Page.",
+                            stage="complete",
+                            level="success",
+                        )
+                        continue
+
+                    if context.site_id is None:
+                        raise ValueError(
+                            "Configure the project website before starting generation."
                         )
                     processed = None
                     for delivery_payload in delivery_payloads:

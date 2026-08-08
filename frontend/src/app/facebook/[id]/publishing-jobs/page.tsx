@@ -43,7 +43,7 @@ const STATUS_COPY: Record<FacebookDeliveryStatus, {
 }> = {
   processing: {
     label: "Waiting for content",
-    description: "The video and article must finish before publication can start.",
+    description: "Generation must finish before publication can start.",
     style: "border-slate-700 bg-slate-800/60 text-slate-300",
     icon: Clock3,
   },
@@ -61,7 +61,7 @@ const STATUS_COPY: Record<FacebookDeliveryStatus, {
   },
   publishing: {
     label: "Publishing",
-    description: "Publishing the article, Facebook Reel, and first comment.",
+    description: "Publishing the article when enabled, Facebook post, and first comment.",
     style: "border-[#1877f2]/60 bg-[#1877f2]/10 text-[#8bbcff]",
     icon: Loader2,
   },
@@ -96,8 +96,13 @@ function canPublishFacebookDelivery(
 ) {
   if (content.status === "ready") return true;
   return delivery.status === "failed"
-    && Boolean(content.processed_video_url)
-    && Boolean(content.article_url || content.generated_article);
+    && (
+      content.post_type === "image"
+        ? Boolean(delivery.generated_image_url)
+          && (!content.generate_article || Boolean(content.article_url || content.generated_article))
+        : Boolean(content.processed_video_url)
+          && Boolean(content.article_url || content.generated_article)
+    );
 }
 
 export default function FacebookPublishingJobsPage() {
