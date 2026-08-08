@@ -418,6 +418,79 @@ class MidjourneyIntegrationTests(unittest.TestCase):
         self.assertEqual(api.message_id, "101")
         self.assertIn("/messages/101", get_mock.call_args_list[1].args[0])
 
+    def test_grid_poll_finds_relax_result_published_under_new_message_id(self) -> None:
+        api = midjourney.MidjourneyApi(
+            prompt=(
+                "https://example.com/image.png Amateur photo from Reddit. "
+                "RECIPE NAME: Roasted Jalapeno Popper Grilled Cheese Recipe --v 6.1 --raw"
+            ),
+            application_id="app",
+            guild_id="guild",
+            channel_id="channel",
+            version="version",
+            mj_id="command",
+            authorization="token",
+            recipe_name="Roasted Jalapeno Popper Grilled Cheese Recipe",
+            source_img_url="https://example.com/image.png",
+            log=lambda _msg: None,
+        )
+        api.baseline_id = "100"
+        progress = _mock_response(
+            json_data=[
+                {
+                    "id": "101",
+                    "content": (
+                        "https://example.com/image.png Amateur photo from Reddit. "
+                        "RECIPE NAME: Roasted Jalapeno Popper Grilled Cheese Recipe (31%)"
+                    ),
+                }
+            ]
+        )
+        stale_progress = _mock_response(
+            json_data={
+                "id": "101",
+                "content": (
+                    "https://example.com/image.png Amateur photo from Reddit. "
+                    "RECIPE NAME: Roasted Jalapeno Popper Grilled Cheese Recipe (62%)"
+                ),
+            }
+        )
+        completed_public_message = _mock_response(
+            json_data=[
+                {
+                    "id": "102",
+                    "content": (
+                        "**https://s.mj.run/rewritten Amateur photo from Reddit. "
+                        "RECIPE NAME: Roasted Jalapeno Popper Grilled Cheese Recipe "
+                        "--v 6.1 --raw** - <@user> (relaxed)"
+                    ),
+                    "attachments": [{"url": "https://cdn.example.com/grid.webp"}],
+                    "components": [{
+                        "components": [
+                            {"label": f"U{number}", "custom_id": f"button-{number}"}
+                            for number in range(1, 5)
+                        ]
+                    }],
+                }
+            ]
+        )
+
+        with patch.object(
+            midjourney.requests,
+            "get",
+            side_effect=[progress, stale_progress, completed_public_message],
+        ) as get_mock:
+            self.assertFalse(api._poll_grid_once())
+            self.assertEqual(api.tracked_message_id, "101")
+            self.assertTrue(api._poll_grid_once())
+
+        self.assertEqual(get_mock.call_count, 3)
+        self.assertEqual(api.message_id, "102")
+        self.assertEqual(api.tracked_message_id, "102")
+        self.assertEqual(len(api.custom_ids), 4)
+        self.assertIn("/messages/101", get_mock.call_args_list[1].args[0])
+        self.assertTrue(get_mock.call_args_list[2].args[0].endswith("/messages"))
+
     def test_cache_image_keeps_real_extension(self) -> None:
         response = _mock_response(
             headers={"Content-Type": "image/png"},

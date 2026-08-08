@@ -205,7 +205,20 @@ class MidjourneyApi:
 
     @staticmethod
     def _normalize_text(value: str) -> str:
-        return " ".join(str(value or "").lower().split())
+        text = str(value or "").lower()
+        # Discord decorates Midjourney prompts with Markdown (usually **bold**)
+        # and may wrap links. Those presentation characters must not make an
+        # otherwise identical prompt fail correlation.
+        text = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1 \2", text)
+        text = text.replace("\u200b", " ").replace("\ufeff", " ")
+        text = re.sub(r"[*_`~>|]", " ", text)
+        return " ".join(text.split())
+
+    @classmethod
+    def _normalize_prompt_text(cls, value: str) -> str:
+        """Normalize prompt text while ignoring rewritten Discord/MJ URLs."""
+        without_urls = re.sub(r"https?://\S+", " ", str(value or ""))
+        return cls._normalize_text(without_urls)
 
     def _job_markers(self) -> list[str]:
         markers: list[str] = []
@@ -224,6 +237,19 @@ class MidjourneyApi:
         if not text:
             return False
         return any(marker in text for marker in self._job_markers())
+
+    def _message_matches_prompt(self, msg: dict) -> bool:
+        """Strong match used when Discord publishes the final grid as a new message.
+
+        Midjourney commonly replaces the source URL with an s.mj.run URL, so the
+        URL is deliberately excluded while the meaningful prompt body remains.
+        """
+        expected = self._normalize_prompt_text(self.prompt)
+        actual = self._normalize_prompt_text(self._message_text(msg))
+        if not expected or not actual:
+            return False
+        marker = expected[:240]
+        return len(marker) >= 16 and marker in actual
 
     @staticmethod
     def _component_custom_ids(msg: dict) -> list[str]:
@@ -365,8 +391,6 @@ class MidjourneyApi:
         for msg in messages:
             try:
                 msg_id = str(msg.get("id", ""))
-                if self.tracked_message_id and msg_id != self.tracked_message_id:
-                    continue
                 comps = msg.get("components", [])
                 if not comps:
                     continue
@@ -379,8 +403,18 @@ class MidjourneyApi:
                     exact_message = bool(
                         self.tracked_message_id and msg_id == self.tracked_message_id
                     )
-                    score = 4 if exact_message else 0
-                    if self._message_matches_job(msg):
+                    prompt_match = self._message_matches_prompt(msg)
+                    job_match = self._message_matches_job(msg)
+                    # A queued/progress interaction can remain on one Discord
+                    # message while Relax mode posts the completed grid on a new
+                    # message. Accept that replacement only when its full prompt
+                    # body matches this generation.
+                    if self.tracked_message_id and not exact_message and not prompt_match:
+                        continue
+                    score = 6 if exact_message else 0
+                    if prompt_match:
+                        score += 4
+                    elif job_match:
                         score += 2
                     if msg.get("attachments"):
                         score += 1
@@ -443,7 +477,11 @@ class MidjourneyApi:
                 return False
             if response.status_code == 200:
                 payload = response.json()
-                return self._find_grid_in_messages([payload] if isinstance(payload, dict) else [])
+                if self._find_grid_in_messages([payload] if isinstance(payload, dict) else []):
+                    return True
+                # Do not return here: Discord/Midjourney may leave the progress
+                # response on this ID and publish the completed grid under a new
+                # public message ID, especially while using Relax mode.
 
         response = requests.get(
             f"https://discord.com/api/v9/channels/{self.channel_id}/messages",
