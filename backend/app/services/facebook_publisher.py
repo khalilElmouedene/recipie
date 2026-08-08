@@ -659,12 +659,14 @@ async def publish_facebook_delivery(
                 select(FacebookDelivery, FacebookContent, FacebookPage, Recipe)
                 .join(FacebookContent, FacebookContent.id == FacebookDelivery.content_id)
                 .join(FacebookPage, FacebookPage.id == FacebookDelivery.page_id)
-                .join(Recipe, Recipe.id == FacebookContent.recipe_id)
+                .outerjoin(Recipe, Recipe.id == FacebookContent.recipe_id)
                 .where(FacebookDelivery.id == delivery_id)
             )
             delivery, content, page, recipe = row.one()
             if getattr(content, "post_type", "video") == "image":
                 return await _publish_facebook_image_delivery(delivery_id)
+            if recipe is None:
+                raise ValueError("Generated recipe is missing for this video post.")
             stored_video_url = (
                 getattr(delivery, "processed_video_url", None)
                 or content.processed_video_url

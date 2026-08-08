@@ -104,6 +104,7 @@ class _QueuedSession:
     def __init__(self, results: list[_ExecutionResult]):
         self._results = iter(results)
         self.commits = 0
+        self.statements = []
 
     async def __aenter__(self):
         return self
@@ -112,6 +113,7 @@ class _QueuedSession:
         return False
 
     async def execute(self, _statement):
+        self.statements.append(_statement)
         return next(self._results)
 
     async def commit(self):
@@ -175,6 +177,33 @@ class FacebookRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_image_post_without_article_is_dispatched_without_recipe_row(self):
+        delivery_id = uuid.uuid4()
+        delivery = SimpleNamespace()
+        content = SimpleNamespace(post_type="image")
+        page = SimpleNamespace()
+        claim_session = _QueuedSession([_ExecutionResult(scalar=delivery_id)])
+        load_session = _QueuedSession(
+            [_ExecutionResult(row=(delivery, content, page, None))]
+        )
+        sessions = iter([claim_session, load_session])
+
+        with (
+            patch(
+                "app.services.facebook_publisher.SessionLocal",
+                side_effect=lambda: next(sessions),
+            ),
+            patch(
+                "app.services.facebook_publisher._publish_facebook_image_delivery",
+                new=AsyncMock(return_value=True),
+            ) as publish_image,
+        ):
+            published = await publish_facebook_delivery(delivery_id)
+
+        self.assertTrue(published)
+        publish_image.assert_awaited_once_with(delivery_id)
+        self.assertIn("LEFT OUTER JOIN recipes", str(load_session.statements[0]))
+
     async def test_retry_reuses_existing_wordpress_article(self):
         content_id = uuid.uuid4()
         article_url = "https://example.com/already-published-recipe"
