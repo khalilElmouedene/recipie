@@ -6,6 +6,7 @@ import re
 import time
 import uuid
 import requests
+from datetime import datetime, timezone
 from typing import Callable
 
 _SUPER_PROPERTIES: str = base64.b64encode(
@@ -94,7 +95,10 @@ class MidjourneyApi:
         upscale_gap_seconds: int = UPSCALE_GAP_SECONDS,
         log: Callable[[str], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
+        tracking_state: dict | None = None,
+        on_tracking_update: Callable[[dict], None] | None = None,
     ):
+        state = tracking_state or {}
         self.application_id = application_id
         self.guild_id = guild_id
         self.channel_id = channel_id
@@ -106,14 +110,47 @@ class MidjourneyApi:
         self.prompt = prompt
         self.wait_time = wait_time
         self.upscale_gap_seconds = max(1, min(120, upscale_gap_seconds))
-        self.session_id = str(uuid.uuid4())
-        self.tracked_message_id = ""
-        self.message_id = ""
-        self.custom_ids: list[str] = []
-        self.grid_job_tokens: set[str] = set()
-        self.expected_upscale_count = 4
+        self.session_id = str(state.get("discord_session_id") or uuid.uuid4())
+        self.interaction_nonce = str(state.get("interaction_nonce") or "")
+        self.baseline_id = str(state.get("baseline_message_id") or "0")
+        self.tracked_message_id = str(state.get("tracked_message_id") or "")
+        self.message_id = str(state.get("grid_message_id") or "")
+        self.custom_ids = [str(value) for value in (state.get("grid_custom_ids") or [])]
+        self.grid_job_tokens = {
+            str(value).lower() for value in (state.get("grid_job_tokens") or [])
+        }
+        self.upscale_baseline_id = str(
+            state.get("upscale_baseline_message_id") or self.message_id or "0"
+        )
+        self.requested_custom_ids = [
+            str(value) for value in (state.get("requested_custom_ids") or [])
+        ]
+        self.expected_upscale_count = max(
+            1, int(state.get("expected_upscale_count") or 4)
+        )
+        self.result_message_ids = [
+            str(value) for value in (state.get("result_message_ids") or [])
+        ]
+        self.image_urls = [str(value) for value in (state.get("image_urls") or [])]
+        self.tracking_status = str(state.get("status") or "created")
         self._log = log or print
         self._should_stop = should_stop or (lambda: False)
+        self._on_tracking_update = on_tracking_update
+
+    @staticmethod
+    def _utcnow() -> datetime:
+        return datetime.now(timezone.utc)
+
+    def _update_tracking(self, status: str | None = None, **values) -> None:
+        if status:
+            self.tracking_status = status
+            values["status"] = status
+        if not self._on_tracking_update:
+            return
+        try:
+            self._on_tracking_update(values)
+        except Exception as exc:
+            self._log(f"Warning: could not persist Midjourney tracking state: {exc}")
 
     def _interruptible_sleep(self, seconds: int) -> None:
         """Sleep in 1-second chunks, raising ValueError immediately if stop is requested."""
@@ -266,6 +303,7 @@ class MidjourneyApi:
     def send_message(self) -> requests.Response:
         # Snapshot the channel before sending so we can filter to OUR messages only
         self.baseline_id = self._get_latest_message_id()
+        self.interaction_nonce = self._nonce()
         url = "https://discord.com/api/v9/interactions"
         data = {
             "type": 2,
@@ -273,7 +311,7 @@ class MidjourneyApi:
             "guild_id": self.guild_id,
             "channel_id": self.channel_id,
             "session_id": self.session_id,
-            "nonce": self._nonce(),
+            "nonce": self.interaction_nonce,
             "data": {
                 "version": self.version,
                 "id": self.id,
@@ -310,6 +348,15 @@ class MidjourneyApi:
             timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
         )
         self._log(f"Midjourney prompt sent (status {response.status_code})")
+        if response.status_code == 204:
+            self._update_tracking(
+                "submitted",
+                discord_session_id=self.session_id,
+                interaction_nonce=self.interaction_nonce,
+                baseline_message_id=self.baseline_id,
+                submitted_at=self._utcnow(),
+                last_error=None,
+            )
         return response
 
     def _find_grid_in_messages(self, messages: list) -> bool:
@@ -351,6 +398,16 @@ class MidjourneyApi:
         self.tracked_message_id = self.message_id
         self.custom_ids = [b["custom_id"] for b in best_buttons]
         self.grid_job_tokens = self._midjourney_job_tokens(self.custom_ids)
+        self._update_tracking(
+            "grid_ready",
+            tracked_message_id=self.tracked_message_id,
+            grid_message_id=self.message_id,
+            grid_custom_ids=list(self.custom_ids),
+            grid_job_tokens=sorted(self.grid_job_tokens),
+            grid_ready_at=self._utcnow(),
+            last_polled_at=self._utcnow(),
+            last_error=None,
+        )
         return True
 
     def _track_progress_message(self, messages: list) -> bool:
@@ -365,6 +422,12 @@ class MidjourneyApi:
             return False
         candidates.sort(key=self._message_sort_id)
         self.tracked_message_id = str(candidates[0]["id"])
+        self._update_tracking(
+            "tracking",
+            tracked_message_id=self.tracked_message_id,
+            last_polled_at=self._utcnow(),
+            last_error=None,
+        )
         self._log(f"Tracking Midjourney Discord message {self.tracked_message_id}.")
         return True
 
@@ -442,19 +505,31 @@ class MidjourneyApi:
             "grant the Midjourney bot 'Send Messages' + 'Attach Files' permissions on that channel "
             "so results appear as public messages."
         )
-        raise ValueError(f"No Midjourney grid found after {self.wait_time}s + {grace_seconds}s grace period")
+        error = f"No Midjourney grid found after {self.wait_time}s + {grace_seconds}s grace period"
+        self._update_tracking(
+            "delayed" if self.tracked_message_id else "failed",
+            tracked_message_id=self.tracked_message_id or None,
+            delayed_at=self._utcnow() if self.tracked_message_id else None,
+            last_polled_at=self._utcnow(),
+            last_error=error,
+        )
+        raise ValueError(error)
 
     def choose_images(self, button_retries: int = 3) -> None:
         """Click U1–U4 to upscale all 4 grid images, retrying each button on failure."""
         url = "https://discord.com/api/v9/interactions"
-        self.get_message()
+        if not self.message_id or not self.custom_ids:
+            self.get_message()
         if not self.custom_ids:
             raise ValueError("No buttons found to upscale images")
         # Record baseline just before triggering upscales so download_image can
         # find only the 4 upscaled images that belong to this recipe
-        self.upscale_baseline_id = self._get_latest_message_id()
+        if not self.upscale_baseline_id or self.upscale_baseline_id == "0":
+            self.upscale_baseline_id = self._get_latest_message_id()
         failed = 0
         for custom_id in self.custom_ids[:4]:
+            if custom_id in self.requested_custom_ids:
+                continue
             data = {
                 "type": 3,
                 "guild_id": self.guild_id,
@@ -476,6 +551,15 @@ class MidjourneyApi:
                 )
                 if response.status_code == 204:
                     sent = True
+                    self.requested_custom_ids.append(custom_id)
+                    self._update_tracking(
+                        "upscaling",
+                        upscale_baseline_message_id=self.upscale_baseline_id,
+                        requested_custom_ids=list(self.requested_custom_ids),
+                        expected_upscale_count=len(self.requested_custom_ids),
+                        last_polled_at=self._utcnow(),
+                        last_error=None,
+                    )
                     break
                 if self._check_rate_limit(response):
                     continue
@@ -486,18 +570,31 @@ class MidjourneyApi:
                 failed += 1
                 self._log(f"Upscale button {custom_id} failed after {button_retries} attempts — skipping")
             self._interruptible_sleep(self.upscale_gap_seconds)
-        if failed == 4:
+        if not self.requested_custom_ids:
             raise ValueError("All 4 upscale buttons failed — Discord may be down")
         if failed:
             self._log(f"Warning: {failed}/4 upscale buttons failed — continuing with partial upscales")
-        self.expected_upscale_count = 4 - failed
-        self._log(f"Upscale requests sent ({4 - failed}/4 succeeded)")
+        self.expected_upscale_count = len(self.requested_custom_ids)
+        self._update_tracking(
+            "upscaling",
+            upscale_baseline_message_id=self.upscale_baseline_id,
+            requested_custom_ids=list(self.requested_custom_ids),
+            expected_upscale_count=self.expected_upscale_count,
+            last_error=None,
+        )
+        self._log(
+            f"Upscale requests ready ({self.expected_upscale_count}/4 tracked for this grid)"
+        )
 
     def download_image(self, post_upscale_wait: int = 120, poll_interval: int = 30) -> list[str]:
         """Return only images linked to this generation's exact grid message."""
         after_id = getattr(self, "upscale_baseline_id", self.message_id)
         expected_count = max(1, int(getattr(self, "expected_upscale_count", 4)))
-        linked_messages: dict[str, list[str]] = {}
+        linked_messages: dict[str, list[str]] = {
+            f"saved-{index}": [url]
+            for index, url in enumerate(self.image_urls)
+            if url
+        }
         elapsed = 0
         while elapsed < post_upscale_wait:
             step = min(poll_interval, post_upscale_wait - elapsed)
@@ -536,11 +633,38 @@ class MidjourneyApi:
                     for url in urls
                 ))
                 if len(img_urls) >= expected_count:
+                    self.image_urls = img_urls[:expected_count]
+                    self.result_message_ids = [
+                        message_id
+                        for message_id, _urls in ordered_messages
+                        if not message_id.startswith("saved-")
+                    ]
+                    self._update_tracking(
+                        "completed",
+                        result_message_ids=list(self.result_message_ids),
+                        image_urls=list(self.image_urls),
+                        last_polled_at=self._utcnow(),
+                        completed_at=self._utcnow(),
+                        delayed_at=None,
+                        last_error=None,
+                    )
                     self._log(
                         f"Got all {expected_count} upscaled image(s) linked to grid "
                         f"{self.message_id} after {elapsed}s"
                     )
-                    return img_urls[:expected_count]
+                    return list(self.image_urls)
+                self.result_message_ids = [
+                    message_id
+                    for message_id, _urls in ordered_messages
+                    if not message_id.startswith("saved-")
+                ]
+                self.image_urls = list(img_urls)
+                self._update_tracking(
+                    "upscaling",
+                    result_message_ids=list(self.result_message_ids),
+                    image_urls=list(self.image_urls),
+                    last_polled_at=self._utcnow(),
+                )
                 self._log(
                     f"Upscaled images linked to grid {self.message_id}: "
                     f"{len(img_urls)}/{expected_count} ({elapsed}/{post_upscale_wait}s)..."
@@ -548,10 +672,21 @@ class MidjourneyApi:
             except Exception as e:
                 self._log(f"Image download poll error (will retry): {e}")
         received_count = sum(len(urls) for urls in linked_messages.values())
-        raise ValueError(
+        error = (
             f"Expected {expected_count} upscaled images linked to Midjourney grid "
             f"{self.message_id}, but received {received_count} after {post_upscale_wait}s"
         )
+        self._update_tracking(
+            "delayed",
+            result_message_ids=list(self.result_message_ids),
+            image_urls=list(dict.fromkeys(
+                url for urls in linked_messages.values() for url in urls
+            )),
+            last_polled_at=self._utcnow(),
+            delayed_at=self._utcnow(),
+            last_error=error,
+        )
+        raise ValueError(error)
 
 
 def generate_images(
@@ -566,6 +701,8 @@ def generate_images(
     retry_delay_seconds: int = 15,
     log: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    tracking_state: dict | None = None,
+    on_tracking_update: Callable[[dict], None] | None = None,
 ) -> list[str]:
     """High-level function to generate Midjourney images for a recipe.
     credentials dict must contain: discord_app_id, discord_guild, discord_channel,
@@ -581,32 +718,99 @@ def generate_images(
     retry_delay = max(1, min(300, int(retry_delay_seconds)))
     post_wait = max(10, min(600, post_upscale_wait_seconds))
     attempts_limit = max(1, int(max_attempts)) if max_attempts is not None else None
+    state = tracking_state or {}
+    identity_changed = bool(
+        (state.get("prompt") and str(state["prompt"]) != prompt)
+        or (
+            state.get("source_image_url")
+            and str(state["source_image_url"]) != img_url
+        )
+    )
+    if identity_changed:
+        _log("Midjourney prompt or source image changed; starting a new tracked generation.")
+        if on_tracking_update:
+            try:
+                on_tracking_update({
+                    "status": "created",
+                    "prompt": prompt,
+                    "source_image_url": img_url,
+                    "discord_session_id": None,
+                    "interaction_nonce": None,
+                    "baseline_message_id": None,
+                    "tracked_message_id": None,
+                    "grid_message_id": None,
+                    "grid_custom_ids": [],
+                    "grid_job_tokens": [],
+                    "upscale_baseline_message_id": None,
+                    "requested_custom_ids": [],
+                    "expected_upscale_count": 4,
+                    "result_message_ids": [],
+                    "image_urls": [],
+                    "cached_image_urls": [],
+                    "last_error": None,
+                    "submitted_at": None,
+                    "grid_ready_at": None,
+                    "delayed_at": None,
+                    "completed_at": None,
+                    "last_polled_at": None,
+                })
+            except Exception as exc:
+                _log(f"Warning: could not reset Midjourney tracking state: {exc}")
+        state = {}
+    saved_urls = [str(value) for value in (state.get("image_urls") or []) if value]
+    saved_expected = max(1, int(state.get("expected_upscale_count") or 4))
+    if state.get("status") == "completed" and len(saved_urls) >= saved_expected:
+        _log(
+            f"Resuming completed Midjourney generation from grid "
+            f"{state.get('grid_message_id') or state.get('tracked_message_id')}"
+        )
+        return saved_urls[:saved_expected]
+
+    mj = MidjourneyApi(
+        prompt=prompt,
+        application_id=credentials.get("discord_app_id", ""),
+        guild_id=credentials.get("discord_guild", ""),
+        channel_id=credentials.get("discord_channel", ""),
+        version=credentials.get("mj_version", ""),
+        mj_id=credentials.get("mj_id", ""),
+        authorization=credentials.get("discord_auth", ""),
+        recipe_name=safe_recipe_name,
+        source_img_url=img_url,
+        wait_time=wait_time,
+        upscale_gap_seconds=upscale_gap_seconds,
+        log=_log,
+        should_stop=_should_stop,
+        tracking_state=state,
+        on_tracking_update=on_tracking_update,
+    )
+    mj._update_tracking(
+        recipe_name=safe_recipe_name,
+        source_image_url=img_url,
+        prompt=prompt,
+        discord_application_id=mj.application_id,
+        discord_guild_id=mj.guild_id,
+        discord_channel_id=mj.channel_id,
+        discord_command_version=mj.version,
+        discord_command_id=mj.id,
+        discord_session_id=mj.session_id,
+    )
+
+    resume_submitted = bool(
+        state.get("status") in {"submitted", "tracking", "delayed"}
+        and mj.baseline_id
+        and mj.baseline_id != "0"
+    )
     attempt = 0
-    while True:
+    while not (mj.tracked_message_id or mj.message_id or resume_submitted):
         attempt += 1
         if _should_stop():
+            mj._update_tracking("cancelled", last_error="Generation stopped by user")
             raise ValueError("Generation stopped by user")
         try:
             if attempts_limit is None:
                 _log(f"Midjourney initial communication attempt {attempt}")
             else:
                 _log(f"Midjourney initial communication attempt {attempt}/{attempts_limit}")
-
-            mj = MidjourneyApi(
-                prompt=prompt,
-                application_id=credentials.get("discord_app_id", ""),
-                guild_id=credentials.get("discord_guild", ""),
-                channel_id=credentials.get("discord_channel", ""),
-                version=credentials.get("mj_version", ""),
-                mj_id=credentials.get("mj_id", ""),
-                authorization=credentials.get("discord_auth", ""),
-                recipe_name=safe_recipe_name,
-                source_img_url=img_url,
-                wait_time=wait_time,
-                upscale_gap_seconds=upscale_gap_seconds,
-                log=_log,
-                should_stop=_should_stop,
-            )
 
             send_resp = mj.send_message()
             # Discord interactions should return 204 on success.
@@ -623,6 +827,7 @@ def generate_images(
                     + (f": {body}" if body else "")
                 )
                 if send_resp.status_code in {400, 401, 403, 404}:
+                    mj._update_tracking("failed", last_error=error)
                     raise MidjourneyPermanentError(error)
                 raise ValueError(error)
             break
@@ -633,18 +838,39 @@ def generate_images(
                 _log(f"Midjourney initial communication failed (attempt {attempt}): {e}. Retrying in {retry_delay}s...")
             else:
                 if attempt >= attempts_limit:
-                    raise ValueError(f"Midjourney initial communication failed after {attempts_limit} attempt(s): {e}")
+                    error = (
+                        f"Midjourney initial communication failed after "
+                        f"{attempts_limit} attempt(s): {e}"
+                    )
+                    mj._update_tracking("failed", last_error=error)
+                    raise ValueError(error)
                 _log(
                     f"Midjourney initial communication failed "
                     f"(attempt {attempt}/{attempts_limit}): {e}. Retrying in {retry_delay}s..."
                 )
             for _ in range(retry_delay):
                 if _should_stop():
+                    mj._update_tracking("cancelled", last_error="Generation stopped by user")
                     raise ValueError("Generation stopped by user")
                 time.sleep(1)
 
-    mj.choose_images()
-    image_urls = mj.download_image(post_upscale_wait=post_wait)
+    if mj.tracked_message_id or mj.message_id:
+        _log(
+            f"Resuming Midjourney tracking from Discord message "
+            f"{mj.message_id or mj.tracked_message_id}."
+        )
+
+    try:
+        mj.choose_images()
+        image_urls = mj.download_image(post_upscale_wait=post_wait)
+    except Exception as exc:
+        message = str(exc)
+        if message == "Generation stopped by user":
+            mj._update_tracking("cancelled", last_error=message)
+        elif mj.tracking_status not in {"delayed", "failed"}:
+            mj._update_tracking("failed", last_error=message)
+        raise
     if not image_urls:
+        mj._update_tracking("failed", last_error="Midjourney returned no image URLs")
         raise ValueError("Midjourney returned no image URLs")
     return image_urls

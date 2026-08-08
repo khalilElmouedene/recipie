@@ -171,6 +171,7 @@ class FacebookRetryGenerationTests(unittest.IsolatedAsyncioTestCase):
         project_id = uuid.uuid4()
         owner_id = uuid.uuid4()
         content_id = uuid.uuid4()
+        recipe_id = uuid.uuid4()
         project = SimpleNamespace(
             id=project_id,
             owner_id=owner_id,
@@ -180,7 +181,7 @@ class FacebookRetryGenerationTests(unittest.IsolatedAsyncioTestCase):
             id=content_id,
             project_id=project_id,
             source_video_url="https://www.facebook.com/reel/blocked",
-            recipe_id=None,
+            recipe_id=recipe_id,
             screenshot_url="/uploads/old-frame.jpg",
             processed_video_url=None,
             generated_images=None,
@@ -222,6 +223,7 @@ class FacebookRetryGenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(content.status, FacebookContentStatus.processing)
         self.assertIsNone(content.error_message)
         self.assertIsNone(content.screenshot_url)
+        self.assertEqual(content.recipe_id, recipe_id)
         self.assertEqual(result.content_id, content_id)
         start_batch.assert_awaited_once_with(
             facebook_project_id=project_id,

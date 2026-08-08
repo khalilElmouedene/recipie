@@ -68,6 +68,8 @@ async def lifespan(app: FastAPI):
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     await _migrate_cleanup_config()
     await init_db()
+    from app.services.midjourney_tracking import bind_tracking_event_loop
+    bind_tracking_event_loop(asyncio.get_running_loop())
     await _migrate_prompts()
     from app.services.publish_scheduler import run_publish_scheduler
     from app.services.image_retention_scheduler import run_image_retention_scheduler
@@ -98,6 +100,7 @@ async def lifespan(app: FastAPI):
     await auto_spy_task
     await job_email_task
     await facebook_scheduler_task
+    bind_tracking_event_loop(None)
 
 
 _debug = os.getenv("APP_ENV", "production").lower() != "production"

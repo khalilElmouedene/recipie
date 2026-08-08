@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete as sql_delete, or_, select
 
 from app.config import settings
 from app.database import SessionLocal
-from app.db_models import CleanupConfig, Project, Recipe, RecipeStatus, Site, SystemCleanupState, ThreadsPost, ThreadsPostStatus
+from app.db_models import CleanupConfig, MidjourneyGeneration, Project, Recipe, RecipeStatus, Site, SystemCleanupState, ThreadsPost, ThreadsPostStatus
 
 
 UPLOADS_DIR = Path("/app/uploads")
@@ -306,6 +306,13 @@ async def _cleanup_once(owner_id: Any, retention_days: int) -> int:
             except Exception:
                 pass
 
+        if to_clear:
+            await db.execute(
+                sql_delete(MidjourneyGeneration).where(
+                    MidjourneyGeneration.recipe_id.in_([recipe.id for recipe in to_clear])
+                )
+            )
+
         if to_clear or to_delete_rows:
             await db.commit()
 
@@ -423,6 +430,13 @@ async def cleanup_project_generated_images(
                     recipes_updated += 1
                 except Exception:
                     pass
+
+            if to_update:
+                await db.execute(
+                    sql_delete(MidjourneyGeneration).where(
+                        MidjourneyGeneration.recipe_id.in_([recipe.id for recipe in to_update])
+                    )
+                )
 
         if to_update or to_delete:
             await db.commit()

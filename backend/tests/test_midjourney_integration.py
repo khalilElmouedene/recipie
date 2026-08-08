@@ -78,6 +78,115 @@ class MidjourneyIntegrationTests(unittest.TestCase):
 
         self.assertEqual(send_mock.call_count, 1)
 
+    def test_generate_images_resumes_saved_grid_without_sending_new_prompt(self) -> None:
+        tracking_state = {
+            "status": "upscaling",
+            "discord_session_id": "saved-session",
+            "baseline_message_id": "100",
+            "tracked_message_id": "101",
+            "grid_message_id": "101",
+            "grid_custom_ids": ["u1", "u2", "u3", "u4"],
+            "requested_custom_ids": ["u1", "u2", "u3", "u4"],
+            "expected_upscale_count": 4,
+        }
+        with (
+            patch.object(midjourney.MidjourneyApi, "send_message") as send_mock,
+            patch.object(midjourney.MidjourneyApi, "choose_images") as choose_mock,
+            patch.object(
+                midjourney.MidjourneyApi,
+                "download_image",
+                return_value=[f"https://cdn.example.com/{number}.webp" for number in range(4)],
+            ) as download_mock,
+        ):
+            result = midjourney.generate_images(
+                "Tacos",
+                "https://example.com/image.png",
+                self.credentials,
+                prompts=self.prompts,
+                tracking_state=tracking_state,
+                log=lambda _msg: None,
+            )
+
+        send_mock.assert_not_called()
+        choose_mock.assert_called_once()
+        download_mock.assert_called_once()
+        self.assertEqual(len(result), 4)
+
+    def test_grid_detection_persists_message_and_button_state(self) -> None:
+        updates: list[dict] = []
+        api = midjourney.MidjourneyApi(
+            prompt="Recipe: Tacos Image: https://example.com/image.png",
+            application_id="app",
+            guild_id="guild",
+            channel_id="channel",
+            version="version",
+            mj_id="command",
+            authorization="token",
+            recipe_name="Tacos",
+            source_img_url="https://example.com/image.png",
+            log=lambda _msg: None,
+            on_tracking_update=updates.append,
+        )
+        job_token = "11111111-2222-3333-4444-555555555555"
+        message = {
+            "id": "101",
+            "content": "Recipe: Tacos Image: https://example.com/image.png",
+            "attachments": [{"url": "https://cdn.example.com/grid.webp"}],
+            "components": [{
+                "components": [
+                    {
+                        "label": f"U{number}",
+                        "custom_id": f"MJ::JOB::upsample::{number}::{job_token}",
+                    }
+                    for number in range(1, 5)
+                ]
+            }],
+        }
+
+        self.assertTrue(api._find_grid_in_messages([message]))
+        persisted = updates[-1]
+        self.assertEqual(persisted["status"], "grid_ready")
+        self.assertEqual(persisted["tracked_message_id"], "101")
+        self.assertEqual(persisted["grid_message_id"], "101")
+        self.assertEqual(len(persisted["grid_custom_ids"]), 4)
+        self.assertEqual(persisted["grid_job_tokens"], [job_token])
+
+    def test_upscale_resume_does_not_click_saved_buttons_twice(self) -> None:
+        updates: list[dict] = []
+        api = midjourney.MidjourneyApi(
+            prompt="Recipe: Tacos Image: https://example.com/image.png",
+            application_id="app",
+            guild_id="guild",
+            channel_id="channel",
+            version="version",
+            mj_id="command",
+            authorization="token",
+            recipe_name="Tacos",
+            source_img_url="https://example.com/image.png",
+            tracking_state={
+                "status": "upscaling",
+                "grid_message_id": "101",
+                "grid_custom_ids": ["u1", "u2", "u3", "u4"],
+                "requested_custom_ids": ["u1", "u2"],
+                "upscale_baseline_message_id": "101",
+            },
+            log=lambda _msg: None,
+            on_tracking_update=updates.append,
+        )
+
+        with (
+            patch.object(midjourney.requests, "post", return_value=_mock_response(status_code=204)) as post_mock,
+            patch.object(api, "_interruptible_sleep", return_value=None),
+        ):
+            api.choose_images()
+
+        self.assertEqual(post_mock.call_count, 2)
+        clicked_ids = [call.kwargs["json"]["data"]["custom_id"] for call in post_mock.call_args_list]
+        self.assertEqual(clicked_ids, ["u3", "u4"])
+        self.assertEqual(api.requested_custom_ids, ["u1", "u2", "u3", "u4"])
+        self.assertEqual(api.expected_upscale_count, 4)
+        self.assertEqual(updates[-1]["status"], "upscaling")
+
     def test_grid_detection_prefers_matching_recipe_message(self) -> None:
         api = midjourney.MidjourneyApi(
             prompt="Recipe: Tacos Image: https://example.com/image.png",

@@ -317,6 +317,62 @@ class Recipe(Base):
 
     site: Mapped[Site] = relationship(back_populates="recipes")
     creator: Mapped[User] = relationship()
+    midjourney_generation: Mapped["MidjourneyGeneration | None"] = relationship(
+        back_populates="recipe", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class MidjourneyGeneration(Base):
+    """Persistent Discord correlation state for one recipe image generation."""
+
+    __tablename__ = "midjourney_generations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    recipe_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("recipes.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="created", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    recipe_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    discord_application_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    discord_guild_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    discord_channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    discord_command_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    discord_command_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    discord_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    interaction_nonce: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    baseline_message_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tracked_message_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    grid_message_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    grid_custom_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    grid_job_tokens: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    upscale_baseline_message_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    requested_custom_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    expected_upscale_count: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    result_message_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    image_urls: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    cached_image_urls: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    grid_ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delayed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+    recipe: Mapped[Recipe] = relationship(back_populates="midjourney_generation")
 
 
 class Job(Base):

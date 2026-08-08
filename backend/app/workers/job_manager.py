@@ -936,6 +936,7 @@ class JobManager:
                                     prompts=prompts,
                                     log=rj.log,
                                     should_stop=rj.should_stop,
+                                    tracking_recipe_id=str(items[0]["id"]),
                                 )
                                 if not shared_images:
                                     raise ValueError(
@@ -1502,6 +1503,7 @@ class JobManager:
                                         prompts=prompts,
                                         log=rj.log,
                                         should_stop=rj.should_stop,
+                                        tracking_recipe_id=str(items[0]["id"]),
                                     )
                                     if not shared_images:
                                         raise ValueError(

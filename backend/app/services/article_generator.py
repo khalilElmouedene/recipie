@@ -9,7 +9,7 @@ import time
 import unicodedata
 import uuid
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from random import randint
 from typing import Callable
@@ -20,6 +20,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 from . import midjourney, openai_service
+from .midjourney_tracking import MidjourneyTrackingStore
 from app.config import settings
 from ..midjourney_settings import (
     DEFAULT_GRID_WAIT_SECONDS,
@@ -67,6 +68,113 @@ def _mj_grid_wait_from_credentials(credentials: dict) -> int:
         return clamp_grid_wait(int(str(raw).strip()))
     except ValueError:
         return DEFAULT_GRID_WAIT_SECONDS
+
+
+def _midjourney_store(
+    recipe_id: str | None,
+    *,
+    recipe_title: str,
+    image_url: str,
+    credentials: dict,
+    log: Callable[[str], None],
+) -> tuple[MidjourneyTrackingStore | None, dict]:
+    if not recipe_id:
+        return None, {}
+    try:
+        store = MidjourneyTrackingStore(recipe_id)
+        state = store.load_or_create(
+            discord_application_id=str(credentials.get("discord_app_id", "")),
+            discord_guild_id=str(credentials.get("discord_guild", "")),
+            discord_channel_id=str(credentials.get("discord_channel", "")),
+            discord_command_version=str(credentials.get("mj_version", "")),
+            discord_command_id=str(credentials.get("mj_id", "")),
+        )
+        return store, state
+    except (ValueError, TypeError):
+        # Some isolated unit tests and shared preview flows use non-UUID IDs.
+        return None, {}
+    except Exception as exc:
+        log(f"Warning: Midjourney tracking database is unavailable: {exc}")
+        return None, {}
+
+
+def _generate_midjourney_cached_images(
+    *,
+    recipe_id: str | None,
+    recipe_title: str,
+    image_url: str,
+    credentials: dict,
+    prompts: dict[str, str] | None,
+    log: Callable[[str], None],
+    should_stop: Callable[[], bool],
+) -> list[str]:
+    store, state = _midjourney_store(
+        recipe_id,
+        recipe_title=recipe_title,
+        image_url=image_url,
+        credentials=credentials,
+        log=log,
+    )
+    saved_cached_urls = [
+        str(value) for value in (state.get("cached_image_urls") or []) if value
+    ]
+    from .prompts import get_prompt
+
+    safe_recipe_title = midjourney._sanitize_mj_prompt(recipe_title, log)
+    expected_prompt = get_prompt(prompts or {}, "midjourney_imagine").format(
+        recipe_name=safe_recipe_title,
+        img_url=image_url,
+        source_img=image_url,
+    )
+    same_generation = bool(
+        state.get("prompt") == expected_prompt
+        and state.get("source_image_url") == image_url
+    )
+    if state.get("status") == "completed" and saved_cached_urls and same_generation:
+        log(
+            f"Reusing {len(saved_cached_urls)} cached Midjourney image(s) from "
+            f"Discord grid {state.get('grid_message_id')}."
+        )
+        return saved_cached_urls
+
+    def persist(values: dict) -> None:
+        if store is not None:
+            store.update(**values)
+
+    img_urls = midjourney.generate_images(
+        recipe_title,
+        image_url,
+        credentials,
+        prompts=prompts,
+        wait_time=_mj_grid_wait_from_credentials(credentials),
+        upscale_gap_seconds=UPSCALE_GAP_SECONDS,
+        post_upscale_wait_seconds=POST_UPSCALE_WAIT_SECONDS,
+        log=log,
+        should_stop=should_stop,
+        tracking_state=state,
+        on_tracking_update=persist if store is not None else None,
+    )
+
+    cached_urls: list[str] = []
+    for url in img_urls:
+        if not url:
+            continue
+        try:
+            cached_urls.append(_cache_image(url, log=log))
+        except Exception as cache_err:
+            log(f"Warning: failed to cache image, skipping: {cache_err}")
+    if not cached_urls:
+        if store is not None:
+            store.update(status="failed", last_error="All Midjourney images failed to cache")
+        raise ValueError("Midjourney did not return cacheable images")
+    if store is not None:
+        store.update(
+            status="completed",
+            cached_image_urls=list(cached_urls),
+            completed_at=datetime.now(timezone.utc),
+            last_error=None,
+        )
+    return cached_urls
 
 
 def _image_extension_from_response(url: str, response: requests.Response) -> str:
@@ -380,30 +488,16 @@ def generate_for_recipe(
                     if _stop():
                         return result
                     _log("Midjourney slot acquired - generating images...")
-                    gw = _mj_grid_wait_from_credentials(credentials)
-                    img_urls = midjourney.generate_images(
-                        recipe_title,
-                        image_url,
-                        credentials,
+                    cached_urls = _generate_midjourney_cached_images(
+                        recipe_id=recipe_id,
+                        recipe_title=recipe_title,
+                        image_url=image_url,
+                        credentials=credentials,
                         prompts=prompts,
-                        wait_time=gw,
-                        upscale_gap_seconds=UPSCALE_GAP_SECONDS,
-                        post_upscale_wait_seconds=POST_UPSCALE_WAIT_SECONDS,
                         log=_log,
                         should_stop=_stop,
                     )
-                    # Cache immediately — Discord CDN URLs expire after a few hours.
-                    # Cache each image individually so one failure doesn't lose the rest.
-                    cached_urls = []
-                    for u in img_urls:
-                        if not u:
-                            continue
-                        try:
-                            cached_urls.append(_cache_image(u, log=_log))
-                        except Exception as cache_err:
-                            _log(f"Warning: failed to cache image, skipping: {cache_err}")
-                    if not cached_urls:
-                        raise ValueError("Midjourney did not return any images")
+                    # The helper caches immediately because Discord CDN URLs expire.
                     result["generated_images"] = json.dumps(cached_urls)
         else:
             _log("Skipping Midjourney (no Discord credentials configured)")
@@ -520,6 +614,7 @@ def generate_images_only(
     prompts: dict[str, str] | None = None,
     log: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    tracking_recipe_id: str | None = None,
 ) -> str | None:
     """Generate Midjourney images only and return JSON string urls (or None)."""
     _log = log or print
@@ -540,28 +635,15 @@ def generate_images_only(
             if _stop():
                 return None
             _log("Midjourney slot acquired - generating images...")
-            gw = _mj_grid_wait_from_credentials(credentials)
-            img_urls = midjourney.generate_images(
-                recipe_title,
-                image_url,
-                credentials,
+            cached_urls = _generate_midjourney_cached_images(
+                recipe_id=tracking_recipe_id,
+                recipe_title=recipe_title,
+                image_url=image_url,
+                credentials=credentials,
                 prompts=prompts,
-                wait_time=gw,
-                upscale_gap_seconds=UPSCALE_GAP_SECONDS,
-                post_upscale_wait_seconds=POST_UPSCALE_WAIT_SECONDS,
                 log=_log,
                 should_stop=_stop,
             )
-            cached_urls = []
-            for u in img_urls:
-                if not u:
-                    continue
-                try:
-                    cached_urls.append(_cache_image(u, log=_log))
-                except Exception as cache_err:
-                    _log(f"Warning: failed to cache image, skipping: {cache_err}")
-            if not cached_urls:
-                raise RuntimeError("All Midjourney images failed to cache")
             return json.dumps(cached_urls)
 
 

@@ -1620,7 +1620,8 @@ async def _queue_facebook_generation_retry(
     previous_recipe_id = content.recipe_id
     if replacement_source_url is not None:
         content.source_video_url = replacement_source_url
-    content.recipe_id = None
+        # A different source must start a different Midjourney generation.
+        content.recipe_id = None
     content.screenshot_url = None
     content.processed_video_url = None
     content.generated_images = None
@@ -1640,7 +1641,7 @@ async def _queue_facebook_generation_retry(
             error_message=None,
         )
     )
-    if previous_recipe_id is not None:
+    if previous_recipe_id is not None and replacement_source_url is not None:
         await db.flush()
         await db.execute(
             sql_delete(Recipe).where(

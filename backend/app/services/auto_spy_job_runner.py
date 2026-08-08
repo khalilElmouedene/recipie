@@ -1506,6 +1506,7 @@ async def start_auto_spy_generate_job(
                             prompts=prompts,
                             log=rj.log,
                             should_stop=rj.should_stop,
+                            tracking_recipe_id=str(items[0]["id"]),
                         )
                         if shared_images:
                             img_list: list[str] = json.loads(shared_images)
@@ -1519,9 +1520,20 @@ async def start_auto_spy_generate_job(
                                 per_item_images[item["id"]] = json.dumps(site_imgs)
                             rj.log(f"  Distributed {len(img_list)} image(s) across {n_sites} site(s)")
                     except Exception as e:
-                        rj.log(f"  Midjourney failed for recipe {group['idx']}: {e} — continuing without images")
+                        rj.log(f"  Midjourney delayed for recipe {group['idx']}: {e}")
                 else:
                     rj.log("  Midjourney skipped (no Discord credentials)")
+
+                if discord_auth and group.get("image_url") and not per_item_images:
+                    message = (
+                        f"Midjourney images are still unavailable for input recipe "
+                        f"{group['idx']}. Retry will resume its saved Discord message."
+                    )
+                    for item in items:
+                        _on_recipe_done(item["id"], {"error_message": message})
+                        done += 1
+                        _on_progress(done, total)
+                    continue
 
                 # Strip Discord from per-site calls — images already generated above
                 run_creds = dict(credentials)
@@ -1864,6 +1876,7 @@ async def resume_auto_spy_generate_job(
                             prompts=prompts,
                             log=rj.log,
                             should_stop=rj.should_stop,
+                            tracking_recipe_id=str(items[0]["id"]),
                         )
                         if shared_images:
                             img_list: list[str] = json.loads(shared_images)
@@ -1876,9 +1889,20 @@ async def resume_auto_spy_generate_job(
                                 per_item_images[item["id"]] = json.dumps(site_imgs)
                             rj.log(f"  Distributed {len(img_list)} image(s) across {n_sites} site(s)")
                     except Exception as e:
-                        rj.log(f"  Midjourney failed: {e} — continuing without images")
+                        rj.log(f"  Midjourney delayed: {e}")
                 else:
                     rj.log("  Midjourney skipped (no Discord credentials)")
+
+                if discord_auth and group.get("image_url") and not per_item_images:
+                    message = (
+                        f"Midjourney images are still unavailable for input recipe "
+                        f"{group['idx']}. Retry will resume its saved Discord message."
+                    )
+                    for item in items:
+                        _on_recipe_done(item["id"], {"error_message": message})
+                        done += 1
+                        _on_progress(done, total)
+                    continue
 
                 run_creds = dict(credentials)
                 run_creds["discord_auth"] = ""
