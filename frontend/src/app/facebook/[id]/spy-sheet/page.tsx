@@ -333,30 +333,44 @@ export default function FacebookSpySheetPage() {
             <span className="grid place-items-center text-slate-700"><Plus size={16} /></span>
             {(["template_image_url", "source_image_url"] as const).map((field) => {
               const value = field === "template_image_url" ? newTemplateImage : newSourceImage;
+              const setValue = field === "template_image_url" ? setNewTemplateImage : setNewSourceImage;
               return (
                 <div key={field} className="pr-3">
-                  <label className="flex h-24 cursor-pointer items-center gap-3 rounded-xl border border-dashed border-slate-700 bg-slate-950/35 p-2 transition hover:border-[#1877f2]/60">
-                    {value ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={value} alt="" className="h-20 w-20 shrink-0 rounded-lg object-cover" />
-                    ) : (
-                      <span className="grid h-20 w-20 shrink-0 place-items-center rounded-lg bg-slate-900 text-slate-600"><FileImage size={20} /></span>
-                    )}
-                    <span className="text-xs font-medium text-slate-400">
-                      {uploading === `new:${field}` ? "Uploading…" : field === "template_image_url" ? "Upload template" : "Upload source"}
-                    </span>
+                  <div className="min-h-24 rounded-xl border border-dashed border-slate-700 bg-slate-950/35 p-2 transition focus-within:border-[#1877f2]/60">
+                    <div className="flex items-center gap-2">
+                      {value ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={value} alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" />
+                      ) : (
+                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-slate-900 text-slate-600"><FileImage size={18} /></span>
+                      )}
+                      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-700 px-2 py-1.5 text-[11px] font-medium text-slate-300 transition hover:border-[#1877f2]/60 hover:text-[#68a8ff]">
+                        {uploading === `new:${field}` ? <Loader2 size={13} className="animate-spin" /> : <CloudUpload size={13} />}
+                        {field === "template_image_url" ? "Upload template" : "Upload source"}
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          className="hidden"
+                          disabled={uploading !== null}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) uploadImage(file, field);
+                            event.target.value = "";
+                          }}
+                        />
+                      </label>
+                    </div>
+                    <div className="my-2 flex items-center gap-2 text-[9px] uppercase tracking-[0.14em] text-slate-700">
+                      <span className="h-px flex-1 bg-slate-800" /> or URL <span className="h-px flex-1 bg-slate-800" />
+                    </div>
                     <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      className="hidden"
-                      disabled={uploading !== null}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) uploadImage(file, field);
-                        event.target.value = "";
-                      }}
+                      type="url"
+                      value={value}
+                      onChange={(event) => setValue(event.target.value)}
+                      className="h-8 w-full rounded-lg border border-slate-800 bg-slate-900 px-2 text-[11px] text-slate-300 outline-none placeholder:text-slate-700 focus:border-[#1877f2]/60"
+                      placeholder="https://example.com/image.jpg"
                     />
-                  </label>
+                  </div>
                 </div>
               );
             })}

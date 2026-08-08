@@ -655,7 +655,8 @@ function FacebookCalendar({
     }
   };
 
-  if (!project.has_website || pages.length === 0) {
+  const websiteIsRequired = project.post_type === "video";
+  if ((websiteIsRequired && !project.has_website) || pages.length === 0) {
     return (
       <div className="grid gap-4 md:grid-cols-2">
         <button
