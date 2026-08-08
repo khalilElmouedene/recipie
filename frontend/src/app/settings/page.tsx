@@ -479,16 +479,18 @@ export default function SettingsPage() {
               <label className="block text-sm font-medium text-gray-300 mb-1">Grid wait (seconds)</label>
               <input
                 type="number"
-                min={30}
+                min={600}
                 max={900}
                 value={mjTimers.grid_wait_seconds}
                 onChange={(e) =>
-                  setMjTimers({ ...mjTimers, grid_wait_seconds: Number(e.target.value) || 30 })
+                  setMjTimers({ ...mjTimers, grid_wait_seconds: Number(e.target.value) || 600 })
                 }
                 disabled={profile.role !== "owner"}
                 className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-60"
               />
-              <p className="mt-1 text-xs text-gray-500">After sending /imagine, wait before reading the grid (30-900).</p>
+              <p className="mt-1 text-xs text-gray-500">
+                Maximum tracking time for the grid (600-900). Fast generations continue immediately when ready.
+              </p>
             </div>
           )}
 

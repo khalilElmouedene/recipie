@@ -151,6 +151,45 @@ class MidjourneyIntegrationTests(unittest.TestCase):
         self.assertEqual(len(persisted["grid_custom_ids"]), 4)
         self.assertEqual(persisted["grid_job_tokens"], [job_token])
 
+    def test_grid_detection_supports_nested_controls_without_visible_u_labels(self) -> None:
+        api = midjourney.MidjourneyApi(
+            prompt="Recipe: Tacos Image: https://example.com/image.png",
+            application_id="app",
+            guild_id="guild",
+            channel_id="channel",
+            version="version",
+            mj_id="command",
+            authorization="token",
+            recipe_name="Tacos",
+            source_img_url="https://example.com/image.png",
+            log=lambda _msg: None,
+        )
+        job_token = "11111111-2222-3333-4444-555555555555"
+        message = {
+            "id": "101",
+            "content": "**Recipe: Tacos Image: https://s.mj.run/rewritten** (relaxed)",
+            "attachments": [{"url": "https://cdn.example.com/grid.webp"}],
+            "components": [{
+                "type": 17,
+                "components": [{
+                    "type": 1,
+                    "components": [
+                        {
+                            "type": 2,
+                            "emoji": {"name": str(number)},
+                            "custom_id": f"MJ::JOB::upsample::{number}::{job_token}",
+                        }
+                        for number in range(1, 5)
+                    ],
+                }],
+            }],
+        }
+
+        self.assertTrue(api._find_grid_in_messages([message]))
+        self.assertEqual(api.message_id, "101")
+        self.assertEqual(len(api.custom_ids), 4)
+        self.assertEqual(api._last_grid_scan["matching_controls"], 1)
+
     def test_upscale_resume_does_not_click_saved_buttons_twice(self) -> None:
         updates: list[dict] = []
         api = midjourney.MidjourneyApi(
@@ -518,6 +557,12 @@ class MidjourneyIntegrationTests(unittest.TestCase):
 
     def test_grid_wait_uses_shared_upper_bound(self) -> None:
         self.assertEqual(article_generator._mj_grid_wait_from_credentials({"mj_grid_wait_seconds": "900"}), 900)
+
+    def test_saved_short_grid_wait_is_upgraded_to_ten_minute_minimum(self) -> None:
+        self.assertEqual(
+            article_generator._mj_grid_wait_from_credentials({"mj_grid_wait_seconds": "100"}),
+            600,
+        )
 
 
 if __name__ == "__main__":

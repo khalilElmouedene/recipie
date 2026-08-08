@@ -133,6 +133,7 @@ class MidjourneyApi:
         ]
         self.image_urls = [str(value) for value in (state.get("image_urls") or [])]
         self.tracking_status = str(state.get("status") or "created")
+        self._last_grid_scan: dict[str, int] = {}
         self._log = log or print
         self._should_stop = should_stop or (lambda: False)
         self._on_tracking_update = on_tracking_update
@@ -249,7 +250,21 @@ class MidjourneyApi:
         if not expected or not actual:
             return False
         marker = expected[:240]
-        return len(marker) >= 16 and marker in actual
+        if len(marker) >= 16 and marker in actual:
+            return True
+
+        # Discord occasionally truncates or reformats part of a long prompt.
+        # Require the exact recipe name plus a strong word overlap so a public
+        # result can still be correlated without accepting another job.
+        recipe_marker = self._normalize_text(self.recipe_name)
+        if len(recipe_marker) < 4 or recipe_marker not in actual:
+            return False
+        expected_words = set(re.findall(r"[a-z0-9]+", expected))
+        actual_words = set(re.findall(r"[a-z0-9]+", actual))
+        if not expected_words:
+            return False
+        overlap = len(expected_words & actual_words) / len(expected_words)
+        return overlap >= 0.65
 
     @staticmethod
     def _component_custom_ids(msg: dict) -> list[str]:
@@ -265,6 +280,28 @@ class MidjourneyApi:
                 custom_ids.append(str(custom_id))
             pending.extend(component.get("components", []) or [])
         return custom_ids
+
+    def _upscale_buttons(self, msg: dict) -> list[dict]:
+        """Find U1-U4 controls in both legacy and nested Discord components."""
+        found: dict[int, dict] = {}
+        pending = list(msg.get("components", []) or [])
+        while pending:
+            component = pending.pop()
+            if not isinstance(component, dict):
+                continue
+            pending.extend(component.get("components", []) or [])
+            custom_id = str(component.get("custom_id") or "")
+            if not custom_id:
+                continue
+            label = self._normalize_text(component.get("label", "")).replace(" ", "")
+            label_match = re.fullmatch(r"u([1-4])", label)
+            custom_match = re.search(
+                r"::upsample::([1-4])(?:::|$)", custom_id, re.IGNORECASE
+            )
+            match = label_match or custom_match
+            if match:
+                found.setdefault(int(match.group(1)), component)
+        return [found[index] for index in sorted(found)]
 
     @staticmethod
     def _midjourney_job_tokens(custom_ids: list[str]) -> set[str]:
@@ -388,23 +425,36 @@ class MidjourneyApi:
     def _find_grid_in_messages(self, messages: list) -> bool:
         """Return True and set message_id/custom_ids if a grid message is found."""
         candidates: list[tuple[int, dict, list[dict]]] = []
+        diagnostics = {
+            "messages": len(messages) if isinstance(messages, list) else 0,
+            "job_matches": 0,
+            "prompt_matches": 0,
+            "matching_attachments": 0,
+            "matching_controls": 0,
+        }
+        if not isinstance(messages, list):
+            self._last_grid_scan = diagnostics
+            return False
         for msg in messages:
+            if not isinstance(msg, dict):
+                continue
             try:
                 msg_id = str(msg.get("id", ""))
-                comps = msg.get("components", [])
-                if not comps:
-                    continue
-                buttons = [
-                    c for row in comps
-                    for c in row.get("components", [])
-                    if c.get("label") in ["U1", "U2", "U3", "U4"]
-                ]
+                prompt_match = self._message_matches_prompt(msg)
+                job_match = self._message_matches_job(msg)
+                if job_match:
+                    diagnostics["job_matches"] += 1
+                if prompt_match:
+                    diagnostics["prompt_matches"] += 1
+                if (prompt_match or job_match) and msg.get("attachments"):
+                    diagnostics["matching_attachments"] += 1
+                buttons = self._upscale_buttons(msg)
+                if (prompt_match or job_match) and len(buttons) >= 4:
+                    diagnostics["matching_controls"] += 1
                 if len(buttons) >= 4:
                     exact_message = bool(
                         self.tracked_message_id and msg_id == self.tracked_message_id
                     )
-                    prompt_match = self._message_matches_prompt(msg)
-                    job_match = self._message_matches_job(msg)
                     # A queued/progress interaction can remain on one Discord
                     # message while Relax mode posts the completed grid on a new
                     # message. Accept that replacement only when its full prompt
@@ -419,8 +469,9 @@ class MidjourneyApi:
                     if msg.get("attachments"):
                         score += 1
                     candidates.append((score, msg, buttons))
-            except (KeyError, IndexError):
+            except (KeyError, IndexError, TypeError, AttributeError):
                 continue
+        self._last_grid_scan = diagnostics
         if not candidates:
             return False
         candidates.sort(key=lambda item: (item[0], self._message_sort_id(item[1])), reverse=True)
@@ -537,13 +588,30 @@ class MidjourneyApi:
                     return
         except Exception as e:
             self._log(f"Fallback scan error: {e}")
+        scan = self._last_grid_scan
         self._log(
-            "Grid still not found. If you can see the Midjourney result in Discord but it shows "
-            "'Only you can see this', the channel is sending ephemeral responses — "
-            "grant the Midjourney bot 'Send Messages' + 'Attach Files' permissions on that channel "
-            "so results appear as public messages."
+            "Midjourney Discord scan: "
+            f"{scan.get('messages', 0)} recent message(s), "
+            f"{scan.get('prompt_matches', 0)} prompt match(es), "
+            f"{scan.get('matching_attachments', 0)} matching image message(s), "
+            f"{scan.get('matching_controls', 0)} matching message(s) with U1-U4 controls."
         )
-        error = f"No Midjourney grid found after {self.wait_time}s + {grace_seconds}s grace period"
+        if scan.get("matching_attachments", 0) and not scan.get("matching_controls", 0):
+            detail = (
+                "The matching Midjourney image is visible, but Discord did not return its "
+                "U1-U4 upscale controls in the message payload"
+            )
+        elif scan.get("prompt_matches", 0):
+            detail = "A matching Midjourney message was found, but it is not a completed grid yet"
+        else:
+            detail = (
+                "No recent public Discord message matched this exact Midjourney prompt; "
+                "the result may be ephemeral or outside the recent message window"
+            )
+        error = (
+            f"No Midjourney grid found after {self.wait_time}s + {grace_seconds}s grace period. "
+            f"{detail}"
+        )
         self._update_tracking(
             "delayed" if self.tracked_message_id else "failed",
             tracked_message_id=self.tracked_message_id or None,
