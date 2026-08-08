@@ -4,14 +4,16 @@ import base64
 import tempfile
 import unittest
 import uuid
+import asyncio
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from PIL import Image
 
 from app.services.facebook_image import FacebookImagePostGenerator, _render_prompt
+from app.services.facebook_generation import FacebookGenerationManager, _GenerationContext
 
 
 def _png_base64() -> str:
@@ -77,6 +79,92 @@ class FacebookImageGenerationTests(unittest.TestCase):
             self.assertIn("Garlic Sauce", kwargs["prompt"])
             self.assertTrue((root / str(content_id) / f"image-post-{delivery_id}.png").is_file())
             self.assertIn(f"/uploads/facebook/{content_id}/image-post-{delivery_id}.png", url)
+
+
+class FacebookImageArticleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_article_uses_source_image_while_facebook_keeps_generated_image(self):
+        manager = FacebookGenerationManager()
+        project_id = uuid.uuid4()
+        content_id = uuid.uuid4()
+        delivery_id = uuid.uuid4()
+        recipe_id = uuid.uuid4()
+        source_image_url = "https://example.com/source-food.jpg"
+        generated_image_url = "https://example.com/generated-facebook-card.png"
+        context = _GenerationContext(
+            facebook_project_id=project_id,
+            content_project_id=uuid.uuid4(),
+            site_id=uuid.uuid4(),
+            site_domain="https://recipes.example.com",
+            pinterest_url="",
+            generate_recipe_json=True,
+            credentials={"openai": "test-key"},
+            prompts={},
+            video_format="9:16",
+            video_intro_seconds=5,
+            video_fps=30,
+            video_bitrate_kbps=5000,
+            post_type="image",
+        )
+        payload = {
+            "id": str(content_id),
+            "post_type": "image",
+            "title": "Garlic Sauce",
+            "template_image_url": "https://example.com/template.png",
+            "source_image_url": source_image_url,
+            "recipe_post": "Garlic Sauce\nIngredients...",
+            "generate_article": True,
+            "deliveries": [
+                {
+                    "id": str(delivery_id),
+                    "page_name": "Recipe Page",
+                    "recipe_card_prompt": "Create a readable card",
+                    "recipe_card_model": "gpt-image-2",
+                    "recipe_card_quality": "high",
+                }
+            ],
+        }
+        manager._load_context = AsyncMock(return_value=context)
+        manager._load_content_payloads = AsyncMock(return_value=[payload])
+        manager._store_delivery_image = AsyncMock()
+        manager._prepare_image_recipe = AsyncMock(return_value=recipe_id)
+        manager._complete = AsyncMock()
+        manager._fail = AsyncMock()
+        manager._image.generate = MagicMock(return_value=generated_image_url)
+
+        with (
+            patch(
+                "app.services.facebook_generation.generate_for_recipe",
+                return_value={"generated_article": "<p>Article</p>"},
+            ) as generate_article,
+            patch(
+                "app.services.facebook_generation.write_facebook_log",
+                new=AsyncMock(),
+            ),
+        ):
+            await manager.start_batch(
+                facebook_project_id=project_id,
+                content_ids=[content_id],
+                created_by=uuid.uuid4(),
+            )
+            for _ in range(200):
+                if not manager.is_running(content_id):
+                    break
+                await asyncio.sleep(0.01)
+
+        self.assertFalse(manager.is_running(content_id))
+        manager._store_delivery_image.assert_awaited_once_with(
+            content_id, delivery_id, generated_image_url
+        )
+        self.assertEqual(
+            manager._prepare_image_recipe.await_args.kwargs["article_image_url"],
+            source_image_url,
+        )
+        self.assertEqual(generate_article.call_args.kwargs["image_url"], source_image_url)
+        generated_result = manager._complete.await_args.args[2]
+        self.assertEqual(
+            generated_result["generated_images"],
+            f'["{source_image_url}"]',
+        )
 
 
 if __name__ == "__main__":

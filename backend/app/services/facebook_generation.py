@@ -392,7 +392,7 @@ class FacebookGenerationManager:
         *,
         site_id: uuid.UUID,
         created_by: uuid.UUID,
-        generated_image_url: str,
+        article_image_url: str,
         recipe_post: str,
     ) -> uuid.UUID:
         async with SessionLocal() as db:
@@ -418,7 +418,7 @@ class FacebookGenerationManager:
                 recipe = Recipe(
                     site_id=site_id,
                     created_by=created_by,
-                    image_url=generated_image_url,
+                    image_url=article_image_url,
                     recipe_text=recipe_post,
                     status=RecipeStatus.generating,
                 )
@@ -427,7 +427,7 @@ class FacebookGenerationManager:
             else:
                 recipe.site_id = site_id
                 recipe.created_by = created_by
-                recipe.image_url = generated_image_url
+                recipe.image_url = article_image_url
                 recipe.recipe_text = recipe_post
                 recipe.status = RecipeStatus.generating
                 recipe.error_message = None
@@ -736,7 +736,7 @@ class FacebookGenerationManager:
                                 )
                             emit(
                                 content_id,
-                                "Starting article generation with the generated image.",
+                                "Starting article generation with the Source Image.",
                                 stage="article",
                             )
                             recipe_id = asyncio.run_coroutine_threadsafe(
@@ -744,7 +744,7 @@ class FacebookGenerationManager:
                                     content_id,
                                     site_id=context.site_id,
                                     created_by=created_by,
-                                    generated_image_url=generated_image_urls[0],
+                                    article_image_url=source_image_url,
                                     recipe_post=recipe_post,
                                 ),
                                 loop,
@@ -754,7 +754,7 @@ class FacebookGenerationManager:
                             generated = generate_for_recipe(
                                 recipe_id=str(recipe_id),
                                 recipe_text=recipe_post,
-                                image_url=generated_image_urls[0],
+                                image_url=source_image_url,
                                 site_domain=context.site_domain,
                                 credentials=article_credentials,
                                 prompts=context.prompts,
@@ -775,7 +775,7 @@ class FacebookGenerationManager:
                                     or "Article generation did not return an article."
                                 )
                             generated["generated_images"] = json.dumps(
-                                [generated_image_urls[0]]
+                                [source_image_url]
                             )
                             asyncio.run_coroutine_threadsafe(
                                 self._complete(
