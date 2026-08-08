@@ -60,6 +60,7 @@ import {
   FacebookVideoFormat,
   PromptOut,
 } from "@/lib/api";
+import { facebookPublicationUrl } from "@/lib/facebook-publication";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
 import FacebookWebsiteSettings from "@/components/facebook/FacebookWebsiteSettings";
@@ -1178,12 +1179,12 @@ function FacebookPostListRow({
                     <div className="flex flex-wrap items-center gap-1.5">
                       {delivery.status === "published" && delivery.facebook_post_id && (
                         <a
-                          href={`https://www.facebook.com/reel/${delivery.facebook_post_id}`}
+                          href={facebookPublicationUrl(content.post_type, delivery.facebook_post_id)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-900/60 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-300 transition hover:bg-emerald-950/30"
                         >
-                          View Reel <ExternalLink size={11} />
+                          {content.post_type === "image" ? "View Post" : "View Reel"} <ExternalLink size={11} />
                         </a>
                       )}
                       {canPublish && (
@@ -1602,12 +1603,12 @@ function ContentDetail({
                     {delivery.error_message && <p className="mt-2 text-xs text-red-300">{delivery.error_message}</p>}
                     {delivery.status === "published" && delivery.facebook_post_id && (
                       <a
-                        href={`https://www.facebook.com/reel/${delivery.facebook_post_id}`}
+                        href={facebookPublicationUrl(content.post_type, delivery.facebook_post_id)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-[#8bbcff] transition hover:text-white"
                       >
-                        View Reel on Facebook <ExternalLink size={12} />
+                        {content.post_type === "image" ? "View Post on Facebook" : "View Reel on Facebook"} <ExternalLink size={12} />
                       </a>
                     )}
                     {canPublishFacebookDelivery(content, delivery) && ["draft", "scheduled", "failed"].includes(delivery.status) && (

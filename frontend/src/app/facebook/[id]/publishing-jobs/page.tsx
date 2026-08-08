@@ -27,6 +27,7 @@ import {
   FacebookProjectOut,
 } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
+import { facebookPublicationUrl } from "@/lib/facebook-publication";
 
 type JobFilter = "all" | "active" | "published" | "failed" | "scheduled";
 
@@ -316,7 +317,7 @@ export default function FacebookPublishingJobsPage() {
             A completed Meta publication is not an audience check. If another
             Facebook account sees a blank loading page, set the Meta app to
             <strong className="mx-1 text-white">Live</strong>
-            and remove Page age, country, or audience restrictions before publishing a new Reel.
+            and remove Page age, country, or audience restrictions before publishing a new {project?.post_type === "image" ? "image post" : "Reel"}.
           </p>
         </div>
       )}
@@ -387,6 +388,9 @@ export default function FacebookPublishingJobsPage() {
         {visibleJobs.map((job) => {
           const copy = STATUS_COPY[job.delivery.status];
           const StatusIcon = copy.icon;
+          const statusDescription = job.delivery.status === "published" && job.content.post_type === "image"
+            ? "Meta published the image post and added the first comment."
+            : copy.description;
           const retryable = job.delivery.status === "failed";
           const publishable = retryable || job.delivery.status === "draft" || job.delivery.status === "scheduled";
           const canRunPublication = publishable && canPublishFacebookDelivery(job.content, job.delivery);
@@ -423,7 +427,7 @@ export default function FacebookPublishingJobsPage() {
                       <span className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${copy.style}`}>{copy.label}</span>
                     </div>
                     <p className="mt-1 text-xs font-medium text-[#8bbcff]">{job.delivery.page_name}</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">{copy.description}</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">{statusDescription}</p>
                     {job.delivery.error_message && (
                       <p className="mt-2 max-w-3xl rounded-lg border border-red-900/40 bg-red-950/20 px-3 py-2 text-xs leading-5 text-red-300">
                         {job.delivery.error_message}
@@ -441,12 +445,12 @@ export default function FacebookPublishingJobsPage() {
                   </p>
                   {job.delivery.status === "published" && job.delivery.facebook_post_id && (
                     <a
-                      href={`https://www.facebook.com/reel/${job.delivery.facebook_post_id}`}
+                      href={facebookPublicationUrl(job.content.post_type, job.delivery.facebook_post_id)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#8bbcff] transition hover:text-white"
                     >
-                      View Reel <ExternalLink size={12} />
+                      {job.content.post_type === "image" ? "View Post" : "View Reel"} <ExternalLink size={12} />
                     </a>
                   )}
                 </div>
