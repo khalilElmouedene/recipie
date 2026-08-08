@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Clock3,
   Code2,
+  Download,
   ExternalLink,
   FileText,
   Globe2,
@@ -121,6 +122,28 @@ function formatDate(value: string | null, options?: Intl.DateTimeFormatOptions) 
 
 function dateKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function filenameFromImageUrl(url: string, title: string, index?: number) {
+  const extMatch = url.match(/\.(png|jpe?g|webp|gif)(?:\?|$)/i);
+  const ext = (extMatch?.[1] || "png").toLowerCase().replace("jpeg", "jpg");
+  const base = title.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").slice(0, 60) || "facebook-post";
+  const suffix = typeof index === "number" ? `-${index + 1}` : "";
+  return `${base}${suffix}.${ext}`;
+}
+
+async function downloadLocalImage(url: string, filename: string) {
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) throw new Error("Could not download image");
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objectUrl);
 }
 
 function localDateTimeInput(value: string | Date) {
@@ -1400,6 +1423,8 @@ function ContentDetail({
   onPublishDelivery: (delivery: FacebookDeliveryOut) => void;
   onClose: () => void;
 }) {
+  const toast = useToast();
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const publishableDeliveries = content.deliveries.filter((delivery) =>
     ["draft", "scheduled", "failed"].includes(delivery.status)
       && canPublishFacebookDelivery(content, delivery),
@@ -1407,6 +1432,23 @@ function ContentDetail({
   const publishLabel = publishableDeliveries.length === 1
     ? `Publish to ${publishableDeliveries[0].page_name}`
     : `Publish to ${publishableDeliveries.length} Pages`;
+  const downloadableImages = content.generated_images.length > 0
+    ? content.generated_images
+    : content.screenshot_url
+      ? [content.screenshot_url]
+      : [];
+
+  const handleDownloadImage = async (url: string, index?: number) => {
+    setDownloadingKey(url);
+    try {
+      await downloadLocalImage(url, filenameFromImageUrl(url, content.title, index));
+      toast.success("Image downloaded");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not download image");
+    } finally {
+      setDownloadingKey(null);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
@@ -1417,6 +1459,17 @@ function ContentDetail({
             <h2 className="mt-2 text-2xl font-semibold text-white">{content.title}</h2>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1">
+            {downloadableImages.length > 0 && (
+              <button
+                type="button"
+                onClick={() => void handleDownloadImage(downloadableImages[0], 0)}
+                disabled={Boolean(downloadingKey)}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/60 px-3.5 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {downloadingKey === downloadableImages[0] ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                {downloadingKey === downloadableImages[0] ? "Downloading…" : "Download"}
+              </button>
+            )}
             {publishableDeliveries.length > 0 && (
               <button
                 onClick={onPublish}
@@ -1443,8 +1496,20 @@ function ContentDetail({
         <div className="grid gap-6 p-6 md:grid-cols-[300px_1fr]">
           <div>
             {content.post_type === "image" && content.screenshot_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={content.screenshot_url} alt="" className="max-h-[520px] w-full rounded-2xl bg-black object-contain" />
+              <div className="relative group">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={content.screenshot_url} alt="" className="max-h-[520px] w-full rounded-2xl bg-black object-contain" />
+                <button
+                  type="button"
+                  onClick={() => void handleDownloadImage(content.screenshot_url!, 0)}
+                  disabled={Boolean(downloadingKey)}
+                  className="absolute bottom-3 right-3 inline-flex items-center gap-2 rounded-lg bg-black/70 px-3 py-2 text-xs font-semibold text-white opacity-0 transition hover:bg-black/85 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Download image"
+                >
+                  {downloadingKey === content.screenshot_url ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                  Download
+                </button>
+              </div>
             ) : content.processed_video_url ? (
               <video src={content.processed_video_url} controls className="max-h-[520px] w-full rounded-2xl bg-black object-contain" />
             ) : content.status === "failed" ? (
@@ -1487,9 +1552,24 @@ function ContentDetail({
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">Generated images</p>
               <div className="mt-3 grid grid-cols-2 gap-3">
-                {content.generated_images.map((image) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img key={image} src={image} alt="" className="aspect-square w-full rounded-xl border border-slate-700 object-cover" />
+                {content.generated_images.map((image, index) => (
+                  <div key={image} className="group relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={image} alt="" className="aspect-square w-full rounded-xl border border-slate-700 object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => void handleDownloadImage(image, index)}
+                      disabled={Boolean(downloadingKey)}
+                      className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/55 opacity-0 transition group-hover:opacity-100 disabled:cursor-not-allowed"
+                      title="Download image"
+                    >
+                      {downloadingKey === image ? (
+                        <Loader2 size={22} className="animate-spin text-white" />
+                      ) : (
+                        <Download size={22} className="text-white" />
+                      )}
+                    </button>
+                  </div>
                 ))}
                 {content.generated_images.length === 0 && <p className="col-span-2 text-sm text-slate-600">Images are not ready yet.</p>}
               </div>
