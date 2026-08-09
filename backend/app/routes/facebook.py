@@ -54,7 +54,6 @@ router = APIRouter(prefix="/api", tags=["facebook"])
 UPLOADS_ROOT = Path(os.getenv("UPLOADS_DIR", "/app/uploads"))
 FACEBOOK_SOURCE_DIR = UPLOADS_ROOT / "facebook" / "sources"
 FACEBOOK_IMAGE_SOURCE_DIR = UPLOADS_ROOT / "facebook" / "image-sources"
-IMAGE_POST_ALLOWED_EMAIL = "khalil@gmail.com"
 MAX_VIDEO_BYTES = 500 * 1024 * 1024
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 ALLOWED_VIDEO_TYPES = {
@@ -342,11 +341,6 @@ async def _project(
         raise HTTPException(status_code=404, detail="Facebook project not found")
     if project.owner_id != user.id:
         raise HTTPException(status_code=403, detail="Not the owner of this Facebook project")
-    if (
-        getattr(project, "post_type", "video") == "image"
-        and user.email.strip().lower() != IMAGE_POST_ALLOWED_EMAIL
-    ):
-        raise HTTPException(status_code=404, detail="Facebook project not found")
     return project
 
 
@@ -466,11 +460,6 @@ async def list_facebook_projects(
         .order_by(FacebookProject.created_at.desc())
     )
     projects = list(rows.scalars().all())
-    if user.email.strip().lower() != IMAGE_POST_ALLOWED_EMAIL:
-        projects = [
-            project for project in projects
-            if getattr(project, "post_type", "video") != "image"
-        ]
     return [await _project_out(project, db) for project in projects]
 
 
@@ -484,8 +473,6 @@ async def create_facebook_project(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    if body.post_type == "image" and user.email.strip().lower() != IMAGE_POST_ALLOWED_EMAIL:
-        raise HTTPException(status_code=404, detail="Facebook project type not found")
     content_project = Project(
         name=f"{body.name} - Facebook Content",
         description=body.description,
@@ -1069,8 +1056,7 @@ async def upload_facebook_image(
     file: Annotated[UploadFile, File(...)],
     user: Annotated[User, Depends(get_current_user)],
 ):
-    if user.email.strip().lower() != IMAGE_POST_ALLOWED_EMAIL:
-        raise HTTPException(status_code=404, detail="Not found")
+    del user
     content_type = (file.content_type or "").lower()
     extension = ALLOWED_IMAGE_TYPES.get(content_type)
     if extension is None:

@@ -25,16 +25,11 @@ export default function FacebookProjectsPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [postType, setPostType] = useState<"video" | "image">("video");
-  const [canUseImagePosts, setCanUseImagePosts] = useState(false);
 
   const load = async () => {
     try {
-      const [loadedProjects, currentUser] = await Promise.all([
-        api.getFacebookProjects(),
-        api.me(),
-      ]);
+      const loadedProjects = await api.getFacebookProjects();
       setProjects(loadedProjects);
-      setCanUseImagePosts(currentUser.email.trim().toLowerCase() === "khalil@gmail.com");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not load Facebook projects");
     } finally {
@@ -219,7 +214,7 @@ export default function FacebookProjectsPage() {
             <div className="space-y-5 px-6 py-6">
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-300">Post type</label>
-                <div className={`grid gap-3 ${canUseImagePosts ? "sm:grid-cols-2" : ""}`}>
+                <div className="grid gap-3 sm:grid-cols-2">
                   <button
                     type="button"
                     onClick={() => setPostType("video")}
@@ -229,17 +224,15 @@ export default function FacebookProjectsPage() {
                     <span className="block text-sm font-semibold text-white">Video Posts</span>
                     <span className="mt-1 block text-xs leading-5 text-slate-500">Process source videos and publish Reels.</span>
                   </button>
-                  {canUseImagePosts && (
-                    <button
-                      type="button"
-                      onClick={() => setPostType("image")}
-                      className={`rounded-xl border p-4 text-left transition ${postType === "image" ? "border-[#1877f2] bg-[#1877f2]/10" : "border-slate-700 bg-slate-950/25 hover:border-slate-600"}`}
-                    >
-                      <FileImage className="mb-3 text-[#68a8ff]" size={21} />
-                      <span className="block text-sm font-semibold text-white">Image Posts</span>
-                      <span className="mt-1 block text-xs leading-5 text-slate-500">Template + source image, generated per Page.</span>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPostType("image")}
+                    className={`rounded-xl border p-4 text-left transition ${postType === "image" ? "border-[#1877f2] bg-[#1877f2]/10" : "border-slate-700 bg-slate-950/25 hover:border-slate-600"}`}
+                  >
+                    <FileImage className="mb-3 text-[#68a8ff]" size={21} />
+                    <span className="block text-sm font-semibold text-white">Image Posts</span>
+                    <span className="mt-1 block text-xs leading-5 text-slate-500">Template + source image, generated per Page.</span>
+                  </button>
                 </div>
               </div>
               <div>

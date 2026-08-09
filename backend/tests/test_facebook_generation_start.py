@@ -120,8 +120,8 @@ class FacebookGenerationStartTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 SimpleNamespace(
                     id=owner_id,
-                    email="khalil@gmail.com",
-                    full_name="Khalil",
+                    email="regular-user@example.com",
+                    full_name="Regular user",
                 ),
                 session,
             )
