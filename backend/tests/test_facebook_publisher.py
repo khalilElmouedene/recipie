@@ -271,9 +271,74 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(published)
         self.assertEqual(
             publish_photo.call_args.kwargs["caption"],
-            content.rewritten_recipe_post,
+            content.recipe_post,
         )
         add_comment.assert_not_called()
+
+    async def test_title_image_header_uses_original_spy_recipe_in_comment(self):
+        delivery_id = uuid.uuid4()
+        delivery = SimpleNamespace(
+            generated_image_url="https://example.com/uploads/facebook/image.png",
+            facebook_post_id=None,
+            first_comment_id=None,
+            allow_without_article_url=False,
+        )
+        content = SimpleNamespace(
+            id=uuid.uuid4(),
+            recipe_post="Original Spy Sheet recipe\nIngredients\n- Original garlic",
+            rewritten_recipe_post="Rewritten recipe\nIngredients\n- Rewritten garlic",
+            recipe_title="Rewritten title",
+            ingredient_recipe="- Rewritten garlic",
+            generate_article=False,
+            title="Original title",
+        )
+        page = SimpleNamespace(
+            access_token="encrypted-token",
+            facebook_page_id="page-42",
+            comment_mode=FacebookCommentMode.full_recipe,
+            post_header_mode=FacebookPostHeaderMode.recipe_title.value,
+        )
+        sessions = iter(
+            [
+                _QueuedSession(
+                    [_ExecutionResult(row=(delivery, content, page, None))]
+                ),
+                _QueuedSession([_ExecutionResult()]),
+                _QueuedSession([_ExecutionResult()]),
+            ]
+        )
+        image_path = MagicMock()
+        image_path.is_file.return_value = True
+
+        with (
+            patch(
+                "app.services.facebook_publisher.SessionLocal",
+                side_effect=lambda: next(sessions),
+            ),
+            patch(
+                "app.services.facebook_publisher._local_upload_path",
+                return_value=image_path,
+            ),
+            patch("app.services.facebook_publisher.decrypt", return_value="page-token"),
+            patch.object(
+                facebook_api,
+                "publish_page_photo",
+                return_value="page-42_post-100",
+            ) as publish_photo,
+            patch.object(
+                facebook_api,
+                "add_first_comment",
+                return_value="comment-100",
+            ) as add_comment,
+        ):
+            published = await _publish_facebook_image_delivery(delivery_id)
+
+        self.assertTrue(published)
+        self.assertEqual(publish_photo.call_args.kwargs["caption"], "Rewritten title")
+        self.assertEqual(
+            add_comment.call_args.kwargs["message"],
+            content.recipe_post,
+        )
 
     async def test_image_post_without_article_is_dispatched_without_recipe_row(self):
         delivery_id = uuid.uuid4()

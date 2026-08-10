@@ -573,13 +573,16 @@ async def _publish_facebook_image_delivery(delivery_id: uuid.UUID) -> bool:
             content_id = content.id
             existing_post_id = delivery.facebook_post_id
             existing_comment_id = delivery.first_comment_id
-            recipe_post = (
+            original_recipe_post = (content.recipe_post or "").strip()
+            if not original_recipe_post:
+                raise ValueError("Original Recipe Post is missing. Regenerate this image post.")
+            rewritten_recipe_post = (
                 getattr(content, "rewritten_recipe_post", None)
-                or content.recipe_post
+                or original_recipe_post
                 or ""
             ).strip()
-            if not recipe_post:
-                raise ValueError("Recipe Post is missing. Regenerate this image post.")
+            if not rewritten_recipe_post:
+                raise ValueError("Rewritten Recipe Post is missing. Regenerate this image post.")
             recipe_title = (
                 getattr(content, "recipe_title", None) or content.title or ""
             ).strip()
@@ -591,7 +594,7 @@ async def _publish_facebook_image_delivery(delivery_id: uuid.UUID) -> bool:
             caption = build_facebook_image_caption(
                 header_mode,
                 recipe_title=recipe_title,
-                recipe_post=recipe_post,
+                recipe_post=original_recipe_post,
                 ingredient_recipe=ingredient_recipe,
             )
 
@@ -641,7 +644,7 @@ async def _publish_facebook_image_delivery(delivery_id: uuid.UUID) -> bool:
                 page_access_token=page_token,
                 message=build_first_comment(
                     effective_mode,
-                    recipe_post,
+                    original_recipe_post,
                     article_url,
                 ),
             )
