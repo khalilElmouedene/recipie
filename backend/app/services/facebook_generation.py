@@ -27,6 +27,10 @@ from app.services.article_generator import generate_for_recipe
 from app.services.credentials_loader import load_credentials_for_job
 from app.services.facebook_video import FacebookVideoProcessor
 from app.services.facebook_image import FacebookImagePostGenerator
+from app.services.facebook_recipe import (
+    DEFAULT_FACEBOOK_RECIPE_REWRITE_PROMPT,
+    rewrite_facebook_recipe_post,
+)
 from app.services.facebook_logs import write_facebook_log
 from app.services.prompts import DEFAULT_PROMPTS
 
@@ -52,6 +56,7 @@ class _GenerationContext:
     video_fps: int
     video_bitrate_kbps: int
     post_type: str
+    recipe_rewrite_prompt: str
 
 
 class FacebookGenerationManager:
@@ -208,6 +213,10 @@ class FacebookGenerationManager:
                 video_fps=project.video_fps,
                 video_bitrate_kbps=project.video_bitrate_kbps,
                 post_type=getattr(project, "post_type", "video") or "video",
+                recipe_rewrite_prompt=(
+                    getattr(project, "recipe_rewrite_prompt", None)
+                    or DEFAULT_FACEBOOK_RECIPE_REWRITE_PROMPT
+                ),
             )
 
     async def _load_content_payloads(
@@ -263,6 +272,13 @@ class FacebookGenerationManager:
                     "template_image_url": content.template_image_url,
                     "source_image_url": content.source_image_url,
                     "recipe_post": content.recipe_post,
+                    "rewritten_recipe_post": getattr(
+                        content, "rewritten_recipe_post", None
+                    ),
+                    "recipe_title": getattr(content, "recipe_title", None),
+                    "ingredient_recipe": getattr(
+                        content, "ingredient_recipe", None
+                    ),
                     "generate_article": bool(content.generate_article),
                     "deliveries": deliveries_by_content.get(content.id, []),
                 }
@@ -305,6 +321,34 @@ class FacebookGenerationManager:
                     FacebookDelivery.status == FacebookDeliveryStatus.processing,
                 )
                 .values(generated_image_url=generated_image_url)
+            )
+            if not result.rowcount:
+                await db.rollback()
+                raise FacebookGenerationCancelled()
+            await db.commit()
+
+    async def _store_rewritten_recipe(
+        self,
+        content_id: uuid.UUID,
+        *,
+        recipe_title: str,
+        rewritten_recipe_post: str,
+        ingredient_recipe: str,
+    ) -> None:
+        async with SessionLocal() as db:
+            result = await db.execute(
+                update(FacebookContent)
+                .where(
+                    FacebookContent.id == content_id,
+                    FacebookContent.status == FacebookContentStatus.processing,
+                    FacebookContent.generation_cancelled.is_(False),
+                )
+                .values(
+                    title=recipe_title,
+                    recipe_title=recipe_title,
+                    rewritten_recipe_post=rewritten_recipe_post,
+                    ingredient_recipe=ingredient_recipe,
+                )
             )
             if not result.rowcount:
                 await db.rollback()
@@ -692,11 +736,44 @@ class FacebookGenerationManager:
                     if str(payload.get("post_type") or "video") == "image":
                         template_image_url = str(payload.get("template_image_url") or "").strip()
                         source_image_url = str(payload.get("source_image_url") or "").strip()
-                        recipe_post = str(payload.get("recipe_post") or "").strip()
-                        if not template_image_url or not source_image_url or not recipe_post:
+                        original_recipe_post = str(payload.get("recipe_post") or "").strip()
+                        if not template_image_url or not source_image_url or not original_recipe_post:
                             raise ValueError(
                                 "Template Image, Source Image, and Recipe Post are required."
                             )
+                        recipe_post = str(
+                            payload.get("rewritten_recipe_post") or ""
+                        ).strip()
+                        recipe_title = str(payload.get("recipe_title") or "").strip()
+                        ingredient_recipe = str(
+                            payload.get("ingredient_recipe") or ""
+                        ).strip()
+                        if not recipe_post or not recipe_title or not ingredient_recipe:
+                            emit(
+                                content_id,
+                                "Rewriting the Recipe Post with the project prompt.",
+                                stage="recipe",
+                            )
+                            rewritten = rewrite_facebook_recipe_post(
+                                recipe_post=original_recipe_post,
+                                custom_prompt=context.recipe_rewrite_prompt,
+                                openai_api_key=context.credentials["openai"],
+                                log=lambda message: progress(
+                                    str(message), stage="recipe"
+                                ),
+                            )
+                            recipe_post = rewritten.recipe_post
+                            recipe_title = rewritten.recipe_title
+                            ingredient_recipe = rewritten.ingredient_recipe
+                            asyncio.run_coroutine_threadsafe(
+                                self._store_rewritten_recipe(
+                                    content_id,
+                                    recipe_title=recipe_title,
+                                    rewritten_recipe_post=recipe_post,
+                                    ingredient_recipe=ingredient_recipe,
+                                ),
+                                loop,
+                            ).result()
                         generated_image_urls: list[str] = []
                         for delivery_payload in delivery_payloads:
                             delivery_id = uuid.UUID(str(delivery_payload["id"]))
@@ -712,7 +789,8 @@ class FacebookGenerationManager:
                                 template_image_url=template_image_url,
                                 source_image_url=source_image_url,
                                 recipe_post=recipe_post,
-                                recipe_title=str(payload["title"]),
+                                recipe_title=recipe_title,
+                                ingredient_recipe=ingredient_recipe,
                                 prompt=str(delivery_payload["recipe_card_prompt"]),
                                 model=str(delivery_payload["recipe_card_model"]),
                                 quality=str(delivery_payload["recipe_card_quality"]),
@@ -782,7 +860,7 @@ class FacebookGenerationManager:
                                     content_id,
                                     recipe_id,
                                     generated,
-                                    str(payload["title"]),
+                                    recipe_title,
                                 ),
                                 loop,
                             ).result()

@@ -21,6 +21,7 @@ from app.db_models import (
     FacebookDeliveryStatus,
     FacebookGenerationLog,
     FacebookPage,
+    FacebookPostHeaderMode,
     FacebookProject,
     FacebookSpyRow,
     Recipe,
@@ -59,6 +60,30 @@ def build_first_comment(
             "The generated full recipe is missing. Regenerate this content before publishing."
         )
     return recipe
+
+
+def build_facebook_image_caption(
+    mode: FacebookPostHeaderMode | str,
+    *,
+    recipe_title: str,
+    recipe_post: str,
+    ingredient_recipe: str,
+) -> str:
+    value = mode.value if hasattr(mode, "value") else str(mode)
+    title = (recipe_title or "").strip()
+    recipe = (recipe_post or "").strip()
+    ingredients = (ingredient_recipe or "").strip()
+    if value == FacebookPostHeaderMode.full_recipe.value:
+        if not recipe:
+            raise ValueError("The rewritten Recipe Post is missing.")
+        return recipe
+    if not title:
+        raise ValueError("The rewritten recipe title is missing.")
+    if value == FacebookPostHeaderMode.title_ingredients.value:
+        if not ingredients:
+            raise ValueError("The first 8 recipe ingredients are missing.")
+        return f"{title}\n\nIngredients :\n{ingredients}"
+    return title
 
 
 def _absolute_media_url(url: str) -> str:
@@ -541,21 +566,41 @@ async def _publish_facebook_image_delivery(delivery_id: uuid.UUID) -> bool:
             page_token = decrypt(page.access_token)
             page_id = page.facebook_page_id
             page_mode = page.comment_mode
+            header_mode = (
+                getattr(page, "post_header_mode", None)
+                or FacebookPostHeaderMode.recipe_title.value
+            )
             content_id = content.id
             existing_post_id = delivery.facebook_post_id
             existing_comment_id = delivery.first_comment_id
-            recipe_post = (content.recipe_post or "").strip()
+            recipe_post = (
+                getattr(content, "rewritten_recipe_post", None)
+                or content.recipe_post
+                or ""
+            ).strip()
             if not recipe_post:
                 raise ValueError("Recipe Post is missing. Regenerate this image post.")
+            recipe_title = (
+                getattr(content, "recipe_title", None) or content.title or ""
+            ).strip()
+            ingredient_recipe = (
+                getattr(content, "ingredient_recipe", None) or ""
+            ).strip()
             generate_article = bool(content.generate_article)
             allow_without_url = bool(delivery.allow_without_article_url)
-            title = content.title
+            caption = build_facebook_image_caption(
+                header_mode,
+                recipe_title=recipe_title,
+                recipe_post=recipe_post,
+                ingredient_recipe=ingredient_recipe,
+            )
 
         article_url = ""
         if generate_article:
             article_url = await _ensure_article_published(content_id)
         elif (
-            page_mode == FacebookCommentMode.full_recipe_url
+            header_mode != FacebookPostHeaderMode.full_recipe.value
+            and page_mode == FacebookCommentMode.full_recipe_url
             and not allow_without_url
         ):
             raise ValueError(
@@ -569,7 +614,7 @@ async def _publish_facebook_image_delivery(delivery_id: uuid.UUID) -> bool:
                 facebook_api.publish_page_photo,
                 page_id=page_id,
                 page_access_token=page_token,
-                caption=title,
+                caption=caption,
                 image_path=image_path,
             )
             async with SessionLocal() as db:
@@ -581,7 +626,10 @@ async def _publish_facebook_image_delivery(delivery_id: uuid.UUID) -> bool:
                 await db.commit()
 
         comment_id = existing_comment_id
-        if not comment_id:
+        if (
+            header_mode != FacebookPostHeaderMode.full_recipe.value
+            and not comment_id
+        ):
             effective_mode = (
                 FacebookCommentMode.full_recipe
                 if not article_url

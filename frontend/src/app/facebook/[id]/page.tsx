@@ -53,6 +53,7 @@ import {
   FacebookDeliveryOut,
   FacebookPageHealthOut,
   FacebookPageOut,
+  FacebookPostHeaderMode,
   FacebookProjectOut,
   FacebookRecipeCardModel,
   FacebookRecipeCardQuality,
@@ -68,7 +69,7 @@ import FacebookAiPromptSettings from "@/components/facebook/FacebookAiPromptSett
 
 type MainTab = "calendar" | "posts" | "settings";
 type PostFilter = "all" | "ready" | "processing" | "failed" | "published";
-type SettingsTab = "website" | "pages" | "keys" | "ai_prompts" | "video_prompts" | "video_settings";
+type SettingsTab = "website" | "pages" | "keys" | "ai_prompts" | "video_prompts" | "video_settings" | "image_settings";
 
 const FACEBOOK_TTS_VOICES: { value: FacebookTtsVoice; name: string }[] = [
   { value: "alloy", name: "Alloy" },
@@ -1667,6 +1668,9 @@ function FacebookSettings({
     { key: "pages" as SettingsTab, label: "Facebook Pages", icon: Users },
     { key: "keys" as SettingsTab, label: "API Keys", icon: KeyRound },
     { key: "ai_prompts" as SettingsTab, label: "AI Prompts", icon: MessageSquare },
+    ...(project.post_type === "image" ? [
+      { key: "image_settings" as SettingsTab, label: "Image Settings", icon: Sparkles },
+    ] : []),
     ...(project.post_type === "video" ? [
       { key: "video_prompts" as SettingsTab, label: "Video Prompts", icon: MessageSquareText },
       { key: "video_settings" as SettingsTab, label: "Video Settings", icon: SlidersHorizontal },
@@ -1699,6 +1703,7 @@ function FacebookSettings({
         )}
         {activeTab === "keys" && <FacebookKeysSettings contentProjectId={project.content_project_id} projectType={project.post_type} />}
         {activeTab === "ai_prompts" && <FacebookAiPromptSettings contentProjectId={project.content_project_id} />}
+        {project.post_type === "image" && activeTab === "image_settings" && <FacebookImageSettings project={project} onProject={onProject} />}
         {project.post_type === "video" && activeTab === "video_prompts" && <FacebookVideoPromptSettings contentProjectId={project.content_project_id} />}
         {project.post_type === "video" && activeTab === "video_settings" && <FacebookVideoSettings project={project} onProject={onProject} />}
       </div>
@@ -1721,6 +1726,85 @@ function SettingsSection({
       <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
       <div className="mt-5">{children}</div>
     </section>
+  );
+}
+
+function FacebookImageSettings({
+  project,
+  onProject,
+}: {
+  project: FacebookProjectOut;
+  onProject: (project: FacebookProjectOut) => void;
+}) {
+  const toast = useToast();
+  const [prompt, setPrompt] = useState(project.recipe_rewrite_prompt);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setPrompt(project.recipe_rewrite_prompt);
+  }, [project.id, project.recipe_rewrite_prompt]);
+
+  const save = async () => {
+    if (!prompt.trim()) return;
+    setSaving(true);
+    try {
+      const updated = await api.updateFacebookProject(project.id, {
+        recipe_rewrite_prompt: prompt.trim(),
+      });
+      onProject(updated);
+      toast.success("Recipe Rewrite Prompt saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save the rewrite prompt");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SettingsSection
+      title="Image Post recipe settings"
+      description="Rewrite each Spy Sheet Recipe Post once before generating Page images, comments, and an optional WordPress article."
+    >
+      <div className="overflow-hidden rounded-[20px] border border-[#1877f2]/25 bg-[#101827]">
+        <div className="border-b border-slate-800 px-5 py-4 lg:px-6">
+          <div className="flex items-center gap-3">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#1877f2]/12 text-[#68a8ff]">
+              <Sparkles size={17} />
+            </span>
+            <div>
+              <h3 className="text-sm font-semibold text-white">Recipe Rewrite Prompt</h3>
+              <p className="mt-1 text-xs text-slate-500">Applied to the original Recipe Post before any Page image is generated.</p>
+            </div>
+          </div>
+        </div>
+        <div className="p-5 lg:p-6">
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            rows={16}
+            maxLength={12000}
+            className="input-field min-h-[340px] resize-y font-mono text-xs leading-5"
+            placeholder="Explain how ChatGPT should rewrite the Recipe Post..."
+          />
+          <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/35 p-4">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">Variables created after rewriting</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {["{recipe_title}", "{ingredient_recipe}", "{recipe_post}"].map((variable) => (
+                <code key={variable} className="rounded-lg border border-[#1877f2]/25 bg-[#1877f2]/8 px-2.5 py-1.5 text-xs text-[#8bbcff]">{variable}</code>
+              ))}
+            </div>
+            <p className="mt-3 text-xs leading-5 text-slate-500">
+              <code className="text-slate-300">{"{ingredient_recipe}"}</code> contains at most the first eight ingredients. You may use <code className="text-slate-300">{"{recipe_post}"}</code> inside this rewrite prompt to place the original input explicitly.
+            </p>
+          </div>
+        </div>
+        <div className="flex justify-end border-t border-slate-800 px-5 py-4 lg:px-6">
+          <button onClick={save} disabled={saving || !prompt.trim()} className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50">
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save rewrite prompt
+          </button>
+        </div>
+      </div>
+    </SettingsSection>
   );
 }
 
@@ -2123,7 +2207,9 @@ function FacebookPagesSettings({
                 <div>
                   <h3 className="font-semibold text-white">{page.name}</h3>
                   <p className="mt-1 text-xs text-slate-500">
-                    First comment: {page.comment_mode === "full_recipe_url" ? "Full Recipe : WordPress URL" : "Generated recipe"}
+                    {project.post_type === "image" && page.post_header_mode === "full_recipe"
+                      ? "Full recipe in post · No first comment"
+                      : `First comment: ${page.comment_mode === "full_recipe_url" ? "Full Recipe : WordPress URL" : "Generated recipe"}`}
                   </p>
                 </div>
               </div>
@@ -2191,10 +2277,11 @@ function FacebookPagesSettings({
                 </div>
               </div>
             )}
-            <div className="grid gap-px bg-slate-800 sm:grid-cols-6">
+            <div className={`grid gap-px bg-slate-800 sm:grid-cols-3 ${project.post_type === "image" ? "xl:grid-cols-7" : "xl:grid-cols-6"}`}>
               {[
                 [project.post_type === "image" ? "Image model" : "Voice", project.post_type === "image" ? page.recipe_card_model : page.tts_voice.charAt(0).toUpperCase() + page.tts_voice.slice(1)],
                 ["Card quality", page.recipe_card_quality.charAt(0).toUpperCase() + page.recipe_card_quality.slice(1)],
+                ...(project.post_type === "image" ? [["Post header", FACEBOOK_POST_HEADER_OPTIONS.find((option) => option.value === page.post_header_mode)?.shortLabel || "Recipe title"]] : []),
                 ["Window", `${page.publish_start_time}–${page.publish_end_time}`],
                 ["Maximum", `${page.max_posts_per_day}/day`],
                 ["Interval", `${page.interval_minutes} min`],
@@ -2288,6 +2375,36 @@ function ConnectPageModal({
   );
 }
 
+const FACEBOOK_POST_HEADER_OPTIONS: Array<{
+  value: FacebookPostHeaderMode;
+  label: string;
+  shortLabel: string;
+  description: string;
+  preview: string;
+}> = [
+  {
+    value: "recipe_title",
+    label: "Recipe Title",
+    shortLabel: "Title",
+    description: "Publish only the rewritten title. The full recipe is added as the first comment.",
+    preview: "Ultimate Roasted Jalapeno Popper Grilled Cheese",
+  },
+  {
+    value: "full_recipe",
+    label: "Full Recipe",
+    shortLabel: "Full recipe",
+    description: "Publish the complete rewritten recipe in the post. No first comment is added.",
+    preview: "Title + ingredients + instructions",
+  },
+  {
+    value: "title_ingredients",
+    label: "Recipe Title & 8 Ingredients",
+    shortLabel: "Title + 8 ingredients",
+    description: "Publish the title and the first eight ingredients. The full recipe remains in the first comment.",
+    preview: "Title\nIngredients:\n- First ingredient\n- Second ingredient",
+  },
+];
+
 function PageScheduleModal({
   projectType,
   page,
@@ -2311,6 +2428,7 @@ function PageScheduleModal({
     recipe_card_prompt: page.recipe_card_prompt,
     recipe_card_model: page.recipe_card_model,
     recipe_card_quality: page.recipe_card_quality,
+    post_header_mode: page.post_header_mode,
   });
   const [saving, setSaving] = useState(false);
 
@@ -2392,10 +2510,37 @@ function PageScheduleModal({
                   maxLength={12000}
                   className="input-field min-h-[320px] resize-y font-mono text-xs leading-5"
                 />
-                <p className="mt-2 text-[11px] text-slate-600">Use {"{recipe_title}"} for the title and {"{recipe_post}"} for the complete Recipe Post.</p>
+                <p className="mt-2 text-[11px] leading-5 text-slate-600">
+                  Available variables: <code className="text-slate-400">{"{recipe_title}"}</code>, <code className="text-slate-400">{"{ingredient_recipe}"}</code> for the first eight ingredients, and <code className="text-slate-400">{"{recipe_post}"}</code> for the complete rewritten recipe.
+                </p>
               </div>
             </div>
           </div>
+          {projectType === "image" && (
+            <div className="sm:col-span-2 rounded-2xl border border-slate-800 bg-slate-950/25 p-5 lg:p-6">
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-white">Facebook Post Header</p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">Choose what is written in the Facebook post above the generated image.</p>
+              </div>
+              <div className="grid gap-3 lg:grid-cols-3">
+                {FACEBOOK_POST_HEADER_OPTIONS.map((option) => {
+                  const selected = form.post_header_mode === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setForm({ ...form, post_header_mode: option.value })}
+                      className={`rounded-xl border p-4 text-left transition ${selected ? "border-[#1877f2] bg-[#1877f2]/10 shadow-[0_0_0_1px_rgba(24,119,242,.12)]" : "border-slate-800 bg-[#101827] hover:border-slate-700"}`}
+                    >
+                      <span className={`text-sm font-semibold ${selected ? "text-white" : "text-slate-300"}`}>{option.label}</span>
+                      <span className="mt-2 block text-[11px] leading-5 text-slate-500">{option.description}</span>
+                      <span className="mt-3 block whitespace-pre-line rounded-lg bg-slate-950/50 px-3 py-2 font-mono text-[10px] leading-4 text-slate-600">{option.preview}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div>
             <label className="mb-2 block text-xs font-medium text-slate-500">Publishing start</label>
             <input type="time" value={form.publish_start_time} onChange={(event) => setForm({ ...form, publish_start_time: event.target.value })} className="input-field" />
@@ -2418,10 +2563,16 @@ function PageScheduleModal({
           </div>
           <div className="sm:col-span-2">
             <label className="mb-2 block text-xs font-medium text-slate-500">First comment</label>
-            <select value={form.comment_mode} onChange={(event) => setForm({ ...form, comment_mode: event.target.value as FacebookCommentMode })} className="input-field">
-              <option value="full_recipe">Full Recipe</option>
-              <option value="full_recipe_url">Full Recipe : WordPress article URL</option>
-            </select>
+            {projectType === "image" && form.post_header_mode === "full_recipe" ? (
+              <div className="rounded-xl border border-emerald-900/40 bg-emerald-950/20 px-4 py-3 text-xs leading-5 text-emerald-200">
+                No comment will be added because the complete recipe is already in the Facebook post.
+              </div>
+            ) : (
+              <select value={form.comment_mode} onChange={(event) => setForm({ ...form, comment_mode: event.target.value as FacebookCommentMode })} className="input-field">
+                <option value="full_recipe">Full Recipe</option>
+                <option value="full_recipe_url">Full Recipe : WordPress article URL</option>
+              </select>
+            )}
           </div>
           <div className="sm:col-span-2 rounded-xl border border-slate-800 bg-slate-950/30 p-4 text-xs leading-5 text-slate-500">
             Example: 12:00–19:00 with a 180-minute interval produces 12:00, 15:00, and 18:00. Remaining posts continue the next day.

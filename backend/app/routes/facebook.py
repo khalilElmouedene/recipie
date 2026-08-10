@@ -27,6 +27,7 @@ from ..db_models import (
     FacebookDeliveryStatus,
     FacebookGenerationLog,
     FacebookPage,
+    FacebookPostHeaderMode,
     FacebookProject,
     FacebookSpyRow,
     Project,
@@ -40,6 +41,7 @@ from ..services import facebook_api
 from ..services.email_service import send_facebook_spy_sheet_low_email
 from ..services.credentials_loader import load_credentials_for_job
 from ..services.facebook_generation import facebook_generation_manager
+from ..services.facebook_recipe import DEFAULT_FACEBOOK_RECIPE_REWRITE_PROMPT
 from ..services.facebook_publisher import delete_facebook_content_files, publish_facebook_delivery
 from ..services.facebook_video import validate_video_file
 from ..services.prompts import DEFAULT_PROMPTS
@@ -87,6 +89,9 @@ class FacebookProjectUpdate(BaseModel):
     video_intro_seconds: float | None = Field(default=None, ge=1.0, le=15.0)
     video_fps: Literal[24, 30, 60] | None = None
     video_bitrate_kbps: int | None = Field(default=None, ge=1000, le=20000)
+    recipe_rewrite_prompt: str | None = Field(
+        default=None, min_length=1, max_length=12000
+    )
 
 
 class FacebookProjectOut(BaseModel):
@@ -96,6 +101,7 @@ class FacebookProjectOut(BaseModel):
     name: str
     description: str
     post_type: str
+    recipe_rewrite_prompt: str
     app_id: str | None
     has_app_secret: bool
     video_format: str
@@ -120,6 +126,7 @@ class FacebookPageOut(BaseModel):
     recipe_card_prompt: str
     recipe_card_model: str
     recipe_card_quality: str
+    post_header_mode: str
     publish_start_time: str
     publish_end_time: str
     max_posts_per_day: int
@@ -148,6 +155,10 @@ class FacebookPageOut(BaseModel):
             recipe_card_quality=(
                 getattr(page, "recipe_card_quality", "low") or "low"
             ),
+            post_header_mode=(
+                getattr(page, "post_header_mode", None)
+                or FacebookPostHeaderMode.recipe_title.value
+            ),
             publish_start_time=page.publish_start_time,
             publish_end_time=page.publish_end_time,
             max_posts_per_day=page.max_posts_per_day,
@@ -168,6 +179,9 @@ class FacebookPageUpdate(BaseModel):
         "gpt-image-2", "gpt-image-2-2026-04-21"
     ] | None = None
     recipe_card_quality: Literal["auto", "low", "medium", "high"] | None = None
+    post_header_mode: Literal[
+        "recipe_title", "full_recipe", "title_ingredients"
+    ] | None = None
     publish_start_time: str | None = None
     publish_end_time: str | None = None
     max_posts_per_day: int | None = Field(default=None, ge=1, le=100)
@@ -187,6 +201,9 @@ class FacebookPageTokenAdd(BaseModel):
         "gpt-image-2", "gpt-image-2-2026-04-21"
     ] | None = None
     recipe_card_quality: Literal["auto", "low", "medium", "high"] | None = None
+    post_header_mode: Literal[
+        "recipe_title", "full_recipe", "title_ingredients"
+    ] = "recipe_title"
 
 
 class FacebookPageHealthOut(BaseModel):
@@ -283,6 +300,9 @@ class FacebookContentOut(BaseModel):
     template_image_url: str | None
     source_image_url: str | None
     recipe_post: str | None
+    rewritten_recipe_post: str | None
+    recipe_title: str | None
+    ingredient_recipe: str | None
     generate_article: bool
     screenshot_url: str | None
     processed_video_url: str | None
@@ -374,6 +394,10 @@ async def _project_out(project: FacebookProject, db: AsyncSession) -> FacebookPr
         name=project.name,
         description=project.description or "",
         post_type=getattr(project, "post_type", "video") or "video",
+        recipe_rewrite_prompt=(
+            getattr(project, "recipe_rewrite_prompt", None)
+            or DEFAULT_FACEBOOK_RECIPE_REWRITE_PROMPT
+        ),
         app_id=project.app_id or (settings.facebook_app_id or None),
         has_app_secret=bool(project.app_secret or settings.facebook_app_secret),
         video_format=project.video_format,
@@ -859,6 +883,7 @@ async def add_facebook_page_by_token(
             recipe_card_prompt=recipe_card_prompt,
             recipe_card_model=body.recipe_card_model or "gpt-image-2",
             recipe_card_quality=body.recipe_card_quality or "low",
+            post_header_mode=body.post_header_mode,
         )
         db.add(page)
     else:
@@ -874,6 +899,7 @@ async def add_facebook_page_by_token(
             page.recipe_card_model = body.recipe_card_model
         if body.recipe_card_quality is not None:
             page.recipe_card_quality = body.recipe_card_quality
+        page.post_header_mode = body.post_header_mode
     await db.commit()
     await db.refresh(page)
     return FacebookPageOut.from_db(page)
@@ -1575,6 +1601,9 @@ async def list_facebook_contents(
                 template_image_url=content.template_image_url,
                 source_image_url=content.source_image_url,
                 recipe_post=content.recipe_post,
+                rewritten_recipe_post=getattr(content, "rewritten_recipe_post", None),
+                recipe_title=getattr(content, "recipe_title", None),
+                ingredient_recipe=getattr(content, "ingredient_recipe", None),
                 generate_article=bool(content.generate_article),
                 screenshot_url=content.screenshot_url,
                 processed_video_url=content.processed_video_url,
@@ -1747,6 +1776,15 @@ async def _queue_facebook_generation_retry(
     content.generated_images = None
     content.generated_article = None
     content.article_url = None
+    if getattr(content, "post_type", "video") == "image":
+        original_recipe_post = (getattr(content, "recipe_post", None) or "").strip()
+        content.title = next(
+            (line.strip() for line in original_recipe_post.splitlines() if line.strip()),
+            content.title,
+        )
+        content.rewritten_recipe_post = None
+        content.recipe_title = None
+        content.ingredient_recipe = None
     content.status = FacebookContentStatus.processing
     content.error_message = None
     await db.execute(

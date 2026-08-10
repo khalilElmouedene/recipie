@@ -22,15 +22,23 @@ FACEBOOK_UPLOADS = UPLOADS_ROOT / "facebook"
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 
 
-def _render_prompt(template: str, recipe_title: str, recipe_post: str) -> str:
+def _render_prompt(
+    template: str,
+    recipe_title: str,
+    recipe_post: str,
+    ingredient_recipe: str,
+) -> str:
     rendered = str(template or "").replace("{recipe_title}", recipe_title)
     rendered = rendered.replace("{recipe_post}", recipe_post)
+    rendered = rendered.replace("{ingredient_recipe}", ingredient_recipe)
     return (
         "You receive exactly two reference images. The FIRST image is the design "
         "template. The SECOND image is the source food image. Follow the Page's "
         "instructions below, preserve readable text, and return one finished social "
         "media image.\n\n"
-        f"Recipe Post:\n{recipe_post}\n\n"
+        f"Recipe title:\n{recipe_title}\n\n"
+        f"First 8 ingredients:\n{ingredient_recipe}\n\n"
+        f"Rewritten Recipe Post:\n{recipe_post}\n\n"
         f"Page instructions:\n{rendered}"
     )
 
@@ -98,6 +106,7 @@ class FacebookImagePostGenerator:
         source_image_url: str,
         recipe_post: str,
         recipe_title: str,
+        ingredient_recipe: str,
         prompt: str,
         model: str,
         quality: str,
@@ -120,7 +129,12 @@ class FacebookImagePostGenerator:
             result = client.images.edit(
                 model=model,
                 image=[template, source],
-                prompt=_render_prompt(prompt, recipe_title, recipe_post),
+                prompt=_render_prompt(
+                    prompt,
+                    recipe_title,
+                    recipe_post,
+                    ingredient_recipe,
+                ),
                 quality=quality,
                 size="1024x1536",
             )

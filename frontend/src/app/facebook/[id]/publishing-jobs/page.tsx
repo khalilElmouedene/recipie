@@ -389,7 +389,7 @@ export default function FacebookPublishingJobsPage() {
           const copy = STATUS_COPY[job.delivery.status];
           const StatusIcon = copy.icon;
           const statusDescription = job.delivery.status === "published" && job.content.post_type === "image"
-            ? "Meta published the image post and added the first comment."
+            ? "Meta published the image post and applied its configured first-comment rule."
             : copy.description;
           const retryable = job.delivery.status === "failed";
           const publishable = retryable || job.delivery.status === "draft" || job.delivery.status === "scheduled";

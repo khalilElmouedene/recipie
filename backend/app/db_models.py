@@ -546,6 +546,12 @@ class FacebookCommentMode(str, enum.Enum):
     full_recipe_url = "full_recipe_url"
 
 
+class FacebookPostHeaderMode(str, enum.Enum):
+    recipe_title = "recipe_title"
+    full_recipe = "full_recipe"
+    title_ingredients = "title_ingredients"
+
+
 class FacebookProject(Base):
     """Facebook workspace backed by a regular content Project.
 
@@ -565,6 +571,7 @@ class FacebookProject(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
     post_type: Mapped[str] = mapped_column(String(16), nullable=False, default="video")
+    recipe_rewrite_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     app_secret: Mapped[str | None] = mapped_column(Text, nullable=True)  # encrypted
     video_format: Mapped[str] = mapped_column(String(16), nullable=False, default="9:16")
@@ -603,6 +610,9 @@ class FacebookPage(Base):
     recipe_card_quality: Mapped[str] = mapped_column(
         String(16), nullable=False, default="low"
     )
+    post_header_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=FacebookPostHeaderMode.recipe_title.value
+    )
     publish_start_time: Mapped[str] = mapped_column(String(5), nullable=False, default="12:00")
     publish_end_time: Mapped[str] = mapped_column(String(5), nullable=False, default="19:00")
     max_posts_per_day: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
@@ -624,6 +634,9 @@ class FacebookSpyRow(Base):
     template_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     recipe_post: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rewritten_recipe_post: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recipe_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ingredient_recipe: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

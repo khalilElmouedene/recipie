@@ -774,6 +774,7 @@ export const api = {
       video_intro_seconds: number;
       video_fps: 24 | 30 | 60;
       video_bitrate_kbps: number;
+      recipe_rewrite_prompt: string;
     }>,
   ) =>
     request<FacebookProjectOut>(`/api/facebook-projects/${projectId}`, {
@@ -820,6 +821,7 @@ export const api = {
       recipe_card_prompt: string;
       recipe_card_model: FacebookRecipeCardModel;
       recipe_card_quality: FacebookRecipeCardQuality;
+      post_header_mode: FacebookPostHeaderMode;
       publish_start_time: string;
       publish_end_time: string;
       max_posts_per_day: number;
@@ -1570,6 +1572,10 @@ export type FacebookRecipeCardModel =
   | "gpt-image-2"
   | "gpt-image-2-2026-04-21";
 export type FacebookRecipeCardQuality = "auto" | "low" | "medium" | "high";
+export type FacebookPostHeaderMode =
+  | "recipe_title"
+  | "full_recipe"
+  | "title_ingredients";
 export type FacebookVideoFormat = "2:3" | "9:16" | "4:5" | "1:1";
 export type FacebookContentStatus = "processing" | "ready" | "failed";
 export type FacebookLogLevel = "info" | "success" | "warning" | "error";
@@ -1589,6 +1595,7 @@ export interface FacebookProjectOut {
   name: string;
   description: string;
   post_type: "video" | "image";
+  recipe_rewrite_prompt: string;
   app_id: string | null;
   has_app_secret: boolean;
   video_format: FacebookVideoFormat;
@@ -1613,6 +1620,7 @@ export interface FacebookPageOut {
   recipe_card_prompt: string;
   recipe_card_model: FacebookRecipeCardModel;
   recipe_card_quality: FacebookRecipeCardQuality;
+  post_header_mode: FacebookPostHeaderMode;
   publish_start_time: string;
   publish_end_time: string;
   max_posts_per_day: number;
@@ -1672,6 +1680,9 @@ export interface FacebookContentOut {
   template_image_url: string | null;
   source_image_url: string | null;
   recipe_post: string | null;
+  rewritten_recipe_post: string | null;
+  recipe_title: string | null;
+  ingredient_recipe: string | null;
   generate_article: boolean;
   screenshot_url: string | null;
   processed_video_url: string | null;

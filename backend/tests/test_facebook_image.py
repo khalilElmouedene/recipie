@@ -14,6 +14,7 @@ from PIL import Image
 
 from app.services.facebook_image import FacebookImagePostGenerator, _render_prompt
 from app.services.facebook_generation import FacebookGenerationManager, _GenerationContext
+from app.services.facebook_recipe import FacebookRewrittenRecipe
 
 
 def _png_base64() -> str:
@@ -25,15 +26,17 @@ def _png_base64() -> str:
 class FacebookImagePromptTests(unittest.TestCase):
     def test_prompt_assigns_template_and_source_roles_and_expands_recipe_fields(self):
         prompt = _render_prompt(
-            "Create {recipe_title}. Include {recipe_post}.",
+            "Create {recipe_title}. Include {ingredient_recipe}. Full: {recipe_post}.",
             "Garlic Sauce",
             "Garlic Sauce\nIngredients...",
+            "- 2 cloves garlic\n- 1 cup yogurt",
         )
 
         self.assertIn("FIRST image is the design template", prompt)
         self.assertIn("SECOND image is the source food image", prompt)
         self.assertIn("Create Garlic Sauce", prompt)
         self.assertIn("Garlic Sauce\nIngredients...", prompt)
+        self.assertIn("- 2 cloves garlic", prompt)
 
 
 class FacebookImageGenerationTests(unittest.TestCase):
@@ -65,6 +68,7 @@ class FacebookImageGenerationTests(unittest.TestCase):
                     source_image_url="https://example.com/source.png",
                     recipe_post="Garlic Sauce\nIngredients...",
                     recipe_title="Garlic Sauce",
+                    ingredient_recipe="- 2 cloves garlic\n- 1 cup yogurt",
                     prompt="Keep text readable: {recipe_title}",
                     model="gpt-image-2",
                     quality="high",
@@ -104,6 +108,7 @@ class FacebookImageArticleTests(unittest.IsolatedAsyncioTestCase):
             video_fps=30,
             video_bitrate_kbps=5000,
             post_type="image",
+            recipe_rewrite_prompt="Rewrite this recipe clearly: {recipe_post}",
         )
         payload = {
             "id": str(content_id),
@@ -126,6 +131,7 @@ class FacebookImageArticleTests(unittest.IsolatedAsyncioTestCase):
         manager._load_context = AsyncMock(return_value=context)
         manager._load_content_payloads = AsyncMock(return_value=[payload])
         manager._store_delivery_image = AsyncMock()
+        manager._store_rewritten_recipe = AsyncMock()
         manager._prepare_image_recipe = AsyncMock(return_value=recipe_id)
         manager._complete = AsyncMock()
         manager._fail = AsyncMock()
@@ -136,6 +142,14 @@ class FacebookImageArticleTests(unittest.IsolatedAsyncioTestCase):
                 "app.services.facebook_generation.generate_for_recipe",
                 return_value={"generated_article": "<p>Article</p>"},
             ) as generate_article,
+            patch(
+                "app.services.facebook_generation.rewrite_facebook_recipe_post",
+                return_value=FacebookRewrittenRecipe(
+                    recipe_title="Rewritten Garlic Sauce",
+                    recipe_post="Rewritten Garlic Sauce\nIngredients\n- Garlic\n- Yogurt\n\nInstructions\n1. Blend.",
+                    ingredient_recipe="- Garlic\n- Yogurt",
+                ),
+            ) as rewrite_recipe,
             patch(
                 "app.services.facebook_generation.write_facebook_log",
                 new=AsyncMock(),
@@ -155,11 +169,25 @@ class FacebookImageArticleTests(unittest.IsolatedAsyncioTestCase):
         manager._store_delivery_image.assert_awaited_once_with(
             content_id, delivery_id, generated_image_url
         )
+        rewrite_recipe.assert_called_once()
+        manager._store_rewritten_recipe.assert_awaited_once_with(
+            content_id,
+            recipe_title="Rewritten Garlic Sauce",
+            rewritten_recipe_post="Rewritten Garlic Sauce\nIngredients\n- Garlic\n- Yogurt\n\nInstructions\n1. Blend.",
+            ingredient_recipe="- Garlic\n- Yogurt",
+        )
+        image_kwargs = manager._image.generate.call_args.kwargs
+        self.assertEqual(image_kwargs["recipe_title"], "Rewritten Garlic Sauce")
+        self.assertEqual(image_kwargs["ingredient_recipe"], "- Garlic\n- Yogurt")
         self.assertEqual(
             manager._prepare_image_recipe.await_args.kwargs["article_image_url"],
             source_image_url,
         )
         self.assertEqual(generate_article.call_args.kwargs["image_url"], source_image_url)
+        self.assertEqual(
+            generate_article.call_args.kwargs["recipe_text"],
+            "Rewritten Garlic Sauce\nIngredients\n- Garlic\n- Yogurt\n\nInstructions\n1. Blend.",
+        )
         generated_result = manager._complete.await_args.args[2]
         self.assertEqual(
             generated_result["generated_images"],

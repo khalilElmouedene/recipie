@@ -7,12 +7,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.config import settings
-from app.db_models import FacebookCommentMode
+from app.db_models import FacebookCommentMode, FacebookPostHeaderMode
 from app.db_models import FacebookDeliveryStatus
 from app.services import facebook_api
 from app.services.facebook_publisher import (
     _ensure_article_published,
     _delete_content_video_files,
+    _publish_facebook_image_delivery,
+    build_facebook_image_caption,
     build_first_comment,
     cleanup_published_facebook_content_video,
     publish_facebook_delivery,
@@ -162,6 +164,41 @@ class FacebookFirstCommentTests(unittest.TestCase):
             )
 
 
+class FacebookImageCaptionTests(unittest.TestCase):
+    def test_recipe_title_header_contains_only_title(self):
+        self.assertEqual(
+            build_facebook_image_caption(
+                FacebookPostHeaderMode.recipe_title,
+                recipe_title="Garlic Sauce",
+                recipe_post="Full recipe",
+                ingredient_recipe="- Garlic",
+            ),
+            "Garlic Sauce",
+        )
+
+    def test_full_recipe_header_contains_recipe_and_requires_no_caption_suffix(self):
+        self.assertEqual(
+            build_facebook_image_caption(
+                FacebookPostHeaderMode.full_recipe,
+                recipe_title="Garlic Sauce",
+                recipe_post="Garlic Sauce\nIngredients\n- Garlic\nInstructions\n1. Blend.",
+                ingredient_recipe="- Garlic",
+            ),
+            "Garlic Sauce\nIngredients\n- Garlic\nInstructions\n1. Blend.",
+        )
+
+    def test_title_ingredients_header_contains_first_ingredients(self):
+        self.assertEqual(
+            build_facebook_image_caption(
+                FacebookPostHeaderMode.title_ingredients,
+                recipe_title="Garlic Sauce",
+                recipe_post="Full recipe",
+                ingredient_recipe="- Garlic\n- Yogurt",
+            ),
+            "Garlic Sauce\n\nIngredients :\n- Garlic\n- Yogurt",
+        )
+
+
 class FacebookRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_recovery_reports_all_interrupted_deliveries(self):
         session = _FakeSession()
@@ -177,6 +214,67 @@ class FacebookRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_recipe_image_header_publishes_without_first_comment(self):
+        delivery_id = uuid.uuid4()
+        delivery = SimpleNamespace(
+            generated_image_url="https://example.com/uploads/facebook/image.png",
+            facebook_post_id=None,
+            first_comment_id=None,
+            allow_without_article_url=False,
+        )
+        content = SimpleNamespace(
+            id=uuid.uuid4(),
+            recipe_post="Original recipe",
+            rewritten_recipe_post="Garlic Sauce\nIngredients\n- Garlic\nInstructions\n1. Blend.",
+            recipe_title="Garlic Sauce",
+            ingredient_recipe="- Garlic",
+            generate_article=False,
+            title="Original title",
+        )
+        page = SimpleNamespace(
+            access_token="encrypted-token",
+            facebook_page_id="page-42",
+            comment_mode=FacebookCommentMode.full_recipe_url,
+            post_header_mode=FacebookPostHeaderMode.full_recipe.value,
+        )
+        sessions = iter(
+            [
+                _QueuedSession(
+                    [_ExecutionResult(row=(delivery, content, page, None))]
+                ),
+                _QueuedSession([_ExecutionResult()]),
+                _QueuedSession([_ExecutionResult()]),
+            ]
+        )
+        image_path = MagicMock()
+        image_path.is_file.return_value = True
+
+        with (
+            patch(
+                "app.services.facebook_publisher.SessionLocal",
+                side_effect=lambda: next(sessions),
+            ),
+            patch(
+                "app.services.facebook_publisher._local_upload_path",
+                return_value=image_path,
+            ),
+            patch("app.services.facebook_publisher.decrypt", return_value="page-token"),
+            patch.object(
+                facebook_api,
+                "publish_page_photo",
+                return_value="page-42_post-99",
+            ) as publish_photo,
+            patch.object(facebook_api, "add_first_comment") as add_comment,
+        ):
+            published = await _publish_facebook_image_delivery(delivery_id)
+
+        self.assertTrue(published)
+        self.assertEqual(
+            publish_photo.call_args.kwargs["caption"],
+            content.rewritten_recipe_post,
+        )
+        add_comment.assert_not_called()
+
     async def test_image_post_without_article_is_dispatched_without_recipe_row(self):
         delivery_id = uuid.uuid4()
         delivery = SimpleNamespace()
