@@ -271,11 +271,11 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(published)
         self.assertEqual(
             publish_photo.call_args.kwargs["caption"],
-            content.recipe_post,
+            content.rewritten_recipe_post,
         )
         add_comment.assert_not_called()
 
-    async def test_title_image_header_uses_original_spy_recipe_in_comment(self):
+    async def test_title_image_header_uses_rewritten_full_recipe_in_comment(self):
         delivery_id = uuid.uuid4()
         delivery = SimpleNamespace(
             generated_image_url="https://example.com/uploads/facebook/image.png",
@@ -337,7 +337,7 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(publish_photo.call_args.kwargs["caption"], "Rewritten title")
         self.assertEqual(
             add_comment.call_args.kwargs["message"],
-            content.recipe_post,
+            content.rewritten_recipe_post,
         )
 
     async def test_image_post_without_article_is_dispatched_without_recipe_row(self):
