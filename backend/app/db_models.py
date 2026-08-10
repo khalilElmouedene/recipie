@@ -634,9 +634,6 @@ class FacebookSpyRow(Base):
     template_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     recipe_post: Mapped[str | None] = mapped_column(Text, nullable=True)
-    rewritten_recipe_post: Mapped[str | None] = mapped_column(Text, nullable=True)
-    recipe_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    ingredient_recipe: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -660,6 +657,9 @@ class FacebookContent(Base):
     template_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     recipe_post: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rewritten_recipe_post: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recipe_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ingredient_recipe: Mapped[str | None] = mapped_column(Text, nullable=True)
     generate_article: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     screenshot_url: Mapped[str | None] = mapped_column(Text, nullable=True)

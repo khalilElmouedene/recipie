@@ -10,6 +10,7 @@ from app.db_models import (
     FacebookDelivery,
     FacebookDeliveryStatus,
     FacebookGenerationLog,
+    FacebookSpyRow,
 )
 from app.routes.facebook import FacebookGenerationStart, start_facebook_generation
 
@@ -59,6 +60,15 @@ class _GenerationSession:
 
 
 class FacebookGenerationStartTests(unittest.IsolatedAsyncioTestCase):
+    def test_rewrite_fields_belong_to_content_and_never_to_spy_sheet(self):
+        rewrite_fields = {
+            "rewritten_recipe_post",
+            "recipe_title",
+            "ingredient_recipe",
+        }
+        self.assertTrue(rewrite_fields.issubset(FacebookContent.__table__.c.keys()))
+        self.assertTrue(rewrite_fields.isdisjoint(FacebookSpyRow.__table__.c.keys()))
+
     async def test_image_project_uses_three_columns_and_allows_image_only_without_site(self):
         project_id = uuid.uuid4()
         content_project_id = uuid.uuid4()
