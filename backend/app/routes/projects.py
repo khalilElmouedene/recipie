@@ -23,7 +23,7 @@ from ..database import get_db
 from ..db_models import (
     User, UserRole, Project, ProjectMember, ProjectMemberRole,
     Site, Recipe, Job, JobStatus, JobType, ProjectPublishSchedule, RecipeStatus,
-    ProjectCredential, Prompt, UserCredential,
+    ProjectCredential, Prompt, UserCredential, FacebookProject,
 )
 from ..dependencies import get_current_user, require_owner, check_project_access
 from ..pagination import apply_limit_offset, count_rows, set_total_count
@@ -90,7 +90,12 @@ async def list_projects(
             (Project.owner_id == user.id) |
             (Project.id.in_(
                 select(ProjectMember.project_id).where(ProjectMember.user_id == user.id)
-            ))
+            )),
+            # Facebook projects own an internal content Project so they can reuse
+            # the existing site/credential pipeline. Keep that implementation
+            # detail out of the generic Projects workspace; it remains available
+            # through the dedicated Facebook area.
+            ~Project.id.in_(select(FacebookProject.content_project_id)),
         )
         .order_by(Project.created_at.desc())
     )
