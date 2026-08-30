@@ -382,7 +382,7 @@ class ImageProjectOut(BaseModel):
 
 class ImageBatchCreate(BaseModel):
     project_id: uuid.UUID
-    prompts: list[str] = Field(min_length=1, max_length=50)
+    prompts: list[str] = Field(min_length=1)
 
     @field_validator("prompts")
     @classmethod

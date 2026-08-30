@@ -141,7 +141,7 @@ export default function ImagesPage() {
   };
 
   const addPrompt = () => {
-    if (prompts.length < 50) setPrompts((current) => [...current, ""]);
+    setPrompts((current) => [...current, ""]);
   };
 
   const removePrompt = (index: number) => {
@@ -176,8 +176,6 @@ export default function ImagesPage() {
         .map((row) => (promptColumn >= 0 ? row[promptColumn] : row.find(Boolean) ?? "").trim())
         .filter(Boolean);
       if (!imported.length) throw new Error("No prompts were found in the selected sheet");
-      if (imported.length > 50) throw new Error(`This batch supports up to 50 prompts. The sheet contains ${imported.length}. Split it into smaller files.`);
-
       setPrompts(imported);
       setImportedSheetName(file.name);
       toast.success(`Loaded ${imported.length} prompt${imported.length === 1 ? "" : "s"} from ${file.name}`);
@@ -307,7 +305,7 @@ export default function ImagesPage() {
                   {importingSheet ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
                   {importingSheet ? "Reading…" : "Import sheet"}
                 </button>
-                <span className="rounded-full border border-gray-700 px-2.5 py-1 text-[11px] text-gray-400">{prompts.length}/50</span>
+                <span className="rounded-full border border-gray-700 px-2.5 py-1 text-[11px] text-gray-400">{prompts.length} prompt{prompts.length === 1 ? "" : "s"}</span>
               </div>
             </div>
             {importedSheetName && <div className="mb-4 flex items-center gap-2 rounded-xl border border-sky-400/15 bg-sky-400/5 px-3 py-2 text-[11px] text-sky-200/80"><Upload size={13} /> {importedSheetName} loaded — review the prompts, then generate the full set.</div>}
@@ -333,7 +331,7 @@ export default function ImagesPage() {
                 </div>
               ))}
             </div>
-            <button type="button" onClick={addPrompt} disabled={prompts.length >= 50} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-700 py-3 text-xs font-semibold text-gray-400 transition hover:border-sky-500/50 hover:bg-sky-400/5 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40">
+            <button type="button" onClick={addPrompt} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-700 py-3 text-xs font-semibold text-gray-400 transition hover:border-sky-500/50 hover:bg-sky-400/5 hover:text-sky-300">
               <Plus size={15} /> Add another prompt
             </button>
             <button
