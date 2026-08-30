@@ -1,9 +1,10 @@
 "use client";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle, ScrollText, BarChart2 } from "lucide-react";
-import { clearToken, getUserEmail, getUserRole } from "@/lib/auth";
+import { LayoutDashboard, FolderKanban, Users, LogOut, X, Settings, LayoutTemplate, MessageCircle, ScrollText, BarChart2, Images } from "lucide-react";
+import { clearToken, getUserRole } from "@/lib/auth";
 import { api } from "@/lib/api";
 import ThemeToggle from "@/components/ThemeToggle";
 
@@ -36,13 +37,28 @@ interface SidebarProps {
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [verifiedEmail, setVerifiedEmail] = useState<string | null>(null);
   const closeIfMobile = () => {
     if (typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches) {
       onClose?.();
     }
   };
   const role = getUserRole();
-  const email = (getUserEmail() || "").trim().toLowerCase();
+  useEffect(() => {
+    let mounted = true;
+    api.me()
+      .then((me) => {
+        if (mounted) setVerifiedEmail(me.email.trim().toLowerCase());
+      })
+      .catch(() => {
+        if (mounted) setVerifiedEmail(null);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const email = verifiedEmail || "";
   const isAuditViewer = email === "khalil@gmail.com";
   const baseItems = role === "owner"
     ? [...NAV, { href: "/users", label: "Users", icon: Users }, { href: "/settings", label: "Settings", icon: Settings }]
@@ -50,9 +66,12 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const withLogs = isAuditViewer
     ? [...baseItems, { href: "/logs", label: "Logs", icon: ScrollText }]
     : baseItems;
-  const allItems = isAuditViewer
-    ? [...withLogs, { href: "/analytics", label: "Analytics", icon: BarChart2 }]
+  const withImages = isAuditViewer
+    ? [...withLogs, { href: "/images", label: "Imges", icon: Images }]
     : withLogs;
+  const allItems = isAuditViewer
+    ? [...withImages, { href: "/analytics", label: "Analytics", icon: BarChart2 }]
+    : withImages;
 
   return (
     <aside

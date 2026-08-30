@@ -395,6 +395,48 @@ class Job(Base):
     logs: Mapped[list[JobLog]] = relationship(back_populates="job", cascade="all, delete-orphan")
 
 
+class ImageBatch(Base):
+    """A standalone Midjourney prompt batch, independent from article recipes."""
+
+    __tablename__ = "image_batches"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    total_prompts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_prompts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_images: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    generations: Mapped[list["ImageGeneration"]] = relationship(
+        back_populates="batch", cascade="all, delete-orphan", order_by="ImageGeneration.position"
+    )
+
+
+class ImageGeneration(Base):
+    """One prompt and its cached Midjourney outputs within an ImageBatch."""
+
+    __tablename__ = "image_generations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    batch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("image_batches.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    image_urls: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    batch: Mapped[ImageBatch] = relationship(back_populates="generations")
+
+
 class JobLog(Base):
     __tablename__ = "job_logs"
 

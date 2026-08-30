@@ -647,6 +647,50 @@ def generate_images_only(
             return json.dumps(cached_urls)
 
 
+def generate_direct_midjourney_images(
+    prompt: str,
+    credentials: dict,
+    log: Callable[[str], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> list[str]:
+    """Generate and locally cache images for a standalone prompt.
+
+    The image workspace deliberately bypasses article/recipe generation. It still
+    uses the same Midjourney account/channel locks, grid wait setting, sanitizer,
+    Discord correlation, and permanent local image cache as article jobs.
+    """
+    _log = log or print
+    _stop = should_stop or (lambda: False)
+    discord_auth = credentials.get("discord_auth", "")
+    if not discord_auth:
+        raise ValueError("Midjourney Discord credentials are not configured for this project")
+    if not prompt.strip():
+        raise ValueError("Prompt cannot be empty")
+    channel_id = credentials.get("discord_channel", "")
+    _log(f"Waiting for Midjourney account slot ({MAX_CONCURRENT_MJ_PER_ACCOUNT} max concurrent)...")
+    with _get_mj_account_semaphore(discord_auth):
+        if _stop():
+            raise ValueError("Generation stopped by user")
+        _log("Waiting for Midjourney channel slot...")
+        with _get_mj_lock(channel_id):
+            if _stop():
+                raise ValueError("Generation stopped by user")
+            _log("Midjourney slot acquired - generating image set...")
+            # A direct prompt is the recipe title for this call. The tiny
+            # identity template prevents project article wording from being
+            # injected into the user's standalone prompt.
+            cached_urls = _generate_midjourney_cached_images(
+                recipe_id=None,
+                recipe_title=prompt.strip(),
+                image_url="",
+                credentials=credentials,
+                prompts={"midjourney_imagine": "{recipe_name}"},
+                log=_log,
+                should_stop=_stop,
+            )
+            return cached_urls
+
+
 def process_recipes_from_db(
     recipes: list[dict],
     site_domain: str,

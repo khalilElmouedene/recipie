@@ -179,6 +179,7 @@ from app.routes.spy_sheet import router as spy_sheet_router
 from app.routes.auto_spy import router as auto_spy_router
 from app.routes.audit_logs import router as audit_logs_router
 from app.routes.analytics import router as analytics_router
+from app.routes.images import router as images_router
 from app.ws.logs import router as ws_router
 
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -202,4 +203,5 @@ app.include_router(spy_sheet_router)
 app.include_router(auto_spy_router)
 app.include_router(audit_logs_router)
 app.include_router(analytics_router)
+app.include_router(images_router)
 app.include_router(ws_router)

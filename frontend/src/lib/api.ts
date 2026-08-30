@@ -214,6 +214,22 @@ export const api = {
   getProjectsPage: (params?: PaginationParams) =>
     requestPage<ProjectOut>("/api/projects", params),
 
+  // -- Standalone image workspace -------------------------
+  getImageProjects: () => request<ImageProjectOut[]>("/api/images/projects"),
+  startImageBatch: (projectId: string, prompts: string[]) =>
+    request<ImageBatchOut>("/api/images/batches", {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId, prompts }),
+    }),
+  getImageBatches: (projectId?: string) =>
+    request<ImageBatchOut[]>(`/api/images/batches${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`),
+  getImageBatch: (batchId: string) =>
+    request<ImageBatchDetailOut>(`/api/images/batches/${batchId}`),
+  stopImageBatch: (batchId: string) =>
+    request<ImageBatchOut>(`/api/images/batches/${batchId}/stop`, { method: "POST" }),
+  downloadImageBatch: (batchId: string) =>
+    downloadFile(`/api/images/batches/${batchId}/download`, `imges-${batchId.slice(0, 8)}.zip`),
+
   getProjectPinterestRecipes: (projectId: string, siteId?: string, signal?: AbortSignal) =>
     request<PinterestRecipeOut[]>(`/api/projects/${projectId}/pinterest-recipes${siteId ? `?site_id=${siteId}` : ""}`, { signal }),
   getProjectPinterestRecipesPage: (
@@ -1193,6 +1209,40 @@ export interface JobOut {
   error: string | null;
   created_at: string;
   finished_at: string | null;
+}
+
+export interface ImageProjectOut {
+  id: string;
+  name: string;
+  description: string;
+  midjourney_configured: boolean;
+  grid_wait_seconds: number;
+}
+
+export interface ImageGenerationOut {
+  id: string;
+  position: number;
+  prompt: string;
+  status: string;
+  image_urls: string[];
+  error: string | null;
+  created_at: string;
+}
+
+export interface ImageBatchOut {
+  id: string;
+  project_id: string;
+  status: string;
+  total_prompts: number;
+  completed_prompts: number;
+  total_images: number;
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface ImageBatchDetailOut extends ImageBatchOut {
+  generations: ImageGenerationOut[];
 }
 
 export interface SharedRecipeInput {

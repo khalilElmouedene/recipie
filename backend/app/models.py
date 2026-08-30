@@ -372,6 +372,61 @@ class JobOut(BaseModel):
         from_attributes = True
 
 
+class ImageProjectOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    description: str
+    midjourney_configured: bool = False
+    grid_wait_seconds: int
+
+
+class ImageBatchCreate(BaseModel):
+    project_id: uuid.UUID
+    prompts: list[str] = Field(min_length=1, max_length=50)
+
+    @field_validator("prompts")
+    @classmethod
+    def validate_prompts(cls, values: list[str]) -> list[str]:
+        cleaned = [value.strip() for value in values if value and value.strip()]
+        if not cleaned:
+            raise ValueError("At least one prompt is required")
+        if any(len(value) > 4000 for value in cleaned):
+            raise ValueError("Each prompt must be 4,000 characters or fewer")
+        return cleaned
+
+
+class ImageGenerationOut(BaseModel):
+    id: uuid.UUID
+    position: int
+    prompt: str
+    status: str
+    image_urls: list[str] = Field(default_factory=list)
+    error: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ImageBatchOut(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    status: str
+    total_prompts: int
+    completed_prompts: int
+    total_images: int
+    error: str | None = None
+    created_at: datetime
+    finished_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class ImageBatchDetailOut(ImageBatchOut):
+    generations: list[ImageGenerationOut] = Field(default_factory=list)
+
+
 class JobPublishSummaryOut(BaseModel):
     total: int
     processed: int
