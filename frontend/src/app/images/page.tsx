@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import * as XLSX from "xlsx";
 import {
   Archive,
-  Check,
   ChevronDown,
   Clock3,
   Download,
@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Sparkles,
   Square,
+  Upload,
   WandSparkles,
   XCircle,
 } from "lucide-react";
@@ -60,6 +61,9 @@ export default function ImagesPage() {
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [loadingBatch, setLoadingBatch] = useState(false);
+  const [importingSheet, setImportingSheet] = useState(false);
+  const [importedSheetName, setImportedSheetName] = useState("");
+  const promptSheetInputRef = useRef<HTMLInputElement>(null);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === projectId) ?? null,
@@ -142,6 +146,52 @@ export default function ImagesPage() {
 
   const removePrompt = (index: number) => {
     setPrompts((current) => current.length === 1 ? current : current.filter((_, i) => i !== index));
+  };
+
+  const importPromptSheet = async (file: File) => {
+    setImportingSheet(true);
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", raw: false });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error("The sheet file does not contain a worksheet");
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+        header: 1,
+        defval: "",
+        raw: false,
+      });
+      const textRows = rows
+        .map((row) => row.map((cell) => String(cell ?? "").trim()))
+        .filter((row) => row.some(Boolean));
+      if (!textRows.length) throw new Error("The selected sheet is empty");
+
+      const normalizeHeader = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+      const firstRow = textRows[0];
+      const promptColumn = firstRow.findIndex((cell) => {
+        const header = normalizeHeader(cell);
+        return header === "prompt" || header === "prompts" || header === "prompt_text" || header === "prompt_texts" || header === "description" || header === "idea";
+      });
+      const dataRows = promptColumn >= 0 ? textRows.slice(1) : textRows;
+      const imported = dataRows
+        .map((row) => (promptColumn >= 0 ? row[promptColumn] : row.find(Boolean) ?? "").trim())
+        .filter(Boolean);
+      if (!imported.length) throw new Error("No prompts were found in the selected sheet");
+      if (imported.length > 50) throw new Error(`This batch supports up to 50 prompts. The sheet contains ${imported.length}. Split it into smaller files.`);
+
+      setPrompts(imported);
+      setImportedSheetName(file.name);
+      toast.success(`Loaded ${imported.length} prompt${imported.length === 1 ? "" : "s"} from ${file.name}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not read the prompt sheet");
+    } finally {
+      setImportingSheet(false);
+      if (promptSheetInputRef.current) promptSheetInputRef.current.value = "";
+    }
+  };
+
+  const handlePromptSheetChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) void importPromptSheet(file);
   };
 
   const startGeneration = async () => {
@@ -251,8 +301,16 @@ export default function ImagesPage() {
                 <h2 className="mt-2 text-lg font-semibold text-white">Describe the frames</h2>
                 <p className="mt-1 text-xs text-gray-500">Each prompt returns its own four-image Midjourney set.</p>
               </div>
-              <span className="rounded-full border border-gray-700 px-2.5 py-1 text-[11px] text-gray-400">{prompts.length}/50</span>
+              <div className="flex items-center gap-2">
+                <input ref={promptSheetInputRef} type="file" accept=".xlsx,.xls,.csv,.tsv" className="sr-only" onChange={handlePromptSheetChange} />
+                <button type="button" onClick={() => promptSheetInputRef.current?.click()} disabled={importingSheet} className="flex items-center gap-1.5 rounded-xl border border-gray-700 px-2.5 py-1.5 text-[11px] font-semibold text-gray-400 transition hover:border-sky-500/50 hover:bg-sky-400/5 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-50" title="Import prompts from CSV, TSV, or Excel">
+                  {importingSheet ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  {importingSheet ? "Reading…" : "Import sheet"}
+                </button>
+                <span className="rounded-full border border-gray-700 px-2.5 py-1 text-[11px] text-gray-400">{prompts.length}/50</span>
+              </div>
             </div>
+            {importedSheetName && <div className="mb-4 flex items-center gap-2 rounded-xl border border-sky-400/15 bg-sky-400/5 px-3 py-2 text-[11px] text-sky-200/80"><Upload size={13} /> {importedSheetName} loaded — review the prompts, then generate the full set.</div>}
             <div className="space-y-3">
               {prompts.map((prompt, index) => (
                 <div key={index} className="group relative rounded-2xl border border-gray-800 bg-gray-950/55 p-3 transition focus-within:border-sky-500/60 focus-within:bg-gray-950">
