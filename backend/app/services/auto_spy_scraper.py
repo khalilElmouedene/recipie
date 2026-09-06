@@ -6,6 +6,7 @@ import json
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
 import httpx
@@ -25,6 +26,10 @@ _HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 _TIMEOUT = httpx.Timeout(25.0, connect=8.0)
+
+_AUTO_SPY_LOOKBACK_DAYS = 30
+_MAX_POSTS_PER_SCAN = 10
+_SOURCE_METADATA_HEADERS = ("image_url", "recipe_text", "post_url", "published_at")
 
 # Image URLs containing these substrings are not recipe photos
 _IMAGE_SKIP_PATTERNS = re.compile(
@@ -108,6 +113,50 @@ def _best_image_from_media_list(media_list: list) -> str:
     return ""
 
 
+def _published_at_from_wp_post(post: dict) -> str:
+    """Return a normalized UTC publish timestamp when WordPress provides one."""
+    raw = str(post.get("date_gmt") or post.get("date") or "").strip()
+    if not raw or raw.startswith("0000-"):
+        return ""
+    try:
+        value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat()
+    except ValueError:
+        return raw
+
+
+def _parse_rss_datetime(raw: str | None) -> datetime | None:
+    """Parse RSS/Atom date formats and normalize them to UTC."""
+    if not raw:
+        return None
+    value = raw.strip()
+    if not value:
+        return None
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _rss_item_published_at(item, namespaces: dict[str, str]) -> datetime | None:
+    """Read the common RSS publication-date fields from one feed item."""
+    for tag in ("pubDate", "dc:date", "published", "updated"):
+        element = item.find(tag, namespaces) if tag.startswith("dc:") else item.find(tag)
+        if element is not None:
+            parsed = _parse_rss_datetime(element.text)
+            if parsed is not None:
+                return parsed
+    return None
+
+
 async def _scrape_wp_rest(base_url: str, after: datetime | None) -> list[dict]:
     params: dict = {
         "per_page": 50,
@@ -154,12 +203,19 @@ async def _scrape_wp_rest(base_url: str, after: datetime | None) -> list[dict]:
             image_url = _extract_image_from_html(excerpt_html)
 
         if image_url:
-            results.append({"image_url": image_url, "recipe_text": title})
+            results.append(
+                {
+                    "image_url": image_url,
+                    "recipe_text": title,
+                    "post_url": str(post.get("link") or "").strip(),
+                    "published_at": _published_at_from_wp_post(post),
+                }
+            )
 
     return results
 
 
-async def _scrape_rss(base_url: str) -> list[dict]:
+async def _scrape_rss(base_url: str, after: datetime | None) -> list[dict]:
     import xml.etree.ElementTree as ET
 
     feed_paths = ["/feed/", "/?feed=rss2", "/rss/", "/feed/rss/", "/index.xml"]
@@ -189,10 +245,21 @@ async def _scrape_rss(base_url: str) -> list[dict]:
     }
     results = []
     for item in root.iter("item"):
+        published_at = _rss_item_published_at(item, ns)
+        if after and published_at and published_at <= after:
+            continue
+
         title_el = item.find("title")
         title = html.unescape(title_el.text or "").strip() if title_el is not None else ""
         if not title:
             continue
+
+        link_el = item.find("link")
+        post_url = html.unescape(link_el.text or "").strip() if link_el is not None else ""
+        if not post_url:
+            guid_el = item.find("guid")
+            candidate = html.unescape(guid_el.text or "").strip() if guid_el is not None else ""
+            post_url = candidate if candidate.startswith(("http://", "https://")) else ""
 
         image_url = ""
 
@@ -230,9 +297,16 @@ async def _scrape_rss(base_url: str) -> list[dict]:
                 image_url = _extract_image_from_html(desc.text)
 
         if image_url:
-            results.append({"image_url": image_url, "recipe_text": title})
+            results.append(
+                {
+                    "image_url": image_url,
+                    "recipe_text": title,
+                    "post_url": post_url,
+                    "published_at": published_at.isoformat() if published_at else "",
+                }
+            )
 
-    return results
+    return sorted(results, key=lambda row: row.get("published_at", ""), reverse=True)
 
 
 async def scrape_source_rows(url: str, after: datetime | None) -> list[dict]:
@@ -244,7 +318,7 @@ async def scrape_source_rows(url: str, after: datetime | None) -> list[dict]:
     except Exception:
         pass
     try:
-        return await _scrape_rss(base_url)
+        return await _scrape_rss(base_url, after)
     except Exception:
         return []
 
@@ -253,10 +327,11 @@ def _make_empty_sheet_data(rows: int = 50, cols: int = 10) -> dict:
     return {"cells": {}, "colWidths": {}, "rowHeights": {}, "rows": rows, "cols": cols}
 
 
-def _make_sheet_tab(tab_id: str, name: str) -> dict:
+def _make_sheet_tab(tab_id: str, name: str, include_source_metadata: bool = False) -> dict:
     data = _make_empty_sheet_data()
-    data["cells"]["0_0"] = {"v": "image_url"}
-    data["cells"]["0_1"] = {"v": "recipe_text"}
+    headers = _SOURCE_METADATA_HEADERS if include_source_metadata else _SOURCE_METADATA_HEADERS[:2]
+    for column, header in enumerate(headers):
+        data["cells"][f"0_{column}"] = {"v": header}
     return {"id": tab_id, "name": name, "data": data}
 
 
@@ -273,29 +348,78 @@ def _save_workbook(workbook: dict) -> str:
     return json.dumps(workbook)
 
 
-def _existing_urls_in_tab(workbook: dict, tab_id: str) -> set[str]:
-    """Return the set of image_url values already stored in a sheet tab."""
+def _ensure_source_metadata_columns(tab: dict) -> None:
+    """Add identity columns to existing Auto Spy tabs without changing their rows."""
+    data = tab["data"]
+    cells: dict = data.setdefault("cells", {})
+    for column, header in enumerate(_SOURCE_METADATA_HEADERS):
+        key = f"0_{column}"
+        if not (cells.get(key, {}).get("v") or "").strip():
+            cells[key] = {"v": header}
+    data["cols"] = max(data.get("cols", 10), len(_SOURCE_METADATA_HEADERS))
+
+
+def _normalize_duplicate_title(value: str) -> str:
+    text = html.unescape(value)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return " ".join(text.lower().split())
+
+
+def _normalize_duplicate_url(value: str) -> str:
+    return value.strip().rstrip("/").lower()
+
+
+def _existing_row_identities_in_tab(workbook: dict, tab_id: str) -> tuple[set[str], set[str], set[str]]:
+    """Return existing image URLs, source URLs, and normalized titles for a tab."""
     tab = next((s for s in workbook.get("sheets", []) if s["id"] == tab_id), None)
     if tab is None:
-        return set()
+        return set(), set(), set()
     cells = tab["data"].get("cells", {})
     urls: set[str] = set()
+    post_urls: set[str] = set()
+    titles: set[str] = set()
     for key, cell in cells.items():
-        if key.endswith("_0"):
-            v = (cell.get("v") or "").strip()
-            if v and v != "image_url":
-                urls.add(v)
+        row, separator, column = key.partition("_")
+        if not separator or row == "0" or not isinstance(cell, dict):
+            continue
+        value = str(cell.get("v") or "").strip()
+        if not value:
+            continue
+        if column == "0":
+            urls.add(value)
+        elif column == "1":
+            title = _normalize_duplicate_title(value)
+            if title:
+                titles.add(title)
+        elif column == "2":
+            post_url = _normalize_duplicate_url(value)
+            if post_url:
+                post_urls.add(post_url)
+    return urls, post_urls, titles
+
+
+def _existing_urls_in_tab(workbook: dict, tab_id: str) -> set[str]:
+    """Return the set of image_url values already stored in a sheet tab."""
+    urls, _, _ = _existing_row_identities_in_tab(workbook, tab_id)
     return urls
 
 
-def _append_rows_to_tab(workbook: dict, tab_id: str, rows: list[dict]) -> int:
+def _append_rows_to_tab(
+    workbook: dict,
+    tab_id: str,
+    rows: list[dict],
+    track_source_identity: bool = False,
+) -> int:
     """Append *rows* to the tab (skipping duplicates). Returns number of new rows added."""
     tab = next((s for s in workbook.get("sheets", []) if s["id"] == tab_id), None)
     if tab is None:
         return 0
 
+    if track_source_identity:
+        _ensure_source_metadata_columns(tab)
+
     cells: dict = tab["data"].get("cells", {})
-    existing_urls = _existing_urls_in_tab(workbook, tab_id)
+    existing_urls, existing_post_urls, existing_titles = _existing_row_identities_in_tab(workbook, tab_id)
 
     occupied_rows = {int(k.split("_")[0]) for k in cells if "_" in k}
     next_row = max(occupied_rows, default=0) + 1
@@ -303,11 +427,28 @@ def _append_rows_to_tab(workbook: dict, tab_id: str, rows: list[dict]) -> int:
     added = 0
     for item in rows:
         img = item.get("image_url", "").strip()
-        if not img or img in existing_urls:
+        post_url = item.get("post_url", "").strip()
+        title = item.get("recipe_text", "")
+        post_url_key = _normalize_duplicate_url(post_url)
+        title_key = _normalize_duplicate_title(title)
+        duplicate = (
+            not img
+            or img in existing_urls
+            or (track_source_identity and post_url_key and post_url_key in existing_post_urls)
+            or (track_source_identity and title_key and title_key in existing_titles)
+        )
+        if duplicate:
             continue
         cells[f"{next_row}_0"] = {"v": img}
-        cells[f"{next_row}_1"] = {"v": item.get("recipe_text", "")}
+        cells[f"{next_row}_1"] = {"v": title}
+        if track_source_identity:
+            cells[f"{next_row}_2"] = {"v": post_url}
+            cells[f"{next_row}_3"] = {"v": item.get("published_at", "")}
         existing_urls.add(img)
+        if post_url_key:
+            existing_post_urls.add(post_url_key)
+        if title_key:
+            existing_titles.add(title_key)
         next_row += 1
         added += 1
 
@@ -446,9 +587,8 @@ async def _get_project_openai_key(project_id: uuid.UUID, created_by_user_id: uui
 async def scan_source(source_id: uuid.UUID, force: bool = False) -> None:
     """Scrape a source and append new rows to its sheet tab.
 
-    Only articles published within the last 7 days are fetched.
-    *force=True* (manual "Scan Now") uses the same 7-day window so repeated
-    clicks are safe — deduplication by image URL prevents duplicate rows.
+    Only articles published within the last 30 days are fetched. Each scan keeps
+    the newest 10 candidates, and manual scans use the same window as the scheduler.
     """
     async with SessionLocal() as db:
         result = await db.execute(select(AutoSpySource).where(AutoSpySource.id == source_id))
@@ -456,16 +596,15 @@ async def scan_source(source_id: uuid.UUID, force: bool = False) -> None:
         if source is None:
             return
 
-        one_week_ago = datetime.now(timezone.utc) - timedelta(weeks=1)
+        lookback_start = datetime.now(timezone.utc) - timedelta(days=_AUTO_SPY_LOOKBACK_DAYS)
 
         if force:
-            # Manual scan: always look back exactly 7 days
-            after = one_week_ago
+            after = lookback_start
         else:
-            # Scheduler: use last_scanned_at but never go further back than 7 days
-            after = max(source.last_scanned_at, one_week_ago) if source.last_scanned_at else one_week_ago
+            # Scheduler: use last_scanned_at but never go further back than the lookback window.
+            after = max(source.last_scanned_at, lookback_start) if source.last_scanned_at else lookback_start
 
-        rows = await scrape_source_rows(source.url, after)
+        rows = (await scrape_source_rows(source.url, after))[:_MAX_POSTS_PER_SCAN]
 
         # AI image filtering — keep only real food images with no people/text.
         # Runs concurrently (up to 5 at once). Falls through gracefully if no key.
@@ -482,7 +621,7 @@ async def scan_source(source_id: uuid.UUID, force: bool = False) -> None:
         sheet = sheet_result.scalar_one_or_none()
 
         workbook = _load_workbook(sheet.data if sheet else None)
-        _append_rows_to_tab(workbook, source.sheet_tab_id, rows)
+        _append_rows_to_tab(workbook, source.sheet_tab_id, rows, track_source_identity=True)
 
         now = datetime.now(timezone.utc)
         if sheet is None:

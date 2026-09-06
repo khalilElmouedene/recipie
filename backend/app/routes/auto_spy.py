@@ -175,7 +175,7 @@ async def add_auto_spy_source(
     # Add tab to workbook
     sheet = await _get_or_create_sheet(project_id, db)
     workbook = _load_workbook(sheet.data)
-    new_tab = _make_sheet_tab(tab_id, site_name)
+    new_tab = _make_sheet_tab(tab_id, site_name, include_source_metadata=True)
     workbook["sheets"].append(new_tab)
     if not workbook["activeId"]:
         workbook["activeId"] = tab_id
@@ -196,7 +196,7 @@ async def add_auto_spy_source(
     await db.commit()
     await db.refresh(source)
 
-    # Kick off an immediate background scan (force=True: no date filter on first run)
+    # Kick off an immediate background scan using Auto Spy's 30-day lookback window.
     source_id = source.id
     asyncio.create_task(scan_source(source_id, force=True))
 
