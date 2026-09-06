@@ -190,6 +190,99 @@ class MidjourneyIntegrationTests(unittest.TestCase):
         self.assertEqual(len(api.custom_ids), 4)
         self.assertEqual(api._last_grid_scan["matching_controls"], 1)
 
+    def test_grid_detection_reads_prompt_from_component_text(self) -> None:
+        api = midjourney.MidjourneyApi(
+            prompt="Recipe: Tacos Image: https://example.com/image.png",
+            application_id="app",
+            guild_id="guild",
+            channel_id="channel",
+            version="version",
+            mj_id="command",
+            authorization="token",
+            recipe_name="Tacos",
+            source_img_url="https://example.com/image.png",
+            log=lambda _msg: None,
+        )
+        message = {
+            "id": "101",
+            "content": "",
+            "components": [
+                {"type": 10, "content": "Recipe: Tacos Image: https://example.com/image.png"},
+                {
+                    "components": [
+                        {"label": f"U{number}", "custom_id": f"button-{number}"}
+                        for number in range(1, 5)
+                    ]
+                },
+            ],
+        }
+
+        self.assertTrue(api._find_grid_in_messages([message]))
+        self.assertEqual(api.message_id, "101")
+
+    def test_grid_detection_accepts_one_safe_recipe_fallback(self) -> None:
+        api = midjourney.MidjourneyApi(
+            prompt="Editorial food photograph for Recipe: Smoky Taco Bake --v 6.1 --raw",
+            application_id="app",
+            guild_id="guild",
+            channel_id="channel",
+            version="version",
+            mj_id="command",
+            authorization="token",
+            recipe_name="Smoky Taco Bake",
+            source_img_url="https://example.com/image.png",
+            log=lambda _msg: None,
+        )
+        api.baseline_id = "100"
+        message = {
+            "id": "101",
+            "author": {"id": "app"},
+            "content": "Smoky Taco Bake",
+            "attachments": [{"url": "https://cdn.example.com/grid.webp"}],
+            "components": [{
+                "components": [
+                    {"label": f"U{number}", "custom_id": f"button-{number}"}
+                    for number in range(1, 5)
+                ]
+            }],
+        }
+
+        self.assertTrue(api._find_grid_in_messages([message]))
+        self.assertEqual(api.message_id, "101")
+        self.assertEqual(api._last_grid_scan["safe_fallback_candidates"], 1)
+
+    def test_grid_detection_rejects_ambiguous_or_wrong_author_fallbacks(self) -> None:
+        api = midjourney.MidjourneyApi(
+            prompt="Editorial food photograph for Recipe: Smoky Taco Bake --v 6.1 --raw",
+            application_id="app",
+            guild_id="guild",
+            channel_id="channel",
+            version="version",
+            mj_id="command",
+            authorization="token",
+            recipe_name="Smoky Taco Bake",
+            source_img_url="https://example.com/image.png",
+            log=lambda _msg: None,
+        )
+        api.baseline_id = "100"
+
+        def grid(message_id: str, author_id: str) -> dict:
+            return {
+                "id": message_id,
+                "author": {"id": author_id},
+                "content": "Smoky Taco Bake",
+                "components": [{
+                    "components": [
+                        {"label": f"U{number}", "custom_id": f"button-{number}"}
+                        for number in range(1, 5)
+                    ]
+                }],
+            }
+
+        self.assertFalse(api._find_grid_in_messages([grid("101", "other-app")]))
+        self.assertFalse(api._find_grid_in_messages([grid("101", "app"), grid("102", "app")]))
+        self.assertEqual(api.message_id, "")
+
     def test_upscale_resume_does_not_click_saved_buttons_twice(self) -> None:
         updates: list[dict] = []
         api = midjourney.MidjourneyApi(
@@ -247,7 +340,7 @@ class MidjourneyIntegrationTests(unittest.TestCase):
             },
             {
                 "id": "2",
-                "content": "Recipe: Tacos freshly plated",
+                "content": "Recipe: Tacos Image: https://example.com/image.png freshly plated",
                 "components": [{"components": [{"label": "U1", "custom_id": "b1"}, {"label": "U2", "custom_id": "b2"}, {"label": "U3", "custom_id": "b3"}, {"label": "U4", "custom_id": "b4"}]}],
             },
         ]

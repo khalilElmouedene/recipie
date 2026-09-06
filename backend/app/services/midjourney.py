@@ -188,20 +188,46 @@ class MidjourneyApi:
         return False
 
     def _message_text(self, msg: dict) -> str:
-        parts: list[str] = [str(msg.get("content", ""))]
-        for embed in msg.get("embeds", []) or []:
-            if not isinstance(embed, dict):
+        """Read prompt text from legacy and newer Discord message layouts."""
+        parts: list[str] = []
+        pending_messages = [msg]
+        while pending_messages:
+            current = pending_messages.pop()
+            if not isinstance(current, dict):
                 continue
-            parts.extend(
-                [
-                    str(embed.get("title", "")),
-                    str(embed.get("description", "")),
-                ]
-            )
-            for field in embed.get("fields", []) or []:
-                if not isinstance(field, dict):
+            parts.append(str(current.get("content", "")))
+            for embed in current.get("embeds", []) or []:
+                if not isinstance(embed, dict):
                     continue
-                parts.extend([str(field.get("name", "")), str(field.get("value", ""))])
+                parts.extend(
+                    [
+                        str(embed.get("title", "")),
+                        str(embed.get("description", "")),
+                        str((embed.get("footer") or {}).get("text", "")),
+                        str((embed.get("author") or {}).get("name", "")),
+                    ]
+                )
+                for field in embed.get("fields", []) or []:
+                    if isinstance(field, dict):
+                        parts.extend([str(field.get("name", "")), str(field.get("value", ""))])
+
+            pending_components = list(current.get("components", []) or [])
+            while pending_components:
+                component = pending_components.pop()
+                if not isinstance(component, dict):
+                    continue
+                for key in ("content", "label", "description", "placeholder"):
+                    value = component.get(key)
+                    if isinstance(value, str):
+                        parts.append(value)
+                pending_components.extend(component.get("components", []) or [])
+
+            for snapshot in current.get("message_snapshots", []) or []:
+                if not isinstance(snapshot, dict):
+                    continue
+                snapshot_message = snapshot.get("message")
+                if isinstance(snapshot_message, dict):
+                    pending_messages.append(snapshot_message)
         return " ".join(parts)
 
     @staticmethod
@@ -223,7 +249,7 @@ class MidjourneyApi:
 
     def _job_markers(self) -> list[str]:
         markers: list[str] = []
-        for raw, min_length in ((self.recipe_name, 4), (self.prompt, 8)):
+        for raw, min_length in ((self.prompt, 8),):
             cleaned = re.sub(r"https?://\S+", " ", raw or "")
             normalized = self._normalize_text(cleaned)
             if len(normalized) >= min_length:
@@ -265,6 +291,38 @@ class MidjourneyApi:
             return False
         overlap = len(expected_words & actual_words) / len(expected_words)
         return overlap >= 0.65
+
+    def _message_is_from_midjourney(self, msg: dict) -> bool:
+        """Check that a message was produced by the configured Midjourney app."""
+        if not self.application_id:
+            return False
+        author = msg.get("author") or {}
+        candidate_ids = {
+            str(author.get("id") or ""),
+            str(msg.get("application_id") or ""),
+        }
+        return self.application_id in candidate_ids
+
+    def _message_is_after_baseline(self, msg: dict) -> bool:
+        """Return whether a Discord snowflake was posted after this job started."""
+        try:
+            return int(str(msg.get("id") or "0")) > int(self.baseline_id) > 0
+        except (TypeError, ValueError):
+            return False
+
+    def _message_matches_recipe_title(self, msg: dict) -> bool:
+        """Match the exact recipe title when Discord omits the rest of the prompt."""
+        recipe_title = self._normalize_text(self.recipe_name)
+        actual = self._normalize_text(self._message_text(msg))
+        return len(recipe_title) >= 4 and recipe_title in actual
+
+    def _is_safe_recipe_fallback(self, msg: dict) -> bool:
+        """Allow a narrow fallback only for this app's unique, post-baseline grid."""
+        return (
+            self._message_is_from_midjourney(msg)
+            and self._message_is_after_baseline(msg)
+            and self._message_matches_recipe_title(msg)
+        )
 
     @staticmethod
     def _component_custom_ids(msg: dict) -> list[str]:
@@ -422,16 +480,37 @@ class MidjourneyApi:
             )
         return response
 
+    def _accept_grid(self, msg: dict, buttons: list[dict]) -> bool:
+        """Persist a confirmed Midjourney grid and its upscale controls."""
+        self.message_id = str(msg["id"])
+        self.tracked_message_id = self.message_id
+        self.custom_ids = [button["custom_id"] for button in buttons]
+        self.grid_job_tokens = self._midjourney_job_tokens(self.custom_ids)
+        self._update_tracking(
+            "grid_ready",
+            tracked_message_id=self.tracked_message_id,
+            grid_message_id=self.message_id,
+            grid_custom_ids=list(self.custom_ids),
+            grid_job_tokens=sorted(self.grid_job_tokens),
+            grid_ready_at=self._utcnow(),
+            last_polled_at=self._utcnow(),
+            last_error=None,
+        )
+        return True
+
     def _find_grid_in_messages(self, messages: list) -> bool:
         """Return True and set message_id/custom_ids if a grid message is found."""
         candidates: list[tuple[int, dict, list[dict]]] = []
+        fallback_candidates: list[tuple[int, dict, list[dict]]] = []
         diagnostics = {
             "messages": len(messages) if isinstance(messages, list) else 0,
             "job_matches": 0,
             "prompt_matches": 0,
             "matching_attachments": 0,
             "matching_controls": 0,
+            "safe_fallback_candidates": 0,
         }
+        unmatched_grid_candidates = 0
         if not isinstance(messages, list):
             self._last_grid_scan = diagnostics
             return False
@@ -468,32 +547,34 @@ class MidjourneyApi:
                         score += 2
                     if msg.get("attachments"):
                         score += 1
-                    candidates.append((score, msg, buttons))
+                    if score >= 2:
+                        candidates.append((score, msg, buttons))
+                    elif self._is_safe_recipe_fallback(msg):
+                        fallback_candidates.append((score, msg, buttons))
+                        diagnostics["safe_fallback_candidates"] += 1
+                    else:
+                        unmatched_grid_candidates += 1
             except (KeyError, IndexError, TypeError, AttributeError):
                 continue
         self._last_grid_scan = diagnostics
-        if not candidates:
-            return False
-        candidates.sort(key=lambda item: (item[0], self._message_sort_id(item[1])), reverse=True)
-        best_score, best_msg, best_buttons = candidates[0]
-        if best_score < 2:
+        if candidates:
+            candidates.sort(key=lambda item: (item[0], self._message_sort_id(item[1])), reverse=True)
+            _, best_msg, best_buttons = candidates[0]
+            return self._accept_grid(best_msg, best_buttons)
+
+        if len(fallback_candidates) == 1:
+            _, best_msg, best_buttons = fallback_candidates[0]
+            self._log(
+                "Accepting the single post-baseline Midjourney grid by exact recipe title; "
+                "the full prompt was not present in Discord's response."
+            )
+            return self._accept_grid(best_msg, best_buttons)
+
+        if len(fallback_candidates) > 1:
+            self._log("Ignoring Midjourney grids: multiple safe fallback candidates are ambiguous.")
+        elif unmatched_grid_candidates:
             self._log("Ignoring Midjourney grid candidate without an exact prompt or message-ID match.")
-            return False
-        self.message_id = str(best_msg["id"])
-        self.tracked_message_id = self.message_id
-        self.custom_ids = [b["custom_id"] for b in best_buttons]
-        self.grid_job_tokens = self._midjourney_job_tokens(self.custom_ids)
-        self._update_tracking(
-            "grid_ready",
-            tracked_message_id=self.tracked_message_id,
-            grid_message_id=self.message_id,
-            grid_custom_ids=list(self.custom_ids),
-            grid_job_tokens=sorted(self.grid_job_tokens),
-            grid_ready_at=self._utcnow(),
-            last_polled_at=self._utcnow(),
-            last_error=None,
-        )
-        return True
+        return False
 
     def _track_progress_message(self, messages: list) -> bool:
         """Capture the first exact progress message and keep tracking only its ID."""
