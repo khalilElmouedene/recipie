@@ -518,6 +518,7 @@ class MidjourneyApi:
         """Return True and set message_id/custom_ids if a grid message is found."""
         candidates: list[tuple[int, dict, list[dict]]] = []
         fallback_candidates: list[tuple[int, dict, list[dict]]] = []
+        strong_identity_candidates: list[tuple[int, dict, list[dict]]] = []
         diagnostics = {
             "messages": len(messages) if isinstance(messages, list) else 0,
             "job_matches": 0,
@@ -531,6 +532,7 @@ class MidjourneyApi:
             "post_baseline_candidates": 0,
             "recipe_title_matches": 0,
             "unmatched_grid_candidates": 0,
+            "strong_identity_candidates": 0,
         }
         unmatched_grid_candidates = 0
         if not isinstance(messages, list):
@@ -574,16 +576,23 @@ class MidjourneyApi:
                         and after_baseline
                         and title_match
                     )
+                    strong_identity_fallback = (
+                        from_midjourney
+                        and has_midjourney_controls
+                        and after_baseline
+                        and bool(msg.get("attachments"))
+                    )
                     # A queued/progress interaction can remain on one Discord
                     # message while Relax mode posts the completed grid on a new
                     # message. Accept a new message when its prompt matches, or
-                    # keep a narrow title-only fallback so newer/truncated
-                    # Discord payloads do not hide the finished grid.
+                    # keep narrow fallbacks so newer/truncated Discord payloads
+                    # do not hide the finished grid.
                     if (
                         self.tracked_message_id
                         and not exact_message
                         and not prompt_match
                         and not safe_fallback
+                        and not strong_identity_fallback
                     ):
                         unmatched_grid_candidates += 1
                         continue
@@ -599,6 +608,9 @@ class MidjourneyApi:
                     elif safe_fallback:
                         fallback_candidates.append((score, msg, buttons))
                         diagnostics["safe_fallback_candidates"] += 1
+                    elif strong_identity_fallback:
+                        strong_identity_candidates.append((score, msg, buttons))
+                        diagnostics["strong_identity_candidates"] += 1
                     else:
                         unmatched_grid_candidates += 1
             except (KeyError, IndexError, TypeError, AttributeError):
@@ -619,6 +631,15 @@ class MidjourneyApi:
 
         if len(fallback_candidates) > 1:
             self._log("Ignoring Midjourney grids: multiple safe fallback candidates are ambiguous.")
+        elif len(strong_identity_candidates) == 1:
+            _, best_msg, best_buttons = strong_identity_candidates[0]
+            self._log(
+                "Accepting the single post-baseline Midjourney grid by app/control identity; "
+                "Discord did not expose the expected prompt or recipe title."
+            )
+            return self._accept_grid(best_msg, best_buttons)
+        elif len(strong_identity_candidates) > 1:
+            self._log("Ignoring Midjourney grids: multiple strong identity fallback candidates are ambiguous.")
         elif unmatched_grid_candidates:
             diagnostics["unmatched_grid_candidates"] = unmatched_grid_candidates
             self._log(
@@ -630,6 +651,7 @@ class MidjourneyApi:
                 f"after_baseline={diagnostics['post_baseline_candidates']}, "
                 f"mj_author={diagnostics['midjourney_author_matches']}, "
                 f"mj_controls={diagnostics['midjourney_control_matches']}, "
+                f"strong_identity={diagnostics['strong_identity_candidates']}, "
                 f"tracked={self.tracked_message_id or 'none'}, "
                 f"baseline={self.baseline_id or 'none'})."
             )
