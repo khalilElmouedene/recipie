@@ -283,6 +283,73 @@ class MidjourneyIntegrationTests(unittest.TestCase):
         self.assertFalse(api._find_grid_in_messages([grid("101", "app"), grid("102", "app")]))
         self.assertEqual(api.message_id, "")
 
+    def test_grid_detection_accepts_midjourney_control_fallback_without_author_match(self) -> None:
+        api = midjourney.MidjourneyApi(
+            prompt="Editorial food photograph for Recipe: Smoky Taco Bake --v 6.1 --raw",
+            application_id="app",
+            guild_id="guild",
+            channel_id="channel",
+            version="version",
+            mj_id="command",
+            authorization="token",
+            recipe_name="Smoky Taco Bake",
+            source_img_url="https://example.com/image.png",
+            log=lambda _msg: None,
+        )
+        api.baseline_id = "100"
+        job_token = "11111111-2222-3333-4444-555555555555"
+        message = {
+            "id": "101",
+            "author": {"id": "other-app"},
+            "content": "Smoky Taco Bake",
+            "attachments": [{"url": "https://cdn.example.com/grid.webp"}],
+            "components": [{
+                "components": [
+                    {
+                        "label": f"U{number}",
+                        "custom_id": f"MJ::JOB::upsample::{number}::{job_token}",
+                    }
+                    for number in range(1, 5)
+                ]
+            }],
+        }
+
+        self.assertTrue(api._find_grid_in_messages([message]))
+        self.assertEqual(api.message_id, "101")
+        self.assertEqual(api._last_grid_scan["midjourney_control_matches"], 1)
+
+    def test_grid_detection_uses_tracked_progress_id_when_baseline_is_missing(self) -> None:
+        api = midjourney.MidjourneyApi(
+            prompt="Editorial food photograph for Recipe: Smoky Taco Bake --v 6.1 --raw",
+            application_id="app",
+            guild_id="guild",
+            channel_id="channel",
+            version="version",
+            mj_id="command",
+            authorization="token",
+            recipe_name="Smoky Taco Bake",
+            source_img_url="https://example.com/image.png",
+            log=lambda _msg: None,
+        )
+        api.baseline_id = "0"
+        api.tracked_message_id = "100"
+        message = {
+            "id": "101",
+            "author": {"id": "app"},
+            "content": "Smoky Taco Bake",
+            "attachments": [{"url": "https://cdn.example.com/grid.webp"}],
+            "components": [{
+                "components": [
+                    {"label": f"U{number}", "custom_id": f"button-{number}"}
+                    for number in range(1, 5)
+                ]
+            }],
+        }
+
+        self.assertTrue(api._find_grid_in_messages([message]))
+        self.assertEqual(api.message_id, "101")
+        self.assertEqual(api._last_grid_scan["post_baseline_candidates"], 1)
+
     def test_upscale_resume_does_not_click_saved_buttons_twice(self) -> None:
         updates: list[dict] = []
         api = midjourney.MidjourneyApi(

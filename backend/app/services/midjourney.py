@@ -294,21 +294,37 @@ class MidjourneyApi:
 
     def _message_is_from_midjourney(self, msg: dict) -> bool:
         """Check that a message was produced by the configured Midjourney app."""
-        if not self.application_id:
-            return False
         author = msg.get("author") or {}
         candidate_ids = {
             str(author.get("id") or ""),
             str(msg.get("application_id") or ""),
         }
-        return self.application_id in candidate_ids
+        return bool(self.application_id and self.application_id in candidate_ids)
+
+    def _message_has_midjourney_controls(self, msg: dict) -> bool:
+        """Recognize real Midjourney controls when Discord omits app identity."""
+        for custom_id in self._component_custom_ids(msg):
+            normalized = custom_id.lower()
+            if normalized.startswith("mj::") and "::upsample::" in normalized:
+                return True
+        return False
 
     def _message_is_after_baseline(self, msg: dict) -> bool:
         """Return whether a Discord snowflake was posted after this job started."""
+        message_id = str(msg.get("id") or "0")
+        baseline_ids = [self.baseline_id, self.tracked_message_id]
         try:
-            return int(str(msg.get("id") or "0")) > int(self.baseline_id) > 0
+            message_int = int(message_id)
         except (TypeError, ValueError):
             return False
+        for baseline_id in baseline_ids:
+            try:
+                baseline_int = int(str(baseline_id or "0"))
+            except (TypeError, ValueError):
+                continue
+            if message_int > baseline_int > 0:
+                return True
+        return False
 
     def _message_matches_recipe_title(self, msg: dict) -> bool:
         """Match the exact recipe title when Discord omits the rest of the prompt."""
@@ -319,7 +335,7 @@ class MidjourneyApi:
     def _is_safe_recipe_fallback(self, msg: dict) -> bool:
         """Allow a narrow fallback only for this app's unique, post-baseline grid."""
         return (
-            self._message_is_from_midjourney(msg)
+            (self._message_is_from_midjourney(msg) or self._message_has_midjourney_controls(msg))
             and self._message_is_after_baseline(msg)
             and self._message_matches_recipe_title(msg)
         )
@@ -509,6 +525,12 @@ class MidjourneyApi:
             "matching_attachments": 0,
             "matching_controls": 0,
             "safe_fallback_candidates": 0,
+            "grid_candidates": 0,
+            "midjourney_author_matches": 0,
+            "midjourney_control_matches": 0,
+            "post_baseline_candidates": 0,
+            "recipe_title_matches": 0,
+            "unmatched_grid_candidates": 0,
         }
         unmatched_grid_candidates = 0
         if not isinstance(messages, list):
@@ -531,10 +553,27 @@ class MidjourneyApi:
                 if (prompt_match or job_match) and len(buttons) >= 4:
                     diagnostics["matching_controls"] += 1
                 if len(buttons) >= 4:
+                    diagnostics["grid_candidates"] += 1
                     exact_message = bool(
                         self.tracked_message_id and msg_id == self.tracked_message_id
                     )
-                    safe_fallback = self._is_safe_recipe_fallback(msg)
+                    from_midjourney = self._message_is_from_midjourney(msg)
+                    has_midjourney_controls = self._message_has_midjourney_controls(msg)
+                    after_baseline = self._message_is_after_baseline(msg)
+                    title_match = self._message_matches_recipe_title(msg)
+                    if from_midjourney:
+                        diagnostics["midjourney_author_matches"] += 1
+                    if has_midjourney_controls:
+                        diagnostics["midjourney_control_matches"] += 1
+                    if after_baseline:
+                        diagnostics["post_baseline_candidates"] += 1
+                    if title_match:
+                        diagnostics["recipe_title_matches"] += 1
+                    safe_fallback = (
+                        (from_midjourney or has_midjourney_controls)
+                        and after_baseline
+                        and title_match
+                    )
                     # A queued/progress interaction can remain on one Discord
                     # message while Relax mode posts the completed grid on a new
                     # message. Accept a new message when its prompt matches, or
@@ -581,7 +620,19 @@ class MidjourneyApi:
         if len(fallback_candidates) > 1:
             self._log("Ignoring Midjourney grids: multiple safe fallback candidates are ambiguous.")
         elif unmatched_grid_candidates:
-            self._log("Ignoring Midjourney grid candidate without an exact prompt or message-ID match.")
+            diagnostics["unmatched_grid_candidates"] = unmatched_grid_candidates
+            self._log(
+                "Ignoring Midjourney grid candidate without an exact prompt or message-ID match "
+                f"(grids={diagnostics['grid_candidates']}, "
+                f"prompt={diagnostics['prompt_matches']}, "
+                f"job={diagnostics['job_matches']}, "
+                f"title={diagnostics['recipe_title_matches']}, "
+                f"after_baseline={diagnostics['post_baseline_candidates']}, "
+                f"mj_author={diagnostics['midjourney_author_matches']}, "
+                f"mj_controls={diagnostics['midjourney_control_matches']}, "
+                f"tracked={self.tracked_message_id or 'none'}, "
+                f"baseline={self.baseline_id or 'none'})."
+            )
         return False
 
     def _track_progress_message(self, messages: list) -> bool:
