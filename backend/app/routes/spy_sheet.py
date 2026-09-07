@@ -121,7 +121,11 @@ async def _scan_spy_sheet_source(source_id: uuid.UUID) -> None:
             return
 
         one_week_ago = datetime.now(timezone.utc) - timedelta(weeks=1)
-        rows = await scrape_source_rows(source.url, one_week_ago)
+        rows = await scrape_source_rows(
+            source.url,
+            one_week_ago,
+            seed_when_empty=source.last_scanned_at is None,
+        )
         if rows:
             openai_key = await _get_project_openai_key(source.project_id, source.created_by_user_id)
             if openai_key:
@@ -288,7 +292,7 @@ async def scrape_into_spy_sheet(
     site_name = _domain_from_url(normalized)
     one_week_ago = datetime.now(timezone.utc) - timedelta(weeks=1)
 
-    rows = await scrape_source_rows(normalized, one_week_ago)
+    rows = await scrape_source_rows(normalized, one_week_ago, seed_when_empty=True)
     if rows:
         openai_key = await _get_project_openai_key(project_id, current_user.id)
         if openai_key:
