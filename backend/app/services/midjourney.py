@@ -534,11 +534,19 @@ class MidjourneyApi:
                     exact_message = bool(
                         self.tracked_message_id and msg_id == self.tracked_message_id
                     )
+                    safe_fallback = self._is_safe_recipe_fallback(msg)
                     # A queued/progress interaction can remain on one Discord
                     # message while Relax mode posts the completed grid on a new
-                    # message. Accept that replacement only when its full prompt
-                    # body matches this generation.
-                    if self.tracked_message_id and not exact_message and not prompt_match:
+                    # message. Accept a new message when its prompt matches, or
+                    # keep a narrow title-only fallback so newer/truncated
+                    # Discord payloads do not hide the finished grid.
+                    if (
+                        self.tracked_message_id
+                        and not exact_message
+                        and not prompt_match
+                        and not safe_fallback
+                    ):
+                        unmatched_grid_candidates += 1
                         continue
                     score = 6 if exact_message else 0
                     if prompt_match:
@@ -549,7 +557,7 @@ class MidjourneyApi:
                         score += 1
                     if score >= 2:
                         candidates.append((score, msg, buttons))
-                    elif self._is_safe_recipe_fallback(msg):
+                    elif safe_fallback:
                         fallback_candidates.append((score, msg, buttons))
                         diagnostics["safe_fallback_candidates"] += 1
                     else:
