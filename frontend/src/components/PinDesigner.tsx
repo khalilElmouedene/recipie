@@ -14,6 +14,7 @@ import {
   FlipHorizontal2, FlipVertical2,
   Lock, Unlock,
   ExternalLink,
+  Maximize2,
 } from "lucide-react";
 import { api, getApiBaseUrl, type PinReusableElementOut } from "@/lib/api";
 import { appendPinImageToArticleHtml, removeRecipeGeneratorPinEmbed } from "@/lib/pinArticleEmbed";
@@ -4542,6 +4543,96 @@ export default function PinDesigner({
     label.setCoords();
   };
 
+  const syncLinkedImageToFrame = (frame: any) => {
+    const img = frame?.__linkedImg as any;
+    if (!img) return;
+
+    const zoneLeft = num(frame.left, 0);
+    const zoneTop = num(frame.top, 0);
+    const zoneW = Math.max(1, (frame.width ?? 1) * (frame.scaleX ?? 1));
+    const zoneH = Math.max(1, (frame.height ?? 1) * (frame.scaleY ?? 1));
+
+    if (img.clipPath) {
+      img.clipPath.set({
+        left: zoneLeft,
+        top: zoneTop,
+        width: zoneW,
+        height: zoneH,
+        absolutePositioned: true,
+      });
+      img.clipPath.setCoords();
+    }
+
+    const minScale = getCoverScale(zoneW, zoneH, img.width || 1, img.height || 1);
+    const nextScale = Math.max(img.scaleX || minScale, minScale);
+    const imgW = (img.width || 1) * nextScale;
+    const imgH = (img.height || 1) * nextScale;
+    const clipRight = zoneLeft + zoneW;
+    const clipBottom = zoneTop + zoneH;
+
+    img.set({
+      scaleX: nextScale,
+      scaleY: nextScale,
+      left: Math.max(clipRight - imgW / 2, Math.min(zoneLeft + imgW / 2, img.left ?? zoneLeft + zoneW / 2)),
+      top: Math.max(clipBottom - imgH / 2, Math.min(zoneTop + imgH / 2, img.top ?? zoneTop + zoneH / 2)),
+    });
+    img.setCoords();
+  };
+
+  const fitSelectedImageZoneToTemplate = () => {
+    const canvas = fabricCanvasRef.current;
+    let obj = getSelectedObject();
+    if (!canvas || !obj) return;
+    if (obj.__pinType === "imageContent" && obj.__frameRect) obj = obj.__frameRect;
+    const isImageZone = obj.__pinType === "imageFrame" || (obj.__pinType === "image" && obj.type === "rect");
+    if (!isImageZone) {
+      toast.warning("Select an image zone to fit it to the full template.");
+      return;
+    }
+    if (obj.__pinLocked) {
+      toast.warning("Unlock this image zone before fitting it to the template.");
+      return;
+    }
+
+    saveUndoState();
+    const width = canvas.width ?? PIN_W;
+    const height = canvas.height ?? PIN_H;
+    obj.set({
+      left: 0,
+      top: 0,
+      width,
+      height,
+      scaleX: 1,
+      scaleY: 1,
+      angle: 0,
+      originX: "left",
+      originY: "top",
+    });
+    obj.setCoords();
+
+    syncLinkedImageToFrame(obj);
+    applyImageZoneLabelPosition(canvas, obj);
+    syncDesignerBorder(canvas, obj);
+    canvas.setActiveObject(obj);
+    const label = canvas.getObjects().find((o: any) => o.__isLabel && o.__forId === obj.__pinId);
+    if (label) canvas.bringObjectToFront(label);
+    const border = canvas.getObjects().find((o: any) => o.__designerBorder && o.__forPinId === obj.__pinId);
+    if (border) canvas.bringObjectToFront(border);
+    recalcToolbarPos(obj);
+    setImageProps({
+      left: 0,
+      top: 0,
+      width: Math.round(width),
+      height: Math.round(height),
+      angle: 0,
+      imageSource: normalizeImageSourceMode(obj.__imageSource),
+      borderColor: normalizeImageBorderColor(obj.stroke, obj.__flipX ? "#4a90d9" : "#cccccc"),
+    });
+    canvas.renderAll();
+    updateLayers();
+    syncSelectionFromObject(obj);
+  };
+
   const insertReusableElement = async (item: PinReusableElementOut) => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
@@ -4932,6 +5023,10 @@ export default function PinDesigner({
           {/* Image-specific */}
           {selectedType === "image" && (
             <>
+              <button onClick={fitSelectedImageZoneToTemplate} title="Fit image zone to full template" aria-label="Fit image zone to full template" className="p-1 rounded hover:bg-gray-700 text-gray-300">
+                <Maximize2 size={14} />
+              </button>
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
               <button onClick={() => zoomImage("in")} title="Zoom in image" className="p-1 rounded hover:bg-gray-700 text-gray-300">
                 <ZoomIn size={14} />
               </button>
@@ -4960,6 +5055,10 @@ export default function PinDesigner({
           {/* imageFrame — zone selected (single click) */}
           {selectedType === "imageFrame" && !imageEditModeId && (
             <>
+              <button onClick={fitSelectedImageZoneToTemplate} title="Fit image zone to full template" aria-label="Fit image zone to full template" className="p-1 rounded hover:bg-gray-700 text-gray-300">
+                <Maximize2 size={14} />
+              </button>
+              <div className="w-px h-4 bg-gray-700 mx-0.5" />
               <button onClick={handleReplaceFrameImage} className="p-1 rounded hover:bg-gray-700 text-gray-300 text-[11px] font-medium px-2" title="Replace image">
                 Replace
               </button>
