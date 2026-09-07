@@ -33,6 +33,7 @@ import {
   ZoomOut,
   Lock,
   Unlock,
+  Maximize2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { applyTextTransform } from "@/components/PinDesigner";
@@ -1072,6 +1073,39 @@ function TemplateDesignerInner() {
     syncLayers();
   }
 
+  function fitImageZoneToTemplate() {
+    const canvas = fabricRef.current;
+    const obj = canvas?.getActiveObject() as any;
+    if (!canvas || !obj || obj.__ttype !== "image") return;
+    if (obj.__pinLocked) {
+      toast.warning("Unlock this image zone before fitting it to the template.");
+      return;
+    }
+
+    saveUndoState();
+    obj.set({
+      left: 0,
+      top: 0,
+      width: canvasW,
+      height: canvasH,
+      scaleX: 1,
+      scaleY: 1,
+      angle: 0,
+      originX: "left",
+      originY: "top",
+    });
+    obj.setCoords?.();
+    applySelectionVisuals(obj);
+    setElemColor(typeof obj.fill === "string" ? obj.fill : "#e8e8e8");
+    setIsFlipZone(obj.__flipX === true);
+    setImageSource(normalizeImageSourceMode(obj.__imageSource));
+    setImageBorderColor(normalizeImageBorderColor(obj.stroke, obj.__flipX === true ? "#4a90d9" : "#aaaaaa"));
+    canvas.setActiveObject(obj);
+    canvas.requestRenderAll();
+    syncLayers();
+    recalcToolbarPos(obj);
+  }
+
   // ── Layers ────────────────────────────────────────────────────────────────
   function getLayerLabel(type: string): string {
     switch (type) {
@@ -1758,6 +1792,14 @@ function TemplateDesignerInner() {
             {selType === "image" && (
               <>
                 <div className="w-px h-4 bg-gray-700 mx-0.5" />
+                <button
+                  onClick={fitImageZoneToTemplate}
+                  title="Fit image zone to full template"
+                  aria-label="Fit image zone to full template"
+                  className="p-1 rounded hover:bg-gray-700 text-gray-300"
+                >
+                  <Maximize2 size={14} />
+                </button>
                 <button
                   onClick={toggleFlipZone}
                   title={isFlipZone ? "Remove flip (make normal Image Zone)" : "Enable flip (mirror recipe image)"}
