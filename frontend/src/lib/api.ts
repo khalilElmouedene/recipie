@@ -920,6 +920,7 @@ export const api = {
     data: {
       row_ids: string[];
       schedule: boolean;
+      start_at?: string;
       page_ids?: string[];
       generate_article?: boolean;
     },

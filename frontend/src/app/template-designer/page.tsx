@@ -1796,9 +1796,11 @@ function TemplateDesignerInner() {
                   onClick={fitImageZoneToTemplate}
                   title="Fit image zone to full template"
                   aria-label="Fit image zone to full template"
-                  className="p-1 rounded hover:bg-gray-700 text-gray-300"
+                  data-toolbar-action="fit-image-zone-to-template"
+                  className="inline-flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-blue-500"
                 >
-                  <Maximize2 size={14} />
+                  <Maximize2 size={13} />
+                  <span>Fit</span>
                 </button>
                 <button
                   onClick={toggleFlipZone}

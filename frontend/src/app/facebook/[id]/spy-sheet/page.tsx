@@ -2,17 +2,20 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import * as XLSX from "xlsx";
 import {
   AlertTriangle,
   ArrowLeft,
   CalendarClock,
   Check,
   CloudUpload,
+  Download,
   FileImage,
   Loader2,
   Plus,
   Rocket,
   Trash2,
+  Upload,
   Video,
   X,
 } from "lucide-react";
@@ -25,6 +28,13 @@ import {
 import { useToast } from "@/contexts/ToastContext";
 
 type LaunchMode = "draft" | "schedule";
+type FacebookSpyRowInput = {
+  direct_link?: string;
+  post_title?: string;
+  template_image_url?: string;
+  source_image_url?: string;
+  recipe_post?: string;
+};
 
 export default function FacebookSpySheetPage() {
   const { id } = useParams<{ id: string }>();
@@ -46,7 +56,10 @@ export default function FacebookSpySheetPage() {
   const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set());
   const [launching, setLaunching] = useState(false);
   const [generateArticle, setGenerateArticle] = useState(true);
+  const [scheduleStartAt, setScheduleStartAt] = useState("");
+  const [importingExcel, setImportingExcel] = useState(false);
   const newFileRef = useRef<HTMLInputElement>(null);
+  const excelInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     try {
@@ -174,12 +187,164 @@ export default function FacebookSpySheetPage() {
     }
   };
 
+  const downloadExcelTemplate = () => {
+    const isImage = project?.post_type === "image";
+    const templateRows = isImage
+      ? [
+          {
+            template_image_url: "https://example.com/template-image-1.png",
+            source_image_url: "https://example.com/source-image-1.jpg",
+            recipe_post: "Crispy garlic parmesan potatoes\nFull recipe post text goes here.",
+          },
+          {
+            template_image_url: "https://example.com/template-image-2.png",
+            source_image_url: "https://example.com/source-image-2.jpg",
+            recipe_post: "Creamy lemon chicken pasta\nFull recipe post text goes here.",
+          },
+        ]
+      : [
+          {
+            direct_link: "https://example.com/source-video-1.mp4",
+            post_title: "Crispy garlic parmesan potatoes",
+          },
+          {
+            direct_link: "https://example.com/source-video-2.mp4",
+            post_title: "Creamy lemon chicken pasta",
+          },
+        ];
+    const headers = isImage
+      ? ["template_image_url", "source_image_url", "recipe_post"]
+      : ["direct_link", "post_title"];
+    const ws = XLSX.utils.json_to_sheet(templateRows, {
+      header: headers,
+      skipHeader: false,
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, isImage ? "image_posts" : "video_posts");
+    XLSX.writeFile(
+      wb,
+      isImage
+        ? "facebook_image_spy_sheet_template.xlsx"
+        : "facebook_video_spy_sheet_template.xlsx",
+    );
+  };
+
+  const handleExcelImport = async (file: File) => {
+    setImportingExcel(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: "array" });
+      const firstSheet = wb.SheetNames[0];
+      if (!firstSheet) {
+        toast.warning("File has no sheet.");
+        return;
+      }
+
+      const ws = wb.Sheets[firstSheet];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+      if (!rawRows.length) {
+        toast.warning("No rows found in file.");
+        return;
+      }
+
+      const normalize = (value: unknown) => String(value ?? "").trim();
+      const normKey = (key: string) => key.toLowerCase().replace(/[\s-]+/g, "_");
+      const firstValue = (mapped: Record<string, string>, keys: string[]) =>
+        keys.map((key) => mapped[key]).find(Boolean) || "";
+
+      const imported: FacebookSpyRowInput[] = rawRows
+        .map((row) => {
+          const mapped: Record<string, string> = {};
+          Object.entries(row).forEach(([key, value]) => {
+            mapped[normKey(key)] = normalize(value);
+          });
+          if (project?.post_type === "image") {
+            return {
+              template_image_url: firstValue(mapped, [
+                "template_image_url",
+                "template_image",
+                "template_url",
+                "template",
+              ]),
+              source_image_url: firstValue(mapped, [
+                "source_image_url",
+                "source_image",
+                "image_url",
+                "image",
+                "source_url",
+                "source",
+              ]),
+              recipe_post: firstValue(mapped, [
+                "recipe_post",
+                "recipe_text",
+                "recipe",
+                "post_text",
+                "post",
+                "text",
+              ]),
+            };
+          }
+          return {
+            direct_link: firstValue(mapped, [
+              "direct_link",
+              "video_url",
+              "source_video_url",
+              "video",
+              "link",
+              "url",
+            ]),
+            post_title: firstValue(mapped, [
+              "post_title",
+              "title",
+              "recipe_title",
+              "caption",
+              "name",
+            ]),
+          };
+        })
+        .filter((row) =>
+          project?.post_type === "image"
+            ? Boolean(row.template_image_url && row.source_image_url && row.recipe_post)
+            : Boolean(row.direct_link && row.post_title),
+        );
+
+      if (!imported.length) {
+        toast.warning(
+          project?.post_type === "image"
+            ? 'No valid rows found. Required columns: "template_image_url", "source_image_url", and "recipe_post".'
+            : 'No valid rows found. Required columns: "direct_link" and "post_title".',
+        );
+        return;
+      }
+
+      const createdRows: FacebookSpyRowOut[] = [];
+      for (const row of imported) {
+        createdRows.push(await api.createFacebookSpyRow(id, row));
+      }
+      setRows((current) => [...current, ...createdRows]);
+      setSelected((current) => {
+        const next = new Set(current);
+        createdRows.forEach((row) => next.add(row.id));
+        return next;
+      });
+      toast.success(`Imported ${createdRows.length} Spy Sheet row${createdRows.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to import Excel file");
+    } finally {
+      setImportingExcel(false);
+      if (excelInputRef.current) excelInputRef.current.value = "";
+    }
+  };
+
   const startGeneration = async () => {
     setLaunching(true);
     try {
       const result = await api.startFacebookGeneration(id, {
         row_ids: selectedRows.map((row) => row.id),
         schedule: launchMode === "schedule",
+        start_at: launchMode === "schedule" && scheduleStartAt
+          ? new Date(scheduleStartAt).toISOString()
+          : undefined,
         page_ids: [...selectedPages],
         generate_article: project?.post_type === "image" ? generateArticle : true,
       });
@@ -225,17 +390,53 @@ export default function FacebookSpySheetPage() {
             {project?.name || "Facebook project"} · {project?.post_type === "image" ? "Add Template Image, Source Image, and Recipe Post." : "Add a workspace video and the post title you want to develop."}
           </p>
         </div>
-        <button
-          onClick={() => setShowLaunch(true)}
-          disabled={selected.size === 0 || pages.length === 0}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#1877f2] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(24,119,242,.25)] transition hover:bg-[#2f86f6] disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Rocket size={17} />
-          Start Generation
-          {selected.size > 0 && (
-            <span className="rounded-md bg-white/15 px-1.5 py-0.5 text-xs">{selected.size}</span>
-          )}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={excelInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void handleExcelImport(file);
+            }}
+          />
+          <button
+            type="button"
+            onClick={downloadExcelTemplate}
+            disabled={!project}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 text-sm font-semibold text-slate-200 transition hover:border-[#1877f2]/60 hover:text-[#68a8ff] disabled:cursor-not-allowed disabled:opacity-40"
+            title={
+              project?.post_type === "image"
+                ? 'Download Excel template with "template_image_url", "source_image_url", and "recipe_post"'
+                : 'Download Excel template with "direct_link" and "post_title"'
+            }
+          >
+            <Download size={16} />
+            Excel Template
+          </button>
+          <button
+            type="button"
+            onClick={() => excelInputRef.current?.click()}
+            disabled={!project || importingExcel}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 text-sm font-semibold text-slate-200 transition hover:border-[#1877f2]/60 hover:text-[#68a8ff] disabled:cursor-not-allowed disabled:opacity-40"
+            title="Import Excel or CSV rows into this Spy Sheet"
+          >
+            {importingExcel ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+            {importingExcel ? "Importing..." : "Import"}
+          </button>
+          <button
+            onClick={() => setShowLaunch(true)}
+            disabled={selected.size === 0 || pages.length === 0}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#1877f2] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(24,119,242,.25)] transition hover:bg-[#2f86f6] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Rocket size={17} />
+            Start Generation
+            {selected.size > 0 && (
+              <span className="rounded-md bg-white/15 px-1.5 py-0.5 text-xs">{selected.size}</span>
+            )}
+          </button>
+        </div>
       </div>
 
       {pages.length === 0 && (
@@ -622,6 +823,20 @@ export default function FacebookSpySheetPage() {
                   <p className="mt-1 text-xs leading-5 text-slate-500">Use each Page’s daily window, cap, and interval.</p>
                 </button>
               </div>
+              {launchMode === "schedule" && (
+                <label className="block rounded-2xl border border-slate-800 bg-slate-950/25 p-4">
+                  <span className="text-sm font-medium text-slate-300">Start scheduling from</span>
+                  <input
+                    type="datetime-local"
+                    value={scheduleStartAt}
+                    onChange={(event) => setScheduleStartAt(event.target.value)}
+                    className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none transition focus:border-[#1877f2]"
+                  />
+                  <span className="mt-2 block text-xs leading-5 text-slate-500">
+                    Leave empty to use the next available time from each Page schedule.
+                  </span>
+                </label>
+              )}
 
               <div>
                 <p className="mb-2 text-sm font-medium text-slate-300">Publish to Pages</p>
