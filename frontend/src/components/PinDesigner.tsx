@@ -797,9 +797,16 @@ export async function buildTemplateOnCanvas(
       }
     } else if (el.type === "band" || el.type === "circle") {
       const bandFill = (el.id === "textBand" && oBandColor) ? oBandColor : (el.bgColor || (el.type === "circle" ? "#8b0000" : "#ffffff"));
+      const strokeStyle = (el.strokeStyle as string) ?? ((el as any).__strokeStyle as string) ?? "solid";
+      const strokeWidth = Number((el as any).strokeWidth || 0);
+      const borderColor = normalizeImageBorderColor((el as any).borderColor ?? (el as any).stroke, "#333333");
+      let dashArray: number[] | undefined;
+      if (strokeStyle === "dashed") dashArray = [15, 10];
+      else if (strokeStyle === "dotted") dashArray = [4, 6];
       const shape = el.type === "circle"
-        ? new fabric.Circle({ left: el.x, top: el.y, radius: el.radius || 60, fill: bandFill, originX: "center", originY: "center" })
-        : new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: bandFill, strokeWidth: 0 });
+        ? new fabric.Circle({ left: el.x, top: el.y, radius: el.radius || 60, fill: bandFill, stroke: borderColor, strokeWidth, strokeDashArray: dashArray, strokeUniform: true, originX: "center", originY: "center" })
+        : new fabric.Rect({ left: el.x, top: el.y, width: el.width, height: el.height, fill: bandFill, stroke: borderColor, strokeWidth, strokeDashArray: dashArray, strokeUniform: true });
+      (shape as any).__strokeStyle = strokeStyle;
       _applyTemplateLock(shape, el.locked);
       canvas.add(shape);
     } else if (el.type === "text") {
@@ -2120,6 +2127,9 @@ export default function PinDesigner({
             width: typeof o.width === "number" ? o.width * (o.scaleX ?? 1) : 0,
             height: typeof o.height === "number" ? o.height * (o.scaleY ?? 1) : 0,
             bgColor: typeof o.fill === "string" ? o.fill : undefined,
+            borderColor: normalizeImageBorderColor((o as any).stroke, "#333333"),
+            strokeWidth: typeof o.strokeWidth === "number" ? o.strokeWidth : 0,
+            strokeStyle: (o as any).__strokeStyle ?? "solid",
           });
         }
       }
@@ -2312,7 +2322,13 @@ export default function PinDesigner({
     } else if (obj.__pinType === "band") {
       const fill = typeof obj.fill === "string" ? obj.fill : "#ffffff";
       const parsed = rgbaToHex(fill);
-      setBandProps({ bandFill: parsed.hex, bandOpacity: parsed.alpha });
+      setBandProps({
+        bandFill: parsed.hex,
+        bandOpacity: parsed.alpha,
+        borderColor: normalizeImageBorderColor(obj.stroke, "#333333"),
+        borderWidth: typeof obj.strokeWidth === "number" ? obj.strokeWidth : 0,
+        borderStyle: obj.__strokeStyle ?? "solid",
+      });
     } else if (obj.__pinType === "image" || obj.__pinType === "imageFrame" || obj.__pinType === "imageContent") {
       const sourceOwner = obj.__pinType === "imageContent" && obj.__frameRect ? obj.__frameRect : obj;
       setImageProps({
@@ -2426,7 +2442,13 @@ export default function PinDesigner({
       } else if (restoredObj.__pinType === "band") {
         const fill = typeof restoredObj.fill === "string" ? restoredObj.fill : "#ffffff";
         const parsed = rgbaToHex(fill);
-        setBandProps({ bandFill: parsed.hex, bandOpacity: parsed.alpha });
+        setBandProps({
+          bandFill: parsed.hex,
+          bandOpacity: parsed.alpha,
+          borderColor: normalizeImageBorderColor(restoredObj.stroke, "#333333"),
+          borderWidth: typeof restoredObj.strokeWidth === "number" ? restoredObj.strokeWidth : 0,
+          borderStyle: restoredObj.__strokeStyle ?? "solid",
+        });
       } else if (restoredObj.__pinType === "image" || restoredObj.__pinType === "imageFrame") {
         setImageProps({
           left: Math.round(restoredObj.left ?? 0),
@@ -2855,6 +2877,12 @@ export default function PinDesigner({
         (circle as any).__pinType = "band";
         canvas.add(circle);
       } else if (el.type === "band") {
+        const strokeStyle = (el.strokeStyle as string) ?? ((el as any).__strokeStyle as string) ?? "solid";
+        const strokeWidth = Number((el as any).strokeWidth || 0);
+        const borderColor = normalizeImageBorderColor((el as any).borderColor ?? (el as any).stroke, "#333333");
+        let dashArray: number[] | undefined;
+        if (strokeStyle === "dashed") dashArray = [15, 10];
+        else if (strokeStyle === "dotted") dashArray = [4, 6];
         const band = new Rect({
           left: el.x,
           top: el.y,
@@ -2862,7 +2890,10 @@ export default function PinDesigner({
           height: el.height,
           fill: el.bgColor || "#ffffff",
           selectable: true,
-          strokeWidth: 0,
+          stroke: borderColor,
+          strokeWidth,
+          strokeDashArray: dashArray,
+          strokeUniform: true,
           originX: "left",
           originY: "top",
           objectCaching: false,
@@ -2870,10 +2901,10 @@ export default function PinDesigner({
         (band as any).__pinId = el.id;
         (band as any).__pinLabel = el.label;
         (band as any).__pinType = "band";
+        (band as any).__strokeStyle = strokeStyle;
         (band as any).__pinLocked = !!(el as any).locked;
         applyLockState(band);
         canvas.add(band);
-        addDesignerBorder(fabric, canvas, el.x, el.y, el.width, el.height, el.id);
       } else if (el.type === "text") {
         const tv = ((el as any).textVariable ?? "") as TextVariable;
         const textContent = resolveTemplateTextContent(el, {
@@ -3801,6 +3832,29 @@ export default function PinDesigner({
     canvas.renderAll();
   };
 
+  const updateBandBorderProperty = (property: "color" | "width" | "style", value: string) => {
+    const canvas = fabricCanvasRef.current;
+    const obj = getSelectedObject();
+    if (!canvas || !obj || obj.__pinType !== "band") return;
+    saveUndoState();
+    if (property === "color") {
+      obj.set("stroke", value);
+      setBandProps({ borderColor: value });
+    } else if (property === "width") {
+      const width = Math.max(0, parseInt(value, 10) || 0);
+      obj.set("strokeWidth", width);
+      setBandProps({ borderWidth: width });
+    } else {
+      (obj as any).__strokeStyle = value;
+      if (value === "dashed") obj.set("strokeDashArray", [15, 10]);
+      else if (value === "dotted") obj.set("strokeDashArray", [4, 6]);
+      else obj.set("strokeDashArray", undefined);
+      setBandProps({ borderStyle: value as StrokeStyle });
+    }
+    obj.set("strokeUniform", true);
+    canvas.renderAll();
+  };
+
   const addBand = () => {
     const fabric = fabricLibRef.current;
     const canvas = fabricCanvasRef.current;
@@ -3813,13 +3867,16 @@ export default function PinDesigner({
       height: 150,
       fill: "#1565c0",
       selectable: true,
+      stroke: "#333333",
       strokeWidth: 0,
+      strokeUniform: true,
       originX: "left",
       originY: "top",
     });
     (band as any).__pinId = id;
     (band as any).__pinLabel = "Color Band";
     (band as any).__pinType = "band";
+    (band as any).__strokeStyle = "solid";
     canvas.add(band);
     canvas.setActiveObject(band);
     canvas.renderAll();
@@ -4389,6 +4446,9 @@ export default function PinDesigner({
           width: num(obj.width, 1000),
           height: num(obj.height, 150),
           fill: str(obj.fill, "#1565c0"),
+          borderColor: str(obj.stroke, "#333333"),
+          strokeWidth: num(obj.strokeWidth, 0),
+          strokeStyle: str(obj.__strokeStyle, "solid"),
         },
       };
     }
@@ -4594,14 +4654,20 @@ export default function PinDesigner({
           width: num(payload.width, PIN_W),
           height: num(payload.height, 150),
           fill: str(payload.fill, "#1565c0"),
+          stroke: str(payload.borderColor ?? payload.stroke, "#333333"),
+          strokeWidth: num(payload.strokeWidth, 0),
           originX: str(payload.originX, "left") as any,
           originY: str(payload.originY, "top") as any,
           selectable: true,
-          strokeWidth: 0,
+          strokeUniform: true,
         });
+        const strokeStyle = str(payload.strokeStyle, "solid");
+        if (strokeStyle === "dashed") band.set("strokeDashArray", [15, 10]);
+        else if (strokeStyle === "dotted") band.set("strokeDashArray", [4, 6]);
         (band as any).__pinId = newId;
         (band as any).__pinLabel = str(payload.label, "Color Band");
         (band as any).__pinType = "band";
+        (band as any).__strokeStyle = strokeStyle;
         applyPlacementFromPayload(band, payload);
         canvas.add(band);
         canvas.setActiveObject(band);
@@ -6369,6 +6435,54 @@ export default function PinDesigner({
                       <span className="text-xs text-gray-400 w-10">{Math.round(bandProps.bandOpacity * 100)}%</span>
                     </div>
                     <p className="text-[10px] text-gray-500 mt-1">0% = transparent, 100% = opaque</p>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">Border Color</label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="color"
+                        value={bandProps.borderColor}
+                        onChange={(e) => updateBandBorderProperty("color", e.target.value)}
+                        className="w-10 h-8 rounded border border-gray-600 cursor-pointer bg-transparent"
+                      />
+                      <input
+                        type="text"
+                        value={bandProps.borderColor}
+                        onChange={(e) => updateBandBorderProperty("color", e.target.value)}
+                        className="input-field text-sm flex-1"
+                        placeholder="#333333"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Border Style</label>
+                    <div className="flex gap-1">
+                      {(["solid", "dashed", "dotted"] as const).map((style) => (
+                        <button
+                          key={style}
+                          type="button"
+                          onClick={() => updateBandBorderProperty("style", style)}
+                          className={`flex-1 py-2 rounded text-xs font-medium transition flex flex-col items-center gap-1 ${bandProps.borderStyle === style ? "bg-brand-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
+                        >
+                          <div className="w-8 h-0 border-t-2" style={{ borderStyle: style, borderColor: bandProps.borderStyle === style ? "white" : "#9ca3af" }} />
+                          <span className="capitalize">{style}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Border Width</label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="range"
+                        min="0"
+                        max="30"
+                        value={bandProps.borderWidth}
+                        onChange={(e) => updateBandBorderProperty("width", e.target.value)}
+                        className="flex-1"
+                      />
+                      <span className="text-sm text-gray-300 w-8">{bandProps.borderWidth}px</span>
+                    </div>
                   </div>
                   <div>
                     <label className="text-[10px] text-gray-500 block mb-1">Quick Colors</label>

@@ -119,6 +119,9 @@ function TemplateDesignerInner() {
 
   // Band / image zone color
   const [elemColor, setElemColor] = useState("#4a90d9");
+  const [bandBorderColor, setBandBorderColor] = useState("#333333");
+  const [bandBorderWidth, setBandBorderWidth] = useState(0);
+  const [bandBorderStyle, setBandBorderStyle] = useState<StrokeStyle>("solid");
   const [isFlipZone, setIsFlipZone] = useState(false);
   const [imageSource, setImageSource] = useState<ImageSourceMode>("original");
   const [imageBorderColor, setImageBorderColor] = useState("#aaaaaa");
@@ -369,6 +372,11 @@ function TemplateDesignerInner() {
       setTextVariable((obj.__textVariable as TextVariable) ?? "");
     } else if (t === "band" || t === "image") {
       setElemColor(typeof obj.fill === "string" ? obj.fill : "#4a90d9");
+      if (t === "band") {
+        setBandBorderColor(normalizeImageBorderColor(obj.stroke, "#333333"));
+        setBandBorderWidth(typeof obj.strokeWidth === "number" ? obj.strokeWidth : 0);
+        setBandBorderStyle((obj.__strokeStyle as StrokeStyle) ?? "solid");
+      }
       if (t === "image") {
         setIsFlipZone(obj.__flipX === true);
         setImageSource(normalizeImageSourceMode(obj.__imageSource));
@@ -577,17 +585,27 @@ function TemplateDesignerInner() {
         applySelectionVisuals(rect);
         canvas.add(rect);
       } else if (el.type === "band") {
+        const strokeStyle = ((el as any).strokeStyle as StrokeStyle) ?? "solid";
+        const strokeWidth = Number((el as any).strokeWidth || 0);
+        let dashArray: number[] | undefined;
+        if (strokeStyle === "dashed") dashArray = [20, 10];
+        else if (strokeStyle === "dotted") dashArray = [4, 8];
         const rect = new fabric.Rect({
           left: el.x ?? 0,
           top: el.y ?? 0,
           width: el.width || canvasW,
           height: el.height || 120,
           fill: el.bgColor || "#4a90d9",
+          stroke: normalizeImageBorderColor((el as any).borderColor ?? (el as any).stroke, "#333333"),
+          strokeWidth,
+          strokeDashArray: dashArray,
+          strokeUniform: true,
           originX: "left",
           originY: "top",
         });
         (rect as any).__id = el.id || uid("band");
         (rect as any).__ttype = "band";
+        (rect as any).__strokeStyle = strokeStyle;
         (rect as any).__pinLocked = !!(el as any).locked;
         applyLockStateDesigner(rect);
         applySelectionVisuals(rect);
@@ -812,13 +830,18 @@ function TemplateDesignerInner() {
       width: canvasW,
       height: 200,
       fill: "#4a90d9",
+      stroke: "#333333",
+      strokeWidth: 0,
+      strokeUniform: true,
     });
     (rect as any).__id = uid("band");
     (rect as any).__ttype = "band";
+    (rect as any).__strokeStyle = "solid";
     applySelectionVisuals(rect);
     canvas.add(rect);
     canvas.setActiveObject(rect);
     canvas.renderAll();
+    syncSel(rect);
   }
 
   function addFrame() {
@@ -1262,6 +1285,28 @@ function TemplateDesignerInner() {
     setElemColor(color);
   }
 
+  function applyBandBorderProperty(property: "color" | "width" | "style", value: string) {
+    const obj = getActive();
+    if (!obj || obj.__ttype !== "band") return;
+    saveUndoState();
+    if (property === "color") {
+      obj.set("stroke", value);
+      setBandBorderColor(value);
+    } else if (property === "width") {
+      const width = Math.max(0, parseInt(value, 10) || 0);
+      obj.set("strokeWidth", width);
+      setBandBorderWidth(width);
+    } else {
+      obj.__strokeStyle = value;
+      if (value === "dashed") obj.set("strokeDashArray", [20, 10]);
+      else if (value === "dotted") obj.set("strokeDashArray", [4, 8]);
+      else obj.set("strokeDashArray", undefined);
+      setBandBorderStyle(value as StrokeStyle);
+    }
+    obj.set("strokeUniform", true);
+    fabricRef.current?.renderAll();
+  }
+
   function applyImageSource(mode: ImageSourceMode) {
     const obj = getActive();
     if (!obj || obj.__ttype !== "image") return;
@@ -1357,6 +1402,9 @@ function TemplateDesignerInner() {
           width: w,
           height: h,
           bgColor: typeof o.fill === "string" ? o.fill : "#4a90d9",
+          borderColor: normalizeImageBorderColor(o.stroke, "#333333"),
+          strokeWidth: typeof o.strokeWidth === "number" ? o.strokeWidth : 0,
+          strokeStyle: (o.__strokeStyle as string) ?? "solid",
           locked: !!o.__pinLocked,
         });
       } else if (type === "asset") {
@@ -2269,6 +2317,55 @@ function TemplateDesignerInner() {
                   </span>
                 </div>
               </div>
+
+              {selType === "band" && (
+                <>
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1.5">Border Color</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={bandBorderColor}
+                        onChange={(e) => applyBandBorderProperty("color", e.target.value)}
+                        className="w-8 h-8 rounded-lg cursor-pointer border border-gray-700 p-0.5 bg-transparent"
+                      />
+                      <span className="text-xs font-mono text-gray-400">{bandBorderColor}</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Border Style</label>
+                    <div className="flex gap-1">
+                      {(["solid", "dashed", "dotted"] as const).map((style) => (
+                        <button
+                          key={style}
+                          type="button"
+                          onClick={() => applyBandBorderProperty("style", style)}
+                          className={`flex-1 py-2 rounded text-xs font-medium transition flex flex-col items-center gap-1 ${bandBorderStyle === style ? "bg-brand-500 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"}`}
+                        >
+                          <div className="w-7 h-0 border-t-2" style={{ borderStyle: style, borderColor: bandBorderStyle === style ? "white" : "#9ca3af" }} />
+                          <span className="capitalize">{style}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-gray-500 block mb-1">Border Width</label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="range"
+                        min="0"
+                        max="30"
+                        value={bandBorderWidth}
+                        onChange={(e) => applyBandBorderProperty("width", e.target.value)}
+                        className="flex-1"
+                      />
+                      <span className="text-sm text-gray-300 w-8">{bandBorderWidth}px</span>
+                    </div>
+                  </div>
+                </>
+              )}
 
               <button
                 onClick={deleteSelected}

@@ -28,6 +28,9 @@ export interface TextProps {
 export interface BandProps {
   bandOpacity: number;
   bandFill: string;
+  borderColor: string;
+  borderWidth: number;
+  borderStyle: StrokeStyle;
 }
 
 export interface FrameProps {
@@ -143,7 +146,13 @@ export const useDesignerStore = create<DesignerState>()(
     setTextProps: (props) =>
       set((s) => ({ textProps: { ...s.textProps, ...props } })),
 
-    bandProps: { bandOpacity: 1, bandFill: "#ffffff" },
+    bandProps: {
+      bandOpacity: 1,
+      bandFill: "#ffffff",
+      borderColor: "#333333",
+      borderWidth: 0,
+      borderStyle: "solid",
+    },
     setBandProps: (props) =>
       set((s) => ({ bandProps: { ...s.bandProps, ...props } })),
 

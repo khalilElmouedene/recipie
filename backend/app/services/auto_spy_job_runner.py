@@ -805,6 +805,18 @@ async function render() {{
     if (t === 'band') {{
       ctx.fillStyle = elem.bgColor || '#888';
       ctx.fillRect(ex, ey, ew, eh);
+      const sw = Number(elem.strokeWidth || 0);
+      const borderColor = elem.borderColor || elem.stroke || '';
+      if (borderColor && sw > 0) {{
+        ctx.save();
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = sw;
+        if (elem.strokeStyle === 'dashed') ctx.setLineDash([15, 10]);
+        else if (elem.strokeStyle === 'dotted') ctx.setLineDash([4, 6]);
+        const inset = sw / 2;
+        ctx.strokeRect(ex + inset, ey + inset, Math.max(0, ew - sw), Math.max(0, eh - sw));
+        ctx.restore();
+      }}
     }}
     else if (t === 'frame') {{
       ctx.save();
@@ -1032,6 +1044,43 @@ def _pil_render_elements(
                 return
             canvas.alpha_composite(el_img.crop((ox, oy, ox + cw, oy + ch)), (max(0, lx), max(0, ty)))
 
+        def _draw_styled_rect_border(layer: Image.Image, w: int, h: int, color: tuple, sw: int, style: str) -> None:
+            if sw <= 0 or w <= sw or h <= sw:
+                return
+            draw = ImageDraw.Draw(layer)
+            inset = max(0, sw // 2)
+            x1, y1 = inset, inset
+            x2, y2 = max(inset, w - inset - 1), max(inset, h - inset - 1)
+            if style not in {"dashed", "dotted"}:
+                draw.rectangle([x1, y1, x2, y2], outline=color, width=sw)
+                return
+
+            dash = max(sw * (1 if style == "dotted" else 4), 2)
+            gap = max(sw * 2, 2)
+
+            def _dashed_line(start: tuple[int, int], end: tuple[int, int]) -> None:
+                sx, sy = start
+                ex2, ey2 = end
+                horizontal = sy == ey2
+                length = abs(ex2 - sx) if horizontal else abs(ey2 - sy)
+                pos = 0
+                while pos < length:
+                    seg_end = min(length, pos + dash)
+                    if horizontal:
+                        x_start = sx + pos if ex2 >= sx else sx - pos
+                        x_end = sx + seg_end if ex2 >= sx else sx - seg_end
+                        draw.line([(x_start, sy), (x_end, ey2)], fill=color, width=sw)
+                    else:
+                        y_start = sy + pos if ey2 >= sy else sy - pos
+                        y_end = sy + seg_end if ey2 >= sy else sy - seg_end
+                        draw.line([(sx, y_start), (ex2, y_end)], fill=color, width=sw)
+                    pos += dash + gap
+
+            _dashed_line((x1, y1), (x2, y1))
+            _dashed_line((x2, y1), (x2, y2))
+            _dashed_line((x2, y2), (x1, y2))
+            _dashed_line((x1, y2), (x1, y1))
+
         image_index = 0
         for elem in elements:
             # Template designer saves elements with a custom schema (not raw Fabric.js JSON):
@@ -1057,6 +1106,19 @@ def _pil_render_elements(
             if etype == "band":
                 fill = _parse_hex_color(str(elem.get("bgColor") or "#888888"))
                 _paste(Image.new("RGBA", (w, h), fill), ex, ey)
+                border_color = str(elem.get("borderColor") or elem.get("stroke") or "").strip()
+                border_width = max(0, int(float(elem.get("strokeWidth") or 0)))
+                if border_color and border_width > 0:
+                    border = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+                    _draw_styled_rect_border(
+                        border,
+                        w,
+                        h,
+                        _parse_hex_color(border_color),
+                        border_width,
+                        str(elem.get("strokeStyle") or "solid"),
+                    )
+                    _paste(border, ex, ey)
 
             elif etype == "frame":
                 el = Image.new("RGBA", (w, h), (0, 0, 0, 0))
