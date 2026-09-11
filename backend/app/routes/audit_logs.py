@@ -5,16 +5,53 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import String, and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..db_models import AuditLog, User
+from ..db_models import AuditLog, Project, Recipe, Site, User
 from ..dependencies import get_current_user
-from ..models import AuditLogListOut, AuditLogOut
+from ..models import AuditLogListOut, AuditLogOut, AuditLogSiteOut
 
 router = APIRouter(prefix="/api/audit-logs", tags=["audit-logs"])
 ALLOWED_AUDIT_EMAIL = "khalil@gmail.com"
+
+
+def _ensure_audit_access(user: User) -> None:
+    if (user.email or "").strip().lower() != ALLOWED_AUDIT_EMAIL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Logs page is restricted",
+        )
+
+
+@router.get("/sites", response_model=list[AuditLogSiteOut])
+async def list_audit_log_sites(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[AuditLogSiteOut]:
+    _ensure_audit_access(user)
+
+    recipe_counts = (
+        select(Recipe.site_id, func.count(Recipe.id).label("recipe_count"))
+        .group_by(Recipe.site_id)
+        .subquery()
+    )
+    stmt = (
+        select(
+            Site.id,
+            Site.project_id,
+            Site.domain,
+            Site.created_at,
+            Project.name.label("project_name"),
+            func.coalesce(recipe_counts.c.recipe_count, 0).label("recipe_count"),
+        )
+        .join(Project, Project.id == Site.project_id)
+        .outerjoin(recipe_counts, recipe_counts.c.site_id == Site.id)
+        .order_by(Project.name.asc(), Site.domain.asc())
+    )
+    rows = (await db.execute(stmt)).mappings().all()
+    return [AuditLogSiteOut.model_validate(dict(row)) for row in rows]
 
 
 @router.get("", response_model=AuditLogListOut)
@@ -27,14 +64,11 @@ async def list_audit_logs(
     table_name: str | None = Query(default=None),
     actor_user_id: uuid.UUID | None = Query(default=None),
     entity_pk: str | None = Query(default=None),
+    site_id: uuid.UUID | None = Query(default=None),
     from_at: datetime | None = Query(default=None),
     to_at: datetime | None = Query(default=None),
 ) -> AuditLogListOut:
-    if (user.email or "").strip().lower() != ALLOWED_AUDIT_EMAIL:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Logs page is restricted",
-        )
+    _ensure_audit_access(user)
 
     filters = []
 
@@ -46,6 +80,16 @@ async def list_audit_logs(
         filters.append(AuditLog.actor_user_id == actor_user_id)
     if entity_pk:
         filters.append(AuditLog.entity_pk == entity_pk)
+    if site_id:
+        site_pk = str(site_id)
+        filters.append(
+            or_(
+                AuditLog.entity_pk == site_pk,
+                AuditLog.request_path.ilike(f"%{site_pk}%"),
+                AuditLog.old_values.cast(String).ilike(f"%{site_pk}%"),
+                AuditLog.new_values.cast(String).ilike(f"%{site_pk}%"),
+            )
+        )
     if from_at:
         filters.append(AuditLog.occurred_at >= from_at)
     if to_at:

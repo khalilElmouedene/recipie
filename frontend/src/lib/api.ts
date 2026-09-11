@@ -639,6 +639,7 @@ export const api = {
     table_name?: string;
     actor_user_id?: string;
     entity_pk?: string;
+    site_id?: string;
     from_at?: string;
     to_at?: string;
   }) => {
@@ -649,11 +650,13 @@ export const api = {
     if (params?.table_name) qp.set("table_name", params.table_name);
     if (params?.actor_user_id) qp.set("actor_user_id", params.actor_user_id);
     if (params?.entity_pk) qp.set("entity_pk", params.entity_pk);
+    if (params?.site_id) qp.set("site_id", params.site_id);
     if (params?.from_at) qp.set("from_at", params.from_at);
     if (params?.to_at) qp.set("to_at", params.to_at);
     const qs = qp.toString();
     return request<AuditLogListOut>(`/api/audit-logs${qs ? `?${qs}` : ""}`);
   },
+  getAuditLogSites: () => request<AuditLogSiteOut[]>("/api/audit-logs/sites"),
 
   downloadSiteExcel: (siteId: string, domain: string) =>
     downloadFile(`/api/sites/${siteId}/export/excel`, `${domain.replace(/[^a-z0-9]/gi, "_")}.xlsx`),
@@ -1450,6 +1453,15 @@ export interface AuditLogOut {
 export interface AuditLogListOut {
   total: number;
   items: AuditLogOut[];
+}
+
+export interface AuditLogSiteOut {
+  id: string;
+  project_id: string;
+  domain: string;
+  project_name: string;
+  recipe_count: number;
+  created_at: string;
 }
 
 export interface DashboardStats {

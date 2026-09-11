@@ -602,6 +602,15 @@ class AuditLogListOut(BaseModel):
     items: list[AuditLogOut]
 
 
+class AuditLogSiteOut(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    domain: str
+    project_name: str
+    recipe_count: int = 0
+    created_at: datetime
+
+
 class DashboardStats(BaseModel):
     total_projects: int
     total_sites: int

@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Loader2, RefreshCcw, Search } from "lucide-react";
-import { api, AuditLogOut } from "@/lib/api";
+import { ChevronLeft, ChevronRight, Globe2, Loader2, RefreshCcw, Search } from "lucide-react";
+import { api, AuditLogOut, AuditLogSiteOut } from "@/lib/api";
 
 const ALLOWED_EMAIL = "khalil@gmail.com";
 const PAGE_SIZE = 50;
@@ -14,6 +14,9 @@ export default function LogsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<AuditLogOut[]>([]);
+  const [sites, setSites] = useState<AuditLogSiteOut[]>([]);
+  const [sitesLoading, setSitesLoading] = useState(false);
+  const [selectedSiteId, setSelectedSiteId] = useState("");
   const [total, setTotal] = useState(0);
   const [action, setAction] = useState("");
   const [tableName, setTableName] = useState("");
@@ -36,17 +39,37 @@ export default function LogsPage() {
     return values;
   }, [page, totalPages]);
 
-  const loadLogs = useCallback(async (targetPage: number = page) => {
+  const selectedSite = useMemo(
+    () => sites.find((site) => site.id === selectedSiteId) || null,
+    [selectedSiteId, sites],
+  );
+
+  const loadSites = useCallback(async () => {
+    setSitesLoading(true);
+    try {
+      setSites(await api.getAuditLogSites());
+    } finally {
+      setSitesLoading(false);
+    }
+  }, []);
+
+  const loadLogs = useCallback(async (
+    targetPage: number = page,
+    options?: { siteId?: string; entityPk?: string },
+  ) => {
     setLoading(true);
     setError(null);
     try {
       const safePage = Math.max(1, targetPage);
+      const activeSiteId = options?.siteId ?? selectedSiteId;
+      const activeEntityPk = options?.entityPk ?? entityPk;
       const res = await api.getAuditLogs({
         limit: PAGE_SIZE,
         offset: (safePage - 1) * PAGE_SIZE,
         action: action || undefined,
         table_name: tableName.trim() || undefined,
-        entity_pk: entityPk.trim() || undefined,
+        entity_pk: activeEntityPk.trim() || undefined,
+        site_id: activeSiteId || undefined,
       });
       setLogs(res.items);
       setTotal(res.total);
@@ -57,7 +80,13 @@ export default function LogsPage() {
     } finally {
       setLoading(false);
     }
-  }, [action, entityPk, page, tableName]);
+  }, [action, entityPk, page, selectedSiteId, tableName]);
+
+  const handleSelectSite = useCallback((siteId: string) => {
+    setSelectedSiteId(siteId);
+    setEntityPk("");
+    void loadLogs(1, { siteId, entityPk: "" });
+  }, [loadLogs]);
 
   useEffect(() => {
     let active = true;
@@ -70,7 +99,7 @@ export default function LogsPage() {
           return;
         }
         setCheckingAccess(false);
-        await loadLogs(1);
+        await Promise.all([loadSites(), loadLogs(1)]);
       } catch {
         router.replace("/");
       }
@@ -105,6 +134,53 @@ export default function LogsPage() {
         </div>
       </div>
 
+      <div className="rounded-xl border border-gray-800 bg-gray-900 p-3">
+        <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+          <Globe2 size={14} className="text-brand-400" />
+          Websites
+          {sitesLoading && <Loader2 size={13} className="animate-spin text-brand-400" />}
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          <button
+            onClick={() => handleSelectSite("")}
+            disabled={loading}
+            className={`shrink-0 rounded-lg border px-3 py-2 text-sm transition ${
+              selectedSiteId === ""
+                ? "border-brand-500 bg-brand-500 text-white"
+                : "border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-600"
+            } disabled:opacity-50`}
+          >
+            All Websites
+          </button>
+          {sites.map((site) => (
+            <button
+              key={site.id}
+              onClick={() => handleSelectSite(site.id)}
+              disabled={loading}
+              title={`${site.project_name} - ${site.domain}`}
+              className={`shrink-0 rounded-lg border px-3 py-2 text-left transition ${
+                selectedSiteId === site.id
+                  ? "border-brand-500 bg-brand-500 text-white"
+                  : "border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-600"
+              } disabled:opacity-50`}
+            >
+              <span className="block max-w-56 truncate text-sm font-medium">{site.domain}</span>
+              <span className={`block max-w-56 truncate text-[11px] ${
+                selectedSiteId === site.id ? "text-blue-100" : "text-gray-500"
+              }`}>
+                {site.project_name}
+                {site.recipe_count > 0 ? ` - ${site.recipe_count} recipes` : ""}
+              </span>
+            </button>
+          ))}
+          {!sitesLoading && sites.length === 0 && (
+            <div className="rounded-lg border border-dashed border-gray-700 px-3 py-2 text-sm text-gray-500">
+              No websites found
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 gap-2 rounded-xl border border-gray-800 bg-gray-900 p-3 md:grid-cols-4">
         <select
           value={action}
@@ -125,7 +201,7 @@ export default function LogsPage() {
         <input
           value={entityPk}
           onChange={(e) => setEntityPk(e.target.value)}
-          placeholder="Entity PK"
+          placeholder={selectedSite ? `Entity PK in ${selectedSite.domain}` : "Entity PK"}
           className="input-field w-full"
         />
         <button
