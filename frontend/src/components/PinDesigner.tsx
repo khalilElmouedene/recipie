@@ -18,6 +18,7 @@ import {
 import { api, getApiBaseUrl, type PinReusableElementOut } from "@/lib/api";
 import { appendPinImageToArticleHtml, removeRecipeGeneratorPinEmbed } from "@/lib/pinArticleEmbed";
 import { storePinterestGalleryContext } from "@/lib/pinterestGalleryContext";
+import { findUploadedFont, loadUploadedFont, loadUploadedFontDefinitions } from "@/lib/customFonts";
 import { getUserRole, getUserId } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
@@ -634,6 +635,12 @@ async function ensureGoogleFontLoaded(fontName: string): Promise<void> {
   const trimmed = fontName.trim();
   if (!trimmed) return;
 
+  const uploadedFont = findUploadedFont(trimmed);
+  if (uploadedFont) {
+    await loadUploadedFont(uploadedFont);
+    return;
+  }
+
   const familyParam = encodeURIComponent(trimmed).replace(/%20/g, "+");
   const linkId = `gfont-${familyParam}`;
   const waitForFont = () => {
@@ -1208,13 +1215,23 @@ export default function PinDesigner({
   useEffect(() => {
     if (fontsLoadedRef.current) return;
     fontsLoadedRef.current = true;
-    api.getCustomFonts()
+    api.getCustomFontDefinitions()
       .then((fonts) => {
-        setCustomFonts(fonts);
-        fonts.forEach(injectFontStylesheet);
+        void loadUploadedFontDefinitions(fonts);
+        const families = fonts.map((font) => font.family);
+        setCustomFonts((prev) => {
+          const next = [...prev];
+          families.forEach((font) => {
+            if (!next.includes(font)) next.push(font);
+          });
+          return next;
+        });
+        fonts
+          .filter((font) => font.source !== "upload")
+          .forEach((font) => { void ensureGoogleFontLoaded(font.family); });
       })
       .catch(() => {});
-  }, [injectFontStylesheet]);
+  }, []);
 
   useEffect(() => {
     if (reusableLoadedRef.current) return;
@@ -1261,7 +1278,7 @@ export default function PinDesigner({
           )
         ));
         if (templateFonts.length > 0) {
-          templateFonts.forEach(injectFontStylesheet);
+          templateFonts.forEach((font) => { void ensureGoogleFontLoaded(font); });
           setCustomFonts((prev) => {
             const extra = templateFonts.filter((f) => !prev.includes(f));
             return extra.length > 0 ? [...prev, ...extra] : prev;
@@ -1269,7 +1286,7 @@ export default function PinDesigner({
         }
       })
       .catch(() => {});
-  }, [projectId, injectFontStylesheet]);
+  }, [projectId]);
 
   const saveFontsToDb = useCallback((fonts: string[]) => {
     api.setCustomFonts(fonts).catch(() => {});

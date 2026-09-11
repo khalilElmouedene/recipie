@@ -430,16 +430,77 @@ class FontsUpdate(BaseModel):
     fonts: list[str]
 
 
+class FontDefinition(BaseModel):
+    family: str = Field(min_length=1, max_length=160)
+    source: str = Field(default="google", max_length=24)
+    fileName: str | None = Field(default=None, max_length=255)
+    dataUrl: str | None = None
+
+
+class FontDefinitionsUpdate(BaseModel):
+    fonts: list[FontDefinition]
+
+
+def _load_font_definitions(user: User) -> list[FontDefinition]:
+    if not user.custom_fonts:
+        return []
+    try:
+        raw_fonts = json.loads(user.custom_fonts)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(raw_fonts, list):
+        return []
+
+    definitions: list[FontDefinition] = []
+    seen: set[str] = set()
+    for item in raw_fonts:
+        try:
+            if isinstance(item, str):
+                definition = FontDefinition(family=item.strip(), source="google")
+            elif isinstance(item, dict):
+                definition = FontDefinition.model_validate(item)
+                definition.family = definition.family.strip()
+                definition.source = (definition.source or "google").strip() or "google"
+            else:
+                continue
+        except Exception:
+            continue
+        if not definition.family:
+            continue
+        key = definition.family.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        definitions.append(definition)
+    return definitions
+
+
+def _save_font_definitions(user: User, fonts: list[FontDefinition]) -> list[FontDefinition]:
+    normalized: list[FontDefinition] = []
+    seen: set[str] = set()
+    for font in fonts:
+        family = font.family.strip()
+        if not family:
+            continue
+        key = family.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(FontDefinition(
+            family=family,
+            source=(font.source or "google").strip() or "google",
+            fileName=font.fileName.strip() if font.fileName else None,
+            dataUrl=font.dataUrl if font.dataUrl else None,
+        ))
+    user.custom_fonts = json.dumps([font.model_dump() for font in normalized])
+    return normalized
+
+
 @router.get("/fonts", response_model=list[str])
 async def get_fonts(
     user: Annotated[User, Depends(get_current_user)],
 ):
-    if not user.custom_fonts:
-        return []
-    try:
-        return json.loads(user.custom_fonts)
-    except (json.JSONDecodeError, TypeError):
-        return []
+    return [font.family for font in _load_font_definitions(user)]
 
 
 @router.put("/fonts", response_model=list[str])
@@ -448,10 +509,32 @@ async def set_fonts(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    unique = list(dict.fromkeys(f.strip() for f in body.fonts if f.strip()))
-    user.custom_fonts = json.dumps(unique)
+    existing_uploads = [
+        font for font in _load_font_definitions(user)
+        if font.source == "upload" and font.dataUrl
+    ]
+    google_fonts = [FontDefinition(family=f.strip(), source="google") for f in body.fonts if f.strip()]
+    saved = _save_font_definitions(user, [*existing_uploads, *google_fonts])
     await db.commit()
-    return unique
+    return [font.family for font in saved]
+
+
+@router.get("/fonts/definitions", response_model=list[FontDefinition])
+async def get_font_definitions(
+    user: Annotated[User, Depends(get_current_user)],
+):
+    return _load_font_definitions(user)
+
+
+@router.put("/fonts/definitions", response_model=list[FontDefinition])
+async def set_font_definitions(
+    body: FontDefinitionsUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    saved = _save_font_definitions(user, body.fonts)
+    await db.commit()
+    return saved
 
 
 class ReusablePinElement(BaseModel):

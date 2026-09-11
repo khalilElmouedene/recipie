@@ -322,7 +322,11 @@ async def preview_render_template(
 
     logs: list[str] = []
 
-    from ..services.auto_spy_job_runner import _render_with_playwright_sync, _pil_render_elements
+    from ..services.auto_spy_job_runner import (
+        _pil_render_elements,
+        _render_with_playwright_sync,
+        _uploaded_font_data_uris_from_json,
+    )
 
     loop = asyncio.get_running_loop()
 
@@ -338,6 +342,7 @@ async def preview_render_template(
                 title=body.title,
                 site_domain="",
                 log=logs.append,
+                uploaded_font_data_uris=_uploaded_font_data_uris_from_json(user.custom_fonts),
             )
             if result:
                 return result

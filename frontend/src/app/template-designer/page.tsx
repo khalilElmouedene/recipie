@@ -35,11 +35,21 @@ import {
   Unlock,
   Maximize2,
 } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, type CustomFontDefinition } from "@/lib/api";
+import {
+  createUploadedFontDefinitionFromFile,
+  findUploadedFont,
+  loadUploadedFontDefinitions,
+  loadUploadedFont,
+  setUploadedFontDefinitions,
+} from "@/lib/customFonts";
 import { applyTextTransform } from "@/components/PinDesigner";
 import { useToast } from "@/contexts/ToastContext";
 
 const SELECTION_ACCENT = "#2563eb";
+const RIGHT_PANEL_WIDTH_STORAGE_KEY = "templateDesignerRightPanelWidth";
+const RIGHT_PANEL_MIN_WIDTH = 256;
+const RIGHT_PANEL_MAX_WIDTH = 520;
 
 let _uid = 0;
 function uid(prefix: string) {
@@ -93,6 +103,7 @@ function TemplateDesignerInner() {
   const [canvasReady, setCanvasReady] = useState(false);
   const [templateLoading, setTemplateLoading] = useState(false);
   const [zoom, setZoom] = useState(38);
+  const [rightPanelWidth, setRightPanelWidth] = useState(256);
 
   // Template meta
   const [templateName, setTemplateName] = useState("My Template");
@@ -114,6 +125,8 @@ function TemplateDesignerInner() {
   const [textTransform, setTextTransform] = useState<"none" | "uppercase" | "lowercase" | "capitalize">("none");
   const [textVariable, setTextVariable] = useState<TextVariable>("");
   const [customFonts, setCustomFonts] = useState<string[]>([]);
+  const [fontDefinitions, setFontDefinitions] = useState<CustomFontDefinition[]>([]);
+  const [uploadedFonts, setUploadedFonts] = useState<string[]>([]);
   const [fontInput, setFontInput] = useState("");
   const [fontLoading, setFontLoading] = useState(false);
 
@@ -146,6 +159,7 @@ function TemplateDesignerInner() {
   const [importing, setImporting] = useState(false);
   const [editingLoaded, setEditingLoaded] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const fontUploadInputRef = useRef<HTMLInputElement>(null);
   const manualTemplateLoadedRef = useRef(false);
   const undoHistoryRef = useRef<string[]>([]);
   const isRestoringRef = useRef(false);
@@ -155,6 +169,22 @@ function TemplateDesignerInner() {
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = Number(window.localStorage.getItem(RIGHT_PANEL_WIDTH_STORAGE_KEY));
+    if (Number.isFinite(stored) && stored > 0) {
+      setRightPanelWidth(Math.max(RIGHT_PANEL_MIN_WIDTH, Math.min(RIGHT_PANEL_MAX_WIDTH, Math.round(stored))));
+    }
+  }, []);
+
+  const updateRightPanelWidth = useCallback((value: number) => {
+    const width = Math.max(RIGHT_PANEL_MIN_WIDTH, Math.min(RIGHT_PANEL_MAX_WIDTH, Math.round(value) || RIGHT_PANEL_MIN_WIDTH));
+    setRightPanelWidth(width);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, String(width));
+    }
   }, []);
 
   const injectFontStylesheet = useCallback((fontName: string): Promise<void> => {
@@ -185,9 +215,35 @@ function TemplateDesignerInner() {
     });
   }, []);
 
-  const saveFontsToDb = useCallback((fonts: string[]) => {
-    api.setCustomFonts(fonts).catch(() => {});
+  const syncFontDefinitionState = useCallback((fonts: CustomFontDefinition[]) => {
+    setFontDefinitions(fonts);
+    setUploadedFontDefinitions(fonts);
+    setUploadedFonts(fonts.filter((font) => font.source === "upload" && font.dataUrl).map((font) => font.family));
+    setCustomFonts(fonts.filter((font) => font.source !== "upload").map((font) => font.family));
   }, []);
+
+  const saveFontsToDb = useCallback((fonts: string[]) => {
+    api.setCustomFonts(fonts)
+      .then(() => {
+        setFontDefinitions((prev) => {
+          const uploads = prev.filter((font) => font.source === "upload" && font.dataUrl);
+          const googleFonts = fonts.map((family) => ({ family, source: "google" as const }));
+          const next = [...uploads, ...googleFonts];
+          setUploadedFontDefinitions(next);
+          return next;
+        });
+      })
+      .catch(() => {});
+  }, []);
+
+  const loadFontForDesigner = useCallback(async (fontName: string): Promise<void> => {
+    const uploadedFont = findUploadedFont(fontName);
+    if (uploadedFont) {
+      await loadUploadedFont(uploadedFont);
+      return;
+    }
+    await injectFontStylesheet(fontName);
+  }, [injectFontStylesheet]);
 
   const loadGoogleFont = useCallback(async (fontName: string) => {
     const trimmed = fontName.trim();
@@ -216,15 +272,38 @@ function TemplateDesignerInner() {
     }
   }, [injectFontStylesheet, saveFontsToDb]);
 
+  const uploadFontFile = useCallback(async (file: File) => {
+    setFontLoading(true);
+    try {
+      const uploaded = await createUploadedFontDefinitionFromFile(file);
+      await loadUploadedFont(uploaded);
+      const nextDefinitions = [
+        ...fontDefinitions.filter((font) => font.family.trim().toLowerCase() !== uploaded.family.trim().toLowerCase()),
+        uploaded,
+      ];
+      const saved = await api.setCustomFontDefinitions(nextDefinitions);
+      syncFontDefinitionState(saved);
+      setFontFamily(uploaded.family);
+      applyText({ fontFamily: uploaded.family });
+      toast.success(`Font "${uploaded.family}" uploaded and saved.`);
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to upload font.");
+    } finally {
+      setFontLoading(false);
+      if (fontUploadInputRef.current) fontUploadInputRef.current.value = "";
+    }
+  }, [fontDefinitions, syncFontDefinitionState, toast]);
+
   useEffect(() => {
     Promise.all(TEMPLATE_FONTS.map((f) => injectFontStylesheet(f))).catch(() => {});
-    api.getCustomFonts()
+    api.getCustomFontDefinitions()
       .then((fonts) => {
-        setCustomFonts(fonts);
-        void Promise.all(fonts.map(injectFontStylesheet));
+        syncFontDefinitionState(fonts);
+        void loadUploadedFontDefinitions(fonts);
+        void Promise.all(fonts.filter((font) => font.source !== "upload").map((font) => injectFontStylesheet(font.family)));
       })
       .catch(() => {});
-  }, [injectFontStylesheet]);
+  }, [injectFontStylesheet, syncFontDefinitionState]);
 
   const saveUndoState = useCallback(() => {
     const canvas = fabricRef.current;
@@ -513,7 +592,7 @@ function TemplateDesignerInner() {
     );
     if (templateFonts.length > 0) {
       setTemplateLoading(true);
-      await Promise.all(templateFonts.map(injectFontStylesheet));
+      await Promise.all(templateFonts.map(loadFontForDesigner));
       setCustomFonts((prev) => {
         const extra = templateFonts.filter((f) => !prev.includes(f));
         return extra.length > 0 ? [...prev, ...extra] : prev;
@@ -684,7 +763,7 @@ function TemplateDesignerInner() {
     saveUndoState();
     syncLayers();
     setTemplateLoading(false);
-  }, [applySelectionVisuals, canvasH, canvasW, saveUndoState, injectFontStylesheet]);
+  }, [applySelectionVisuals, canvasH, canvasW, saveUndoState, loadFontForDesigner]);
 
   const loadExistingTemplate = useCallback(async () => {
     if (!editingTemplateId || editingLoaded || manualTemplateLoadedRef.current) return;
@@ -708,7 +787,7 @@ function TemplateDesignerInner() {
     if (!canvas || !canvasReady) return;
     const sync = () => syncLayers();
     const onSelected = (e: any) => { syncLayers(); recalcToolbarPos(e.selected?.[0]); };
-    const onModified = (e: any) => { syncLayers(); recalcToolbarPos(e.target); };
+    const onModified = (e: any) => { syncLayers(); if (e.target) syncSel(e.target); recalcToolbarPos(e.target); };
     const onCleared  = () => { syncLayers(); setToolbarPos(null); };
     canvas.on("object:added", sync);
     canvas.on("object:removed", sync);
@@ -1552,6 +1631,7 @@ function TemplateDesignerInner() {
   const allFonts = Array.from(
     new Set([
       fontFamily,
+      ...uploadedFonts,
       ...customFonts,
       ...TEMPLATE_FONTS,
       ...SYSTEM_FONTS,
@@ -1899,9 +1979,28 @@ function TemplateDesignerInner() {
         )}
 
         {/* ── Right Panel ─────────────────────────────────────────────────── */}
-        <aside className="w-64 border-l border-gray-800 bg-gray-950 flex flex-col flex-shrink-0 overflow-hidden">
+        <aside
+          className="border-l border-gray-800 bg-gray-950 flex flex-col flex-shrink-0 overflow-hidden"
+          style={{ width: rightPanelWidth }}
+        >
           {/* scrollable properties area */}
           <div className="flex-1 overflow-y-auto p-4">
+          <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900/50 p-3">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                Panel Width
+              </label>
+              <span className="text-[10px] font-mono text-gray-500">{rightPanelWidth}px</span>
+            </div>
+            <input
+              type="range"
+              min={RIGHT_PANEL_MIN_WIDTH}
+              max={RIGHT_PANEL_MAX_WIDTH}
+              value={rightPanelWidth}
+              onChange={(e) => updateRightPanelWidth(Number(e.target.value))}
+              className="w-full accent-brand-500"
+            />
+          </div>
           {!selType && (
             <div className="flex flex-col items-center justify-center h-full text-center">
               <div className="w-12 h-12 rounded-xl bg-gray-800 flex items-center justify-center mb-3">
@@ -2129,6 +2228,31 @@ function TemplateDesignerInner() {
                     {fontLoading ? <Loader2 size={13} className="animate-spin" /> : "Add"}
                   </button>
                 </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-gray-500 block mb-1">
+                  Upload Font
+                </label>
+                <input
+                  ref={fontUploadInputRef}
+                  type="file"
+                  accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void uploadFontFile(file);
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fontUploadInputRef.current?.click()}
+                  disabled={fontLoading}
+                  className="w-full flex items-center justify-center gap-2 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-xs text-gray-200 hover:border-brand-500 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                >
+                  {fontLoading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  Choose .ttf, .otf, .woff
+                </button>
               </div>
 
               <div>

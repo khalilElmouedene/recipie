@@ -339,6 +339,13 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ fonts }),
     }),
+  getCustomFontDefinitions: () =>
+    request<CustomFontDefinition[]>(`/api/settings/fonts/definitions`, { cache: "no-store" }),
+  setCustomFontDefinitions: (fonts: CustomFontDefinition[]) =>
+    request<CustomFontDefinition[]>(`/api/settings/fonts/definitions`, {
+      method: "PUT",
+      body: JSON.stringify({ fonts }),
+    }),
   getPinReusableElements: () =>
     request<PinReusableElementOut[]>(`/api/settings/pin-elements`, { cache: "no-store" }),
   setPinReusableElements: (elements: PinReusableElementOut[]) =>
@@ -1378,6 +1385,13 @@ export interface PinDesignerTemplateCreate {
   canvasHeight?: number;
   project_ids?: string[] | null;
   elements: PinDesignerTemplateElement[];
+}
+
+export interface CustomFontDefinition {
+  family: string;
+  source?: "google" | "upload" | string;
+  fileName?: string | null;
+  dataUrl?: string | null;
 }
 
 export interface PinReusableElementOut {

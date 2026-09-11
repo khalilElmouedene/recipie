@@ -43,6 +43,7 @@ from ..db_models import (
     RecipeStatus,
     Site,
     SitePublishSchedule,
+    User,
 )
 
 
@@ -419,11 +420,13 @@ def _render_custom_template_sync(
         async with SessionLocal() as session:
             try:
                 row = await session.execute(
-                    select(PinDesignerTemplate).where(
+                    select(PinDesignerTemplate, User.custom_fonts).join(
+                        User, User.id == PinDesignerTemplate.owner_id
+                    ).where(
                         PinDesignerTemplate.id == uuid.UUID(template_id)
                     )
                 )
-                return row.scalar_one_or_none()
+                return row.first()
             except Exception:
                 return None
 
@@ -431,14 +434,16 @@ def _render_custom_template_sync(
     # asyncio.run() would create a new loop in this thread, corrupting the pool.
     try:
         if main_loop is not None and main_loop.is_running():
-            tmpl = asyncio.run_coroutine_threadsafe(_load(), main_loop).result(timeout=15)
+            loaded = asyncio.run_coroutine_threadsafe(_load(), main_loop).result(timeout=15)
         else:
-            tmpl = asyncio.run(_load())
+            loaded = asyncio.run(_load())
     except Exception:
         return None
 
-    if tmpl is None:
+    if loaded is None:
         return None
+
+    tmpl, custom_fonts_json = loaded
 
     try:
         elements = json.loads(tmpl.elements_json) if tmpl.elements_json else []
@@ -460,6 +465,7 @@ def _render_custom_template_sync(
         title=title,
         site_domain=site_domain,
         log=log,
+        uploaded_font_data_uris=_uploaded_font_data_uris_from_json(custom_fonts_json),
     )
     if pw_result:
         return pw_result
@@ -591,6 +597,39 @@ def _font_to_data_uri(family: str, bold: bool, italic: bool) -> tuple[str, str] 
     return None
 
 
+def _uploaded_font_data_uris_from_json(custom_fonts: str | None) -> dict[str, str]:
+    if not custom_fonts:
+        return {}
+    try:
+        raw_fonts = json.loads(custom_fonts)
+    except Exception:
+        return {}
+    if not isinstance(raw_fonts, list):
+        return {}
+
+    uploads: dict[str, str] = {}
+    for item in raw_fonts:
+        if not isinstance(item, dict):
+            continue
+        family = str(item.get("family") or "").strip()
+        source = str(item.get("source") or "").strip()
+        data_uri = str(item.get("dataUrl") or "").strip()
+        if family and source == "upload" and data_uri.startswith("data:"):
+            uploads[family] = data_uri
+    return uploads
+
+
+def _font_format_hint_from_data_uri(data_uri: str) -> str:
+    head = data_uri.split(",", 1)[0].lower()
+    if "woff2" in head:
+        return "woff2"
+    if "woff" in head:
+        return "woff"
+    if "opentype" in head or "otf" in head:
+        return "opentype"
+    return "truetype"
+
+
 def _build_pin_render_html(
     elements: list[dict],
     bg_color: str,
@@ -601,10 +640,12 @@ def _build_pin_render_html(
     asset_data_uris: dict[str, str],
     title: str,
     site_domain: str = "",
+    uploaded_font_data_uris: dict[str, str] | None = None,
     log: Callable[[str], None] | None = None,
 ) -> str:
     """Build a self-contained HTML page that renders the pin template on a <canvas>."""
     _log = log or (lambda _: None)
+    uploaded_font_data_uris = uploaded_font_data_uris or {}
 
     # Build a font-family substitution map: original → resolved (free) name.
     # This must happen BEFORE building the elements JSON so the JavaScript
@@ -614,10 +655,13 @@ def _build_pin_render_html(
         if elem.get("type") == "text":
             fam = str(elem.get("fontFamily") or "").strip()
             if fam and fam not in family_map:
-                resolved, substituted = _resolve_font_family(fam)
-                family_map[fam] = resolved
-                if substituted:
-                    _log(f"  Font substitution: '{fam}' → '{resolved}'")
+                if fam in uploaded_font_data_uris:
+                    family_map[fam] = fam
+                else:
+                    resolved, substituted = _resolve_font_family(fam)
+                    family_map[fam] = resolved
+                    if substituted:
+                        _log(f"  Font substitution: '{fam}' → '{resolved}'")
 
     # Rewrite elements so the JS sees the resolved font name in elem.fontFamily
     elements = [
@@ -639,8 +683,22 @@ def _build_pin_render_html(
     # The FontFace API lets us explicitly await each font before drawing anything.
     font_load_js = ""
     for fam in sorted(font_families):
-        _log(f"  Embedding font: {fam}")
         fam_esc = fam.replace("\\", "\\\\").replace('"', '\\"')
+        uploaded_uri = uploaded_font_data_uris.get(fam)
+        if uploaded_uri:
+            fmt = _font_format_hint_from_data_uri(uploaded_uri)
+            _log(f"  Embedding uploaded font: {fam}")
+            font_load_js += (
+                f"  try {{\n"
+                f"    const _ff = new FontFace(\"{fam_esc}\", \"url('{uploaded_uri}')\");\n"
+                f"    document.fonts.add(_ff);\n"
+                f"    await _ff.load();\n"
+                f"  }} catch(_e) {{}}\n"
+            )
+            _log(f"    uploaded → {fmt} embedded ({len(uploaded_uri)//1024}KB)")
+            continue
+
+        _log(f"  Embedding font: {fam}")
         for bold, italic, weight, css_style in [
             (False, False, "400", "normal"),
             (True,  False, "700", "normal"),
@@ -919,6 +977,7 @@ def _render_with_playwright_sync(
     title: str,
     site_domain: str,
     log: Callable[[str], None],
+    uploaded_font_data_uris: dict[str, str] | None = None,
 ) -> str | None:
     """Render the pin template in headless Chromium via Playwright.
 
@@ -962,6 +1021,7 @@ def _render_with_playwright_sync(
         asset_data_uris=asset_data_uris,
         title=title,
         site_domain=site_domain,
+        uploaded_font_data_uris=uploaded_font_data_uris,
         log=log,
     )
 
