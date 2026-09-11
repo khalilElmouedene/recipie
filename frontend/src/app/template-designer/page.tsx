@@ -50,6 +50,8 @@ const SELECTION_ACCENT = "#2563eb";
 const RIGHT_PANEL_WIDTH_STORAGE_KEY = "templateDesignerRightPanelWidth";
 const RIGHT_PANEL_MIN_WIDTH = 256;
 const RIGHT_PANEL_MAX_WIDTH = 520;
+const TEMPLATE_SIZE_MIN = 100;
+const TEMPLATE_SIZE_MAX = 4000;
 
 let _uid = 0;
 function uid(prefix: string) {
@@ -90,8 +92,8 @@ function TemplateDesignerInner() {
   const searchParams = useSearchParams();
   const editingTemplateId = searchParams.get("templateId");
 
-  const canvasW = Math.max(100, parseInt(searchParams.get("w") || "1000", 10));
-  const canvasH = Math.max(100, parseInt(searchParams.get("h") || "1500", 10));
+  const initialCanvasW = Math.max(TEMPLATE_SIZE_MIN, parseInt(searchParams.get("w") || "1000", 10));
+  const initialCanvasH = Math.max(TEMPLATE_SIZE_MIN, parseInt(searchParams.get("h") || "1500", 10));
 
   // Canvas
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -104,6 +106,10 @@ function TemplateDesignerInner() {
   const [templateLoading, setTemplateLoading] = useState(false);
   const [zoom, setZoom] = useState(38);
   const [rightPanelWidth, setRightPanelWidth] = useState(256);
+  const [canvasW, setCanvasW] = useState(initialCanvasW);
+  const [canvasH, setCanvasH] = useState(initialCanvasH);
+  const [canvasWInput, setCanvasWInput] = useState(String(initialCanvasW));
+  const [canvasHInput, setCanvasHInput] = useState(String(initialCanvasH));
 
   // Template meta
   const [templateName, setTemplateName] = useState("My Template");
@@ -173,6 +179,11 @@ function TemplateDesignerInner() {
   }, []);
 
   useEffect(() => {
+    setCanvasWInput(String(canvasW));
+    setCanvasHInput(String(canvasH));
+  }, [canvasH, canvasW]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const stored = Number(window.localStorage.getItem(RIGHT_PANEL_WIDTH_STORAGE_KEY));
     if (Number.isFinite(stored) && stored > 0) {
@@ -186,6 +197,11 @@ function TemplateDesignerInner() {
     if (typeof window !== "undefined") {
       window.localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, String(width));
     }
+  }, []);
+
+  const normalizeTemplateSize = useCallback((value: number, fallback: number) => {
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(TEMPLATE_SIZE_MIN, Math.min(TEMPLATE_SIZE_MAX, Math.round(value)));
   }, []);
 
   useEffect(() => {
@@ -346,6 +362,30 @@ function TemplateDesignerInner() {
       // ignore
     }
   }, []);
+
+  const applyTemplateSize = useCallback((nextW: number, nextH: number) => {
+    const width = normalizeTemplateSize(nextW, canvasW);
+    const height = normalizeTemplateSize(nextH, canvasH);
+    if (width === canvasW && height === canvasH) return;
+
+    const canvas = fabricRef.current;
+    if (canvas) {
+      saveUndoState();
+      canvas.setDimensions({ width, height });
+      canvas.set("backgroundColor", bgColor);
+      canvas.renderAll();
+    }
+    setCanvasW(width);
+    setCanvasH(height);
+  }, [bgColor, canvasH, canvasW, normalizeTemplateSize, saveUndoState]);
+
+  function commitTemplateSizeInputs() {
+    const nextW = canvasWInput.trim() ? Number(canvasWInput) : canvasW;
+    const nextH = canvasHInput.trim() ? Number(canvasHInput) : canvasH;
+    applyTemplateSize(nextW, nextH);
+    setCanvasWInput(String(normalizeTemplateSize(nextW, canvasW)));
+    setCanvasHInput(String(normalizeTemplateSize(nextH, canvasH)));
+  }
 
   const applySelectionVisuals = useCallback((obj: any) => {
     if (!obj) return;
@@ -604,6 +644,8 @@ function TemplateDesignerInner() {
   const applyTemplateToCanvas = useCallback(async (tmpl: {
     name?: string | null;
     bgColor?: string | null;
+    canvasWidth?: number | null;
+    canvasHeight?: number | null;
     elements?: any[];
   }) => {
     const canvas = fabricRef.current;
@@ -629,12 +671,17 @@ function TemplateDesignerInner() {
 
     const nextName = (tmpl.name || "My Template").trim() || "My Template";
     const nextBg = tmpl.bgColor || "#ffffff";
+    const nextCanvasW = normalizeTemplateSize(Number(tmpl.canvasWidth), canvasW);
+    const nextCanvasH = normalizeTemplateSize(Number(tmpl.canvasHeight), canvasH);
     setTemplateName(nextName);
     setBgColor(nextBg);
+    setCanvasW(nextCanvasW);
+    setCanvasH(nextCanvasH);
     setSelType(null);
 
     canvas.discardActiveObject();
     canvas.clear();
+    canvas.setDimensions({ width: nextCanvasW, height: nextCanvasH });
     canvas.set("backgroundColor", nextBg);
 
     for (const el of tmpl.elements || []) {
@@ -643,8 +690,8 @@ function TemplateDesignerInner() {
         const tt = (el as any).textTransform ?? "none";
         const boundVar = (el as any).textVariable ?? "";
         const tb = new fabric.Textbox(applyTextTransform(rawText, tt), {
-          left: el.x ?? canvasW / 2,
-          top: el.y ?? canvasH / 2,
+          left: el.x ?? nextCanvasW / 2,
+          top: el.y ?? nextCanvasH / 2,
           width: el.width || 800,
           fontSize: el.fontSize || 48,
           fontFamily: el.fontFamily || "Arial",
@@ -700,7 +747,7 @@ function TemplateDesignerInner() {
         const rect = new fabric.Rect({
           left: el.x ?? 0,
           top: el.y ?? 0,
-          width: el.width || canvasW,
+          width: el.width || nextCanvasW,
           height: el.height || 120,
           fill: el.bgColor || "#4a90d9",
           stroke: normalizeImageBorderColor((el as any).borderColor ?? (el as any).stroke, "#333333"),
@@ -791,7 +838,7 @@ function TemplateDesignerInner() {
     saveUndoState();
     syncLayers();
     setTemplateLoading(false);
-  }, [applySelectionVisuals, canvasH, canvasW, saveUndoState, loadFontForDesigner]);
+  }, [applySelectionVisuals, canvasH, canvasW, loadFontForDesigner, normalizeTemplateSize, saveUndoState]);
 
   const loadExistingTemplate = useCallback(async () => {
     if (!editingTemplateId || editingLoaded || manualTemplateLoadedRef.current) return;
@@ -1628,23 +1675,11 @@ function TemplateDesignerInner() {
       await applyTemplateToCanvas({
         name: importedName,
         bgColor: typeof data.bgColor === "string" ? data.bgColor : "#ffffff",
+        canvasWidth: Number.isFinite(Number(data.canvasWidth)) ? Number(data.canvasWidth) : undefined,
+        canvasHeight: Number.isFinite(Number(data.canvasHeight)) ? Number(data.canvasHeight) : undefined,
         elements: data.elements,
       });
       setEditingLoaded(true);
-
-      const importedW = Number(data.canvasWidth);
-      const importedH = Number(data.canvasHeight);
-      if (
-        Number.isFinite(importedW) &&
-        importedW > 0 &&
-        Number.isFinite(importedH) &&
-        importedH > 0 &&
-        (Math.round(importedW) !== canvasW || Math.round(importedH) !== canvasH)
-      ) {
-        toast.info(
-          `Imported file size is ${Math.round(importedW)}x${Math.round(importedH)}. Current canvas is ${canvasW}x${canvasH}.`
-        );
-      }
 
       toast.success(`Template "${importedName}" imported.`);
     } catch {
@@ -1832,13 +1867,68 @@ function TemplateDesignerInner() {
                   Template Size
                 </label>
                 <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                  <div className="flex-1 bg-gray-800 rounded-lg px-2 py-1.5 text-center font-mono">
-                    {canvasW}
-                  </div>
+                  <input
+                    type="number"
+                    min={TEMPLATE_SIZE_MIN}
+                    max={TEMPLATE_SIZE_MAX}
+                    step={10}
+                    value={canvasWInput}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setCanvasWInput(value);
+                      const nextW = Number(value);
+                      if (Number.isFinite(nextW) && nextW >= TEMPLATE_SIZE_MIN && nextW <= TEMPLATE_SIZE_MAX) {
+                        applyTemplateSize(nextW, canvasH);
+                      }
+                    }}
+                    onBlur={commitTemplateSizeInputs}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitTemplateSizeInputs();
+                    }}
+                    aria-label="Template width"
+                    className="min-w-0 flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-center font-mono text-gray-200 focus:outline-none focus:border-brand-500"
+                  />
                   <span className="text-gray-600">×</span>
-                  <div className="flex-1 bg-gray-800 rounded-lg px-2 py-1.5 text-center font-mono">
-                    {canvasH}
-                  </div>
+                  <input
+                    type="number"
+                    min={TEMPLATE_SIZE_MIN}
+                    max={TEMPLATE_SIZE_MAX}
+                    step={10}
+                    value={canvasHInput}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setCanvasHInput(value);
+                      const nextH = Number(value);
+                      if (Number.isFinite(nextH) && nextH >= TEMPLATE_SIZE_MIN && nextH <= TEMPLATE_SIZE_MAX) {
+                        applyTemplateSize(canvasW, nextH);
+                      }
+                    }}
+                    onBlur={commitTemplateSizeInputs}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitTemplateSizeInputs();
+                    }}
+                    aria-label="Template height"
+                    className="min-w-0 flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-center font-mono text-gray-200 focus:outline-none focus:border-brand-500"
+                  />
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-1">
+                  {([
+                    [1000, 1500, "Pin"],
+                    [1080, 1920, "Story"],
+                  ] as const).map(([w, h, label]) => (
+                    <button
+                      key={`${w}x${h}`}
+                      type="button"
+                      onClick={() => applyTemplateSize(w, h)}
+                      className={`rounded-md border px-2 py-1 text-[10px] font-medium transition ${
+                        canvasW === w && canvasH === h
+                          ? "border-brand-500 bg-brand-500/15 text-brand-300"
+                          : "border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-600 hover:text-gray-200"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
               </div>
               <div>
