@@ -160,6 +160,7 @@ function TemplateDesignerInner() {
   const [editingLoaded, setEditingLoaded] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const fontUploadInputRef = useRef<HTMLInputElement>(null);
+  const rightPanelResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const manualTemplateLoadedRef = useRef(false);
   const undoHistoryRef = useRef<string[]>([]);
   const isRestoringRef = useRef(false);
@@ -186,6 +187,33 @@ function TemplateDesignerInner() {
       window.localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, String(width));
     }
   }, []);
+
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const resize = rightPanelResizeRef.current;
+      if (!resize) return;
+      event.preventDefault();
+      updateRightPanelWidth(resize.startWidth + resize.startX - event.clientX);
+    };
+
+    const onPointerUp = () => {
+      if (!rightPanelResizeRef.current) return;
+      rightPanelResizeRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [updateRightPanelWidth]);
 
   const injectFontStylesheet = useCallback((fontName: string): Promise<void> => {
     const trimmed = fontName.trim();
@@ -1980,12 +2008,26 @@ function TemplateDesignerInner() {
 
         {/* ── Right Panel ─────────────────────────────────────────────────── */}
         <aside
-          className="border-l border-gray-800 bg-gray-950 flex flex-col flex-shrink-0 overflow-hidden"
+          className="relative border-l border-gray-800 bg-gray-950 flex flex-col flex-shrink-0 overflow-hidden"
           style={{ width: rightPanelWidth }}
         >
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize properties panel"
+            title="Drag to resize properties panel"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              rightPanelResizeRef.current = { startX: e.clientX, startWidth: rightPanelWidth };
+              document.body.style.cursor = "col-resize";
+              document.body.style.userSelect = "none";
+            }}
+            className="absolute left-0 top-0 z-20 h-full w-2 -translate-x-1 bg-transparent hover:bg-brand-500/35"
+            style={{ cursor: "ew-resize", touchAction: "none" }}
+          />
           {/* scrollable properties area */}
           <div className="flex-1 overflow-y-auto p-4">
-          <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900/50 p-3">
+          <div className="mb-4 rounded-lg border border-gray-800 bg-gray-900/50 p-2.5">
             <div className="flex items-center justify-between gap-3 mb-2">
               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                 Panel Width
@@ -2185,9 +2227,31 @@ function TemplateDesignerInner() {
               </div>
 
               <div>
-                <label className="text-[10px] text-gray-500 block mb-1.5">
-                  Font Family
-                </label>
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <label className="text-[10px] text-gray-500">
+                    Font Family
+                  </label>
+                  <input
+                    ref={fontUploadInputRef}
+                    type="file"
+                    accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void uploadFontFile(file);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fontUploadInputRef.current?.click()}
+                    disabled={fontLoading}
+                    className="inline-flex items-center gap-1 rounded-md border border-gray-700 bg-gray-800 px-2 py-1 text-[10px] font-medium text-gray-200 hover:border-brand-500 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                    title="Upload font file"
+                  >
+                    {fontLoading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                    Upload
+                  </button>
+                </div>
                 <select
                   value={fontFamily}
                   onChange={(e) => {
@@ -2228,31 +2292,6 @@ function TemplateDesignerInner() {
                     {fontLoading ? <Loader2 size={13} className="animate-spin" /> : "Add"}
                   </button>
                 </div>
-              </div>
-
-              <div>
-                <label className="text-[10px] text-gray-500 block mb-1">
-                  Upload Font
-                </label>
-                <input
-                  ref={fontUploadInputRef}
-                  type="file"
-                  accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) void uploadFontFile(file);
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => fontUploadInputRef.current?.click()}
-                  disabled={fontLoading}
-                  className="w-full flex items-center justify-center gap-2 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-xs text-gray-200 hover:border-brand-500 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                >
-                  {fontLoading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                  Choose .ttf, .otf, .woff
-                </button>
               </div>
 
               <div>
