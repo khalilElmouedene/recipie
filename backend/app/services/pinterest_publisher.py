@@ -16,7 +16,7 @@ from ..crypto import decrypt, encrypt
 from ..config import settings
 from ..database import SessionLocal, engine
 from ..db_models import Project, ProjectMember, Recipe, RecipeStatus, Site, User
-from ..pinterest_models import PinterestPublication, PinterestPublisher
+from ..pinterest_models import PinterestPublication, PinterestPublisher, PinterestPublishingLog
 from . import pinterest_api as api
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,12 @@ async def sync_queue(db: AsyncSession, site_id: uuid.UUID):
     await db.commit()
 
 
+async def log_event(db, site_id, event, message, item=None, level="info"):
+    # Callers provide curated operational details, never request/response bodies or credentials.
+    db.add(PinterestPublishingLog(site_id=site_id, publication_id=item.id if item else None,
+        event=event, message=message, level=level))
+
+
 async def store_tokens(publisher: PinterestPublisher, data: dict):
     now = utcnow()
     publisher.access_token_encrypted = encrypt(data["access_token"])
@@ -137,6 +143,8 @@ async def _access_token(db: AsyncSession, publisher: PinterestPublisher) -> str:
     if not publisher.access_token_encrypted:
         raise api.PinterestError("Connect a Pinterest account first.", reconnect=True)
     now = utcnow()
+    if publisher.connection_method == "token":
+        return decrypt(publisher.access_token_encrypted)
     if publisher.token_expires_at and aware(publisher.token_expires_at) > now + timedelta(minutes=5):
         return decrypt(publisher.access_token_encrypted)
     if not publisher.refresh_token_encrypted or (
@@ -147,6 +155,7 @@ async def _access_token(db: AsyncSession, publisher: PinterestPublisher) -> str:
     data = await api.exchange_token(client_id=client_id, client_secret=client_secret,
         grant_type="refresh_token", refresh_token=decrypt(publisher.refresh_token_encrypted))
     await store_tokens(publisher, data)
+    await log_event(db, publisher.site_id, "token_refreshed", "Pinterest authorization refreshed securely.")
     await db.commit()
     return decrypt(publisher.access_token_encrypted)
 
@@ -171,6 +180,12 @@ def next_publication_at(publisher: PinterestPublisher, used: int, now: datetime)
 
 
 async def recover_interrupted(db: AsyncSession, site_id: uuid.UUID):
+    interrupted = (await db.scalars(select(PinterestPublication).where(
+        PinterestPublication.site_id == site_id, PinterestPublication.status == "publishing"))).all()
+    for item in interrupted:
+        await log_event(db, site_id, "attempt_interrupted",
+            "Worker interrupted after dispatch. Check Pinterest before retrying." if item.dispatched_at else
+            "Worker interrupted before dispatch. Item queued for safe retry.", item, "error")
     # Called only while holding the site lock: no live worker can own these rows.
     await db.execute(update(PinterestPublication).where(PinterestPublication.site_id == site_id,
         PinterestPublication.status == "publishing", PinterestPublication.dispatched_at.is_(None)).values(
@@ -213,6 +228,7 @@ async def publish_one(db: AsyncSession, publisher: PinterestPublisher):
     item.error = None
     item.next_retry_at = None
     publisher.last_attempt_at = now
+    await log_event(db, publisher.site_id, "attempt_started", f"Attempt {item.attempt_count}: {item.title}", item)
     await db.commit()
     try:
         recipe = await db.get(Recipe, item.recipe_id)
@@ -223,12 +239,18 @@ async def publish_one(db: AsyncSession, publisher: PinterestPublisher):
         for key, value in recipe_fields(recipe).items():
             setattr(item, key, value)
         payload = api.pin_payload(item)
+        await log_event(db, publisher.site_id, "content_validated", "Pin image, title and article URL validated. Checking authorization.", item)
+        await db.commit()
         token = await access_token(db, publisher)
         # Serializes board discovery/creation across websites using the same account.
         async with locked_session(f"pinterest-boards:{publisher.username.casefold()}") as board_guard:
             if board_guard is None:
                 raise api.PinterestError("Another website is preparing a Pinterest board. Retrying later.", retryable=True)
-            item.board_id = await api.ensure_board(token, item.board_name, publisher.username)
+            async def board_progress(event, message):
+                await log_event(db, publisher.site_id, event, message, item)
+                await db.commit()
+            await board_progress("board_search", f"Looking for board: {item.board_name}")
+            item.board_id = await api.ensure_board(token, item.board_name, publisher.username, progress=board_progress)
         # A stop can arrive during board lookup. Re-read the row before dispatch.
         await db.refresh(publisher, with_for_update=True)
         dispatch_time = utcnow()
@@ -236,10 +258,12 @@ async def publish_one(db: AsyncSession, publisher: PinterestPublisher):
         if (not publisher.enabled or previous_due > dispatch_time or
             await daily_usage(db, publisher.site_id, dispatch_time) >= publisher.daily_limit):
             item.status = "pending"
+            await log_event(db, publisher.site_id, "dispatch_deferred", "Item returned to pending because publishing was stopped or its schedule changed.", item)
             await db.commit()
             return
         item.dispatched_at = utcnow()
         item.retry_safe = False
+        await log_event(db, publisher.site_id, "pin_dispatch", f"Sending pin to Pinterest board {item.board_id}. Waiting for its Pin ID.", item)
         await db.commit()  # MUST precede the network write.
         payload["board_id"] = item.board_id
         result = await api.request("POST", "/pins", token, json=payload)
@@ -252,6 +276,7 @@ async def publish_one(db: AsyncSession, publisher: PinterestPublisher):
         item.error = None
         publisher.last_error = None
         publisher.last_attempt_at = utcnow()  # Spacing measured after completion, including across midnight.
+        await log_event(db, publisher.site_id, "pin_published", f"Published successfully. Pin ID: {item.pin_id}. Publication date: {item.published_at.isoformat()}.", item)
         await db.commit()
     except api.PinterestError as error:
         item.status = "failed"
@@ -263,6 +288,9 @@ async def publish_one(db: AsyncSession, publisher: PinterestPublisher):
         publisher.last_attempt_at = utcnow()
         if error.reconnect:
             publisher.enabled = False
+        retry = f" Automatic retry after {item.next_retry_at.isoformat()}." if item.next_retry_at else (
+            " Verify the outcome on Pinterest before retrying." if error.uncertain else " Correct the issue and retry from publishing settings.")
+        await log_event(db, publisher.site_id, "pin_failed", str(error) + retry + (" Publishing stopped; reconnect or replace the token." if error.reconnect else ""), item, "error")
         await db.commit()
 
 

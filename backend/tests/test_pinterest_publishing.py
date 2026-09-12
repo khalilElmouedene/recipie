@@ -93,6 +93,62 @@ class PinterestDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await service.publish_one(self.db, self.publisher)
         return request
 
+    async def test_manual_token_is_encrypted_write_only_and_needs_no_app_secret(self):
+        body = routes.AccessTokenBody(access_token="manual-secret-token")
+        self.assertNotIn("manual-secret-token", repr(body))
+        self.assertNotIn("access_token", body.model_dump())
+        with patch.object(service, "site_lock", self.lock), patch.object(api, "request", AsyncMock(side_effect=[{"username": "chef"}, {"items": []}])):
+            result = await routes.connect_token(self.site.id, body, self.user, self.db)
+        self.assertEqual(result["connection_method"], "token")
+        self.assertFalse(result["enabled"])
+        self.assertNotIn("manual-secret-token", str(result))
+        self.assertNotEqual(self.publisher.access_token_encrypted, "manual-secret-token")
+        self.assertIsNone(self.publisher.refresh_token_encrypted)
+        with patch.object(api, "exchange_token", AsyncMock()) as exchange:
+            self.assertEqual(await service.access_token(self.db, self.publisher), "manual-secret-token")
+            exchange.assert_not_called()
+        page = await routes.get_logs(self.site.id, self.user, self.db, None, 100)
+        self.assertNotIn("manual-secret-token", str(page))
+        self.assertEqual(page["items"][0].event, "token_connected")
+
+    async def test_rejected_token_keeps_existing_connection(self):
+        previous = self.publisher.access_token_encrypted
+        with patch.object(service, "site_lock", self.lock), patch.object(api, "request", AsyncMock(side_effect=api.PinterestError("Expired token", reconnect=True))):
+            with self.assertRaises(HTTPException):
+                await routes.connect_token(self.site.id, routes.AccessTokenBody(access_token="expired"), self.user, self.db)
+        self.assertEqual(self.publisher.access_token_encrypted, previous)
+        self.assertTrue(self.publisher.enabled)
+
+    async def test_logs_are_site_scoped_and_paginated_without_overlap(self):
+        for i in range(4):
+            await service.log_event(self.db, self.site.id, "test", str(i))
+        await service.log_event(self.db, self.other_site.id, "private", "Other website")
+        await self.db.commit()
+        first = await routes.get_logs(self.site.id, self.user, self.db, None, 2)
+        second = await routes.get_logs(self.site.id, self.user, self.db, first["next_before_id"], 2)
+        self.assertEqual([x.message for x in first["items"] + second["items"]], ["3", "2", "1", "0"])
+        self.assertIsNone(second["next_before_id"])
+        self.user.email = "other@example.com"
+        with self.assertRaises(HTTPException) as error:
+            await routes.get_logs(self.site.id, self.user, self.db, None, 2)
+        self.assertEqual(error.exception.status_code, 403)
+
+    async def test_success_and_failure_have_durable_activity(self):
+        self.recipe()
+        await self.sync()
+        await self.publish()
+        page = await routes.get_logs(self.site.id, self.user, self.db, None, 100)
+        events = [x.event for x in page["items"]]
+        self.assertEqual(events, ["pin_published", "pin_dispatch", "board_search", "content_validated", "attempt_started"])
+        self.assertIn("12345", page["items"][0].message)
+        self.recipe()
+        await self.sync()
+        self.publisher.last_attempt_at = None
+        await self.publish(error=api.PinterestError("Rate limited", retryable=True))
+        page = await routes.get_logs(self.site.id, self.user, self.db, None, 100)
+        self.assertEqual(page["items"][0].level, "error")
+        self.assertIn("Automatic retry after", page["items"][0].message)
+
     async def test_queue_matches_gallery_and_is_site_scoped_idempotent(self):
         self.recipe()
         self.recipe(site_id=self.other_site.id)
@@ -208,7 +264,7 @@ class PinterestDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_stop_during_board_lookup_prevents_dispatch(self):
         self.recipe()
         item = await self.sync()
-        async def board(*args):
+        async def board(*args, **kwargs):
             self.publisher.enabled = False
             self.session.commit()
             return "42"
@@ -226,7 +282,7 @@ class PinterestDatabaseTests(unittest.IsolatedAsyncioTestCase):
         existing.status = "published"
         existing.published_at = service.utcnow()
         self.session.commit()
-        async def board(*args):
+        async def board(*args, **kwargs):
             self.publisher.daily_limit = 1
             self.session.commit()
             return "42"

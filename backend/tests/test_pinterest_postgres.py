@@ -70,7 +70,7 @@ class PinterestPostgresTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.dispose()
 
     async def test_two_workers_publish_once_and_lock_is_released(self):
-        async def board(*_):
+        async def board(*_, **kwargs):
             await asyncio.sleep(0.1)
             return "42"
         with patch.object(api, "ensure_board", board), patch.object(api, "request", AsyncMock(return_value={"id": "123456"})) as request:
@@ -125,8 +125,13 @@ class PinterestPostgresTests(unittest.IsolatedAsyncioTestCase):
         credential_spec = importlib.util.spec_from_file_location("pinterest_credentials_migration_test", credential_path)
         credential_migration = importlib.util.module_from_spec(credential_spec)
         credential_spec.loader.exec_module(credential_migration)
+        log_spec = importlib.util.spec_from_file_location("pinterest_logs_migration_test", path.with_name("add_pinterest_logs_token.py"))
+        log_migration = importlib.util.module_from_spec(log_spec)
+        log_spec.loader.exec_module(log_migration)
         def check(connection):
             with Operations.context(MigrationContext.configure(connection)):
+                log_migration.upgrade()
+                log_migration.downgrade()
                 migration.upgrade()  # startup tables already exist
                 migration.downgrade()
                 migration.upgrade()  # migration creates all tables
@@ -135,6 +140,10 @@ class PinterestPostgresTests(unittest.IsolatedAsyncioTestCase):
                 credential_migration.upgrade()  # supports tables created by startup
                 credential_migration.downgrade()
                 credential_migration.upgrade()
+                log_migration.upgrade()
+                log_migration.upgrade()
+                log_migration.downgrade()
+                log_migration.upgrade()
             inspector = inspect(connection)
             for table in (PinterestPublisher.__table__, PinterestPublication.__table__):
                 columns = {col["name"]: col for col in inspector.get_columns(table.name)}

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
@@ -19,6 +19,7 @@ class PinterestPublisher(Base):
     site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     username: Mapped[str | None] = mapped_column(String(200))
+    connection_method: Mapped[str] = mapped_column(String(16), default="oauth", server_default="oauth")
     client_id: Mapped[str | None] = mapped_column(String(100))
     app_secret_encrypted: Mapped[str | None] = mapped_column(Text)
     access_token_encrypted: Mapped[str | None] = mapped_column(Text)
@@ -30,6 +31,17 @@ class PinterestPublisher(Base):
     interval_minutes: Mapped[int] = mapped_column(Integer, default=60, server_default="60")
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class PinterestPublishingLog(Base):
+    __tablename__ = "pinterest_publishing_logs"
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), index=True)
+    publication_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    level: Mapped[str] = mapped_column(String(16), default="info")
+    event: Mapped[str] = mapped_column(String(64))
+    message: Mapped[str] = mapped_column(Text)
 
 
 class PinterestOAuthState(Base):

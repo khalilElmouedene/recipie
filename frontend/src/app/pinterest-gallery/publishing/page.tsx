@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, CheckCircle2, Clock3, ExternalLink, Globe2, Loader2, Pause, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import { api, PinterestPublisherOut, PinterestPublicationOut, PinterestPublicationStatus } from "@/lib/api";
 import { getUserEmail } from "@/lib/auth";
@@ -19,6 +19,8 @@ const safeUrl = (url: string) => /^https?:\/\//i.test(url);
 
 function PublishingPage() {
   const params = useSearchParams();
+  const router = useRouter();
+  const [accessToken, setAccessToken] = useState("");
   const siteId = params.get("site_id") || "";
   const toast = useToast();
   const confirm = useConfirm();
@@ -67,6 +69,7 @@ function PublishingPage() {
     setFilter("");
     setAppId("");
     setAppSecret("");
+    setAccessToken("");
   }, [siteId]);
 
   useEffect(() => {
@@ -108,16 +111,18 @@ function PublishingPage() {
   const saveAppCredentials = () => act(async () => {
     const secret = appSecret;
     setAppSecret("");
+    setAccessToken("");
     const result = await api.savePinterestAppCredentials(siteId, {
       client_id: appId.trim(), ...(secret.trim() ? { client_secret: secret } : {}),
     });
     setAppId(result.client_id);
   }, "App credentials saved securely.");
-  const save = (enabled: boolean) => act(async () => {
+  const save = (enabled: boolean, openLogs = false) => act(async () => {
     if (!Number.isInteger(daily) || daily < 1 || daily > 1000 || !Number.isInteger(interval) || interval < 1 || interval > 10080) {
       throw new Error("Use 1–1,000 pins per day and an interval of 1–10,080 minutes.");
     }
     await api.savePinterestPublishingSettings(siteId, { daily_limit: daily, interval_minutes: interval, enabled });
+    if (openLogs) router.push(`/pinterest-gallery/publishing/logs?site_id=${siteId}`);
   }, enabled ? "Publishing settings saved. Automatic publishing is running." : "Publishing settings saved. Automatic publishing is stopped.");
 
   const retry = async (item: PinterestPublicationOut) => {
@@ -151,17 +156,30 @@ function PublishingPage() {
       <button className="ml-4 underline" onClick={() => void act(load)}>Try again</button></div>}
     {loading && !publisher && <div className="flex items-center gap-3 py-16 text-gray-400"><Loader2 className="animate-spin" /> Loading publishing settings…</div>}
     {publisher && <>
+      <Link href={`/pinterest-gallery/publishing/logs?site_id=${siteId}`} className="mt-5 inline-block text-sm text-red-400 hover:underline">View publishing logs →</Link>
       <div className="mt-7 grid gap-5 lg:grid-cols-[1fr_1.5fr]">
         <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-6">
           <p className="text-xs font-medium uppercase tracking-widest text-gray-500">01 / Account</p>
           <h2 className="mt-4 text-xl font-semibold">{publisher.connected ? `@${publisher.username}` : "Connect your Pinterest"}</h2>
           <p className="mt-2 text-sm leading-6 text-gray-400">{publisher.connected ? `Connected for ${publisher.domain}. This website has its own queue and publishing settings.` : "Authorize your Pinterest account to publish the pin images and article links from this website."}</p>
-          {!publisher.configured && <p className="mt-3 text-sm text-amber-300">Add your Pinterest App ID and App Secret below to connect this website.</p>}
+          {!publisher.configured && <p className="mt-3 text-sm text-amber-300">Connect with app credentials below, or use an access token.</p>}
           <div className="mt-5 flex flex-wrap gap-3">
             <button disabled={busy || !publisher.configured} onClick={() => void connect()} className="rounded-lg bg-[#E60023] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#c90020] disabled:opacity-40">{publisher.connected ? "Reconnect Pinterest" : "Connect Pinterest account"}</button>
             {publisher.connected && <button disabled={busy} onClick={() => void act(() => api.disconnectPinterestPublisher(siteId), "Pinterest disconnected. Publishing history is preserved.")} className="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-300 disabled:opacity-40">Disconnect</button>}
           </div>
           <p className="mt-5 flex items-center gap-2 text-xs text-gray-500"><ShieldCheck size={15} /> Secure account connection</p>
+          <details className="mt-5 border-t border-gray-800 pt-4">
+            <summary className="cursor-pointer text-sm font-medium text-gray-200">Use an access token {publisher.connected && publisher.connection_method === "token" ? "· Connected" : ""}</summary>
+            <form autoComplete="off" className="mt-4 space-y-4" onSubmit={(e) => { e.preventDefault(); void act(async () => {
+              const token = accessToken; setAccessToken(""); await api.connectPinterestToken(siteId, token);
+            }, "Access token saved securely. Review settings before starting publishing."); }}>
+              <p className="text-xs leading-5 text-gray-400">Paste a production access token with user_accounts:read, boards:read, boards:write and pins:write permissions. No App ID or App Secret is needed for this connection.</p>
+              <p className="rounded-lg bg-amber-950/30 p-3 text-xs leading-5 text-amber-200">Pinterest’s generated production test tokens are read-only and cannot publish. Sandbox tokens cannot connect here. Use OAuth for automatic publishing, or a production token with write permissions.</p>
+              <label className="block text-sm text-gray-300">Access token<input required type="password" autoComplete="new-password" maxLength={8192} value={accessToken} onChange={(e) => setAccessToken(e.target.value)} disabled={busy} placeholder="Paste token without Bearer prefix" className="mt-2 block w-full rounded-lg border-gray-700 bg-gray-950 px-3 py-2.5 text-sm text-white" /></label>
+              <p className="text-xs leading-5 text-gray-500">Encrypted on the server and never returned to your browser. Replace it here when it expires. Saving a token stops publishing and replaces the existing connection.</p>
+              <button disabled={busy} className="rounded-lg border border-gray-700 px-4 py-2 text-sm font-semibold disabled:opacity-40">Validate & save token</button>
+            </form>
+          </details>
           <details open={!publisher.configured} className="mt-5 border-t border-gray-800 pt-4">
             <summary className="cursor-pointer text-sm font-medium text-gray-200">Pinterest app credentials</summary>
             <form autoComplete="off" onSubmit={(e) => { e.preventDefault(); void saveAppCredentials(); }} className="mt-4 space-y-4">
@@ -201,7 +219,7 @@ function PublishingPage() {
               <button disabled={busy} type="submit" className="rounded-lg border border-gray-700 px-4 py-2.5 text-sm font-medium text-gray-200 disabled:opacity-40">Save settings</button>
               <button disabled={busy || !publisher.connected} type="button" onClick={() => {
                 if (publisher.enabled) void act(() => api.savePinterestPublishingSettings(siteId, { daily_limit: publisher.daily_limit, interval_minutes: publisher.interval_minutes, enabled: false }), "Automatic publishing stopped. Any pin already sent to Pinterest will finish.");
-                else void save(true);
+                else void save(true, true);
               }} className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-gray-950 disabled:opacity-40">
                 {busy ? <Loader2 size={16} className="animate-spin" /> : publisher.enabled ? <Pause size={16} /> : <Play size={16} />}{publisher.enabled ? "Stop publishing" : "Start publishing"}
               </button>

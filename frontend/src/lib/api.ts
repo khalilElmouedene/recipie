@@ -152,6 +152,10 @@ async function requestPage<T>(
 
 // -- Auth ------------------------------------------------
 export const api = {
+  connectPinterestToken: (siteId: string, access_token: string) =>
+    request<PinterestPublisherOut>(`/api/sites/${siteId}/pinterest-publishing/token`, { method: "PUT", body: JSON.stringify({ access_token }) }),
+  getPinterestPublishingLogs: (siteId: string, beforeId?: number) =>
+    request<{ items: PinterestPublishingLogOut[]; next_before_id: number | null }>(`/api/sites/${siteId}/pinterest-publishing/logs${beforeId ? `?before_id=${beforeId}` : ""}`),
   getPinterestPublisher: (siteId: string) =>
     request<PinterestPublisherOut>(`/api/sites/${siteId}/pinterest-publishing`),
   savePinterestAppCredentials: (siteId: string, data: { client_id: string; client_secret?: string }) =>
@@ -1130,7 +1134,17 @@ export interface WpUserOut {
 
 export type PinterestPublicationStatus = "pending" | "publishing" | "published" | "failed";
 
+export interface PinterestPublishingLogOut {
+  id: number;
+  publication_id: string | null;
+  created_at: string;
+  level: string;
+  event: string;
+  message: string;
+}
+
 export interface PinterestPublisherOut {
+  connection_method: "oauth" | "token";
   site_id: string;
   project_id: string;
   domain: string;

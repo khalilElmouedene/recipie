@@ -36,7 +36,7 @@ async def request(method: str, path: str, token: str = "", **kwargs) -> dict:
         message = {
             400: "Pinterest rejected the content. Check the board, image and pin fields.",
             401: "Pinterest authorization expired. Reconnect the account.",
-            403: "Pinterest denied access. Check app approval and account permissions.",
+            403: "Pinterest denied access. Check app approval and token permissions (boards:write and pins:write). Generated production test tokens are read-only.",
             404: "Pinterest board or pin was not found.",
             429: "Pinterest rate limit reached. Publishing will retry later.",
         }.get(status, "Pinterest request failed.")
@@ -69,7 +69,7 @@ def normalize_board(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
-async def ensure_board(token: str, name: str, username: str) -> str:
+async def ensure_board(token: str, name: str, username: str, *, progress=None) -> str:
     bookmark = None
     seen = set()
     while True:
@@ -78,6 +78,8 @@ async def ensure_board(token: str, name: str, username: str) -> str:
         for board in data.get("items", []):
             owner = (board.get("owner") or {}).get("username", "")
             if normalize_board(board.get("name", "")) == normalize_board(name) and owner.casefold() == username.casefold():
+                if progress:
+                    await progress("board_found", f"Using existing board {board["id"]}: {name}")
                 return str(board["id"])
         bookmark = data.get("bookmark")
         if not bookmark:
@@ -85,9 +87,13 @@ async def ensure_board(token: str, name: str, username: str) -> str:
         if bookmark in seen:
             raise PinterestError("Pinterest board pagination did not complete.", retryable=True)
         seen.add(bookmark)
+    if progress:
+        await progress("board_creating", f"Board not found. Creating public board: {name}")
     board = await request("POST", "/boards", token, json={"name": name.strip(), "privacy": "PUBLIC"})
     if not board.get("id"):
         raise PinterestError("Pinterest did not return a board ID.", retryable=True)
+    if progress:
+        await progress("board_created", f"Created board {board["id"]}: {name}")
     return str(board["id"])
 
 

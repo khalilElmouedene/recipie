@@ -17,7 +17,7 @@ from ..crypto import encrypt
 from ..database import get_db
 from ..db_models import Site, User
 from ..dependencies import check_project_access, get_current_user
-from ..pinterest_models import PinterestOAuthState, PinterestPublication, PinterestPublisher
+from ..pinterest_models import PinterestOAuthState, PinterestPublication, PinterestPublisher, PinterestPublishingLog
 from ..services import pinterest_api as api
 from ..services import pinterest_publisher as service
 
@@ -136,6 +136,7 @@ async def publisher_status(db: AsyncSession, publisher: PinterestPublisher, site
     # Explicit allowlist: ORM credential fields are never serialized.
     return dict(site_id=str(site.id), project_id=str(site.project_id), domain=site.domain,
         connected=bool(publisher.access_token_encrypted), username=publisher.username,
+        connection_method=publisher.connection_method,
         **service.credential_status(publisher),
         enabled=publisher.enabled, daily_limit=publisher.daily_limit, interval_minutes=publisher.interval_minutes,
         timezone="UTC", daily_usage=usage, counts={s: counts.get(s, 0) for s in ("pending", "publishing", "published", "failed")},
@@ -181,10 +182,12 @@ async def save_settings(site_id: uuid.UUID, body: PublishingSettings,
         .with_for_update().execution_options(populate_existing=True))
     if body.enabled and not publisher.access_token_encrypted:
         raise HTTPException(400, "Connect Pinterest before starting automatic publishing")
+    event = "publishing_started" if body.enabled and not publisher.enabled else "settings_updated" if body.enabled == publisher.enabled else "publishing_stopped"
     publisher.daily_limit = body.daily_limit
     publisher.interval_minutes = body.interval_minutes
     publisher.enabled = body.enabled
     publisher.user_id = user.id
+    await service.log_event(db, site_id, event, f"Automatic publishing {"enabled" if body.enabled else "disabled"}. Limit: {body.daily_limit} pins/day (UTC); interval: {body.interval_minutes} minutes. Worker checks every 30 seconds.")
     await db.commit()
     return await publisher_status(db, publisher, site)
 
@@ -237,12 +240,14 @@ async def callback(body: CallbackBody, user: User = Depends(publishing_user), db
             account = await api.request("GET", "/user_account", tokens["access_token"])
             if not account.get("username"):
                 raise api.PinterestError("Pinterest account identity could not be verified.")
+            publisher.connection_method = "oauth"
             publisher.enabled = False
             publisher.user_id = user.id
             publisher.username = account["username"]
             publisher.refresh_expires_at = None
             await service.store_tokens(publisher, tokens)
             publisher.last_error = None
+            await service.log_event(locked, site.id, "account_connected", "Pinterest account connected through OAuth. Publishing is stopped until you start it.")
             await locked.commit()
             await service.sync_queue(locked, site.id)
             return await publisher_status(locked, publisher, site)
@@ -259,6 +264,7 @@ async def disconnect(site_id: uuid.UUID, user: User = Depends(publishing_user), 
         publisher = await locked.get(PinterestPublisher, site_id)
         if publisher:
             service.clear_connection(publisher)
+            await service.log_event(locked, site_id, "account_disconnected", "Pinterest disconnected. Automatic publishing stopped.")
         await locked.execute(delete(PinterestOAuthState).where(PinterestOAuthState.site_id == site_id))
         await locked.commit()
     return {"ok": True}
@@ -285,6 +291,7 @@ async def retry_item(site_id: uuid.UUID, item_id: uuid.UUID, body: RetryBody,
     item.dispatched_at = None
     item.next_retry_at = None
     item.attempt_count = 0
+    await service.log_event(db, site_id, "retry_requested", "Item returned to pending by the user. Publishing limits still apply.", item)
     await db.commit()
     return {"ok": True}
 
@@ -324,3 +331,63 @@ async def reconcile_item(site_id: uuid.UUID, item_id: uuid.UUID, body: Reconcile
             return {"ok": True}
         except api.PinterestError as error:
             raise HTTPException(400, str(error)) from None
+
+
+class AccessTokenBody(BaseModel):
+    access_token: SecretStr = Field(repr=False, exclude=True)
+
+
+@router.put("/sites/{site_id}/pinterest-publishing/token")
+async def connect_token(site_id: uuid.UUID, body: AccessTokenBody,
+    user: User = Depends(publishing_user), db: AsyncSession = Depends(get_db)):
+    site = await authorized_site(site_id, user, db)
+    token = body.access_token.get_secret_value().strip()
+    if not token or len(token) > 8192 or any(c.isspace() for c in token):
+        raise HTTPException(400, "Enter a valid Pinterest access token (without the Bearer prefix)")
+    async with service.site_lock(site_id) as locked:
+        if locked is None:
+            raise HTTPException(409, "A pin is being processed. Stop publishing and wait before replacing the connection.")
+        publisher = await ensure_publisher(locked, site_id, user.id)
+        try:
+            account = await api.request("GET", "/user_account", token)
+            if not isinstance(account.get("username"), str) or not account["username"]:
+                raise api.PinterestError("Pinterest account identity could not be verified.")
+            await api.request("GET", "/boards", token, params={"page_size": 1})
+        except api.PinterestError as error:
+            await service.log_event(locked, site_id, "token_rejected", str(error), level="error")
+            await locked.commit()
+            raise HTTPException(400, str(error)) from None
+        service.clear_connection(publisher)
+        publisher.connection_method = "token"
+        publisher.user_id = user.id
+        publisher.username = account["username"]
+        publisher.access_token_encrypted = encrypt(token)
+        await locked.execute(delete(PinterestOAuthState).where(PinterestOAuthState.site_id == site_id))
+        await service.log_event(locked, site_id, "token_connected",
+            "Access token validated for account and board read access and saved securely. Write permissions are required for publishing. Replace the token when it expires; publishing is stopped.")
+        await locked.commit()
+        await service.sync_queue(locked, site_id)
+        return await publisher_status(locked, publisher, site)
+
+
+class PublishingLogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    publication_id: uuid.UUID | None
+    created_at: datetime
+    level: str
+    event: str
+    message: str
+
+
+@router.get("/sites/{site_id}/pinterest-publishing/logs")
+async def get_logs(site_id: uuid.UUID, user: User = Depends(publishing_user), db: AsyncSession = Depends(get_db),
+    before_id: int | None = Query(None, ge=1), limit: int = Query(100, ge=1, le=100)):
+    await authorized_site(site_id, user, db)
+    conditions = [PinterestPublishingLog.site_id == site_id]
+    if before_id is not None:
+        conditions.append(PinterestPublishingLog.id < before_id)
+    rows = (await db.scalars(select(PinterestPublishingLog).where(*conditions)
+        .order_by(PinterestPublishingLog.id.desc()).limit(limit + 1))).all()
+    return {"items": [PublishingLogOut.model_validate(row) for row in rows[:limit]],
+        "next_before_id": rows[limit - 1].id if len(rows) > limit else None}

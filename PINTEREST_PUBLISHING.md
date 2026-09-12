@@ -103,6 +103,33 @@ The server checks its board, title and destination before marking it Published. 
 was created, use **Verify before retrying** and explicitly confirm that check. An incorrect
 manual confirmation can create a duplicate; the system cannot prove absence remotely.
 
+## Publishing activity and access-token connections
+
+Apply `alembic upgrade head` from `backend` before restarting the API and scheduler.
+The `add_pinterest_logs_token` migration adds persistent website activity and the
+connection method without changing existing OAuth connections or publication history.
+
+The **Start publishing** control in publishing settings now opens the website's
+**Publishing logs** page. **View publishing logs** also opens it without starting
+publishing. Activity refreshes every three seconds, with older activity available by
+cursor pagination. It records attempts, content validation, board lookup and creation,
+dispatch, Pin IDs and publication dates, errors, retries, interrupted attempts, and
+start/stop settings. Operational messages never include credentials or raw API responses.
+The page shows daily usage, queue counts and the next eligible time, and allows stopping.
+
+Under **Use an access token**, paste a production token without the `Bearer` prefix.
+The backend validates account and board read access, encrypts the token, clears the
+previous OAuth refresh token and pending OAuth states, and stops publishing. Invalid
+tokens leave the previous connection intact. Supplied tokens have no refresh token;
+when Pinterest rejects an expired token, publishing stops and the user must replace it.
+Tokens are write-only and are not stored in browser storage or returned by APIs.
+
+Publishing needs `boards:write` and `pins:write`, plus account and board read access.
+Read validation cannot prove write permissions. Pinterest's generated production test
+tokens are read-only and cannot publish; sandbox tokens are not supported by this live
+publisher. Use OAuth or a production access token with write permissions. See
+[Pinterest's generated-token documentation](https://developer.pinterest.com/docs/developer-tools/quickstart-tools/).
+
 ## References
 
 - [Pinterest authentication and refresh tokens](https://developers.pinterest.com/docs/getting-started/set-up-authentication-and-authorization/)
