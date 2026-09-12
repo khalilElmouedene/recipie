@@ -140,7 +140,7 @@ function PublishingPage() {
     <Link href={gallery} className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-white"><ArrowLeft size={15} /> Pinterest gallery</Link>
     <header className="mt-6 flex flex-wrap items-end justify-between gap-5 border-b border-gray-800 pb-7">
       <div><p className="mb-2 text-xs font-semibold uppercase tracking-[0.22em] text-red-400">Pinterest / Publishing</p>
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">A steady rhythm for your pins.</h1>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">My publisher dashboard</h1>
         <p className="mt-3 flex items-center gap-2 text-gray-400"><Globe2 size={16} />{publisher?.domain || "Loading website…"}</p>
       </div>
       {publisher && <span className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm ${publisher.enabled ? colors.published : colors.pending}`}>
