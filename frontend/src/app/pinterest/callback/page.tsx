@@ -1,20 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
-import { getApiBaseUrl } from "@/lib/api";
+import { api, getApiBaseUrl } from "@/lib/api";
 
-export default function PinterestCallbackPage() {
+function PinterestCallbackInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [message, setMessage] = useState("");
+  const handled = useRef(false);
+  const [returnUrl, setReturnUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    if (handled.current) return;
+    handled.current = true;
     const code = searchParams.get("code");
     const state = searchParams.get("state");
     const error = searchParams.get("error");
+    const publishingSiteId = state ? sessionStorage.getItem(`pinterest_publishing_oauth:${state}`) : null;
+    if (publishingSiteId) setReturnUrl(`/pinterest-gallery/publishing?site_id=${publishingSiteId}`);
+    // Remove the temporary authorization code from browser history immediately.
+    window.history.replaceState(window.history.state, "", "/pinterest/callback");
 
     if (error) {
       setStatus("error");
@@ -25,6 +33,17 @@ export default function PinterestCallbackPage() {
     if (!code) {
       setStatus("error");
       setMessage("No authorization code received from Pinterest");
+      return;
+    }
+
+    if (publishingSiteId && state) {
+      void api.completePinterestPublishingOAuth(publishingSiteId, code, state).then(() => {
+        sessionStorage.removeItem(`pinterest_publishing_oauth:${state}`);
+        router.replace(`/pinterest-gallery/publishing?site_id=${publishingSiteId}`);
+      }).catch((err) => {
+        setStatus("error");
+        setMessage(err instanceof Error ? err.message : "Failed to connect Pinterest");
+      });
       return;
     }
 
@@ -108,7 +127,7 @@ export default function PinterestCallbackPage() {
             <h1 className="text-xl font-semibold text-white mb-2">Connection Failed</h1>
             <p className="text-gray-400">{message}</p>
             <button
-              onClick={() => router.back()}
+              onClick={() => returnUrl ? router.replace(returnUrl) : router.back()}
               className="mt-6 btn-primary"
             >
               Go Back
@@ -118,4 +137,8 @@ export default function PinterestCallbackPage() {
       </div>
     </div>
   );
+}
+
+export default function PinterestCallbackPage() {
+  return <Suspense fallback={<div className="p-8"><Loader2 className="animate-spin" /></div>}><PinterestCallbackInner /></Suspense>;
 }

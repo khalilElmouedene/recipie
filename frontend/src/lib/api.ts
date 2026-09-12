@@ -152,6 +152,25 @@ async function requestPage<T>(
 
 // -- Auth ------------------------------------------------
 export const api = {
+  getPinterestPublisher: (siteId: string) =>
+    request<PinterestPublisherOut>(`/api/sites/${siteId}/pinterest-publishing`),
+  getPinterestPublishingItems: (siteId: string, status = "", offset = 0) =>
+    request<{ total: number; items: PinterestPublicationOut[] }>(buildPathWithQuery(
+      `/api/sites/${siteId}/pinterest-publishing/items`, { status, offset, limit: 50 })),
+  syncPinterestPublishingItems: (siteId: string) =>
+    request(`/api/sites/${siteId}/pinterest-publishing/sync`, { method: "POST" }),
+  savePinterestPublishingSettings: (siteId: string, data: { daily_limit: number; interval_minutes: number; enabled: boolean }) =>
+    request<PinterestPublisherOut>(`/api/sites/${siteId}/pinterest-publishing/settings`, { method: "PUT", body: JSON.stringify(data) }),
+  getPinterestPublishingAuthUrl: (siteId: string) =>
+    request<{ url: string; state: string }>(`/api/sites/${siteId}/pinterest-publishing/auth-url`, { method: "POST" }),
+  completePinterestPublishingOAuth: (siteId: string, code: string, state: string) =>
+    request<PinterestPublisherOut>("/api/pinterest-publishing/callback", { method: "POST", body: JSON.stringify({ site_id: siteId, code, state }) }),
+  disconnectPinterestPublisher: (siteId: string) =>
+    request(`/api/sites/${siteId}/pinterest-publishing/connection`, { method: "DELETE" }),
+  retryPinterestPublication: (siteId: string, itemId: string, confirmed = false) =>
+    request(`/api/sites/${siteId}/pinterest-publishing/items/${itemId}/retry`, { method: "POST", body: JSON.stringify({ confirmed_not_published: confirmed }) }),
+  reconcilePinterestPublication: (siteId: string, itemId: string, pinId: string) =>
+    request(`/api/sites/${siteId}/pinterest-publishing/items/${itemId}/reconcile`, { method: "POST", body: JSON.stringify({ pin_id: pinId }) }),
   register: (email: string, password: string, full_name: string) =>
     request<{ access_token: string }>("/api/auth/register", {
       method: "POST",
@@ -1103,6 +1122,44 @@ export interface MidjourneyTimersOut {
 
 export interface WpUserOut {
   username: string;
+}
+
+export type PinterestPublicationStatus = "pending" | "publishing" | "published" | "failed";
+
+export interface PinterestPublisherOut {
+  site_id: string;
+  project_id: string;
+  domain: string;
+  connected: boolean;
+  configured: boolean;
+  username: string | null;
+  enabled: boolean;
+  daily_limit: number;
+  interval_minutes: number;
+  timezone: string;
+  daily_usage: number;
+  counts: Record<PinterestPublicationStatus, number>;
+  next_publication_at: string | null;
+  last_error: string | null;
+}
+
+export interface PinterestPublicationOut {
+  id: string;
+  recipe_id: string;
+  title: string;
+  description: string;
+  board_name: string;
+  keywords: string;
+  article_url: string;
+  image_url: string;
+  status: PinterestPublicationStatus;
+  pin_id: string | null;
+  published_at: string | null;
+  attempted_at: string | null;
+  attempt_count: number;
+  retry_safe: boolean;
+  next_retry_at: string | null;
+  error: string | null;
 }
 
 export interface PinterestRecipeOut {

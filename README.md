@@ -58,6 +58,9 @@ Frontend uses `http://localhost:8000` by default. Set `NEXT_PUBLIC_API_URL` only
 
 ## Deployment
 
+For website-scoped Pinterest OAuth and automatic publishing, see
+[Pinterest publishing setup](PINTEREST_PUBLISHING.md).
+
 ### Backend (Railway / Render)
 1. Push the `backend/` directory
 2. Set all environment variables from `.env.example`

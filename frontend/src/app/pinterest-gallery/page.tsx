@@ -14,6 +14,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { api, ProjectOut, PinterestRecipeOut } from "@/lib/api";
+import PinterestPublishingLink from "@/components/PinterestPublishingLink";
 import { readPinterestGalleryContext, type PinterestGalleryContextSnapshot } from "@/lib/pinterestGalleryContext";
 import { useToast } from "@/contexts/ToastContext";
 import {
@@ -147,7 +148,7 @@ function PinterestGalleryInner() {
   useEffect(() => {
     if (siteIdParam) return;
     if (websites.length === 0) { if (selectedWebsite !== "") setSelectedWebsite(""); return; }
-    if (!selectedWebsite || !websites.includes(selectedWebsite)) setSelectedWebsite(websites[0]);
+    if (selectedWebsite && !websites.includes(selectedWebsite)) setSelectedWebsite("");
   }, [websites, selectedWebsite, siteIdParam]);
 
   const pinDesignerRecipeIdSet = useMemo(
@@ -258,6 +259,8 @@ function PinterestGalleryInner() {
   };
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const publishingSiteIds = Array.from(new Set(websiteScopedRecipes.map((r) => r.site_id)));
+  const publishingSiteId = siteIdParam || (publishingSiteIds.length === 1 ? publishingSiteIds[0] : null);
   const fromPinDesigner = Boolean(siteIdParam);
   const hasPinDesignerRecipeScope = pinDesignerRecipeIdSet.size > 0;
   const hideProjectSelector = (fromProjectDetails && Boolean(projectIdParam)) || fromPinDesigner;
@@ -272,7 +275,7 @@ function PinterestGalleryInner() {
       {/* ── Sticky header ── */}
       <div className="sticky top-0 z-30 border-b border-gray-800 bg-gray-950/95 backdrop-blur-sm">
         <div className="mx-auto max-w-screen-2xl px-4 sm:px-6 lg:px-8">
-          <div className="flex h-16 items-center justify-between gap-4">
+          <div className="flex min-h-16 flex-wrap items-center justify-between gap-4 py-3">
             {/* Title + project selector */}
             <div className="flex items-center gap-3 min-w-0">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#E60023]/15">
@@ -353,7 +356,8 @@ function PinterestGalleryInner() {
             </div>
 
             {/* Actions */}
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <PinterestPublishingLink siteId={recipesLoading ? null : publishingSiteId} />
               <button
                 onClick={() => void openWorksheet()}
                 className="flex items-center gap-2 rounded-lg border border-blue-700/60 bg-blue-950/40 px-3 py-2 text-xs font-medium text-blue-300 transition hover:bg-blue-900/50 hover:text-blue-200 disabled:opacity-40"
@@ -452,6 +456,7 @@ function PinterestGalleryInner() {
         {!recipesLoading && !recipesError && allRecipes.length > 0 && filtered.length === 0 && (
           <EmptyState message={hasPinDesignerRecipeScope
             ? "No pins are available yet for the recipes from this Pin Designer session."
+            : !siteIdParam && !selectedWebsite ? "Select a website above to view its pins and start publishing."
             : "No pins match your current filter."} />
         )}
 

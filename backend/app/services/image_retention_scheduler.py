@@ -7,14 +7,26 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from sqlalchemy import delete as sql_delete, or_, select
+from sqlalchemy import delete as sql_delete, exists, or_, select
 
 from app.config import settings
 from app.database import SessionLocal
 from app.db_models import CleanupConfig, MidjourneyGeneration, Project, Recipe, RecipeStatus, Site, SystemCleanupState, ThreadsPost, ThreadsPostStatus
+from app.pinterest_models import PinterestPublication, PinterestPublisher
 
 
 UPLOADS_DIR = Path("/app/uploads")
+
+
+def _pinterest_source_needed():
+    """Connected websites retain source content until their Pinterest pin is published."""
+    return exists().where(
+        PinterestPublisher.site_id == Recipe.site_id,
+        PinterestPublisher.access_token_encrypted.is_not(None),
+        ~exists().where(PinterestPublication.recipe_id == Recipe.id,
+            PinterestPublication.site_id == Recipe.site_id, PinterestPublication.status == "published")
+        .correlate(Recipe),
+    ).correlate(Recipe)
 
 
 def _upload_subpath_from_url(url: str) -> str | None:
@@ -159,7 +171,7 @@ async def _system_cleanup_all_published() -> int:
         stmt = (
             select(Recipe)
             .join(Site, Recipe.site_id == Site.id)
-            .where(Recipe.status == RecipeStatus.published)
+            .where(Recipe.status == RecipeStatus.published, ~_pinterest_source_needed())
         )
         rows = (await db.execute(stmt)).scalars().all()
         files_to_delete: set[Path] = set()
@@ -194,6 +206,7 @@ async def run_full_published_cleanup(owner_id: Any) -> dict:
             .where(
                 Recipe.status == RecipeStatus.published,
                 Project.owner_id == owner_id,
+                ~_pinterest_source_needed(),
             )
         )
         rows = (await db.execute(stmt)).all()
@@ -243,6 +256,7 @@ async def _cleanup_once(owner_id: Any, retention_days: int) -> int:
                 Recipe.status == RecipeStatus.published,
                 Recipe.created_at <= candidate_threshold,
                 Project.owner_id == owner_id,
+                ~_pinterest_source_needed(),
             )
         )
         # Include rows with generated_images cache, or any local /uploads/ source image to clean up
@@ -254,6 +268,7 @@ async def _cleanup_once(owner_id: Any, retention_days: int) -> int:
                 Recipe.status.in_([RecipeStatus.generated, RecipeStatus.failed]),
                 Recipe.created_at <= candidate_threshold,
                 Project.owner_id == owner_id,
+                ~_pinterest_source_needed(),
                 or_(
                     Recipe.generated_images.isnot(None),
                     Recipe.image_url.like("%/uploads/%"),
@@ -334,6 +349,7 @@ async def _cleanup_pending_stale_source_images(owner_id: Any, retention_days: in
                 Recipe.status == RecipeStatus.pending,
                 Recipe.created_at <= threshold,
                 Project.owner_id == owner_id,
+                ~_pinterest_source_needed(),
             )
         )
         recipes = rows.scalars().all()
@@ -379,7 +395,7 @@ async def cleanup_project_generated_images(
         stmt = (
             select(Recipe, Site.project_id)
             .join(Site, Recipe.site_id == Site.id)
-            .where(Site.project_id == project_id)
+            .where(Site.project_id == project_id, ~_pinterest_source_needed())
         )
 
         if delete_all_published:

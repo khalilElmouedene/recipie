@@ -80,6 +80,7 @@ async def lifespan(app: FastAPI):
     from app.services.job_email_notifications import run_job_email_notifier
     from app.services.facebook_generation import facebook_generation_manager
     from app.services.facebook_publisher import run_facebook_scheduler
+    from app.services.pinterest_publisher import run_pinterest_scheduler
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(run_publish_scheduler(stop_event))
     retention_task = asyncio.create_task(run_image_retention_scheduler(stop_event))
@@ -89,6 +90,7 @@ async def lifespan(app: FastAPI):
     auto_spy_task = asyncio.create_task(run_auto_spy_scheduler(stop_event))
     job_email_task = asyncio.create_task(run_job_email_notifier(stop_event))
     facebook_scheduler_task = asyncio.create_task(run_facebook_scheduler(stop_event))
+    pinterest_scheduler_task = asyncio.create_task(run_pinterest_scheduler(stop_event))
     await facebook_generation_manager.resume_pending()
     yield
     stop_event.set()
@@ -100,6 +102,7 @@ async def lifespan(app: FastAPI):
     await auto_spy_task
     await job_email_task
     await facebook_scheduler_task
+    await pinterest_scheduler_task
     bind_tracking_event_loop(None)
 
 
@@ -171,6 +174,7 @@ from app.routes.recipes import router as recipes_router
 from app.routes.jobs import router as jobs_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.pinterest import router as pinterest_router
+from app.routes.pinterest_publishing import router as pinterest_publishing_router
 from app.routes.settings import router as settings_router
 from app.routes.pin_designer_templates import router as pin_designer_templates_router
 from app.routes.threads import router as threads_router
@@ -195,6 +199,7 @@ app.include_router(recipes_router)
 app.include_router(jobs_router)
 app.include_router(dashboard_router)
 app.include_router(pinterest_router)
+app.include_router(pinterest_publishing_router)
 app.include_router(settings_router)
 app.include_router(pin_designer_templates_router)
 app.include_router(threads_router)

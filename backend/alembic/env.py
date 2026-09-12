@@ -13,6 +13,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.database import Base
 from app import db_models  # noqa: F401 — registers all models
+from app import pinterest_models  # noqa: F401
 from app.config import settings
 
 target_metadata = Base.metadata
