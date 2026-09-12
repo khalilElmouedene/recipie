@@ -121,12 +121,20 @@ class PinterestPostgresTests(unittest.IsolatedAsyncioTestCase):
         spec = importlib.util.spec_from_file_location("pinterest_migration_test", path)
         migration = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(migration)
+        credential_path = path.with_name("add_pinterest_app_credentials.py")
+        credential_spec = importlib.util.spec_from_file_location("pinterest_credentials_migration_test", credential_path)
+        credential_migration = importlib.util.module_from_spec(credential_spec)
+        credential_spec.loader.exec_module(credential_migration)
         def check(connection):
             with Operations.context(MigrationContext.configure(connection)):
                 migration.upgrade()  # startup tables already exist
                 migration.downgrade()
                 migration.upgrade()  # migration creates all tables
                 migration.upgrade()  # idempotent
+                credential_migration.upgrade()
+                credential_migration.upgrade()  # supports tables created by startup
+                credential_migration.downgrade()
+                credential_migration.upgrade()
             inspector = inspect(connection)
             for table in (PinterestPublisher.__table__, PinterestPublication.__table__):
                 columns = {col["name"]: col for col in inspector.get_columns(table.name)}

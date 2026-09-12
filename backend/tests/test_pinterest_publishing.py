@@ -246,7 +246,8 @@ class PinterestDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_status_contains_no_credentials(self):
         status = await routes.publisher_status(self.db, self.publisher, self.site)
-        self.assertFalse(any("token" in key or "secret" in key for key in status))
+        self.assertFalse(any("token" in key or "secret" in key for key in status if key != "has_app_secret"))
+        self.assertIsInstance(status["has_app_secret"], bool)
         self.assertNotIn("access-test", str(status))
         self.assertNotIn(self.publisher.access_token_encrypted, str(status))
 
@@ -368,8 +369,104 @@ class PinterestDatabaseTests(unittest.IsolatedAsyncioTestCase):
             result = await client.get(f"/api/sites/{self.site.id}/pinterest-publishing")
         self.assertEqual(result.status_code, 401)
 
+    async def test_app_credentials_are_encrypted_write_only_and_invalidate_old_connection(self):
+        from app.audit import _snapshot_instance
+        state = PinterestOAuthState(token_hash="old-state", site_id=self.site.id, user_id=self.user.id,
+            expires_at=service.utcnow() + timedelta(minutes=5))
+        self.session.add(state)
+        self.session.commit()
+        body = routes.AppCredentialsBody(client_id="123456", client_secret="new-app-secret")
+        with patch.object(service, "site_lock", self.lock):
+            result = await routes.save_credentials(self.site.id, body, self.user, self.db)
+        self.assertEqual(decrypt(self.publisher.app_secret_encrypted), "new-app-secret")
+        self.assertNotIn("new-app-secret", self.publisher.app_secret_encrypted)
+        self.assertNotIn("new-app-secret", str(result))
+        self.assertNotIn(self.publisher.app_secret_encrypted, str(result))
+        self.assertEqual(result["client_id"], "123456")
+        self.assertTrue(result["has_app_secret"])
+        self.assertFalse(result["connected"])
+        self.assertFalse(result["enabled"])
+        self.assertIsNone(self.publisher.refresh_token_encrypted)
+        self.assertEqual(self.session.scalars(select(PinterestOAuthState)).all(), [])
+        self.assertEqual(_snapshot_instance(self.publisher)["app_secret_encrypted"], "[REDACTED]")
+        self.assertNotIn("new-app-secret", repr(body))
+        self.assertNotIn("client_secret", body.model_dump())
+
+    async def test_blank_secret_keeps_existing_value_but_new_app_id_requires_a_secret(self):
+        self.publisher.client_id = "123456"
+        self.publisher.app_secret_encrypted = encrypt("existing-secret")
+        self.session.commit()
+        encrypted = self.publisher.app_secret_encrypted
+        with patch.object(service, "site_lock", self.lock):
+            await routes.save_credentials(self.site.id, routes.AppCredentialsBody(client_id="123456"), self.user, self.db)
+            self.assertEqual(self.publisher.app_secret_encrypted, encrypted)
+            self.assertTrue(self.publisher.enabled)
+            with self.assertRaises(HTTPException):
+                await routes.save_credentials(self.site.id, routes.AppCredentialsBody(client_id="999999"), self.user, self.db)
+        self.assertEqual(self.publisher.client_id, "123456")
+        self.assertEqual(self.publisher.app_secret_encrypted, encrypted)
+
+    async def test_website_credentials_used_for_oauth_and_refresh_and_not_other_sites(self):
+        self.publisher.client_id = "123456"
+        self.publisher.app_secret_encrypted = encrypt("website-secret")
+        self.publisher.token_expires_at = service.utcnow() - timedelta(minutes=1)
+        self.session.commit()
+        result = await routes.auth_url(self.site.id, self.user, self.db)
+        self.assertIn("client_id=123456", result["url"])
+        self.assertNotIn("website-secret", result["url"])
+        with patch.object(api, "exchange_token", AsyncMock(return_value=dict(access_token="renewed", expires_in=3600))) as exchange:
+            await service.access_token(self.db, self.publisher)
+            self.assertEqual(exchange.call_args.kwargs["client_id"], "123456")
+            self.assertEqual(exchange.call_args.kwargs["client_secret"], "website-secret")
+        other = await routes.ensure_publisher(self.db, self.other_site.id, self.user.id)
+        with patch.object(settings, "pinterest_client_id", "server-id"), patch.object(settings, "pinterest_client_secret", "server-secret"):
+            self.assertEqual(service.app_credentials(other), ("server-id", "server-secret"))
+            self.assertEqual(service.app_credentials(self.publisher), ("123456", "website-secret"))
+        with patch.object(service, "site_lock", self.lock), patch.object(api, "exchange_token", AsyncMock(return_value=dict(
+            access_token="connected", refresh_token="refresh", expires_in=3600, scope=api.SCOPES))) as exchange, patch.object(api, "request", AsyncMock(return_value={"username": "chef"})):
+            await routes.callback(routes.CallbackBody(site_id=self.site.id, code="oauth-code", state=result["state"]), self.user, self.db)
+            self.assertEqual(exchange.call_args.kwargs["client_secret"], "website-secret")
+
+    async def test_switching_to_server_defaults_clears_custom_secret(self):
+        self.publisher.client_id = "123456"
+        self.publisher.app_secret_encrypted = encrypt("website-secret")
+        self.session.commit()
+        with patch.object(service, "site_lock", self.lock), patch.object(settings, "pinterest_client_id", "server-id"), patch.object(settings, "pinterest_client_secret", "server-secret"):
+            result = await routes.use_server_credentials(self.site.id, self.user, self.db)
+        self.assertIsNone(self.publisher.app_secret_encrypted)
+        self.assertIsNone(self.publisher.client_id)
+        self.assertEqual(result["client_id"], "server-id")
+        self.assertEqual(result["credential_source"], "server")
+        self.assertFalse(result["connected"])
+
+    async def test_credentials_api_rejects_other_users(self):
+        self.user.email = "another@example.com"
+        app = FastAPI()
+        app.include_router(routes.router)
+        app.dependency_overrides[get_current_user] = lambda: self.user
+        async def database(): yield self.db
+        app.dependency_overrides[get_db] = database
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            result = await client.put(f"/api/sites/{self.site.id}/pinterest-publishing/credentials",
+                json={"client_id": "123456", "client_secret": "secret"})
+            self.assertEqual(result.status_code, 403)
+            result = await client.delete(f"/api/sites/{self.site.id}/pinterest-publishing/credentials")
+            self.assertEqual(result.status_code, 403)
+
+    async def test_invalid_saved_secret_never_falls_back_to_another_app(self):
+        self.publisher.client_id = "123456"
+        self.publisher.app_secret_encrypted = "unreadable-ciphertext"
+        with patch.object(settings, "pinterest_client_id", "server-id"), patch.object(settings, "pinterest_client_secret", "server-secret"):
+            with self.assertRaises(api.PinterestError):
+                service.app_credentials(self.publisher)
+
 
 class PinterestApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_app_credentials_are_used_only_as_backend_basic_auth(self):
+        with patch.object(api, "request", AsyncMock(return_value={"access_token": "token", "expires_in": 3600})) as request:
+            await api.exchange_token(client_id="123456", client_secret="private-app-secret", grant_type="authorization_code", code="temporary-code")
+        self.assertEqual(request.call_args.kwargs["auth"], ("123456", "private-app-secret"))
+        self.assertNotIn("private-app-secret", str(request.call_args.kwargs["data"]))
     async def test_board_lookup_paginates_and_reuses_owned_board(self):
         responses = [{"items": [{"id": "1", "name": "Soups", "owner": {"username": "someone-else"}}], "bookmark": "next"},
             {"items": [{"id": "42", "name": "  SOUPS ", "owner": {"username": "chef"}}]}]

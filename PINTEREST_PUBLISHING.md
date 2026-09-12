@@ -6,9 +6,29 @@ select a website, then choose **Start Publishing on Pinterest**. Connect Pintere
 review the queue, set the daily limit and interval, and start publishing. Each website
 has independent credentials, settings, and history. Connecting alone does not start it.
 
+## Manage Pinterest app credentials in the app
+
+Open the selected website's publishing page and expand **Pinterest app credentials**.
+Enter the **App ID** and **App Secret**, then choose **Save app credentials**. Register
+the redirect URI displayed in that form in your Pinterest app, then connect Pinterest.
+These controls are available only to `khalil@gmail.com` with access to the website.
+
+The App ID is displayed for later editing. The App Secret is a write-only password
+field: the entered value is sent to the authenticated backend, encrypted there, and
+cleared from the form. The saved secret and ciphertext are never returned to the
+browser or included in audit logs. Neither localStorage nor sessionStorage stores it.
+Use HTTPS in production. Leaving the secret blank keeps the existing website secret;
+changing the App ID requires entering its matching secret.
+
+Changing credentials stops publishing, clears the old account tokens and pending OAuth
+states, and requires reconnecting. Queue and publication history remain intact. **Use
+server defaults** removes that website's app credentials and uses the backend environment
+configuration instead. Disconnecting the Pinterest account retains its app settings.
+
 ## Server setup
 
-Set these variables in the backend environment or `backend/.env`:
+You can optionally supply fallback app credentials through the backend environment or
+`backend/.env`. Website credentials entered in the app take precedence as a complete pair:
 
 ```dotenv
 PINTEREST_CLIENT_ID=your-app-id
@@ -35,6 +55,8 @@ also needs reconnection.
 
 Apply `cd backend && alembic upgrade head`, then restart the backend. The migration
 also supports installations where startup `create_all` has already created the tables.
+The `add_pinterest_app_credentials` migration adds encrypted app settings to existing
+Pinterest publishing installations.
 An always-running backend and PostgreSQL are required. The worker starts in the FastAPI
 lifespan and checks every 30 seconds; no open browser or separate cron service is needed.
 PostgreSQL session advisory locks require a direct connection or a pooler in session

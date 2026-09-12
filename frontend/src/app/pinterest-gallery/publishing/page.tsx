@@ -30,6 +30,8 @@ function PublishingPage() {
   const [offset, setOffset] = useState(0);
   const [daily, setDaily] = useState(10);
   const [interval, setInterval] = useState(60);
+  const [appId, setAppId] = useState("");
+  const [appSecret, setAppSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -51,6 +53,7 @@ function PublishingPage() {
     if (!initialized.current) {
       setDaily(settings.daily_limit);
       setInterval(settings.interval_minutes);
+      setAppId(settings.client_id);
       initialized.current = true;
     }
     setError("");
@@ -62,6 +65,8 @@ function PublishingPage() {
     setItems([]);
     setOffset(0);
     setFilter("");
+    setAppId("");
+    setAppSecret("");
   }, [siteId]);
 
   useEffect(() => {
@@ -100,6 +105,14 @@ function PublishingPage() {
     sessionStorage.setItem(`pinterest_publishing_oauth:${result.state}`, siteId);
     window.location.assign(result.url);
   });
+  const saveAppCredentials = () => act(async () => {
+    const secret = appSecret;
+    setAppSecret("");
+    const result = await api.savePinterestAppCredentials(siteId, {
+      client_id: appId.trim(), ...(secret.trim() ? { client_secret: secret } : {}),
+    });
+    setAppId(result.client_id);
+  }, "App credentials saved securely.");
   const save = (enabled: boolean) => act(async () => {
     if (!Number.isInteger(daily) || daily < 1 || daily > 1000 || !Number.isInteger(interval) || interval < 1 || interval > 10080) {
       throw new Error("Use 1–1,000 pins per day and an interval of 1–10,080 minutes.");
@@ -143,12 +156,38 @@ function PublishingPage() {
           <p className="text-xs font-medium uppercase tracking-widest text-gray-500">01 / Account</p>
           <h2 className="mt-4 text-xl font-semibold">{publisher.connected ? `@${publisher.username}` : "Connect your Pinterest"}</h2>
           <p className="mt-2 text-sm leading-6 text-gray-400">{publisher.connected ? `Connected for ${publisher.domain}. This website has its own queue and publishing settings.` : "Authorize your Pinterest account to publish the pin images and article links from this website."}</p>
-          {!publisher.configured && <p className="mt-3 text-sm text-amber-300">Pinterest connection is not available yet. The server needs its Pinterest app credentials.</p>}
+          {!publisher.configured && <p className="mt-3 text-sm text-amber-300">Add your Pinterest App ID and App Secret below to connect this website.</p>}
           <div className="mt-5 flex flex-wrap gap-3">
             <button disabled={busy || !publisher.configured} onClick={() => void connect()} className="rounded-lg bg-[#E60023] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#c90020] disabled:opacity-40">{publisher.connected ? "Reconnect Pinterest" : "Connect Pinterest account"}</button>
             {publisher.connected && <button disabled={busy} onClick={() => void act(() => api.disconnectPinterestPublisher(siteId), "Pinterest disconnected. Publishing history is preserved.")} className="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-300 disabled:opacity-40">Disconnect</button>}
           </div>
           <p className="mt-5 flex items-center gap-2 text-xs text-gray-500"><ShieldCheck size={15} /> Secure account connection</p>
+          <details open={!publisher.configured} className="mt-5 border-t border-gray-800 pt-4">
+            <summary className="cursor-pointer text-sm font-medium text-gray-200">Pinterest app credentials</summary>
+            <form autoComplete="off" onSubmit={(e) => { e.preventDefault(); void saveAppCredentials(); }} className="mt-4 space-y-4">
+              <p className="text-xs leading-5 text-gray-400">App settings for {publisher.domain}. Changing credentials stops publishing and requires reconnecting Pinterest.</p>
+              <label className="block text-sm text-gray-300">App ID
+                <input required type="text" inputMode="numeric" pattern="[0-9]+" maxLength={100} autoComplete="off" value={appId} onChange={(e) => setAppId(e.target.value)} disabled={busy}
+                  className="mt-2 block w-full rounded-lg border-gray-700 bg-gray-950 px-3 py-2.5 text-sm text-white" />
+              </label>
+              <label className="block text-sm text-gray-300">App Secret
+                <input type="password" autoComplete="new-password" maxLength={4096} value={appSecret} onChange={(e) => setAppSecret(e.target.value)} disabled={busy}
+                  required={publisher.credential_source !== "website" || !publisher.has_app_secret || appId.trim() !== publisher.client_id}
+                  placeholder={publisher.credential_source === "website" && publisher.has_app_secret ? "Saved securely — leave blank to keep" : "Enter your Pinterest App Secret"}
+                  className="mt-2 block w-full rounded-lg border-gray-700 bg-gray-950 px-3 py-2.5 text-sm text-white" />
+              </label>
+              <p className="text-xs leading-5 text-gray-500">The secret is encrypted on the server. Its saved value is never displayed or stored in your browser.</p>
+              <div className="rounded-lg bg-gray-950 p-3"><p className="text-xs text-gray-400">Register this redirect URI in your Pinterest app:</p><p className="mt-2 break-all text-xs text-gray-200 select-all">{publisher.redirect_uri}</p></div>
+              <div className="flex flex-wrap gap-3">
+                <button type="submit" disabled={busy} className="rounded-lg bg-[#E60023] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Saving…" : "Save app credentials"}</button>
+                {publisher.credential_source === "website" && <button type="button" disabled={busy} onClick={() => void act(async () => {
+                  const result = await api.usePinterestServerCredentials(siteId); setAppId(result.client_id); setAppSecret("");
+                }, "Website app credentials removed. Server defaults now apply; reconnect Pinterest.")}
+                  className="text-xs text-gray-400 underline disabled:opacity-40">Use server defaults</button>}
+              </div>
+              <p className="text-xs text-gray-500">{publisher.credential_source === "website" ? "Using this website’s app credentials." : publisher.configured ? "Using server app credentials." : "No app credentials configured."}</p>
+            </form>
+          </details>
         </section>
         <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-6">
           <p className="text-xs font-medium uppercase tracking-widest text-gray-500">02 / Publishing rhythm</p>

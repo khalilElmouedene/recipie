@@ -19,6 +19,8 @@ class PinterestPublisher(Base):
     site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     username: Mapped[str | None] = mapped_column(String(200))
+    client_id: Mapped[str | None] = mapped_column(String(100))
+    app_secret_encrypted: Mapped[str | None] = mapped_column(Text)
     access_token_encrypted: Mapped[str | None] = mapped_column(Text)
     refresh_token_encrypted: Mapped[str | None] = mapped_column(Text)
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

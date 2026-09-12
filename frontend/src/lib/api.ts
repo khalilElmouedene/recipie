@@ -154,6 +154,10 @@ async function requestPage<T>(
 export const api = {
   getPinterestPublisher: (siteId: string) =>
     request<PinterestPublisherOut>(`/api/sites/${siteId}/pinterest-publishing`),
+  savePinterestAppCredentials: (siteId: string, data: { client_id: string; client_secret?: string }) =>
+    request<PinterestPublisherOut>(`/api/sites/${siteId}/pinterest-publishing/credentials`, { method: "PUT", body: JSON.stringify(data) }),
+  usePinterestServerCredentials: (siteId: string) =>
+    request<PinterestPublisherOut>(`/api/sites/${siteId}/pinterest-publishing/credentials`, { method: "DELETE" }),
   getPinterestPublishingItems: (siteId: string, status = "", offset = 0) =>
     request<{ total: number; items: PinterestPublicationOut[] }>(buildPathWithQuery(
       `/api/sites/${siteId}/pinterest-publishing/items`, { status, offset, limit: 50 })),
@@ -1132,6 +1136,10 @@ export interface PinterestPublisherOut {
   domain: string;
   connected: boolean;
   configured: boolean;
+  client_id: string;
+  has_app_secret: boolean;
+  credential_source: "website" | "server";
+  redirect_uri: string;
   username: string | null;
   enabled: boolean;
   daily_limit: number;

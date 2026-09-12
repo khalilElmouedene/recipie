@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..crypto import decrypt, encrypt
+from ..config import settings
 from ..database import SessionLocal, engine
 from ..db_models import Project, ProjectMember, Recipe, RecipeStatus, Site, User
 from ..pinterest_models import PinterestPublication, PinterestPublisher
@@ -63,6 +64,37 @@ def site_lock(site_id: uuid.UUID):
     return locked_session(f"pinterest-site:{site_id}")
 
 
+def app_credentials(publisher: PinterestPublisher) -> tuple[str, str]:
+    """Return an entire website credential pair, or the server defaults."""
+    if publisher.client_id:
+        if not publisher.app_secret_encrypted:
+            raise api.PinterestError("Save the Pinterest App Secret for this website first.", reconnect=True)
+        try:
+            return publisher.client_id, decrypt(publisher.app_secret_encrypted)
+        except InvalidToken:
+            raise api.PinterestError("The saved Pinterest App Secret could not be read. Replace it in app settings.", reconnect=True) from None
+    return settings.pinterest_client_id, settings.pinterest_client_secret
+
+
+def credential_status(publisher: PinterestPublisher) -> dict:
+    custom = bool(publisher.client_id)
+    client_id = publisher.client_id if custom else settings.pinterest_client_id
+    has_secret = bool(publisher.app_secret_encrypted if custom else settings.pinterest_client_secret)
+    return dict(client_id=client_id or "", has_app_secret=has_secret,
+        credential_source="website" if custom else "server", configured=bool(client_id and has_secret),
+        redirect_uri=settings.pinterest_redirect_uri)
+
+
+def clear_connection(publisher: PinterestPublisher):
+    publisher.enabled = False
+    publisher.access_token_encrypted = None
+    publisher.refresh_token_encrypted = None
+    publisher.token_expires_at = None
+    publisher.refresh_expires_at = None
+    publisher.username = None
+    publisher.last_error = None
+
+
 def recipe_fields(recipe: Recipe) -> dict:
     return dict(title=recipe.pin_title or (recipe.recipe_text or "").split("\n")[0].strip(),
         description=recipe.pin_description or "", board_name=recipe.pin_board or "",
@@ -111,7 +143,9 @@ async def _access_token(db: AsyncSession, publisher: PinterestPublisher) -> str:
         publisher.refresh_expires_at and aware(publisher.refresh_expires_at) <= now
     ):
         raise api.PinterestError("Pinterest authorization expired. Reconnect the account.", reconnect=True)
-    data = await api.exchange_token(grant_type="refresh_token", refresh_token=decrypt(publisher.refresh_token_encrypted))
+    client_id, client_secret = app_credentials(publisher)
+    data = await api.exchange_token(client_id=client_id, client_secret=client_secret,
+        grant_type="refresh_token", refresh_token=decrypt(publisher.refresh_token_encrypted))
     await store_tokens(publisher, data)
     await db.commit()
     return decrypt(publisher.access_token_encrypted)

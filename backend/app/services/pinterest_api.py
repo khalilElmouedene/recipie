@@ -53,11 +53,13 @@ async def request(method: str, path: str, token: str = "", **kwargs) -> dict:
         raise PinterestError("Pinterest returned an invalid response.", uncertain=is_pin_create, retryable=not is_pin_create) from None
 
 
-async def exchange_token(**data) -> dict:
-    if not settings.pinterest_client_id or not settings.pinterest_client_secret:
+async def exchange_token(*, client_id: str | None = None, client_secret: str | None = None, **data) -> dict:
+    client_id = settings.pinterest_client_id if client_id is None else client_id
+    client_secret = settings.pinterest_client_secret if client_secret is None else client_secret
+    if not client_id or not client_secret:
         raise PinterestError("Pinterest OAuth is not configured on the server.", reconnect=True)
     result = await request("POST", "/oauth/token", data=data,
-        auth=(settings.pinterest_client_id, settings.pinterest_client_secret))
+        auth=(client_id, client_secret))
     if not result.get("access_token") or not result.get("expires_in"):
         raise PinterestError("Pinterest did not return a valid access token.", reconnect=True)
     return result

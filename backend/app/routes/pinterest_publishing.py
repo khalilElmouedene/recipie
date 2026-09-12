@@ -7,12 +7,13 @@ from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
+from ..crypto import encrypt
 from ..database import get_db
 from ..db_models import Site, User
 from ..dependencies import check_project_access, get_current_user
@@ -51,6 +52,56 @@ class PublishingSettings(BaseModel):
     enabled: bool
 
 
+class AppCredentialsBody(BaseModel):
+    client_id: str = Field(min_length=1, max_length=100, pattern=r"^\d+$")
+    # Write-only; never serialize this model or return the saved secret.
+    client_secret: SecretStr | None = Field(default=None, repr=False, exclude=True)
+
+
+@router.put("/sites/{site_id}/pinterest-publishing/credentials")
+async def save_credentials(site_id: uuid.UUID, body: AppCredentialsBody,
+    user: User = Depends(publishing_user), db: AsyncSession = Depends(get_db)):
+    site = await authorized_site(site_id, user, db)
+    async with service.site_lock(site_id) as locked:
+        if locked is None:
+            raise HTTPException(409, "A pin is being processed. Stop publishing and wait for it to finish before changing credentials.")
+        await ensure_publisher(locked, site_id, user.id)
+        publisher = await locked.scalar(select(PinterestPublisher).where(PinterestPublisher.site_id == site_id)
+            .with_for_update().execution_options(populate_existing=True))
+        new_secret = body.client_secret.get_secret_value().strip() if body.client_secret else ""
+        if len(new_secret) > 4096:
+            raise HTTPException(400, "The Pinterest App Secret is too long")
+        if not new_secret and (publisher.client_id != body.client_id or not publisher.app_secret_encrypted):
+            raise HTTPException(400, "Enter the App Secret when configuring a new App ID")
+        if new_secret or publisher.client_id != body.client_id:
+            publisher.client_id = body.client_id
+            publisher.app_secret_encrypted = encrypt(new_secret)
+            service.clear_connection(publisher)
+            # Pending OAuth grants belong to the previous app configuration.
+            await locked.execute(delete(PinterestOAuthState).where(PinterestOAuthState.site_id == site_id))
+        await locked.commit()
+        return await publisher_status(locked, publisher, site)
+
+
+@router.delete("/sites/{site_id}/pinterest-publishing/credentials")
+async def use_server_credentials(site_id: uuid.UUID,
+    user: User = Depends(publishing_user), db: AsyncSession = Depends(get_db)):
+    site = await authorized_site(site_id, user, db)
+    async with service.site_lock(site_id) as locked:
+        if locked is None:
+            raise HTTPException(409, "A pin is being processed. Stop publishing and wait for it to finish before changing credentials.")
+        await ensure_publisher(locked, site_id, user.id)
+        publisher = await locked.scalar(select(PinterestPublisher).where(PinterestPublisher.site_id == site_id)
+            .with_for_update().execution_options(populate_existing=True))
+        if publisher.client_id:
+            publisher.client_id = None
+            publisher.app_secret_encrypted = None
+            service.clear_connection(publisher)
+            await locked.execute(delete(PinterestOAuthState).where(PinterestOAuthState.site_id == site_id))
+        await locked.commit()
+        return await publisher_status(locked, publisher, site)
+
+
 class CallbackBody(BaseModel):
     site_id: uuid.UUID
     code: str = Field(min_length=1, max_length=4096)
@@ -85,7 +136,7 @@ async def publisher_status(db: AsyncSession, publisher: PinterestPublisher, site
     # Explicit allowlist: ORM credential fields are never serialized.
     return dict(site_id=str(site.id), project_id=str(site.project_id), domain=site.domain,
         connected=bool(publisher.access_token_encrypted), username=publisher.username,
-        configured=bool(settings.pinterest_client_id and settings.pinterest_client_secret),
+        **service.credential_status(publisher),
         enabled=publisher.enabled, daily_limit=publisher.daily_limit, interval_minutes=publisher.interval_minutes,
         timezone="UTC", daily_usage=usage, counts={s: counts.get(s, 0) for s in ("pending", "publishing", "published", "failed")},
         next_publication_at=service.next_publication_at(publisher, usage, now) if publisher.enabled else None,
@@ -141,14 +192,21 @@ async def save_settings(site_id: uuid.UUID, body: PublishingSettings,
 @router.post("/sites/{site_id}/pinterest-publishing/auth-url")
 async def auth_url(site_id: uuid.UUID, user: User = Depends(publishing_user), db: AsyncSession = Depends(get_db)):
     await authorized_site(site_id, user, db)
-    if not settings.pinterest_client_id or not settings.pinterest_client_secret:
-        raise HTTPException(400, "Pinterest OAuth is not configured on the server")
+    await ensure_publisher(db, site_id, user.id)
+    publisher = await db.scalar(select(PinterestPublisher).where(PinterestPublisher.site_id == site_id)
+        .with_for_update().execution_options(populate_existing=True))
+    try:
+        client_id, client_secret = service.app_credentials(publisher)
+    except api.PinterestError as error:
+        raise HTTPException(400, str(error)) from None
+    if not client_id or not client_secret:
+        raise HTTPException(400, "Save the Pinterest App ID and App Secret before connecting")
     state = secrets.token_urlsafe(32)
     await db.execute(delete(PinterestOAuthState).where(PinterestOAuthState.expires_at < service.utcnow()))
     db.add(PinterestOAuthState(token_hash=hashlib.sha256(state.encode()).hexdigest(), site_id=site_id,
         user_id=user.id, expires_at=service.utcnow() + timedelta(minutes=10)))
     await db.commit()
-    url = "https://www.pinterest.com/oauth/?" + urlencode(dict(client_id=settings.pinterest_client_id,
+    url = "https://www.pinterest.com/oauth/?" + urlencode(dict(client_id=client_id,
         redirect_uri=settings.pinterest_redirect_uri, response_type="code", scope=api.SCOPES, state=state))
     return {"url": url, "state": state}
 
@@ -168,7 +226,10 @@ async def callback(body: CallbackBody, user: User = Depends(publishing_user), db
         if not consumed:
             raise HTTPException(400, "Invalid, expired or already used OAuth state. Connect Pinterest again.")
         try:
-            tokens = await api.exchange_token(grant_type="authorization_code", code=body.code,
+            publisher = await ensure_publisher(locked, site.id, user.id)
+            client_id, client_secret = service.app_credentials(publisher)
+            tokens = await api.exchange_token(client_id=client_id, client_secret=client_secret,
+                grant_type="authorization_code", code=body.code,
                 redirect_uri=settings.pinterest_redirect_uri, continuous_refresh="true")
             granted = set(tokens.get("scope", "").replace(",", " ").split())
             if not set(api.SCOPES.split(",")).issubset(granted) or not tokens.get("refresh_token"):
@@ -176,7 +237,6 @@ async def callback(body: CallbackBody, user: User = Depends(publishing_user), db
             account = await api.request("GET", "/user_account", tokens["access_token"])
             if not account.get("username"):
                 raise api.PinterestError("Pinterest account identity could not be verified.")
-            publisher = await ensure_publisher(locked, site.id, user.id)
             publisher.enabled = False
             publisher.user_id = user.id
             publisher.username = account["username"]
@@ -198,12 +258,7 @@ async def disconnect(site_id: uuid.UUID, user: User = Depends(publishing_user), 
             raise HTTPException(409, "A pin is being processed. Stop publishing, then disconnect after it finishes.")
         publisher = await locked.get(PinterestPublisher, site_id)
         if publisher:
-            publisher.enabled = False
-            publisher.access_token_encrypted = None
-            publisher.refresh_token_encrypted = None
-            publisher.token_expires_at = None
-            publisher.refresh_expires_at = None
-            publisher.username = None
+            service.clear_connection(publisher)
         await locked.execute(delete(PinterestOAuthState).where(PinterestOAuthState.site_id == site_id))
         await locked.commit()
     return {"ok": True}

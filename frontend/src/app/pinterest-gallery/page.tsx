@@ -13,7 +13,7 @@ import {
   Sheet,
   ChevronDown,
 } from "lucide-react";
-import { api, ProjectOut, PinterestRecipeOut } from "@/lib/api";
+import { api, ProjectOut, PinterestRecipeOut, SiteOut } from "@/lib/api";
 import PinterestPublishingLink from "@/components/PinterestPublishingLink";
 import { readPinterestGalleryContext, type PinterestGalleryContextSnapshot } from "@/lib/pinterestGalleryContext";
 import { useToast } from "@/contexts/ToastContext";
@@ -62,6 +62,7 @@ function PinterestGalleryInner() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
 
   const [allRecipes, setAllRecipes] = useState<PinterestRecipeOut[]>([]);
+  const [sites, setSites] = useState<SiteOut[]>([]);
   const [recipesLoading, setRecipesLoading] = useState(false);
   const [recipesError, setRecipesError] = useState<string | null>(null);
 
@@ -119,16 +120,20 @@ function PinterestGalleryInner() {
 
   // ── Fetch recipes when project / site changes ──
   useEffect(() => {
-    if (!selectedProjectId) { setAllRecipes([]); setRecipesLoading(false); return; }
+    if (!selectedProjectId) { setAllRecipes([]); setSites([]); setRecipesLoading(false); return; }
     const controller = new AbortController();
     setAllRecipes([]);
+    setSites([]);
     setRecipesLoading(true);
     setRecipesError(null);
     setSearch("");
     setSelectedWebsite("");
     setSelectedBoard("__all__");
-    api.getProjectPinterestRecipes(selectedProjectId, siteIdParam ?? undefined, controller.signal)
-      .then((data) => { if (!controller.signal.aborted) setAllRecipes(data); })
+    Promise.all([
+      api.getProjectPinterestRecipes(selectedProjectId, siteIdParam ?? undefined, controller.signal),
+      api.getSites(selectedProjectId),
+    ])
+      .then(([data, websiteList]) => { if (!controller.signal.aborted) { setAllRecipes(data); setSites(websiteList); } })
       .catch((e) => { if (e?.name !== "AbortError") setRecipesError(e?.message || "Failed to load recipes"); })
       .finally(() => { if (!controller.signal.aborted) setRecipesLoading(false); });
     return () => { controller.abort(); };
@@ -141,14 +146,14 @@ function PinterestGalleryInner() {
 
   // ── Derived data ──
   const websites = useMemo(() =>
-    Array.from(new Set(allRecipes.map((r) => r.site_domain))).sort(),
-    [allRecipes]
+    sites.slice().sort((a, b) => a.domain.localeCompare(b.domain)),
+    [sites]
   );
 
   useEffect(() => {
     if (siteIdParam) return;
     if (websites.length === 0) { if (selectedWebsite !== "") setSelectedWebsite(""); return; }
-    if (selectedWebsite && !websites.includes(selectedWebsite)) setSelectedWebsite("");
+    if (selectedWebsite && !websites.some((site) => site.id === selectedWebsite)) setSelectedWebsite("");
   }, [websites, selectedWebsite, siteIdParam]);
 
   const pinDesignerRecipeIdSet = useMemo(
@@ -159,7 +164,7 @@ function PinterestGalleryInner() {
   const websiteScopedRecipes = useMemo(() => {
     let scoped = siteIdParam
       ? allRecipes
-      : (selectedWebsite ? allRecipes.filter((r) => r.site_domain === selectedWebsite) : []);
+      : (selectedWebsite ? allRecipes.filter((r) => r.site_id === selectedWebsite) : []);
     if (pinDesignerRecipeIdSet.size > 0) {
       scoped = scoped.filter((recipe) => pinDesignerRecipeIdSet.has(recipe.id));
     }
@@ -259,8 +264,7 @@ function PinterestGalleryInner() {
   };
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
-  const publishingSiteIds = Array.from(new Set(websiteScopedRecipes.map((r) => r.site_id)));
-  const publishingSiteId = siteIdParam || (publishingSiteIds.length === 1 ? publishingSiteIds[0] : null);
+  const publishingSiteId = siteIdParam || selectedWebsite || null;
   const fromPinDesigner = Boolean(siteIdParam);
   const hasPinDesignerRecipeScope = pinDesignerRecipeIdSet.size > 0;
   const hideProjectSelector = (fromProjectDetails && Boolean(projectIdParam)) || fromPinDesigner;
@@ -392,17 +396,17 @@ function PinterestGalleryInner() {
         )}
 
         {/* ── Filters ── */}
-        {!recipesLoading && !recipesError && allRecipes.length > 0 && (
+        {!recipesLoading && !recipesError && websites.length > 0 && (
           <div className="mb-6 space-y-4">
             {!fromPinDesigner && (
               <div className="flex flex-wrap gap-2">
                 {websites.map((site) => (
                   <WebsitePill
-                    key={site}
-                    label={site}
-                    count={allRecipes.filter((r) => r.site_domain === site).length}
-                    active={selectedWebsite === site}
-                    onClick={() => setSelectedWebsite(site)}
+                    key={site.id}
+                    label={site.domain}
+                    count={allRecipes.filter((r) => r.site_id === site.id).length}
+                    active={selectedWebsite === site.id}
+                    onClick={() => setSelectedWebsite(site.id)}
                   />
                 ))}
               </div>
@@ -411,7 +415,7 @@ function PinterestGalleryInner() {
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
               <input
                 type="text"
-                placeholder={selectedWebsite ? `Search pins in ${selectedWebsite}…` : "Search pins…"}
+                placeholder={selectedWebsite ? `Search pins in ${sites.find((site) => site.id === selectedWebsite)?.domain || "this website"}…` : "Search pins…"}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full rounded-lg border border-gray-800 bg-gray-900 pl-9 pr-9 py-2 text-sm text-gray-200 placeholder-gray-500 outline-none focus:border-brand-500 transition"
