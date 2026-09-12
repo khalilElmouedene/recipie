@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # Pinterest OAuth
     pinterest_client_id: str = ""
     pinterest_client_secret: str = ""
-    pinterest_redirect_uri: str = "http://localhost:3000/pinterest/callback"
+    pinterest_redirect_uri: str = "https://bohssini.com/pinterest/callback"
 
     # Google OAuth
     google_client_id: str = ""
