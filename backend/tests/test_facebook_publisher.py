@@ -15,6 +15,7 @@ from app.services.facebook_publisher import (
     _delete_content_video_files,
     _publish_facebook_image_delivery,
     build_facebook_image_caption,
+    build_facebook_media_caption,
     build_first_comment,
     cleanup_published_facebook_content_video,
     publish_facebook_delivery,
@@ -165,6 +166,18 @@ class FacebookFirstCommentTests(unittest.TestCase):
 
 
 class FacebookImageCaptionTests(unittest.TestCase):
+    def test_media_caption_contains_title_and_only_first_eight_ingredients(self):
+        ingredients = "\n".join(f"- Ingredient {number}" for number in range(1, 10))
+
+        self.assertEqual(
+            build_facebook_media_caption(
+                recipe_title="Garlic Sauce",
+                ingredient_recipe=ingredients,
+            ),
+            "Garlic Sauce\n\nIngredients :\n"
+            + "\n".join(f"- Ingredient {number}" for number in range(1, 9)),
+        )
+
     def test_recipe_title_header_contains_only_title(self):
         self.assertEqual(
             build_facebook_image_caption(
@@ -214,7 +227,7 @@ class FacebookRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
-    async def test_full_recipe_image_header_publishes_without_first_comment(self):
+    async def test_image_post_uses_ingredients_caption_and_configured_comment(self):
         delivery_id = uuid.uuid4()
         delivery = SimpleNamespace(
             generated_image_url="https://example.com/uploads/facebook/image.png",
@@ -234,7 +247,7 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         page = SimpleNamespace(
             access_token="encrypted-token",
             facebook_page_id="page-42",
-            comment_mode=FacebookCommentMode.full_recipe_url,
+            comment_mode=FacebookCommentMode.full_recipe,
             post_header_mode=FacebookPostHeaderMode.full_recipe.value,
         )
         sessions = iter(
@@ -271,9 +284,12 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(published)
         self.assertEqual(
             publish_photo.call_args.kwargs["caption"],
+            "Garlic Sauce\n\nIngredients :\n- Garlic",
+        )
+        self.assertEqual(
+            add_comment.call_args.kwargs["message"],
             content.rewritten_recipe_post,
         )
-        add_comment.assert_not_called()
 
     async def test_title_image_header_uses_rewritten_full_recipe_in_comment(self):
         delivery_id = uuid.uuid4()
@@ -334,7 +350,10 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
             published = await _publish_facebook_image_delivery(delivery_id)
 
         self.assertTrue(published)
-        self.assertEqual(publish_photo.call_args.kwargs["caption"], "Rewritten title")
+        self.assertEqual(
+            publish_photo.call_args.kwargs["caption"],
+            "Rewritten title\n\nIngredients :\n- Rewritten garlic",
+        )
         self.assertEqual(
             add_comment.call_args.kwargs["message"],
             content.rewritten_recipe_post,
@@ -407,6 +426,10 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
             id=content_id,
             processed_video_url="https://example.com/uploads/facebook/legacy-video.mp4",
             title="Recipe title",
+            recipe_title="Creamy Garlic Sauce",
+            ingredient_recipe="\n".join(
+                f"- Ingredient {number}" for number in range(1, 9)
+            ),
         )
         page = SimpleNamespace(
             access_token="encrypted-page-token",
@@ -450,6 +473,12 @@ class FacebookPublishingWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
         def finish_reel(**_kwargs):
             order.append("reel-finish")
+            self.assertEqual(_kwargs["title"], "Creamy Garlic Sauce")
+            self.assertEqual(
+                _kwargs["description"],
+                "Creamy Garlic Sauce\n\nIngredients :\n"
+                + "\n".join(f"- Ingredient {number}" for number in range(1, 9)),
+            )
 
         def wait_for_reel(**_kwargs):
             order.append("reel-ready")

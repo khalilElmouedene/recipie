@@ -29,6 +29,7 @@ from app.db_models import (
     Site,
 )
 from app.services import facebook_api
+from app.services.facebook_recipe import _ingredients_from_recipe
 from app.services.facebook_video import validate_facebook_reel_file
 from app.services.publisher import publish_recipe
 from app.site_credentials import get_random_wp_credentials
@@ -84,6 +85,32 @@ def build_facebook_image_caption(
             raise ValueError("The first 8 recipe ingredients are missing.")
         return f"{title}\n\nIngredients :\n{ingredients}"
     return title
+
+
+def build_facebook_media_caption(
+    *,
+    recipe_title: str,
+    ingredient_recipe: str,
+    recipe_post: str = "",
+) -> str:
+    title = (recipe_title or "").strip()
+    if not title:
+        raise ValueError("The rewritten recipe title is missing.")
+
+    ingredients = [
+        line.strip()
+        for line in (ingredient_recipe or "").splitlines()
+        if line.strip()
+    ][:8]
+    if not ingredients:
+        ingredients = [
+            f"- {ingredient}"
+            for ingredient in _ingredients_from_recipe(recipe_post)[:8]
+        ]
+    if not ingredients:
+        raise ValueError("The first 8 recipe ingredients are missing.")
+
+    return f"{title}\n\nIngredients :\n" + "\n".join(ingredients)
 
 
 def _absolute_media_url(url: str) -> str:
@@ -566,10 +593,6 @@ async def _publish_facebook_image_delivery(delivery_id: uuid.UUID) -> bool:
             page_token = decrypt(page.access_token)
             page_id = page.facebook_page_id
             page_mode = page.comment_mode
-            header_mode = (
-                getattr(page, "post_header_mode", None)
-                or FacebookPostHeaderMode.recipe_title.value
-            )
             content_id = content.id
             existing_post_id = delivery.facebook_post_id
             existing_comment_id = delivery.first_comment_id
@@ -588,19 +611,17 @@ async def _publish_facebook_image_delivery(delivery_id: uuid.UUID) -> bool:
             ).strip()
             generate_article = bool(content.generate_article)
             allow_without_url = bool(delivery.allow_without_article_url)
-            caption = build_facebook_image_caption(
-                header_mode,
+            caption = build_facebook_media_caption(
                 recipe_title=recipe_title,
-                recipe_post=full_recipe,
                 ingredient_recipe=ingredient_recipe,
+                recipe_post=full_recipe,
             )
 
         article_url = ""
         if generate_article:
             article_url = await _ensure_article_published(content_id)
         elif (
-            header_mode != FacebookPostHeaderMode.full_recipe.value
-            and page_mode == FacebookCommentMode.full_recipe_url
+            page_mode == FacebookCommentMode.full_recipe_url
             and not allow_without_url
         ):
             raise ValueError(
@@ -626,10 +647,7 @@ async def _publish_facebook_image_delivery(delivery_id: uuid.UUID) -> bool:
                 await db.commit()
 
         comment_id = existing_comment_id
-        if (
-            header_mode != FacebookPostHeaderMode.full_recipe.value
-            and not comment_id
-        ):
+        if not comment_id:
             effective_mode = (
                 FacebookCommentMode.full_recipe
                 if not article_url
@@ -725,11 +743,20 @@ async def publish_facebook_delivery(
             page_id = page.facebook_page_id
             page_mode = page.comment_mode
             title = content.title
+            full_recipe = recipe.generated_full_recipe or ""
+            recipe_title = (getattr(content, "recipe_title", None) or title).strip()
+            ingredient_recipe = (
+                getattr(content, "ingredient_recipe", None) or ""
+            ).strip()
+            post_caption = build_facebook_media_caption(
+                recipe_title=recipe_title,
+                ingredient_recipe=ingredient_recipe,
+                recipe_post=full_recipe,
+            )
             video_url = _absolute_media_url(stored_video_url)
             content_id = content.id
             existing_post_id = delivery.facebook_post_id
             existing_comment_id = delivery.first_comment_id
-            full_recipe = recipe.generated_full_recipe or ""
 
         post_id = existing_post_id
         upload_url: str | None = None
@@ -796,8 +823,8 @@ async def publish_facebook_delivery(
                     page_id=page_id,
                     page_access_token=page_token,
                     video_id=post_id,
-                    title=title,
-                    description=title,
+                    title=recipe_title,
+                    description=post_caption,
                 )
         # Publishing a Reel is asynchronous. Wait for Meta to finish encoding
         # before adding the first comment or reporting the delivery as complete.
