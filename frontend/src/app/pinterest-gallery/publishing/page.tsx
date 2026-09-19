@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, CheckCircle2, Clock3, ExternalLink, Globe2, Loader2, Pause, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Clock3, ExternalLink, FileText, Globe2, Loader2, Pause, Play, RefreshCw, Send, ShieldCheck } from "lucide-react";
 import { api, PinterestPublisherOut, PinterestPublicationOut, PinterestPublicationStatus } from "@/lib/api";
 import { getUserEmail } from "@/lib/auth";
 import { useToast } from "@/contexts/ToastContext";
@@ -35,6 +35,7 @@ function PublishingPage() {
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
   const [busy, setBusy] = useState(false);
+  const [publishingItemId, setPublishingItemId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [pinIds, setPinIds] = useState<Record<string, string>>({});
@@ -130,6 +131,23 @@ function PublishingPage() {
       "Pinterest may already have created this pin. If it exists, cancel and save its Pin ID below. Retry only after checking the board and confirming that no pin was created.",
       confirmLabel: "I checked — no pin exists", danger: true })) return;
     await act(() => api.retryPinterestPublication(siteId, item.id, !item.retry_safe), "Item returned to the queue. Daily limits and publication intervals still apply.");
+  };
+
+  const publishItem = async (item: PinterestPublicationOut) => {
+    setBusy(true);
+    setPublishingItemId(item.id);
+    try {
+      const result = await api.publishPinterestPublication(siteId, item.id);
+      await load();
+      toast.success(result.status === "published" ? "Item published on Pinterest." : "Publishing attempt finished. Review the item logs.");
+      router.push(`/pinterest-gallery/publishing/logs?site_id=${siteId}&item_id=${item.id}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not publish this item");
+      await load().catch(() => undefined);
+    } finally {
+      setBusy(false);
+      setPublishingItemId("");
+    }
   };
 
   if (allowed === null) return <div className="p-8"><Loader2 className="animate-spin" /></div>;
@@ -242,8 +260,10 @@ function PublishingPage() {
               <button disabled={busy} onClick={() => void act(() => api.syncPinterestPublishingItems(siteId))} className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-white disabled:opacity-40"><RefreshCw size={15} /> Refresh</button></div>
           </div>
           {items.length === 0 ? <div className="p-12 text-center"><CheckCircle2 className="mx-auto mb-3 text-gray-600" size={32} /><p className="text-gray-300">{filter ? `No ${filter} items.` : "Your queue is ready for its first pin."}</p><p className="mt-2 text-sm text-gray-500">Create pin content for this website in the Pinterest gallery.</p></div> :
-            <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-gray-900/60 text-xs text-gray-500"><tr>{["Pin", "Board / destination", "Status", "Publication"].map((label) => <th key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr></thead>
-              <tbody className="divide-y divide-gray-800">{items.map((item) => <tr key={item.id} className="align-top hover:bg-gray-900/30">
+            <div className="overflow-x-auto"><table className="w-full min-w-[1040px] text-left text-sm"><thead className="bg-gray-900/60 text-xs text-gray-500"><tr>{["Pin", "Board / destination", "Status", "Publication", "Actions"].map((label) => <th key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr></thead>
+              <tbody className="divide-y divide-gray-800">{items.map((item) => {
+                const canPublishItem = publisher.connected && !item.pin_id && (item.status === "pending" || (item.status === "failed" && item.retry_safe));
+                return <tr key={item.id} className="align-top hover:bg-gray-900/30">
                 <td className="max-w-md p-5"><div className="flex gap-4">{(safeUrl(item.image_url) || /^data:image\/(png|jpeg);base64,/.test(item.image_url)) ? <img src={item.image_url} alt="" loading="lazy" className="h-24 w-16 shrink-0 rounded-lg bg-gray-800 object-cover" /> : <div className="flex h-24 w-16 shrink-0 items-center rounded-lg bg-gray-800 p-2 text-center text-xs text-gray-500">No pin image</div>}
                   <div><p className="font-medium text-gray-200">{item.title || "Untitled pin"}</p><p className="mt-2 line-clamp-3 text-xs leading-5 text-gray-500">{item.description || "No description"}</p>{item.keywords && <p className="mt-2 text-xs text-gray-400">{item.keywords}</p>}</div></div></td>
                 <td className="max-w-[230px] p-5"><p className="text-gray-300">{item.board_name || "Board name needed"}</p>{safeUrl(item.article_url) ? <a href={item.article_url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs text-red-400 hover:underline">View article <ExternalLink size={12} /></a> : <p className="mt-3 text-xs text-amber-400">Article URL needed</p>}</td>
@@ -255,7 +275,25 @@ function PublishingPage() {
                   </div>}
                 </td>
                 <td className="p-5 text-xs text-gray-500">{item.pin_id ? <><a href={`https://www.pinterest.com/pin/${encodeURIComponent(item.pin_id)}/`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-emerald-400 hover:underline">View pin <ExternalLink size={12} /></a><p className="mt-2">ID {item.pin_id}</p><p className="mt-2">{date(item.published_at)}</p></> : <><p>{item.attempt_count} attempts</p>{item.attempted_at && <p className="mt-2">Last attempt {date(item.attempted_at)}</p>}</>}</td>
-              </tr>)}</tbody></table></div>}
+                <td className="w-40 p-5">
+                  <div className="flex flex-col items-start gap-3">
+                    <button
+                      type="button"
+                      disabled={busy || !canPublishItem}
+                      onClick={() => void publishItem(item)}
+                      title={canPublishItem ? "Publish only this item now" : "This item cannot be published now"}
+                      className="inline-flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-100 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:border-gray-800 disabled:bg-gray-900 disabled:text-gray-600"
+                    >
+                      {publishingItemId === item.id ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                      Publish now
+                    </button>
+                    <Link href={`/pinterest-gallery/publishing/logs?site_id=${siteId}&item_id=${item.id}`} className="inline-flex items-center gap-2 text-xs text-gray-400 hover:text-white">
+                      <FileText size={14} /> Logs
+                    </Link>
+                  </div>
+                </td>
+              </tr>;
+              })}</tbody></table></div>}
           <div className="flex items-center justify-between border-t border-gray-800 px-5 py-4 text-xs text-gray-500"><span>{total ? `${offset + 1}–${Math.min(offset + 50, total)} of ${total}` : "0 items"}</span><div className="flex gap-4"><button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))} className="disabled:opacity-30">Previous</button><button disabled={offset + 50 >= total} onClick={() => setOffset(offset + 50)} className="disabled:opacity-30">Next</button></div></div>
         </section>
         {publisher.enabled && <p className="mt-4 flex items-center gap-2 text-xs text-gray-500"><Clock3 size={14} />Next eligible publication: {date(publisher.next_publication_at)}. Requires a ready item; checks run every 30 seconds.</p>}

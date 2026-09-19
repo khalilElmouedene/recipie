@@ -207,17 +207,32 @@ async def still_authorized(db: AsyncSession, publisher: PinterestPublisher) -> b
         ProjectMember.project_id == site.project_id, ProjectMember.user_id == user.id))))
 
 
-async def publish_one(db: AsyncSession, publisher: PinterestPublisher):
+async def publish_one(
+    db: AsyncSession,
+    publisher: PinterestPublisher,
+    item_id: uuid.UUID | None = None,
+    respect_schedule: bool = True,
+):
     now = utcnow()
     used = await daily_usage(db, publisher.site_id, now)
-    if next_publication_at(publisher, used, now) > now:
+    if respect_schedule and next_publication_at(publisher, used, now) > now:
         return
-    item = await db.scalar(select(PinterestPublication).where(
-        PinterestPublication.site_id == publisher.site_id, PinterestPublication.pin_id.is_(None),
-        or_(PinterestPublication.status == "pending", and_(PinterestPublication.status == "failed",
-            PinterestPublication.retry_safe.is_(True), PinterestPublication.next_retry_at <= now,
-            PinterestPublication.attempt_count < MAX_AUTO_ATTEMPTS))
-    ).order_by(PinterestPublication.created_at, PinterestPublication.id).limit(1).with_for_update())
+    if item_id is None:
+        item_query = select(PinterestPublication).where(
+            PinterestPublication.site_id == publisher.site_id, PinterestPublication.pin_id.is_(None),
+            or_(PinterestPublication.status == "pending", and_(PinterestPublication.status == "failed",
+                PinterestPublication.retry_safe.is_(True), PinterestPublication.next_retry_at <= now,
+                PinterestPublication.attempt_count < MAX_AUTO_ATTEMPTS))
+        ).order_by(PinterestPublication.created_at, PinterestPublication.id).limit(1)
+    else:
+        item_query = select(PinterestPublication).where(
+            PinterestPublication.site_id == publisher.site_id,
+            PinterestPublication.id == item_id,
+            PinterestPublication.pin_id.is_(None),
+            PinterestPublication.status.in_(["pending", "failed"]),
+            PinterestPublication.retry_safe.is_(True),
+        )
+    item = await db.scalar(item_query.with_for_update())
     if item is None:
         return
     previous_attempt_at = publisher.last_attempt_at
@@ -255,7 +270,7 @@ async def publish_one(db: AsyncSession, publisher: PinterestPublisher):
         await db.refresh(publisher, with_for_update=True)
         dispatch_time = utcnow()
         previous_due = (aware(previous_attempt_at) + timedelta(minutes=publisher.interval_minutes)) if previous_attempt_at else dispatch_time
-        if (not publisher.enabled or previous_due > dispatch_time or
+        if respect_schedule and (not publisher.enabled or previous_due > dispatch_time or
             await daily_usage(db, publisher.site_id, dispatch_time) >= publisher.daily_limit):
             item.status = "pending"
             await log_event(db, publisher.site_id, "dispatch_deferred", "Item returned to pending because publishing was stopped or its schedule changed.", item)

@@ -4,6 +4,7 @@ import hashlib
 import secrets
 import uuid
 from datetime import datetime, timedelta
+from typing import Annotated
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -296,6 +297,36 @@ async def retry_item(site_id: uuid.UUID, item_id: uuid.UUID, body: RetryBody,
     return {"ok": True}
 
 
+@router.post("/sites/{site_id}/pinterest-publishing/items/{item_id}/publish")
+async def publish_item_now(site_id: uuid.UUID, item_id: uuid.UUID,
+    user: User = Depends(publishing_user), db: AsyncSession = Depends(get_db)):
+    site = await authorized_site(site_id, user, db)
+    async with service.site_lock(site_id) as locked:
+        if locked is None:
+            raise HTTPException(409, "A pin is being processed. Try again shortly.")
+        publisher = await ensure_publisher(locked, site_id, user.id)
+        if not publisher.access_token_encrypted:
+            raise HTTPException(400, "Connect Pinterest before publishing this item")
+        item = await locked.scalar(select(PinterestPublication).where(PinterestPublication.site_id == site_id,
+            PinterestPublication.id == item_id).with_for_update())
+        if not item:
+            raise HTTPException(404, "Publishing item not found")
+        if item.pin_id or item.status == "published":
+            raise HTTPException(409, "This item is already published")
+        if item.status == "publishing":
+            raise HTTPException(409, "This item is already being published")
+        if item.status == "failed" and not item.retry_safe:
+            raise HTTPException(409, "Check Pinterest first: this pin may already exist")
+        if item.status not in ("pending", "failed"):
+            raise HTTPException(409, "This item cannot be published right now")
+        await service.log_event(locked, site_id, "manual_publish_requested",
+            "User requested immediate publishing for this item.", item)
+        await locked.commit()
+        await service.publish_one(locked, publisher, item_id=item_id, respect_schedule=False)
+        item = await locked.get(PinterestPublication, item_id)
+        return PublicationOut.model_validate(item)
+
+
 class ReconcileBody(BaseModel):
     pin_id: str = Field(pattern=r"^\d{1,100}$")
 
@@ -382,9 +413,13 @@ class PublishingLogOut(BaseModel):
 
 @router.get("/sites/{site_id}/pinterest-publishing/logs")
 async def get_logs(site_id: uuid.UUID, user: User = Depends(publishing_user), db: AsyncSession = Depends(get_db),
-    before_id: int | None = Query(None, ge=1), limit: int = Query(100, ge=1, le=100)):
+    before_id: Annotated[int | None, Query(ge=1)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    publication_id: uuid.UUID | None = None):
     await authorized_site(site_id, user, db)
     conditions = [PinterestPublishingLog.site_id == site_id]
+    if publication_id is not None:
+        conditions.append(PinterestPublishingLog.publication_id == publication_id)
     if before_id is not None:
         conditions.append(PinterestPublishingLog.id < before_id)
     rows = (await db.scalars(select(PinterestPublishingLog).where(*conditions)

@@ -133,6 +133,16 @@ class PinterestDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await routes.get_logs(self.site.id, self.user, self.db, None, 2)
         self.assertEqual(error.exception.status_code, 403)
 
+    async def test_logs_can_be_filtered_to_one_publication_item(self):
+        self.recipe()
+        item = await self.sync()
+        await service.log_event(self.db, self.site.id, "item_event", "Selected item only", item)
+        await service.log_event(self.db, self.site.id, "site_event", "Whole site")
+        await self.db.commit()
+        page = await routes.get_logs(self.site.id, self.user, self.db, publication_id=item.id)
+        self.assertEqual([x.event for x in page["items"]], ["item_event"])
+        self.assertEqual(page["items"][0].publication_id, item.id)
+
     async def test_success_and_failure_have_durable_activity(self):
         self.recipe()
         await self.sync()
@@ -177,6 +187,35 @@ class PinterestDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.session.delete(recipe)
         self.session.commit()
         self.assertIsNotNone(self.session.get(PinterestPublication, item.id))
+
+    async def test_manual_publish_targets_selected_item_even_when_automatic_is_stopped(self):
+        self.recipe(pin_title="First pin")
+        self.recipe(pin_title="Second pin")
+        await self.sync()
+        first = self.session.scalar(select(PinterestPublication).where(PinterestPublication.title == "First pin"))
+        second = self.session.scalar(select(PinterestPublication).where(PinterestPublication.title == "Second pin"))
+        self.publisher.enabled = False
+        self.publisher.last_attempt_at = service.utcnow()
+        self.session.commit()
+        request = AsyncMock(return_value={"id": "67890"})
+        with patch.object(service, "locked_session", self.lock), patch.object(api, "ensure_board", AsyncMock(return_value="42")), patch.object(api, "request", request):
+            await service.publish_one(self.db, self.publisher, item_id=second.id, respect_schedule=False)
+        self.assertEqual(first.status, "pending")
+        self.assertEqual(second.status, "published")
+        self.assertEqual(second.pin_id, "67890")
+        self.assertEqual(request.await_count, 1)
+
+    async def test_publish_item_now_records_request_and_returns_item(self):
+        self.recipe()
+        item = await self.sync()
+        self.publisher.enabled = False
+        self.session.commit()
+        with patch.object(service, "site_lock", self.lock), patch.object(service, "locked_session", self.lock), patch.object(api, "ensure_board", AsyncMock(return_value="42")), patch.object(api, "request", AsyncMock(return_value={"id": "98765"})):
+            result = await routes.publish_item_now(self.site.id, item.id, self.user, self.db)
+        self.assertEqual(result.status, "published")
+        self.assertEqual(result.pin_id, "98765")
+        page = await routes.get_logs(self.site.id, self.user, self.db, publication_id=item.id)
+        self.assertIn("manual_publish_requested", [x.event for x in page["items"]])
 
     async def test_dispatch_is_committed_before_api_write(self):
         self.recipe()

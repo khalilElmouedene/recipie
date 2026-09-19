@@ -154,8 +154,9 @@ async function requestPage<T>(
 export const api = {
   connectPinterestToken: (siteId: string, access_token: string) =>
     request<PinterestPublisherOut>(`/api/sites/${siteId}/pinterest-publishing/token`, { method: "PUT", body: JSON.stringify({ access_token }) }),
-  getPinterestPublishingLogs: (siteId: string, beforeId?: number) =>
-    request<{ items: PinterestPublishingLogOut[]; next_before_id: number | null }>(`/api/sites/${siteId}/pinterest-publishing/logs${beforeId ? `?before_id=${beforeId}` : ""}`),
+  getPinterestPublishingLogs: (siteId: string, beforeId?: number, publicationId?: string) =>
+    request<{ items: PinterestPublishingLogOut[]; next_before_id: number | null }>(buildPathWithQuery(
+      `/api/sites/${siteId}/pinterest-publishing/logs`, { before_id: beforeId, publication_id: publicationId })),
   getPinterestPublisher: (siteId: string) =>
     request<PinterestPublisherOut>(`/api/sites/${siteId}/pinterest-publishing`),
   savePinterestAppCredentials: (siteId: string, data: { client_id: string; client_secret?: string }) =>
@@ -177,6 +178,8 @@ export const api = {
     request(`/api/sites/${siteId}/pinterest-publishing/connection`, { method: "DELETE" }),
   retryPinterestPublication: (siteId: string, itemId: string, confirmed = false) =>
     request(`/api/sites/${siteId}/pinterest-publishing/items/${itemId}/retry`, { method: "POST", body: JSON.stringify({ confirmed_not_published: confirmed }) }),
+  publishPinterestPublication: (siteId: string, itemId: string) =>
+    request<PinterestPublicationOut>(`/api/sites/${siteId}/pinterest-publishing/items/${itemId}/publish`, { method: "POST" }),
   reconcilePinterestPublication: (siteId: string, itemId: string, pinId: string) =>
     request(`/api/sites/${siteId}/pinterest-publishing/items/${itemId}/reconcile`, { method: "POST", body: JSON.stringify({ pin_id: pinId }) }),
   register: (email: string, password: string, full_name: string) =>
