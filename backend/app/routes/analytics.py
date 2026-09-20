@@ -1,277 +1,188 @@
 from __future__ import annotations
-import uuid
-from datetime import datetime, timedelta, timezone
+
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, func, case, text
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..db_models import (
-    User, Project, ProjectMember, Site, Recipe, RecipeStatus, Job, JobStatus,
-)
+from ..db_models import User, Project, ProjectMember, Site, Recipe, Job, Prompt
 from ..dependencies import get_current_user
+from ..services.prompts import DEFAULT_PROMPTS
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
-
-class SiteAnalytics(BaseModel):
-    id: str
-    domain: str
-    total: int
-    published: int
-    generated: int
-    pending: int
-    failed: int
-    last_published_at: datetime | None
-    last_title: str | None
+ANALYTICS_VIEWER_EMAIL = "khalil@gmail.com"
 
 
-class ProjectAnalytics(BaseModel):
+class AnalyticsPrompt(BaseModel):
+    key: str
+    value: str
+    description: str
+    source: str
+    updated_at: datetime | None = None
+
+
+class AnalyticsProject(BaseModel):
     id: str
     name: str
+    description: str
+    owner_id: str
+    owner_email: str
+    created_at: datetime
     site_count: int
-    total: int
-    published: int
-    generated: int
-    pending: int
-    failed: int
-    last_published_at: datetime | None
-    sites: list[SiteAnalytics]
+    recipe_count: int
+    job_count: int
+    member_count: int
+    custom_prompt_count: int
+    prompts: list[AnalyticsPrompt]
 
 
-class RecentJob(BaseModel):
-    id: str
-    job_type: str
-    status: str
-    project_name: str
-    created_at: datetime
-    finished_at: datetime | None
-    total_rows: int | None
-    current_row: int | None
-
-
-class LastPublished(BaseModel):
-    title: str
-    site_domain: str
-    wp_permalink: str | None
-    created_at: datetime
-
-
-class MonthStat(BaseModel):
-    month: str
-    generated: int
-    published: int
-
-
-class OwnerAnalytics(BaseModel):
+class AnalyticsPromptBrowser(BaseModel):
     total_projects: int
-    total_sites: int
-    total_recipes: int
-    total_published: int
-    total_generated: int
-    total_pending: int
-    total_failed: int
-    total_jobs: int
-    total_jobs_completed: int
-    total_jobs_failed: int
-    success_rate: float
-    last_published: LastPublished | None
-    recent_jobs: list[RecentJob]
-    projects: list[ProjectAnalytics]
-    monthly: list[MonthStat]
+    total_prompts: int
+    projects: list[AnalyticsProject]
 
 
-_EMPTY = OwnerAnalytics(
-    total_projects=0, total_sites=0, total_recipes=0,
-    total_published=0, total_generated=0, total_pending=0, total_failed=0,
-    total_jobs=0, total_jobs_completed=0, total_jobs_failed=0,
-    success_rate=0.0, last_published=None, recent_jobs=[], projects=[], monthly=[],
-)
+def _require_analytics_viewer(user: User) -> None:
+    if user.email.strip().lower() != ANALYTICS_VIEWER_EMAIL:
+        raise HTTPException(status_code=403, detail="Analytics is only available to Khalil")
 
 
-@router.get("", response_model=OwnerAnalytics)
+def _prompt_out(prompt: Prompt | None, key: str, source: str) -> AnalyticsPrompt:
+    default = DEFAULT_PROMPTS.get(key, {})
+    return AnalyticsPrompt(
+        key=key,
+        value=prompt.value if prompt else default.get("value", ""),
+        description=(prompt.description if prompt else default.get("description", "")) or "",
+        source=source,
+        updated_at=prompt.updated_at if prompt else None,
+    )
+
+
+@router.get("", response_model=AnalyticsPromptBrowser)
 async def get_analytics(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    projects_q = await db.execute(
-        select(Project)
-        .where(
-            (Project.owner_id == user.id) |
-            (Project.id.in_(
-                select(ProjectMember.project_id).where(ProjectMember.user_id == user.id)
-            ))
-        )
+    _require_analytics_viewer(user)
+
+    project_rows = await db.execute(
+        select(Project, User.email)
+        .join(User, Project.owner_id == User.id)
         .order_by(Project.created_at.desc())
     )
-    projects = projects_q.scalars().all()
+    projects = project_rows.all()
     if not projects:
-        return _EMPTY
+        return AnalyticsPromptBrowser(total_projects=0, total_prompts=0, projects=[])
 
-    project_ids = [p.id for p in projects]
-    project_name_map = {p.id: p.name for p in projects}
+    project_ids = [project.id for project, _owner_email in projects]
+    owner_ids = {project.owner_id for project, _owner_email in projects}
 
-    # ── Global recipe counts by status ───────────────────────────────────────
-    rs_q = await db.execute(
-        select(Recipe.status, func.count().label("cnt"))
-        .join(Site, Recipe.site_id == Site.id)
+    site_counts_result = await db.execute(
+        select(Site.project_id, func.count(Site.id))
         .where(Site.project_id.in_(project_ids))
-        .group_by(Recipe.status)
+        .group_by(Site.project_id)
     )
-    rs = {row.status: row.cnt for row in rs_q}
-    total_published = rs.get(RecipeStatus.published, 0)
-    total_generated = rs.get(RecipeStatus.generated, 0)
-    total_pending   = rs.get(RecipeStatus.pending, 0)
-    total_failed    = rs.get(RecipeStatus.failed, 0)
-    total_recipes   = sum(rs.values())
-    success_rate    = round(total_published / total_recipes * 100, 1) if total_recipes else 0.0
+    site_counts = {project_id: count for project_id, count in site_counts_result.all()}
 
-    # ── Global job counts ─────────────────────────────────────────────────────
-    js_q = await db.execute(
-        select(Job.status, func.count().label("cnt"))
+    recipe_counts_result = await db.execute(
+        select(Site.project_id, func.count(Recipe.id))
+        .join(Recipe, Recipe.site_id == Site.id)
+        .where(Site.project_id.in_(project_ids))
+        .group_by(Site.project_id)
+    )
+    recipe_counts = {project_id: count for project_id, count in recipe_counts_result.all()}
+
+    job_counts_result = await db.execute(
+        select(Job.project_id, func.count(Job.id))
         .where(Job.project_id.in_(project_ids))
-        .group_by(Job.status)
+        .group_by(Job.project_id)
     )
-    js = {row.status: row.cnt for row in js_q}
-    total_jobs           = sum(js.values())
-    total_jobs_completed = js.get(JobStatus.completed, 0)
-    total_jobs_failed    = js.get(JobStatus.failed, 0)
+    job_counts = {project_id: count for project_id, count in job_counts_result.all()}
 
-    # ── Last published recipe ─────────────────────────────────────────────────
-    lp_q = await db.execute(
-        select(Recipe, Site)
-        .join(Site, Recipe.site_id == Site.id)
-        .where(Site.project_id.in_(project_ids), Recipe.status == RecipeStatus.published)
-        .order_by(Recipe.created_at.desc())
-        .limit(1)
+    member_counts_result = await db.execute(
+        select(ProjectMember.project_id, func.count(ProjectMember.id))
+        .where(ProjectMember.project_id.in_(project_ids))
+        .group_by(ProjectMember.project_id)
     )
-    lp_row = lp_q.first()
-    last_published: LastPublished | None = None
-    if lp_row:
-        r, s = lp_row
-        last_published = LastPublished(
-            title=(r.seo_title or r.recipe_text or "").splitlines()[0][:120],
-            site_domain=s.domain,
-            wp_permalink=r.wp_permalink,
-            created_at=r.created_at,
-        )
+    member_counts = {project_id: count for project_id, count in member_counts_result.all()}
 
-    # ── Monthly stats (last 6 months) ─────────────────────────────────────────
-    # Use text("'month'") so the literal is not parameterized — PostgreSQL requires
-    # the GROUP BY expression to be identical (not just equal) to the SELECT expression.
-    cutoff = datetime.now(timezone.utc) - timedelta(days=183)
-    _month_trunc = func.date_trunc(text("'month'"), Recipe.created_at)
-    monthly_q = await db.execute(
-        select(
-            _month_trunc.label("month"),
-            func.count().label("total"),
-            func.sum(case((Recipe.status == RecipeStatus.published, 1), else_=0)).label("published"),
+    owner_prompts_result = await db.execute(
+        select(Prompt).where(
+            Prompt.owner_id.in_(owner_ids),
+            Prompt.project_id.is_(None),
         )
-        .join(Site, Recipe.site_id == Site.id)
-        .where(Site.project_id.in_(project_ids), Recipe.created_at >= cutoff)
-        .group_by(_month_trunc)
-        .order_by(_month_trunc)
     )
-    monthly = [
-        MonthStat(
-            month=row.month.strftime("%b %Y"),
-            generated=row.total,
-            published=int(row.published or 0),
-        )
-        for row in monthly_q
-    ]
+    owner_prompts: dict[tuple[object, str], Prompt] = {
+        (prompt.owner_id, prompt.key): prompt
+        for prompt in owner_prompts_result.scalars().all()
+    }
 
-    # ── Recent jobs (last 15) ─────────────────────────────────────────────────
-    rj_q = await db.execute(
-        select(Job)
-        .where(Job.project_id.in_(project_ids))
-        .order_by(Job.created_at.desc())
-        .limit(15)
+    project_prompts_result = await db.execute(
+        select(Prompt).where(Prompt.project_id.in_(project_ids))
     )
-    recent_jobs = [
-        RecentJob(
-            id=str(j.id),
-            job_type=j.job_type.value,
-            status=j.status.value,
-            project_name=project_name_map.get(j.project_id, "Unknown"),
-            created_at=j.created_at,
-            finished_at=j.finished_at,
-            total_rows=j.total_rows,
-            current_row=j.current_row,
-        )
-        for j in rj_q.scalars().all()
-    ]
+    project_prompts: dict[tuple[object, str], Prompt] = {
+        (prompt.project_id, prompt.key): prompt
+        for prompt in project_prompts_result.scalars().all()
+        if prompt.project_id is not None
+    }
 
-    # ── Per-project / per-site breakdown ──────────────────────────────────────
-    all_sites_q = await db.execute(select(Site).where(Site.project_id.in_(project_ids)))
-    all_sites = all_sites_q.scalars().all()
-    sites_by_project: dict[uuid.UUID, list] = {}
-    for s in all_sites:
-        sites_by_project.setdefault(s.project_id, []).append(s)
+    default_keys = list(DEFAULT_PROMPTS.keys())
+    default_key_set = set(default_keys)
+    analytics_projects: list[AnalyticsProject] = []
+    total_prompts = 0
 
-    project_analytics: list[ProjectAnalytics] = []
-    for p in projects:
-        p_sites = sites_by_project.get(p.id, [])
-        site_analytics: list[SiteAnalytics] = []
-        p_total = p_pub = p_gen = p_pend = p_fail = 0
-        p_last_pub: datetime | None = None
+    for project, owner_email in projects:
+        project_keys = {
+            key
+            for prompt_project_id, key in project_prompts
+            if prompt_project_id == project.id
+        }
+        owner_keys = {
+            key
+            for prompt_owner_id, key in owner_prompts
+            if prompt_owner_id == project.owner_id
+        }
+        prompt_keys = [*default_keys, *sorted((project_keys | owner_keys) - default_key_set)]
 
-        for s in p_sites:
-            sr_q = await db.execute(
-                select(Recipe.status, func.count().label("cnt"))
-                .where(Recipe.site_id == s.id)
-                .group_by(Recipe.status)
+        prompts: list[AnalyticsPrompt] = []
+        for key in prompt_keys:
+            project_prompt = project_prompts.get((project.id, key))
+            if project_prompt is not None:
+                prompts.append(_prompt_out(project_prompt, key, "project"))
+                continue
+
+            owner_prompt = owner_prompts.get((project.owner_id, key))
+            if owner_prompt is not None:
+                prompts.append(_prompt_out(owner_prompt, key, "owner"))
+                continue
+
+            prompts.append(_prompt_out(None, key, "default"))
+
+        total_prompts += len(prompts)
+        analytics_projects.append(
+            AnalyticsProject(
+                id=str(project.id),
+                name=project.name,
+                description=project.description or "",
+                owner_id=str(project.owner_id),
+                owner_email=owner_email,
+                created_at=project.created_at,
+                site_count=site_counts.get(project.id, 0),
+                recipe_count=recipe_counts.get(project.id, 0),
+                job_count=job_counts.get(project.id, 0),
+                member_count=member_counts.get(project.id, 0),
+                custom_prompt_count=len(project_keys),
+                prompts=prompts,
             )
-            sr = {row.status: row.cnt for row in sr_q}
-            s_total = sum(sr.values())
-            s_pub   = sr.get(RecipeStatus.published, 0)
-            s_gen   = sr.get(RecipeStatus.generated, 0)
-            s_pend  = sr.get(RecipeStatus.pending, 0)
-            s_fail  = sr.get(RecipeStatus.failed, 0)
+        )
 
-            lps_q = await db.execute(
-                select(Recipe.created_at, Recipe.recipe_text, Recipe.seo_title)
-                .where(Recipe.site_id == s.id, Recipe.status == RecipeStatus.published)
-                .order_by(Recipe.created_at.desc())
-                .limit(1)
-            )
-            lps = lps_q.first()
-            s_last_pub   = lps.created_at if lps else None
-            s_last_title = (lps.seo_title or lps.recipe_text or "").splitlines()[0][:80] if lps else None
-
-            site_analytics.append(SiteAnalytics(
-                id=str(s.id), domain=s.domain,
-                total=s_total, published=s_pub, generated=s_gen, pending=s_pend, failed=s_fail,
-                last_published_at=s_last_pub, last_title=s_last_title,
-            ))
-            p_total += s_total; p_pub += s_pub; p_gen += s_gen
-            p_pend += s_pend;   p_fail += s_fail
-            if s_last_pub and (p_last_pub is None or s_last_pub > p_last_pub):
-                p_last_pub = s_last_pub
-
-        project_analytics.append(ProjectAnalytics(
-            id=str(p.id), name=p.name, site_count=len(p_sites),
-            total=p_total, published=p_pub, generated=p_gen, pending=p_pend, failed=p_fail,
-            last_published_at=p_last_pub, sites=site_analytics,
-        ))
-
-    return OwnerAnalytics(
-        total_projects=len(projects),
-        total_sites=len(all_sites),
-        total_recipes=total_recipes,
-        total_published=total_published,
-        total_generated=total_generated,
-        total_pending=total_pending,
-        total_failed=total_failed,
-        total_jobs=total_jobs,
-        total_jobs_completed=total_jobs_completed,
-        total_jobs_failed=total_jobs_failed,
-        success_rate=success_rate,
-        last_published=last_published,
-        recent_jobs=recent_jobs,
-        projects=project_analytics,
-        monthly=monthly,
+    return AnalyticsPromptBrowser(
+        total_projects=len(analytics_projects),
+        total_prompts=total_prompts,
+        projects=analytics_projects,
     )
