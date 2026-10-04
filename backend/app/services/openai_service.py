@@ -34,6 +34,38 @@ def _repair_seo_once(value: str, issues: list[str], api_key: str, *, kind: str, 
     )
 
 
+def _improve_seo_best_effort(value: str, api_key: str, *, kind: str, keyword: str, log=None, title: bool = False) -> str:
+    """Try one SEO repair without discarding usable content or failing generation."""
+    _log = log or print
+    require_generated_text(value)
+    if not plain_text(value):
+        raise ValueError("AI returned empty content")
+    check = article_issues if kind == "HTML article" else lambda text, phrase: metadata_issues(text, phrase, title=title)
+    issues = check(value, keyword)
+    if not issues:
+        return value
+    try:
+        repaired = _repair_seo_once(value, issues, api_key, kind=kind, keyword=keyword, log=_log)
+        if kind == "HTML article":
+            repaired = re.sub(r'```(?:html)?\s*|\s*```', '', repaired)
+        else:
+            repaired = plain_text(repaired).strip('"\' ')
+        require_generated_text(repaired)
+        if not plain_text(repaired):
+            raise ValueError("SEO repair returned empty content")
+        remaining = check(repaired, keyword)
+        # Keep improvements only when they do not introduce new SEO issues.
+        if set(remaining).issubset(issues):
+            value, issues = repaired, remaining
+        else:
+            _log(f"SEO warning ({kind}): repair introduced new issues; keeping the original content.")
+    except Exception:
+        _log(f"SEO warning ({kind}): repair could not be completed; keeping the original content.")
+    if issues:
+        _log(f"SEO warning ({kind}): {' '.join(issues)} Generation will continue.")
+    return value
+
+
 def generate_with_openai(prompt: str, api_key: str, max_retries: int = 3, log: Callable[[str], None] | None = None) -> str:
     _log = log or print
     client = _get_client(api_key)
@@ -102,12 +134,7 @@ def generate_article(recipe_title: str, full_recipe: str, external_links: str, i
     result = re.sub(r'```html\s*', '', result)
     result = re.sub(r'\s*```', '', result)
     if focus_keyword:
-        issues = article_issues(result, focus_keyword)
-        result = _repair_seo_once(result, issues, api_key, kind="HTML article", keyword=focus_keyword, log=log)
-        result = re.sub(r'```(?:html)?\s*|\s*```', '', result)
-        remaining = article_issues(result, focus_keyword)
-        if remaining:
-            raise ValueError("Article failed SEO validation: " + " ".join(remaining))
+        result = _improve_seo_best_effort(result, api_key, kind="HTML article", keyword=focus_keyword, log=log)
     return require_generated_text(result)
 
 
@@ -161,10 +188,8 @@ def generate_meta_description(article: str, api_key: str, prompts: dict[str, str
     result = generate_with_openai(prompt, api_key, log=log)
     result = plain_text(require_generated_text(result)).strip('"\' ')
     if focus_keyword:
-        result = plain_text(_repair_seo_once(result, metadata_issues(result, focus_keyword), api_key, kind="meta description", keyword=focus_keyword, log=log)).strip('"\' ')
-        if metadata_issues(result, focus_keyword):
-            raise ValueError("Meta description failed keyword/length validation")
-    return result
+        result = _improve_seo_best_effort(result, api_key, kind="meta description", keyword=focus_keyword, log=log)
+    return require_generated_text(result)
 
 
 def generate_category(article: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:
@@ -194,10 +219,8 @@ def generate_seo_title(article: str, api_key: str, prompts: dict[str, str] | Non
     )
     result = plain_text(_response_text(response)).strip('"\' ')
     if focus_keyword:
-        result = plain_text(_repair_seo_once(result, metadata_issues(result, focus_keyword, title=True), api_key, kind="SEO title", keyword=focus_keyword, log=log)).strip('"\' ')
-        if metadata_issues(result, focus_keyword, title=True):
-            raise ValueError("SEO title failed keyword/length validation")
-    return result
+        result = _improve_seo_best_effort(result, api_key, kind="SEO title", keyword=focus_keyword, log=log, title=True)
+    return require_generated_text(result)
 
 
 def generate_focus_keyword(article: str, api_key: str, prompts: dict[str, str] | None = None, log: Callable[[str], None] | None = None) -> str:

@@ -26,16 +26,19 @@ to article, title, and description templates and appends consistency constraints
 Built-in prompts apply only where there is no saved override. The Settings view
 includes inherited owner prompts, following the worker's precedence.
 
-Generated articles target 750–1000 useful body words and require at least 600
-body words, one keyword-bearing H1, the keyword in the first paragraph, and a
-relevant H2/H3. One repair call is allowed before failing validation. These are
+Generated articles target 750–1000 useful body words. Checks flag fewer than 600
+body words, missing keyword placement in the H1, first paragraph or a relevant
+H2/H3, and title/description keyword or length issues. One best-effort repair is
+attempted. Remaining SEO issues become warnings in the job logs; generation
+continues with usable content even if the repair fails. Empty or failed initial
+AI responses and incomplete recipe cards still fail generation. These are
 editorial checks, not guarantees of search rankings or Pinterest Rich Pin display.
 
 The bridge has not been installed on a live site by this task. Test authenticated
 REST access after deploying it. Rank Math's editor may need to recalculate its
 own analysis; this plugin never writes an artificial score.
 
-Local verification covered 28 SEO/API regression tests, six publisher image/embed
+Local verification covered 33 SEO/API regression tests, six publisher image/embed
 tests, five publishing configuration checks, Python compilation and TypeScript
 type checking. External calls were mocked. PHP/WordPress was unavailable locally,
 so the bridge still needs runtime verification on WordPress before production use.

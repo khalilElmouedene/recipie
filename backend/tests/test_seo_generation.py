@@ -102,11 +102,39 @@ class AiGenerationTests(unittest.TestCase):
         self.assertNotIn("```", value)
         self.assertEqual(seo.article_issues(value, KEYWORD), [])
 
-    def test_unrepaired_article_fails(self):
+    def test_unrepaired_article_continues_with_warning(self):
+        logs = []
         with patch.object(openai_service, "generate_with_openai", return_value="<p>Too short</p>") as generate:
-            with self.assertRaisesRegex(ValueError, "SEO validation"):
-                openai_service.generate_article("Cookies", SOURCE, "", [], "test-key", focus_keyword=KEYWORD)
+            value = openai_service.generate_article("Cookies", SOURCE, "", [], "test-key", focus_keyword=KEYWORD, log=logs.append)
+        self.assertEqual(value, "<p>Too short</p>")
+        self.assertTrue(any("SEO warning" in message and "Generation will continue" in message for message in logs))
         self.assertEqual(generate.call_count, 2)
+
+    def test_missing_keyword_in_first_paragraph_is_not_fatal(self):
+        original = article().replace(f"<p>{KEYWORD} are easy to prepare.</p>", "<p>A warm, cozy recipe for autumn.</p>")
+        logs = []
+        with patch.object(openai_service, "generate_with_openai", return_value=original):
+            value = openai_service.generate_article("Cookies", SOURCE, "", [], "test-key", focus_keyword=KEYWORD, log=logs.append)
+        self.assertEqual(value, original)
+        self.assertTrue(any("first paragraph" in message and "SEO warning" in message for message in logs))
+
+    def test_failed_or_invalid_seo_repair_keeps_original_article(self):
+        original = article().replace(f"<p>{KEYWORD} are easy to prepare.</p>", "<p>A cozy autumn recipe.</p>")
+        for repair in (RuntimeError("API unavailable"), "Error: failed", "", "<p></p>", "<p>Shorter and worse</p>"):
+            with self.subTest(repair=repair), patch.object(openai_service, "generate_with_openai", side_effect=[original, repair]):
+                value = openai_service.generate_article("Cookies", SOURCE, "", [], "test-key", focus_keyword=KEYWORD, log=lambda _: None)
+            self.assertEqual(value, original)
+
+    def test_failed_initial_article_generation_still_raises(self):
+        with patch.object(openai_service, "generate_with_openai", side_effect=RuntimeError("API unavailable")):
+            with self.assertRaises(RuntimeError):
+                openai_service.generate_article("Cookies", SOURCE, "", [], "test-key", focus_keyword=KEYWORD)
+
+    def test_empty_initial_html_still_fails_without_seo_repair(self):
+        with patch.object(openai_service, "generate_with_openai", return_value="<p></p>") as generate:
+            with self.assertRaisesRegex(ValueError, "empty content"):
+                openai_service.generate_article("Cookies", SOURCE, "", [], "test-key", focus_keyword=KEYWORD)
+        self.assertEqual(generate.call_count, 1)
 
     def test_description_repair_returns_plain_text(self):
         with patch.object(openai_service, "generate_with_openai", side_effect=["Wrong phrase", '<b>Make pumpkin cookies with simple ingredients.</b>']) as generate:
@@ -120,6 +148,20 @@ class AiGenerationTests(unittest.TestCase):
         with patch.object(openai_service, "_get_client", return_value=client), patch.object(openai_service, "generate_with_openai", return_value="Pumpkin Cookies Recipe"):
             value = openai_service.generate_seo_title(article(), "test-key", focus_keyword=KEYWORD)
         self.assertEqual(value, "Pumpkin Cookies Recipe")
+
+    def test_metadata_seo_issues_and_repair_failures_do_not_fail_generation(self):
+        description = "A cozy autumn dessert. " * 8
+        title = "A cozy autumn dessert"
+        logs = []
+        with patch.object(openai_service, "generate_with_openai", side_effect=[description, RuntimeError("API unavailable")]):
+            value = openai_service.generate_meta_description(article(), "test-key", focus_keyword=KEYWORD, log=logs.append)
+        self.assertEqual(value, description.strip())
+        self.assertTrue(any("Generation will continue" in message for message in logs))
+        client = Mock()
+        client.chat.completions.create.return_value = response(title)
+        with patch.object(openai_service, "_get_client", return_value=client), patch.object(openai_service, "generate_with_openai", return_value=title):
+            value = openai_service.generate_seo_title(article(), "test-key", focus_keyword=KEYWORD, log=lambda _: None)
+        self.assertEqual(value, title)
 
     def test_recipe_json_preserves_quantities_without_fake_time_defaults(self):
         with patch.object(openai_service, "generate_with_openai", return_value=json.dumps(CARD)) as generate:
