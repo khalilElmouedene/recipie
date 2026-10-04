@@ -421,6 +421,15 @@ async def update_recipe(
         recipe.pin_tags = body.pin_tags
     if body.seo_title is not None:
         recipe.seo_title = body.seo_title
+    if body.focus_keyword is not None:
+        from ..services.seo import clean_focus_keyword
+        try:
+            recipe.focus_keyword = clean_focus_keyword(body.focus_keyword) if body.focus_keyword.strip() else ""
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if body.meta_description is not None:
+        from ..services.seo import plain_text
+        recipe.meta_description = plain_text(body.meta_description)
     if body.wp_tags is not None:
         recipe.wp_tags = body.wp_tags
 
@@ -632,7 +641,44 @@ async def publish_recipe_article(
         recipe.pin_blog_link = recipe.wp_permalink
     await db.commit()
 
-    return {"wp_post_id": recipe.wp_post_id, "wp_permalink": recipe.wp_permalink}
+    return {"wp_post_id": recipe.wp_post_id, "wp_permalink": recipe.wp_permalink,
+            "seo_status": pub_result.get("seo_status", "unverified"),
+            "seo_warning": pub_result.get("seo_warning", "")}
+
+
+@router.post("/api/recipes/{recipe_id}/sync-seo")
+async def sync_recipe_seo(
+    recipe_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """Update SEO fields on the existing post without republishing or changing its URL."""
+    recipe = await db.get(Recipe, recipe_id)
+    if not recipe:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    site = await db.get(Site, recipe.site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    await check_project_access(site.project_id, user, db)
+    if not recipe.wp_post_id:
+        raise HTTPException(status_code=400, detail="Publish the article before syncing SEO")
+    from ..services.seo import clean_focus_keyword, metadata_issues, plain_text
+    from ..services.wordpress import set_rank_math_meta
+    try:
+        keyword = clean_focus_keyword(recipe.focus_keyword or "")
+        title = plain_text(recipe.seo_title or "")
+        description = plain_text(recipe.meta_description or "")
+        issues = metadata_issues(title, keyword, title=True) + metadata_issues(description, keyword)
+        if issues:
+            raise ValueError(" ".join(issues))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    username, password = get_random_wp_credentials(site)
+    config = {"wp_url": site.wp_url, "wp_username": username, "wp_password": password}
+    return await asyncio.get_running_loop().run_in_executor(
+        None, functools.partial(set_rank_math_meta, recipe.wp_post_id, keyword, description,
+                                config, seo_title=title)
+    )
 
 
 @router.get("/api/pin-templates", response_model=list[PinTemplateOut])

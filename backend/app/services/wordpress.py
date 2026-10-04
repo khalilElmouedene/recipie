@@ -147,7 +147,7 @@ def upload_pin_embed_images(soup, site_config: dict, title: str, log: Callable[[
             _log(f"Pin embed image upload failed: {e}")
 
 
-def inject_images_into_html(soup, img1_url: str | None, img2_url: str | None = None) -> str:
+def inject_images_into_html(soup, img1_url: str | None, img2_url: str | None = None, alt_text: str = "") -> str:
     """Insert images into article HTML using BeautifulSoup — mirrors the Winsome publisher script.
     img1 is inserted before the first <p> (top of article).
     img2 is inserted before the 4th <h2> (mid-article).
@@ -164,14 +164,14 @@ def inject_images_into_html(soup, img1_url: str | None, img2_url: str | None = N
     # Image 1 — before first <p>
     first_p = soup.find("p")
     if first_p and img1_url:
-        tag = soup.new_tag("img", src=img1_url, loading="lazy", decoding="async")
+        tag = soup.new_tag("img", src=img1_url, alt=alt_text, loading="lazy", decoding="async")
         first_p.insert_before(tag)
 
     # Image 2 — before 4th <h2>
     if img2_url:
         h2_list = soup.find_all("h2")
         target = h2_list[3] if len(h2_list) >= 4 else (soup.find("body") or soup)
-        tag2 = soup.new_tag("img", src=img2_url, loading="lazy", decoding="async")
+        tag2 = soup.new_tag("img", src=img2_url, alt=alt_text, loading="lazy", decoding="async")
         target.insert_before(tag2)
 
     body = soup.find("body")
@@ -460,7 +460,7 @@ def set_rank_math_meta(
     site_config: dict,
     seo_title: str = "",
     log: Callable[[str], None] | None = None,
-):
+) -> dict:
     _log = log or print
     try:
         base_url = _wp_rest_base(site_config)
@@ -473,11 +473,27 @@ def set_rank_math_meta(
         if seo_description:
             meta["rank_math_description"] = seo_description
         if meta:
-            r = _wp_session(auth).post(f"{base_url}/posts/{post_id}", json={"meta": meta}, timeout=30)
+            session = _wp_session(auth)
+            r = session.post(f"{base_url}/posts/{post_id}", json={"meta": meta}, timeout=30)
             r.raise_for_status()
-            _log(f"Rank Math SEO meta updated for post {post_id}")
+            saved = session.get(f"{base_url}/posts/{post_id}", params={"context": "edit", "_fields": "id,meta"}, timeout=30)
+            saved.raise_for_status()
+            stored_meta = saved.json().get("meta", {})
+            if not isinstance(stored_meta, dict) or any(key not in stored_meta for key in meta):
+                message = "Rank Math fields are not exposed by WordPress REST; SEO saving is unverified. Enable the RecipeBot SEO metadata bridge on this site."
+                _log(f"Warning: {message}")
+                return {"status": "unverified", "message": message}
+            mismatches = [key for key, value in meta.items() if stored_meta[key] != value]
+            if mismatches:
+                message = "WordPress did not retain these Rank Math fields: " + ", ".join(mismatches)
+                _log(f"Warning: {message}")
+                return {"status": "failed", "message": message}
+            _log(f"Rank Math SEO metadata verified for post {post_id}")
+            return {"status": "verified", "message": ""}
+        return {"status": "skipped", "message": "No SEO metadata supplied"}
     except Exception as e:
         _log(f"Error setting Rank Math meta: {e}")
+        return {"status": "unverified", "message": "Could not write and verify Rank Math metadata"}
 
 
 def insert_image_after_paragraph(html: str, image_url: str, alt_text: str, paragraph_number: int = 4) -> str:

@@ -519,6 +519,8 @@ export const api = {
     pin_board?: string;
     pin_tags?: string;
     seo_title?: string;
+    focus_keyword?: string;
+    meta_description?: string;
     wp_tags?: string;
   }) =>
     request<RecipeOut>(`/api/recipes/${recipeId}`, { method: "PATCH", body: JSON.stringify(data) }),
@@ -530,9 +532,12 @@ export const api = {
     request<void>(buildPathWithQuery(`/api/sites/${siteId}/recipes`, { status: recipeStatus }), { method: "DELETE" }),
 
   publishRecipeArticle: (recipeId: string) =>
-    request<{ wp_post_id: string; wp_permalink: string }>(`/api/recipes/${recipeId}/publish-article`, {
+    request<{ wp_post_id: string; wp_permalink: string; seo_status?: string; seo_warning?: string }>(`/api/recipes/${recipeId}/publish-article`, {
       method: "POST",
     }),
+
+  syncRecipeSeo: (recipeId: string) =>
+    request<{ status: string; message: string }>(`/api/recipes/${recipeId}/sync-seo`, { method: "POST" }),
 
   getPinterestBoards: (projectId: string) =>
     request<PinterestBoard[]>(`/api/projects/${projectId}/pinterest/boards`),

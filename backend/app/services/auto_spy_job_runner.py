@@ -1686,6 +1686,7 @@ async def start_auto_spy_generate_job(
                         should_stop=rj.should_stop,
                         pinterest_url=item.get("pinterest_url", ""),
                         generate_recipe_json=bool(item.get("generate_recipe_json", True)),
+                        focus_keyword=item.get("focus_keyword") or "",
                     )
 
                     if rj.should_stop():
@@ -1906,6 +1907,7 @@ async def resume_auto_spy_generate_job(
                 "generate_recipe_json": bool(getattr(site, "generate_recipe_json", True)),
                 "pin_template_id": site.pin_template_id,
                 "recipe_text": recipe.recipe_text,
+                "focus_keyword": recipe.focus_keyword or "",
                 "image_url": recipe.image_url,
             })
 
@@ -2053,6 +2055,7 @@ async def resume_auto_spy_generate_job(
                         should_stop=rj.should_stop,
                         pinterest_url=item.get("pinterest_url", ""),
                         generate_recipe_json=bool(item.get("generate_recipe_json", True)),
+                        focus_keyword=item.get("focus_keyword") or "",
                     )
 
                     if rj.should_stop():

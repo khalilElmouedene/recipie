@@ -146,14 +146,20 @@ async def list_prompts(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    fallback = await db.execute(
+        select(Prompt).where(Prompt.owner_id == project.owner_id, Prompt.project_id.is_(None))
+    )
     result = await db.execute(
         select(Prompt).where(Prompt.owner_id == project.owner_id, Prompt.project_id == project_id)
     )
-    rows = result.scalars().all()
+    rows = list(fallback.scalars().all()) + list(result.scalars().all())
     out = {r.key: PromptOut(key=r.key, value=r.value, description=r.description or "") for r in rows}
     for key, data in DEFAULT_PROMPTS.items():
         if key not in out:
             out[key] = PromptOut(key=key, value=data["value"], description=data.get("description", ""))
+        else:
+            # Current placeholder documentation also applies to saved custom prompts.
+            out[key].description = data.get("description", "")
     return list(out.values())
 
 
@@ -238,15 +244,7 @@ async def update_prompts(
                 description=DEFAULT_PROMPTS[key].get("description", ""),
             ))
     await db.commit()
-    result = await db.execute(
-        select(Prompt).where(Prompt.owner_id == user.id, Prompt.project_id == project_id)
-    )
-    rows = result.scalars().all()
-    out = {r.key: PromptOut(key=r.key, value=r.value, description=r.description or "") for r in rows}
-    for key, data in DEFAULT_PROMPTS.items():
-        if key not in out:
-            out[key] = PromptOut(key=key, value=data["value"], description=data.get("description", ""))
-    return list(out.values())
+    return await list_prompts(user=user, db=db, project_id=project_id)
 
 
 # ── Pinterest Boards ─────────────────────────────────────────────────────────

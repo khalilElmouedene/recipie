@@ -3,13 +3,16 @@ from __future__ import annotations
 
 DEFAULT_PROMPTS: dict[str, dict[str, str]] = {
     "article": {
-        "value": """You are a professional americain recipe blogger. Your goal is to write a long, SEO-optimized blog article based on the recipe I will provide in english language.
+        "value": """You are a professional recipe blogger. Write in the same language as the supplied recipe. Write 750-1000 useful body words with specific cooking guidance.
+
+Primary search phrase: {focus_keyword}
+Use this exact phrase naturally in the H1, first paragraph and one relevant H2 or H3. Preserve ingredient quantities and instructions. Do not invent personal experience or testing stories.
 
 Instructions:
 
 Write in a warm, conversational, and friendly tone, as if you're talking to a friend in the kitchen.
 
-Use the second person ("you") to guide the reader step by step, and occasionally use the first person ("I") to add helpful personal tips.
+Use the second person to guide the reader step by step with practical cooking tips.
 
 Use simple, clear language with an inviting, cozy vibe. No jargon.
 
@@ -61,7 +64,7 @@ Structure:
 <!-- INSERT INTERNAL & EXTERNAL LINKS INSTRUCTIONS -->
 
 **Internal Links Instructions:**
-You must naturally integrate 2–3 internal links from the following list into the body of the article using rich anchor text.
+When verified URLs are available below, naturally integrate relevant internal links into the body using descriptive anchor text. Otherwise omit them.
 Make sure these links:
 - Are placed only where they make contextual sense.
 - Use meaningful and descriptive anchor text (no 'click here').
@@ -72,184 +75,75 @@ Here are the internal links you may use:
 {internal_links}
 
 **External Link Instruction:**
-At the very end of the article, add a short sentence encouraging readers to follow the Pinterest account.
+If a Pinterest account URL is supplied below, add a short sentence at the end encouraging readers to follow it. Otherwise omit this sentence and link.
 
 Use the word <strong>Pinterest</strong> as the anchor text, linking it to:
 {pinterest_url}
 
 Now write the full HTML article using the following recipe:
 {new_recipe}""",
-        "description": "Article generation - placeholders: {recipe_name}, {new_recipe}, {internal_links}, {pinterest_url}",
+        "description": "Article generation - placeholders: {recipe_name}, {new_recipe}, {internal_links}, {pinterest_url}, {focus_keyword}",
     },
     "full_recipe": {
-        "value": "Rewrite in English language the following food recipe in a clean and professional format. Only include title, ingredients, and instructions. Do not add commentary.\n\n{original_recipe}",
+        "value": "Rewrite the complete recipe in its original language in a clean, professional format. Preserve all supplied ingredients, quantities, temperatures, times and instructions. Include title, ingredients and instructions only. If the input is just a dish name, draft a recipe for that dish. Do not claim it has been tested.\n\n{original_recipe}",
         "description": "Full recipe rewrite - placeholder: {original_recipe}",
     },
     "recipe_json": {
-        "value": """You are an expert recipe-card generator.
-Parse the following english food article and return ONLY a JSON object (no backticks, no markdown) that follows THIS schema exactly:
+        "value": """Map the supplied recipe into this WP Recipe Maker JSON shape. Return one JSON object only.
+Preserve the recipe language, ingredient quantities, method and supplied times.
+Populate every ingredient and instruction, not just the single example entry.
+Use integer minutes for times. Leave unknown times/servings at 0 and unknown nutrition empty.
+Do not invent ratings, author claims, nutrition, or ingredients from unrelated examples.
 
 {{
-  "name": "Garlic Butter Chicken Bites with Creamy Parmesan Pasta",
-  "summary": "<p>Juicy garlic butter chicken bites served over rich, creamy Parmesan pasta—this easy yet elegant meal is perfect for busy weeknights or cozy weekends.</p>",
-  "author_display": "disabled",
-  "author_name": "",
-  "author_link": "",
-  "cost": "",
-  "servings": "4",
-  "servings_unit": "servings",
-  "prep_time": "10",
-  "prep_time_zero": "",
-  "cook_time": "25",
-  "cook_time_zero": "",
-  "total_time": "35",
-  "custom_time": "",
-  "custom_time_zero": "",
-  "custom_time_label": "",
+  "name": "",
+  "summary": "",
+  "servings": 0,
+  "servings_unit": "",
+  "prep_time": 0,
+  "cook_time": 0,
+  "total_time": 0,
   "tags": {{
-    "course": ["Dinner", "Main Course"],
-    "cuisine": ["American", "Italian-Inspired"],
-    "keyword": ["Garlic Butter Chicken", "Creamy Pasta", "Parmesan"],
-    "difficulty": []
+    "course": [],
+    "cuisine": [],
+    "keyword": []
   }},
   "equipment": [
-    {{ "name": "Large Skillet" }},
-    {{ "name": "Large Pot" }},
-    {{ "name": "Tongs or Spatula" }}
+    {{
+      "name": ""
+    }}
   ],
   "ingredients_flat": [
     {{
-      "name": "For the Garlic Butter Chicken Bites",
-      "type": "group"
-    }},
-    {{
-      "amount": "1",
-      "unit": "lb",
-      "name": "boneless chicken breasts",
-      "notes": "cut into bite-sized pieces",
-      "converted": {{
-        "2": {{ "amount": "450", "unit": "g" }}
-      }},
-      "type": "ingredient"
-    }},
-    {{
-      "amount": "2",
-      "unit": "tbsp",
-      "name": "olive oil",
-      "notes": "",
-      "converted": {{
-        "2": {{ "amount": "30", "unit": "ml" }}
-      }},
-      "type": "ingredient"
-    }},
-    {{
-      "amount": "3",
-      "unit": "tbsp",
-      "name": "unsalted butter",
-      "notes": "",
-      "converted": {{
-        "2": {{ "amount": "45", "unit": "g" }}
-      }},
-      "type": "ingredient"
-    }},
-    {{
-      "amount": "3",
-      "unit": "cloves",
-      "name": "garlic",
-      "notes": "minced",
-      "converted": {{
-        "2": {{ "amount": "3", "unit": "cloves" }}
-      }},
-      "type": "ingredient"
-    }},
-    {{
-      "name": "For the Creamy Parmesan Pasta",
-      "type": "group"
-    }},
-    {{
-      "amount": "12",
-      "unit": "oz",
-      "name": "fettuccine",
-      "notes": "or linguine",
-      "converted": {{
-        "2": {{ "amount": "340", "unit": "g" }}
-      }},
-      "type": "ingredient"
-    }},
-    {{
-      "amount": "1.5",
-      "unit": "cups",
-      "name": "heavy cream",
-      "notes": "",
-      "converted": {{
-        "2": {{ "amount": "360", "unit": "ml" }}
-      }},
-      "type": "ingredient"
-    }},
-    {{
-      "amount": "1",
-      "unit": "cup",
-      "name": "Parmesan cheese",
-      "notes": "grated",
-      "converted": {{
-        "2": {{ "amount": "100", "unit": "g" }}
-      }},
-      "type": "ingredient"
+      "type": "ingredient",
+      "amount": "",
+      "unit": "",
+      "name": "",
+      "notes": ""
     }}
   ],
   "instructions_flat": [
     {{
-      "text": "<p><strong>Step 1:</strong> Cook pasta in a large pot of salted water until al dente. Reserve 1/2 cup of pasta water. Drain and set aside.</p>",
       "type": "instruction",
-      "image_url": ""
-    }},
-    {{
-      "text": "<p><strong>Step 2:</strong> In a skillet, heat olive oil over medium-high. Season chicken with paprika, Italian seasoning, salt, and pepper. Sear for 3-4 minutes per side until golden and cooked through. Remove and set aside.</p>",
-      "type": "instruction",
-      "image_url": ""
-    }},
-    {{
-      "text": "<p><strong>Step 3:</strong> In the same skillet, melt butter and add minced garlic. Saute for 1 minute. Return chicken to the pan and toss in garlic butter.</p>",
-      "type": "instruction",
-      "image_url": ""
+      "text": ""
     }}
   ],
-  "video_embed": "",
-  "notes": "<p>Make it lighter by swapping heavy cream with half-and-half. Store leftovers in the fridge up to 3 days.</p>",
-  "nutrition": {{
-    "calories": 670,
-    "carbohydrates": 40,
-    "protein": 38,
-    "fat": 42,
-    "saturated_fat": 22,
-    "cholesterol": 160,
-    "sodium": 580,
-    "potassium": 550,
-    "fiber": 2,
-    "sugar": 2,
-    "vitamin_a": 1100,
-    "vitamin_c": 6,
-    "calcium": 280,
-    "iron": 2
-  }},
-  "custom_fields": {{}},
-  "ingredient_links_type": "global"
+  "nutrition": {{}},
+  "notes": ""
 }}
 
-Rules:
-• Fill every blank with info from the article.
-• Times are integers in minutes.
-• Leave a field empty (or 0) if info is missing.
-• Do NOT wrap the JSON in backticks or markdown.
+Canonical recipe:
+{full_recipe}
 
-ARTICLE:
+Article context:
 {article}""",
-        "description": "Recipe JSON - placeholder: {article}",
+        "description": "Recipe JSON - placeholders: {article}, {full_recipe}",
     },
     "meta_description": {
         "value": """You are an SEO expert.
 
 Write a single meta description (≤ 140 characters) for this article.
+Use the article's language and include the exact primary search phrase: {focus_keyword}
 Rules:
 - One short, clear sentence.
 - No emojis.
@@ -264,7 +158,7 @@ Allowed characters:
 
 Article:
 {article}""",
-        "description": "Meta description - placeholder: {article}",
+        "description": "Meta description - placeholders: {article}, {focus_keyword}",
     },
     "category": {
         "value": """Wähle die BESTPASSENDE Kategorie für den folgenden deutschen Artikel.
@@ -351,17 +245,18 @@ Article:
         "description": "Pinterest board selection - placeholders: {article}, {boards_list}",
     },
     "seo_title": {
-        "value": """You are an SEO expert for a US food blog.
+        "value": """You are an SEO editor for a recipe blog. Use the article's language and natural capitalization for that language.
 
 Task: Write a single SEO title for this recipe article.
 
 Rules:
-- Use natural Title Case.
+- Include the exact search phrase near the beginning: {focus_keyword}
+- Aim for at most 60 characters, with a maximum of 70.
 - Use a style like:
   • Easy Chocolate Cupcakes Recipe
   • Homemade Spaghetti Sauce Recipe
   • Air Fryer Chicken Wings (Extra Crispy!)
-- Include the word "Recipe" unless the title ends with a parenthetical or exclamation tag.
+- Use a natural word for recipe in the article's language only when it fits.
 - Make it natural and compelling.
 - Return ONLY the title on one line, nothing else.
 
@@ -373,7 +268,7 @@ Allowed characters:
 
 Article:
 {article}""",
-        "description": "SEO post title - placeholder: {article}",
+        "description": "SEO post title - placeholders: {article}, {focus_keyword}",
     },
     "focus_keyword": {
         "value": """Create a single focus keyphrase for this article.
@@ -381,6 +276,8 @@ Article:
 Rules:
 - 2–5 words.
 - What a user would type in Google.
+- Use the supplied recipe's language and preserve accented letters.
+- Return a suggestion only; do not invent search volume or competition data.
 - No quotes, no explanations.
 - Example: garlic butter chicken pasta
 
@@ -397,7 +294,7 @@ Article:
         "description": "Focus keyphrase - placeholder: {article}",
     },
     "wp_tags": {
-        "value": """(The tags should be in English) Gib 3–5 relevante Tags (Komma-getrennt, nur Kleinbuchstaben) für diesen englischsprachigen Rezept-Artikel zurück. Keine Hashtags, keine Wiederholungen.
+        "value": """Return 3-5 relevant WordPress tags in the same language as this recipe article. Use lowercase, commas, no hashtags and no duplicate tags.
 
 Artikel:
 {article}""",
@@ -462,7 +359,7 @@ Recipe title:
 
 def get_prompt(prompts: dict[str, str], key: str) -> str:
     """Get prompt value from dict, fallback to default."""
-    if prompts and key in prompts:
+    if prompts and key in prompts and prompts[key].strip():
         return prompts[key]
     if key in DEFAULT_PROMPTS:
         return DEFAULT_PROMPTS[key]["value"]

@@ -20,6 +20,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 from . import midjourney, openai_service
+from .seo import clean_focus_keyword, require_generated_text
 from .midjourney_tracking import MidjourneyTrackingStore
 from app.config import settings
 from ..midjourney_settings import (
@@ -438,7 +439,7 @@ def get_sitemap_links(site_domain: str, log: Callable[[str], None] | None = None
         except Exception:
             continue
 
-    _log("WARNING: No internal links found - article will use fallback category links")
+    _log("WARNING: No verified internal links found - article will omit internal links")
     return []
 
 
@@ -453,6 +454,7 @@ def generate_for_recipe(
     should_stop: Callable[[], bool] | None = None,
     pinterest_url: str = "",
     generate_recipe_json: bool = True,
+    focus_keyword: str = "",
 ) -> dict:
     """Generate all content for a single recipe. Returns a dict of fields to update on the Recipe row."""
     _log = log or print
@@ -470,8 +472,17 @@ def generate_for_recipe(
         if _stop():
             return result
         _log("Generating full recipe...")
-        full_recipe = openai_service.generate_full_recipe(recipe_title, openai_key, prompts=prompts, log=_log)
+        full_recipe = require_generated_text(openai_service.generate_full_recipe(recipe_text or recipe_title, openai_key, prompts=prompts, log=_log))
         result["generated_full_recipe"] = full_recipe
+
+        # Select the phrase before writing, so every SEO field shares one target.
+        if _stop():
+            return result
+        selected_keyword = clean_focus_keyword(focus_keyword) if focus_keyword.strip() else clean_focus_keyword(
+            openai_service.generate_focus_keyword(full_recipe, openai_key, prompts=prompts, log=_log)
+        )
+        result["focus_keyword"] = selected_keyword
+        _log(f"Focus keyword: {selected_keyword}")
 
         # 2. Midjourney images (required when Discord credentials are configured)
         discord_auth = credentials.get("discord_auth", "").strip()
@@ -508,7 +519,7 @@ def generate_for_recipe(
         _log("Generating article HTML...")
         internal_links = get_sitemap_links(site_domain, log=_log)
         _log(f"Found {len(internal_links)} internal links from sitemap")
-        article = openai_service.generate_article(recipe_title, full_recipe, "", internal_links, openai_key, prompts=prompts, log=_log, site_domain=site_domain, pinterest_url=pinterest_url)
+        article = require_generated_text(openai_service.generate_article(recipe_title, full_recipe, "", internal_links, openai_key, prompts=prompts, log=_log, site_domain=site_domain, pinterest_url=pinterest_url, focus_keyword=selected_keyword))
         result["generated_article"] = article
 
         # 3. Generate recipe JSON for WP Recipe Maker (uses full article)
@@ -516,7 +527,7 @@ def generate_for_recipe(
             if _stop():
                 return result
             _log("Generating recipe JSON...")
-            recipe_json = openai_service.generate_recipe_json(recipe_title, article, "", openai_key, prompts=prompts, log=_log)
+            recipe_json = openai_service.generate_recipe_json(recipe_title, article, "", openai_key, prompts=prompts, log=_log, full_recipe=full_recipe)
             result["generated_json"] = recipe_json
         else:
             _log("Skipping recipe JSON generation (disabled for this job)")
@@ -526,7 +537,7 @@ def generate_for_recipe(
         if _stop():
             return result
         _log("Generating meta description...")
-        meta = openai_service.generate_meta_description(article, openai_key, prompts=prompts, log=_log)
+        meta = require_generated_text(openai_service.generate_meta_description(article, openai_key, prompts=prompts, log=_log, focus_keyword=selected_keyword))
         result["meta_description"] = meta
 
         # 5. Category
@@ -539,13 +550,12 @@ def generate_for_recipe(
         # 6. SEO title (AI-generated, used as WP post title + Rank Math title)
         if not _stop():
             _log("Generating SEO title...")
-            try:
-                seo_title = openai_service.generate_seo_title(article, openai_key, prompts=prompts, log=_log)
-                if seo_title and len(seo_title) > 3:
-                    result["seo_title"] = seo_title
-                    _log(f"SEO title: {seo_title}")
-            except Exception as e:
-                _log(f"SEO title generation failed (non-fatal): {e}")
+            seo_title = require_generated_text(openai_service.generate_seo_title(article, openai_key, prompts=prompts, log=_log, focus_keyword=selected_keyword))
+            result["seo_title"] = seo_title
+            _log(f"SEO title: {seo_title}")
+
+        if not _stop():
+            result["wp_tags"] = require_generated_text(openai_service.generate_wp_tags(article, openai_key, prompts=prompts, log=_log))
 
         # 7. Pinterest board selection (AI picks best board from boards list)
         from .prompts import DEFAULT_PROMPTS as _DP
@@ -740,6 +750,7 @@ def process_recipes_from_db(
             should_stop=_stop,
             pinterest_url=pinterest_url,
             generate_recipe_json=generate_recipe_json,
+            focus_keyword=recipe.get("focus_keyword") or "",
         )
 
         if _stop():

@@ -268,6 +268,8 @@ class RecipeUpdate(BaseModel):
     pin_board: str | None = None
     pin_tags: str | None = None
     seo_title: str | None = None
+    focus_keyword: str | None = Field(default=None, max_length=100)
+    meta_description: str | None = Field(default=None, max_length=160)
     wp_tags: str | None = None
 
 

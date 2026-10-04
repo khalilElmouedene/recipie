@@ -22,6 +22,7 @@ class PublisherPinEmbedTests(unittest.TestCase):
             "wp_username": "author",
             "wp_password": "secret",
             "domain": "https://example.com",
+            "embed_pin_in_article": True,
         }
         self.base_recipe = {
             "id": "recipe-1",
@@ -158,6 +159,17 @@ class PublisherPinEmbedTests(unittest.TestCase):
         self.assertEqual(upload_image_mock.call_count, 1)
         self.assertEqual(payload["featured_media"], 10)
         self.assertIn('src="https://wp.example.com/featured.webp"', payload["content"])
+
+    def test_disabled_pin_embedding_removes_existing_embed_without_uploading_pin(self) -> None:
+        self.site_config["embed_pin_in_article"] = False
+        recipe = {
+            **self.base_recipe,
+            "generated_article": '<h1>Cookies</h1><p>Introduction</p><figure data-recipe-generator-pin-embed="1"><img src="https://example.com/pin.png" /></figure>',
+        }
+        payload, upload_mock, _ = self._publish(recipe)
+        self.assertEqual(upload_mock.call_count, 1)
+        self.assertNotIn("data-recipe-generator-pin-embed", payload["content"])
+        self.assertNotIn("wp-published-pin.webp", payload["content"])
 
 
 if __name__ == "__main__":

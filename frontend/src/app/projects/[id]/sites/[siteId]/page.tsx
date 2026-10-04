@@ -117,6 +117,9 @@ export default function SiteDetailPage() {
 
   // WordPress publish (full article - per recipe)
   const [wpPublishingId, setWpPublishingId] = useState<string | null>(null);
+  const [seoEditingId, setSeoEditingId] = useState<string | null>(null);
+  const [seoDraft, setSeoDraft] = useState({ focus_keyword: "", seo_title: "", meta_description: "" });
+  const [seoSaving, setSeoSaving] = useState(false);
 
   // Saved pin design form (Pinterest tab)
   const [pinDesignTitle, setPinDesignTitle] = useState("");
@@ -823,6 +826,9 @@ export default function SiteDetailPage() {
     try {
       const data = await api.publishRecipeArticle(r.id);
       toast.success(`Published to WordPress! Post: ${data.wp_permalink}`);
+      if (data.seo_status !== "verified") {
+        toast.warning(data.seo_warning || "Post published, but SEO metadata could not be verified.");
+      }
       loadRecipes();
     } catch (err: any) {
       // The request may have timed out (Cloudflare proxy timeout) while the backend
@@ -857,6 +863,33 @@ export default function SiteDetailPage() {
       toast.error(err.message || "Failed to save");
     }
     setPinDesignSaving(false);
+  };
+
+  const handleSaveSeo = async (recipeId: string) => {
+    setSeoSaving(true);
+    try {
+      const updated = await api.updateRecipe(recipeId, seoDraft);
+      setRecipes((prev) => prev.map((recipe) => recipe.id === recipeId ? toRecipeListItem(updated) : recipe));
+      setSeoEditingId(null);
+      toast.success("SEO fields saved. An existing keyword will be reused when regenerating this recipe.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save SEO fields");
+    } finally {
+      setSeoSaving(false);
+    }
+  };
+
+  const handleSyncSeo = async (recipeId: string) => {
+    setSeoSaving(true);
+    try {
+      const result = await api.syncRecipeSeo(recipeId);
+      if (result.status === "verified") toast.success("SEO fields updated and verified on the existing WordPress post.");
+      else toast.warning(result.message || "WordPress SEO saving could not be verified.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not sync SEO to WordPress");
+    } finally {
+      setSeoSaving(false);
+    }
   };
 
   const handleCreatePins = async (recipeId: string) => {
@@ -1373,6 +1406,30 @@ export default function SiteDetailPage() {
                   )}
                   {detailTab === "seo" && (
                     <div className="space-y-3">
+                      {seoEditingId === r.id ? (
+                        <div className="space-y-3">
+                          <label className="block text-xs text-gray-400">Focus keyword
+                            <input className="input w-full mt-1" maxLength={100} value={seoDraft.focus_keyword} onChange={(e) => setSeoDraft({ ...seoDraft, focus_keyword: e.target.value })} />
+                          </label>
+                          <p className="text-xs text-gray-500">The search phrase this recipe targets, for example “soft pumpkin cookies”.</p>
+                          <label className="block text-xs text-gray-400">SEO title ({seoDraft.seo_title.length}/70)
+                            <input className="input w-full mt-1" maxLength={70} value={seoDraft.seo_title} onChange={(e) => setSeoDraft({ ...seoDraft, seo_title: e.target.value })} />
+                          </label>
+                          <label className="block text-xs text-gray-400">Meta description ({seoDraft.meta_description.length}/160)
+                            <textarea className="input w-full mt-1" rows={3} maxLength={160} value={seoDraft.meta_description} onChange={(e) => setSeoDraft({ ...seoDraft, meta_description: e.target.value })} />
+                          </label>
+                          <p className="text-xs text-gray-500">Save these fields, then use Sync SEO to WordPress to update an existing post.</p>
+                          <div className="flex gap-2">
+                            <button className="btn-primary" disabled={seoSaving} onClick={() => handleSaveSeo(r.id)}>{seoSaving ? "Saving..." : "Save SEO"}</button>
+                            <button className="btn-secondary" disabled={seoSaving} onClick={() => setSeoEditingId(null)}>Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button className="btn-secondary text-xs" onClick={() => { setSeoEditingId(r.id); setSeoDraft({ focus_keyword: r.focus_keyword || "", seo_title: r.seo_title || "", meta_description: r.meta_description || "" }); }}>Edit SEO</button>
+                      )}
+                      {r.wp_post_id && seoEditingId !== r.id && (
+                        <button className="btn-secondary text-xs ml-2" disabled={seoSaving} onClick={() => handleSyncSeo(r.id)}>{seoSaving ? "Syncing..." : "Sync SEO to WordPress"}</button>
+                      )}
                       <div>
                         <span className="text-xs font-semibold text-gray-400 uppercase">Focus Keyword</span>
                         <p className="text-sm text-gray-300 mt-1">{r.focus_keyword || "—"}</p>
@@ -1380,6 +1437,10 @@ export default function SiteDetailPage() {
                       <div>
                         <span className="text-xs font-semibold text-gray-400 uppercase">Meta Description</span>
                         <p className="text-sm text-gray-300 mt-1">{r.meta_description || "—"}</p>
+                      </div>
+                      <div>
+                        <span className="text-xs font-semibold text-gray-400 uppercase">SEO Title</span>
+                        <p className="text-sm text-gray-300 mt-1">{r.seo_title || "—"}</p>
                       </div>
                       <div>
                         <span className="text-xs font-semibold text-gray-400 uppercase">Category</span>

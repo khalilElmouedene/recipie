@@ -872,11 +872,13 @@ const KEY_GROUPS = [
 ];
 
 const PROMPT_GROUPS: { label: string; keys: string[] }[] = [
+  { label: "Focus keyword", keys: ["focus_keyword"] },
   { label: "Article generation", keys: ["article"] },
   { label: "Full recipe", keys: ["full_recipe"] },
   { label: "Recipe JSON (WP Recipe Maker)", keys: ["recipe_json"] },
   { label: "SEO title", keys: ["seo_title"] },
   { label: "Meta description (SEO)", keys: ["meta_description"] },
+  { label: "WordPress tags", keys: ["wp_tags"] },
   { label: "Category", keys: ["category"] },
   { label: "Pinterest Pin title", keys: ["pinterest_title"] },
   { label: "Pinterest Pin description", keys: ["pinterest_description"] },

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from slugify import slugify
+from .seo import require_generated_text, validate_recipe_card, plain_text
 
 from .wordpress import (
     _parse_and_extract_title, inject_images_into_html, upload_pin_embed_images,
@@ -117,9 +118,15 @@ def publish_recipe(
         domain = site_config.get("domain", "")
 
         article_html = recipe.get("generated_article", "")
+        require_generated_text(article_html)
         recipe_json_str = recipe.get("generated_json", "")
+        recipe_data = validate_recipe_json(recipe_json_str)
+        if recipe_json_str and not recipe_data:
+            raise ValueError("Recipe card JSON is invalid; correct it before publishing")
+        if recipe_data:
+            validate_recipe_card(recipe_data)
         focus_kw = recipe.get("focus_keyword", "")
-        meta_desc = recipe.get("meta_description", "")
+        meta_desc = plain_text(recipe.get("meta_description") or "")
         category = recipe.get("category", "")
         image_url = recipe.get("image_url", "")
         generated_images_str = recipe.get("generated_images", "")
@@ -183,16 +190,17 @@ def publish_recipe(
         # image is handled separately below and should not suppress this setting.
         image_mode = site_config.get("image_mode", "featured_and_top")
         if image_mode == "featured_and_top":
-            content = inject_images_into_html(soup, img1_url)
+            content = inject_images_into_html(soup, img1_url, alt_text=focus_kw or wp_title)
         else:
             content = str(soup.find("body").decode_contents() if soup.find("body") else soup)
 
         # Recipe card shortcode
         wp_recipe_id = None
-        recipe_data = validate_recipe_json(recipe_json_str)
         if recipe_data:
             wp_recipe_id = add_recipe(recipe_data, site_config,
                                       image_url=img1_url, image_id=img1_id, log=_log)
+            if not wp_recipe_id:
+                raise ValueError("WP Recipe Maker card creation failed; article was not published")
 
         if wp_recipe_id:
             content += f"\n[wprm-recipe id={wp_recipe_id}]"
@@ -222,6 +230,7 @@ def publish_recipe(
         post_payload: dict = {
             "title": wp_title, "content": content, "slug": slug,
             "comment_status": "open", "ping_status": "closed", "status": "publish",
+            "excerpt": meta_desc,
         }
         now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         if post_date_gmt is not None:
@@ -242,12 +251,12 @@ def publish_recipe(
             tag_ids = [tid for t in tags_list if (tid := _get_or_create_term(t, "tags", base_url, auth, _log))]
             if tag_ids:
                 post_payload["tags"] = tag_ids
-        # Yoast SEO meta merged into create call (requires Yoast v14+; silently ignored on older versions)
+        # This app uses Rank Math. Write its fields and verify them after creation.
         if focus_kw or meta_desc or wp_title:
             post_payload["meta"] = {
-                "_yoast_wpseo_title": wp_title,
-                "_yoast_wpseo_metadesc": meta_desc,
-                "_yoast_wpseo_focuskw": focus_kw,
+                "rank_math_title": wp_title,
+                "rank_math_description": meta_desc,
+                "rank_math_focus_keyword": focus_kw,
             }
 
         rp = wp_session.post(f"{base_url}/posts", json=post_payload, timeout=30)
@@ -263,9 +272,14 @@ def publish_recipe(
 
         try:
             if focus_kw or meta_desc or wp_title:
-                set_rank_math_meta(post_id, focus_kw, meta_desc, site_config, seo_title=wp_title, log=_log)
+                seo_result = set_rank_math_meta(post_id, focus_kw, meta_desc, site_config, seo_title=wp_title, log=_log)
+                if seo_result:
+                    result["seo_status"] = seo_result["status"]
+                    result["seo_warning"] = seo_result.get("message", "")
         except Exception as seo_err:
             _log(f"Rank Math SEO meta failed (post published OK): {seo_err}")
+            result["seo_status"] = "unverified"
+            result["seo_warning"] = "Could not verify Rank Math metadata; use Sync SEO for this post"
 
     except Exception as e:
         _log(f"Publishing failed: {e}")

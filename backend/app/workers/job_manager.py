@@ -994,6 +994,7 @@ class JobManager:
                                 should_stop=rj.should_stop,
                                 pinterest_url=item.get("pinterest_url", ""),
                                 generate_recipe_json=bool(item.get("generate_recipe_json", True)),
+                                focus_keyword=item.get("focus_keyword") or "",
                             )
                             if rj.should_stop():
                                 break
@@ -1215,6 +1216,7 @@ class JobManager:
                         "pinterest_url": site.pinterest_url or "",
                         "generate_recipe_json": bool(getattr(site, "generate_recipe_json", True)),
                         "recipe_text": recipe.recipe_text,
+                        "focus_keyword": recipe.focus_keyword or "",
                         "image_url": recipe.image_url,
                         "group_idx": len(groups),
                     })
@@ -1554,6 +1556,7 @@ class JobManager:
                                     should_stop=rj.should_stop,
                                     pinterest_url=item.get("pinterest_url", ""),
                                     generate_recipe_json=bool(item.get("generate_recipe_json", True)),
+                                    focus_keyword=item.get("focus_keyword") or "",
                                 )
                                 if rj.should_stop():
                                     break
