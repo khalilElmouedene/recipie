@@ -46,6 +46,34 @@ class MidjourneyIntegrationTests(unittest.TestCase):
         }
         self.prompts = {"midjourney_imagine": "Recipe: {recipe_name} Image: {img_url}"}
 
+    def test_interactions_allow_blank_guild_id(self) -> None:
+        for guild_id in ("", "guild"):
+            with self.subTest(guild_id=guild_id):
+                api = midjourney.MidjourneyApi(
+                    prompt="Tacos",
+                    application_id="app",
+                    guild_id=guild_id,
+                    channel_id="channel",
+                    version="version",
+                    mj_id="command",
+                    authorization="token",
+                    log=lambda _msg: None,
+                )
+                api.message_id = "101"
+                api.custom_ids = ["u1"]
+                with (
+                    patch.object(api, "_get_latest_message_id", return_value="100"),
+                    patch.object(midjourney.requests, "post", return_value=_mock_response(status_code=204)) as post,
+                    patch.object(midjourney.time, "sleep", return_value=None),
+                ):
+                    api.send_message()
+                    api.choose_images()
+
+                self.assertEqual(post.call_count, 2)
+                for call in post.call_args_list:
+                    self.assertEqual(call.kwargs["json"]["guild_id"], guild_id or None)
+                    self.assertEqual(call.kwargs["json"]["channel_id"], "channel")
+
     def test_generate_images_stops_after_default_attempt_limit(self) -> None:
         send_response = _mock_response(status_code=500, text="server error")
         with (

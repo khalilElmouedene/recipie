@@ -48,7 +48,6 @@ def _project_out(project: Project, credentials: dict[str, str]) -> ImageProjectO
         midjourney_configured=bool(
             credentials.get("discord_auth")
             and credentials.get("discord_app_id")
-            and credentials.get("discord_guild")
             and credentials.get("discord_channel")
             and credentials.get("mj_version")
             and credentials.get("mj_id")
@@ -201,7 +200,7 @@ async def create_image_batch(
     _require_khalil(user)
     await check_project_access(body.project_id, user, db)
     credentials = await load_credentials_for_job(db, body.project_id, user.id)
-    required = ("discord_auth", "discord_app_id", "discord_guild", "discord_channel", "mj_version", "mj_id")
+    required = ("discord_auth", "discord_app_id", "discord_channel", "mj_version", "mj_id")
     if any(not credentials.get(key) for key in required):
         raise HTTPException(status_code=400, detail="Complete the Midjourney credentials in the selected project first")
 

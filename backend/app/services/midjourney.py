@@ -445,7 +445,7 @@ class MidjourneyApi:
         data = {
             "type": 2,
             "application_id": self.application_id,
-            "guild_id": self.guild_id,
+            "guild_id": self.guild_id or None,
             "channel_id": self.channel_id,
             "session_id": self.session_id,
             "nonce": self.interaction_nonce,
@@ -800,7 +800,7 @@ class MidjourneyApi:
                 continue
             data = {
                 "type": 3,
-                "guild_id": self.guild_id,
+                "guild_id": self.guild_id or None,
                 "channel_id": self.channel_id,
                 "message_flags": 0,
                 "message_id": self.message_id,
@@ -973,8 +973,8 @@ def generate_images(
     on_tracking_update: Callable[[dict], None] | None = None,
 ) -> list[str]:
     """High-level function to generate Midjourney images for a recipe.
-    credentials dict must contain: discord_app_id, discord_guild, discord_channel,
-    mj_version, mj_id, discord_auth
+    credentials dict must contain: discord_app_id, discord_channel,
+    mj_version, mj_id, discord_auth. discord_guild is optional for direct messages.
     """
     _log = log or print
     _should_stop = should_stop or (lambda: False)
