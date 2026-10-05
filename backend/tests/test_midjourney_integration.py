@@ -63,6 +63,7 @@ class MidjourneyIntegrationTests(unittest.TestCase):
                 api.custom_ids = ["u1"]
                 with (
                     patch.object(api, "_get_latest_message_id", return_value="100"),
+                    patch.object(midjourney.requests, "get", return_value=_mock_response(json_data={"id": "channel", "type": 1})),
                     patch.object(midjourney.requests, "post", return_value=_mock_response(status_code=204)) as post,
                     patch.object(midjourney.time, "sleep", return_value=None),
                 ):
@@ -71,7 +72,10 @@ class MidjourneyIntegrationTests(unittest.TestCase):
 
                 self.assertEqual(post.call_count, 2)
                 for call in post.call_args_list:
-                    self.assertEqual(call.kwargs["json"]["guild_id"], guild_id or None)
+                    if guild_id:
+                        self.assertEqual(call.kwargs["json"]["guild_id"], guild_id)
+                    else:
+                        self.assertNotIn("guild_id", call.kwargs["json"])
                     self.assertEqual(call.kwargs["json"]["channel_id"], "channel")
 
     def test_generate_images_stops_after_default_attempt_limit(self) -> None:
@@ -91,6 +95,62 @@ class MidjourneyIntegrationTests(unittest.TestCase):
                 )
 
         self.assertEqual(send_mock.call_count, 3)
+
+    def test_channel_lookup_detects_server_and_dm_context_once(self) -> None:
+        for channel, expected_guild in (
+            ({"id": "channel", "type": 0, "guild_id": "detected"}, "detected"),
+            ({"id": "channel", "type": 1}, None),
+        ):
+            with self.subTest(channel=channel):
+                api = midjourney.MidjourneyApi("Tacos", "app", "", "channel", "version", "command", "token", log=lambda _: None)
+                with (
+                    patch.object(midjourney.requests, "get", return_value=_mock_response(json_data=channel)) as get,
+                    patch.object(midjourney.requests, "post", return_value=_mock_response(status_code=204)) as post,
+                ):
+                    api._post_interaction({"type": 2})
+                    api._post_interaction({"type": 3})
+                get.assert_called_once()
+                for call in post.call_args_list:
+                    self.assertEqual(call.kwargs["json"].get("guild_id"), expected_guild)
+
+    def test_unknown_guild_is_corrected_from_channel(self) -> None:
+        for channel in ({"id": "channel", "type": 0, "guild_id": "correct"}, {"id": "channel", "type": 1}):
+            with self.subTest(channel=channel):
+                api = midjourney.MidjourneyApi("Tacos", "app", "stale", "channel", "version", "command", "token", log=lambda _: None)
+                with (
+                    patch.object(midjourney.requests, "get", return_value=_mock_response(json_data=channel)) as get,
+                    patch.object(midjourney.requests, "post", side_effect=[
+                        _mock_response(status_code=400, json_data={"code": 10004}),
+                        _mock_response(status_code=204),
+                    ]) as post,
+                ):
+                    response = api._post_interaction({"type": 2, "channel_id": "channel"})
+                self.assertEqual(response.status_code, 204)
+                self.assertEqual(post.call_count, 2)
+                self.assertEqual(post.call_args_list[0].kwargs["json"]["guild_id"], "stale")
+                self.assertEqual(post.call_args_list[1].kwargs["json"].get("guild_id"), channel.get("guild_id"))
+                get.assert_called_once()
+
+    def test_channel_access_error_does_not_send_interaction(self) -> None:
+        api = midjourney.MidjourneyApi("Tacos", "app", "", "channel", "version", "command", "token", log=lambda _: None)
+        with (
+            patch.object(midjourney.requests, "get", return_value=_mock_response(status_code=403)),
+            patch.object(midjourney.requests, "post") as post,
+        ):
+            with self.assertRaisesRegex(midjourney.MidjourneyPermanentError, "channel access"):
+                api._post_interaction({"type": 2})
+        post.assert_not_called()
+
+    def test_unknown_guild_recovery_is_bounded(self) -> None:
+        api = midjourney.MidjourneyApi("Tacos", "app", "stale", "channel", "version", "command", "token", log=lambda _: None)
+        with (
+            patch.object(midjourney.requests, "get", return_value=_mock_response(json_data={"id": "channel", "type": 0, "guild_id": "correct"})) as get,
+            patch.object(midjourney.requests, "post", return_value=_mock_response(status_code=400, json_data={"code": 10004})) as post,
+        ):
+            response = api._post_interaction({"type": 2})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(post.call_count, 2)
+        get.assert_called_once()
 
     def test_generate_images_fails_fast_on_invalid_auth(self) -> None:
         send_response = _mock_response(status_code=401, text="bad token")

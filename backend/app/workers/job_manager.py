@@ -821,12 +821,16 @@ class JobManager:
             from ..services.article_generator import process_recipes_from_db, generate_for_recipe, generate_images_only
             from ..services.publisher import publish_recipes_from_db
 
+            recipe_errors: list[str] = []
+
             def _on_recipe_done(recipe_id: str, fields: dict):
                 future = asyncio.run_coroutine_threadsafe(
                     _update_recipe(recipe_id, fields, db_job.job_type),
                     main_loop,
                 )
                 future.result()
+                if fields.get("error_message"):
+                    recipe_errors.append(str(fields["error_message"]))
 
             def _on_progress(current: int, total: int):
                 rj.set_progress(current, total)
@@ -1004,6 +1008,8 @@ class JobManager:
                             done += 1
                             _on_progress(done, total)
 
+                if recipe_errors and not rj.should_stop():
+                    raise ValueError(f"{len(recipe_errors)} recipe(s) failed. First error: {recipe_errors[0]}")
                 final_status = JobStatus.stopped if rj.should_stop() else JobStatus.completed
                 rj.log("Job completed successfully" if final_status == JobStatus.completed else "Job stopped")
                 if rj.should_stop():
@@ -1396,10 +1402,14 @@ class JobManager:
                 from ..services.article_generator import process_recipes_from_db, generate_for_recipe, generate_images_only
                 from ..services.publisher import publish_recipes_from_db
 
+                recipe_errors: list[str] = []
+
                 def _on_recipe_done(recipe_id: str, fields: dict):
                     asyncio.run_coroutine_threadsafe(
                         _update_recipe(recipe_id, fields, db_job.job_type), main_loop
                     ).result()
+                    if fields.get("error_message"):
+                        recipe_errors.append(str(fields["error_message"]))
 
                 def _on_progress(current: int, total: int):
                     rj.set_progress(current, total)
@@ -1566,6 +1576,8 @@ class JobManager:
                                 done += 1
                                 _on_progress(done, total)
 
+                    if recipe_errors and not rj.should_stop():
+                        raise ValueError(f"{len(recipe_errors)} recipe(s) failed. First error: {recipe_errors[0]}")
                     final_status = JobStatus.stopped if rj.should_stop() else JobStatus.completed
                     rj.log("Job completed" if final_status == JobStatus.completed else "Job stopped")
                     if rj.should_stop() and db_job.job_type == JobType.publisher:

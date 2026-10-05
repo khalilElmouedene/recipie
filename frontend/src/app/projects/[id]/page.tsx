@@ -855,7 +855,7 @@ const KEY_GROUPS = [
     keys: [
       { key: "discord_auth", label: "Discord Authorization", placeholder: "Authorization token", type: "password" },
       { key: "discord_app_id", label: "Discord Application ID", placeholder: "App ID", type: "text" },
-      { key: "discord_guild", label: "Discord Guild ID (optional)", placeholder: "Server ID (leave blank for direct messages)", type: "text" },
+      { key: "discord_guild", label: "Discord Guild ID (optional)", placeholder: "Leave blank to detect from Channel ID", type: "text" },
       { key: "discord_channel", label: "Discord Channel ID", placeholder: "Channel ID", type: "text" },
       { key: "mj_version", label: "Midjourney Version", placeholder: "e.g. 6", type: "text" },
       { key: "mj_id", label: "Midjourney ID", placeholder: "Bot ID", type: "text" },
@@ -929,7 +929,7 @@ function SettingsTab({ projectId }: { projectId: string }) {
 
   const handleSave = async () => {
     const toSave = Object.entries(values)
-      .filter(([, v]) => v.trim())
+      .filter(([key, v]) => key === "discord_guild" || v.trim())
       .map(([key_type, value]) => ({ key_type, value }));
     if (!toSave.length) return;
     setSaving(true);
@@ -985,7 +985,7 @@ function SettingsTab({ projectId }: { projectId: string }) {
   };
 
   const getMasked = (key: string) => creds.find((c) => c.key_type === key)?.masked_value || "Not configured";
-  const hasChanges = Object.values(values).some((v) => v.trim());
+  const hasChanges = Object.entries(values).some(([key, v]) => key === "discord_guild" || v.trim());
   const hasPromptChanges = prompts.some((p) => (promptValues[p.key] ?? p.value) !== p.value);
 
   const subTabs = [
@@ -1039,6 +1039,9 @@ function SettingsTab({ projectId }: { projectId: string }) {
                     <div key={k.key} className="border border-gray-700 rounded-lg p-3">
                       <div className="flex items-center justify-between mb-1.5">
                         <label className="text-sm font-medium text-gray-300">{k.label}</label>
+                        {k.key === "discord_guild" && (
+                          <button type="button" onClick={() => setValues({ ...values, discord_guild: "" })} className="text-xs text-brand-400">Auto detect</button>
+                        )}
                         <span className="text-xs font-mono text-gray-500">{getMasked(k.key)}</span>
                       </div>
                       {k.type === "textarea" ? (

@@ -100,7 +100,8 @@ class MidjourneyApi:
     ):
         state = tracking_state or {}
         self.application_id = application_id
-        self.guild_id = guild_id
+        self.guild_id = (guild_id or "").strip()
+        self._channel_context_resolved = False
         self.channel_id = channel_id
         self.version = version
         self.id = mj_id
@@ -437,11 +438,61 @@ class MidjourneyApi:
                 pass
         return "0"
 
+    def _resolve_channel_context(self) -> None:
+        response = requests.get(
+            f"https://discord.com/api/v9/channels/{self.channel_id}",
+            headers=self._headers(),
+            timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
+        )
+        if response.status_code in (400, 401, 403, 404):
+            raise MidjourneyPermanentError(
+                f"Cannot access the configured Discord channel (status {response.status_code}). "
+                "Check the Discord Channel ID and this account's channel access."
+            )
+        response.raise_for_status()
+        channel = response.json()
+        if not isinstance(channel, dict) or not channel.get("id"):
+            raise ValueError("Discord returned invalid channel details; check the Discord Channel ID")
+        if channel.get("type") in (1, 3):
+            self.guild_id = ""
+            self._log("Discord direct-message channel detected; no Guild ID needed")
+        elif channel.get("guild_id"):
+            self.guild_id = str(channel["guild_id"])
+            self._log("Discord Guild ID detected from the configured channel")
+        else:
+            raise ValueError("Could not detect the Discord Guild ID from the configured channel")
+        self._channel_context_resolved = True
+        self._update_tracking(discord_guild_id=self.guild_id)
+
+    def _post_interaction(self, data: dict) -> requests.Response:
+        if not self.guild_id and not self._channel_context_resolved:
+            self._resolve_channel_context()
+        if self.guild_id:
+            data["guild_id"] = self.guild_id
+        else:
+            data.pop("guild_id", None)
+        url = "https://discord.com/api/v9/interactions"
+        response = requests.post(url, headers=self._headers(), json=data, timeout=DISCORD_HTTP_TIMEOUT_SECONDS)
+        if response.status_code == 400:
+            try:
+                unknown_guild = response.json().get("code") == 10004
+            except (ValueError, AttributeError):
+                unknown_guild = False
+            if unknown_guild and not self._channel_context_resolved:
+                self._log("Discord rejected the Guild ID; checking the configured channel")
+                self._resolve_channel_context()
+                corrected = dict(data)
+                if self.guild_id:
+                    corrected["guild_id"] = self.guild_id
+                else:
+                    corrected.pop("guild_id", None)
+                response = requests.post(url, headers=self._headers(), json=corrected, timeout=DISCORD_HTTP_TIMEOUT_SECONDS)
+        return response
+
     def send_message(self) -> requests.Response:
         # Snapshot the channel before sending so we can filter to OUR messages only
         self.baseline_id = self._get_latest_message_id()
         self.interaction_nonce = self._nonce()
-        url = "https://discord.com/api/v9/interactions"
         data = {
             "type": 2,
             "application_id": self.application_id,
@@ -478,12 +529,7 @@ class MidjourneyApi:
                 "attachments": [],
             },
         }
-        response = requests.post(
-            url,
-            headers=self._headers(),
-            json=data,
-            timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
-        )
+        response = self._post_interaction(data)
         self._log(f"Midjourney prompt sent (status {response.status_code})")
         if response.status_code == 204:
             self._update_tracking(
@@ -785,7 +831,6 @@ class MidjourneyApi:
 
     def choose_images(self, button_retries: int = 3) -> None:
         """Click U1–U4 to upscale all 4 grid images, retrying each button on failure."""
-        url = "https://discord.com/api/v9/interactions"
         if not self.message_id or not self.custom_ids:
             self.get_message()
         if not self.custom_ids:
@@ -811,12 +856,7 @@ class MidjourneyApi:
             }
             sent = False
             for attempt in range(button_retries):
-                response = requests.post(
-                    url,
-                    headers=self._headers(),
-                    json=data,
-                    timeout=DISCORD_HTTP_TIMEOUT_SECONDS,
-                )
+                response = self._post_interaction(data)
                 if response.status_code == 204:
                     sent = True
                     self.requested_custom_ids.append(custom_id)

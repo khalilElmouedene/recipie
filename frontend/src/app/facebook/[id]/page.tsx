@@ -2602,7 +2602,7 @@ const KEY_GROUPS = [
     fields: [
       { key: "discord_auth", label: "Discord Authorization", placeholder: "Authorization token", type: "password" },
       { key: "discord_app_id", label: "Discord Application ID", placeholder: "App ID", type: "text" },
-      { key: "discord_guild", label: "Discord Guild ID (optional)", placeholder: "Server ID (leave blank for direct messages)", type: "text" },
+      { key: "discord_guild", label: "Discord Guild ID (optional)", placeholder: "Leave blank to detect from Channel ID", type: "text" },
       { key: "discord_channel", label: "Discord Channel ID", placeholder: "Channel ID", type: "text" },
       { key: "mj_version", label: "Midjourney Version", placeholder: "e.g. 6", type: "text" },
       { key: "mj_id", label: "Midjourney ID", placeholder: "Bot ID", type: "text" },
@@ -2628,7 +2628,7 @@ function FacebookKeysSettings({
   }, [contentProjectId]);
 
   const save = async () => {
-    const changed = Object.entries(values).filter(([, value]) => value.trim());
+    const changed = Object.entries(values).filter(([key, value]) => key === "discord_guild" || value.trim());
     if (!changed.length) return;
     setSaving(true);
     try {
@@ -2668,6 +2668,9 @@ function FacebookKeysSettings({
                   <div key={field.key} className="rounded-xl border border-slate-800 p-4">
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <label className="text-sm font-medium text-slate-300">{field.label}</label>
+                      {field.key === "discord_guild" && (
+                        <button type="button" onClick={() => setValues({ ...values, discord_guild: "" })} className="text-xs text-blue-400">Auto detect</button>
+                      )}
                       <span className="font-mono text-[10px] text-slate-600">{masked}</span>
                     </div>
                     <input type={field.type} value={values[field.key] || ""} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })} className="input-field font-mono text-xs" placeholder={field.placeholder} />
@@ -2679,7 +2682,7 @@ function FacebookKeysSettings({
         ))}
       </div>
       <div className="mt-5 flex justify-end">
-        <button onClick={save} disabled={saving || !Object.values(values).some((value) => value.trim())} className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
+        <button onClick={save} disabled={saving || !Object.entries(values).some(([key, value]) => key === "discord_guild" || value.trim())} className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
           {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save API keys
         </button>
       </div>
