@@ -13,7 +13,7 @@ from .seo import require_generated_text, validate_recipe_card, plain_text
 from .wordpress import (
     _parse_and_extract_title, inject_images_into_html, upload_pin_embed_images,
     upload_image, upload_base64_image, add_recipe, validate_recipe_json, set_rank_math_meta,
-    _wp_rest_base, _get_or_create_term, _wp_session,
+    _wp_rest_base, _get_or_create_term, _wp_session, RecipeCardCreationError,
 )
 
 
@@ -197,8 +197,12 @@ def publish_recipe(
         # Recipe card shortcode
         wp_recipe_id = None
         if recipe_data:
-            wp_recipe_id = add_recipe(recipe_data, site_config,
-                                      image_url=img1_url, image_id=img1_id, log=_log)
+            try:
+                wp_recipe_id = add_recipe(recipe_data, site_config,
+                                          image_url=img1_url, image_id=img1_id, log=_log,
+                                          raise_on_error=True)
+            except RecipeCardCreationError as exc:
+                raise ValueError(f"WP Recipe Maker card creation failed; article was not published: {exc}") from exc
             if not wp_recipe_id:
                 raise ValueError("WP Recipe Maker card creation failed; article was not published")
 

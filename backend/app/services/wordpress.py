@@ -418,6 +418,34 @@ def _normalize_recipe_for_wprm(data: dict) -> dict:
     return data
 
 
+class RecipeCardCreationError(ValueError):
+    """A recipe card could not be confirmed as created in WordPress."""
+
+
+def _recipe_card_http_error(response: requests.Response) -> str:
+    detail = f"WordPress returned HTTP {response.status_code}"
+    code = ""
+    try:
+        body = response.json()
+        if isinstance(body, dict):
+            code = str(body.get("code") or "")[:100]
+            message = body.get("message")
+            if code:
+                detail += f" ({code})"
+            if isinstance(message, str) and message.strip():
+                message = BeautifulSoup(message, "html.parser").get_text(" ", strip=True)
+                detail += f": {' '.join(message.split())[:500]}"
+    except (ValueError, TypeError):
+        pass
+    if response.status_code == 401:
+        detail += ". Check the site's WordPress username and Application Password."
+    elif response.status_code == 403:
+        detail += ". Check this WordPress user's recipe permissions and any REST API firewall rules."
+    elif response.status_code in (404, 405) or code == "rest_no_route":
+        detail += ". Check that WP Recipe Maker is active and its /wp-json/wp/v2/wprm_recipe endpoint allows POST requests."
+    return detail
+
+
 def add_recipe(
     recipe_data: dict,
     site_config: dict,
@@ -425,6 +453,8 @@ def add_recipe(
     author: str | None = None,
     image_id: int | str | None = None,
     log: Callable[[str], None] | None = None,
+    *,
+    raise_on_error: bool = False,
 ) -> int | None:
     _log = log or print
     try:
@@ -444,12 +474,27 @@ def add_recipe(
             recipe_data["author_name"] = author
 
         r = _wp_session(auth).post(f"{base_url}/wprm_recipe", json={"recipe": recipe_data}, timeout=30)
-        r.raise_for_status()
-        recipe_id = r.json().get("id")
+        if not 200 <= r.status_code < 300:
+            raise RecipeCardCreationError(_recipe_card_http_error(r))
+        try:
+            body = r.json()
+        except ValueError as exc:
+            raise RecipeCardCreationError("WordPress returned an invalid JSON response; recipe creation could not be confirmed.") from exc
+        recipe_id = body.get("id") if isinstance(body, dict) else None
+        if isinstance(recipe_id, bool) or not isinstance(recipe_id, int) or recipe_id <= 0:
+            raise RecipeCardCreationError("WordPress returned no valid recipe ID; recipe creation could not be confirmed.")
         _log(f"Recipe created (ID: {recipe_id})")
         return recipe_id
     except Exception as e:
-        _log(f"Error adding recipe: {e}")
+        if isinstance(e, requests.Timeout):
+            detail = "WordPress timed out; recipe creation could not be confirmed."
+        elif isinstance(e, requests.ConnectionError):
+            detail = "Could not connect to WordPress to create the recipe card."
+        else:
+            detail = str(e)
+        _log(f"Error adding recipe: {detail}")
+        if raise_on_error:
+            raise RecipeCardCreationError(detail) from e
         return None
 
 
