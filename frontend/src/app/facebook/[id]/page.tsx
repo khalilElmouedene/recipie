@@ -408,9 +408,39 @@ function FacebookCalendar({
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
   const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
   const [bulkPublishing, setBulkPublishing] = useState(false);
+  const [deletingHistory, setDeletingHistory] = useState(false);
   const toast = useToast();
   const confirm = useConfirm();
   const selectedContentId = selectedContent?.id;
+  const publishedHistoryCount = contents.filter((content) =>
+    content.status === "ready" && content.deliveries.length > 0
+    && content.deliveries.every((delivery) => delivery.status === "published"),
+  ).length;
+
+  const deleteAllHistory = async () => {
+    const accepted = await confirm({
+      message: `Delete all ${publishedHistoryCount} fully published posts from this project's history, including posts outside the current search or filter? Local files and generation logs will be removed. Drafts, scheduled posts and failed deliveries will be kept. Published Facebook and WordPress posts will stay online.`,
+      confirmLabel: "Delete all history",
+      danger: true,
+    });
+    if (!accepted) return;
+    setDeletingHistory(true);
+    try {
+      const result = await api.deleteFacebookHistory(project.id);
+      setSelectedContent(null);
+      if (result.failed) {
+        toast.error(`Deleted ${result.deleted} history posts; ${result.failed} could not be removed. Try again.`);
+      } else {
+        toast.success(`Deleted ${result.deleted} published history posts${result.skipped ? `; ${result.skipped} kept because their status changed` : ""}`);
+      }
+      onRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not delete history");
+      onRefresh();
+    } finally {
+      setDeletingHistory(false);
+    }
+  };
 
   const postCounts = useMemo(() => ({
     all: contents.length,
@@ -834,6 +864,16 @@ function FacebookCalendar({
               Select all publishable posts in this view
             </label>
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void deleteAllHistory()}
+                disabled={!publishedHistoryCount || deletingHistory || bulkPublishing}
+                title="Delete history for posts published to every Page"
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-900/60 bg-red-950/20 px-3 py-2.5 text-xs font-semibold text-red-400 transition hover:border-red-700 hover:bg-red-950/40 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {deletingHistory ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                {deletingHistory ? "Deleting history…" : "Delete all history"}
+              </button>
               {selectedPostIds.size > 0 && (
                 <button
                   type="button"
@@ -857,6 +897,7 @@ function FacebookCalendar({
               </button>
             </div>
           </div>
+          <p className="text-[11px] text-slate-500">Published history is automatically deleted every 24 hours once all Page deliveries have been published for at least 24 hours.</p>
         </div>
       )}
 

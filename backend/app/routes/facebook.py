@@ -1620,6 +1620,20 @@ async def list_facebook_contents(
 
 
 @router.delete(
+    "/facebook-projects/{project_id}/history",
+)
+async def delete_facebook_history(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    await _project(project_id, user, db)
+    from ..services.facebook_history_cleanup import cleanup_published_facebook_history
+
+    return await cleanup_published_facebook_history(project_id)
+
+
+@router.delete(
     "/facebook-contents/{content_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )

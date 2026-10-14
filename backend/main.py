@@ -80,6 +80,7 @@ async def lifespan(app: FastAPI):
     from app.services.job_email_notifications import run_job_email_notifier
     from app.services.facebook_generation import facebook_generation_manager
     from app.services.facebook_publisher import run_facebook_scheduler
+    from app.services.facebook_history_cleanup import run_facebook_history_cleanup
     from app.services.pinterest_publisher import run_pinterest_scheduler
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(run_publish_scheduler(stop_event))
@@ -92,6 +93,7 @@ async def lifespan(app: FastAPI):
     facebook_scheduler_task = asyncio.create_task(run_facebook_scheduler(stop_event))
     pinterest_scheduler_task = asyncio.create_task(run_pinterest_scheduler(stop_event))
     await facebook_generation_manager.resume_pending()
+    facebook_history_task = asyncio.create_task(run_facebook_history_cleanup(stop_event))
     yield
     stop_event.set()
     await scheduler_task
@@ -102,6 +104,7 @@ async def lifespan(app: FastAPI):
     await auto_spy_task
     await job_email_task
     await facebook_scheduler_task
+    await facebook_history_task
     await pinterest_scheduler_task
     bind_tracking_event_loop(None)
 

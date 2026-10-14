@@ -71,6 +71,16 @@ For website-scoped Pinterest OAuth and automatic publishing, see
 2. Set `NEXT_PUBLIC_API_URL` to your backend URL
 3. Framework: Next.js (auto-detected)
 
+## Facebook history cleanup
+
+Facebook post history can be cleared with **Delete all history** in the posts toolbar.
+It removes local history, delivery records, generation logs and local generated files
+only for posts published to every Page. Published Facebook posts and WordPress
+articles stay online; drafts, scheduled posts and failed deliveries remain available.
+The backend also checks on startup and every 24 hours, automatically deleting history
+whose last Page publication was at least 24 hours ago. Keep the backend running for
+automatic cleanup; no separate service or database migration is required.
+
 ## Environment Variables
 
 | Variable | Description |

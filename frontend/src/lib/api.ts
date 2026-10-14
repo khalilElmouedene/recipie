@@ -978,6 +978,10 @@ export const api = {
     request<FacebookContentOut[]>(`/api/facebook-projects/${projectId}/contents`),
   deleteFacebookContent: (contentId: string) =>
     request<void>(`/api/facebook-contents/${contentId}`, { method: "DELETE" }),
+  deleteFacebookHistory: (projectId: string) =>
+    request<{ deleted: number; skipped: number; failed: number }>(
+      `/api/facebook-projects/${projectId}/history`, { method: "DELETE" },
+    ),
   retryFacebookGeneration: (contentId: string) =>
     request<{ content_id: string; status: "processing" }>(
       `/api/facebook-contents/${contentId}/retry`,
