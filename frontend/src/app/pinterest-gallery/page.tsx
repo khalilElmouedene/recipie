@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { api, ProjectOut, PinterestRecipeOut, SiteOut } from "@/lib/api";
 import PinterestPublishingLink from "@/components/PinterestPublishingLink";
+import PinterestSheetDownload from "@/components/PinterestSheetDownload";
 import { readPinterestGalleryContext, type PinterestGalleryContextSnapshot } from "@/lib/pinterestGalleryContext";
 import { useToast } from "@/contexts/ToastContext";
 import {
@@ -362,6 +363,7 @@ function PinterestGalleryInner() {
             {/* Actions */}
             <div className="flex flex-wrap items-center gap-2">
               <PinterestPublishingLink siteId={recipesLoading ? null : publishingSiteId} />
+              <PinterestSheetDownload recipes={filtered} loading={recipesLoading} />
               <button
                 onClick={() => void openWorksheet()}
                 className="flex items-center gap-2 rounded-lg border border-blue-700/60 bg-blue-950/40 px-3 py-2 text-xs font-medium text-blue-300 transition hover:bg-blue-900/50 hover:text-blue-200 disabled:opacity-40"

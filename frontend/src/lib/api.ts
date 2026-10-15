@@ -262,6 +262,8 @@ export const api = {
 
   getProjectPinterestRecipes: (projectId: string, siteId?: string, signal?: AbortSignal) =>
     request<PinterestRecipeOut[]>(`/api/projects/${projectId}/pinterest-recipes${siteId ? `?site_id=${siteId}` : ""}`, { signal }),
+  preparePinterestSheetRecipe: (recipeId: string) =>
+    request<PinterestSheetRow[]>(`/api/recipes/${recipeId}/pinterest-sheet`, { method: "POST" }),
   getProjectPinterestRecipesPage: (
     projectId: string,
     params?: PaginationParams & { siteId?: string; signal?: AbortSignal },
@@ -1194,6 +1196,16 @@ export interface PinterestPublicationOut {
   retry_safe: boolean;
   next_retry_at: string | null;
   error: string | null;
+}
+
+export interface PinterestSheetRow {
+  title: string;
+  image_url: string;
+  description: string;
+  tags: string;
+  article_link: string;
+  status: string;
+  board: string;
 }
 
 export interface PinterestRecipeOut {

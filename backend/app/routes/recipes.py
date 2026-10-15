@@ -39,6 +39,63 @@ _IMAGE_PROXY_MAX_BYTES = 10 * 1024 * 1024
 _IMAGE_PROXY_CHUNK_SIZE = 64 * 1024
 
 
+@router.post("/api/recipes/{recipe_id}/pinterest-sheet")
+async def prepare_pinterest_sheet_recipe(
+    recipe_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Prepare one recipe at a time so large sheet exports can show progress."""
+    if user.email.strip().lower() != "khalil@gmail.com":
+        raise HTTPException(403, "This sheet download is not available for this account")
+    recipe = await db.get(Recipe, recipe_id)
+    if not recipe:
+        raise HTTPException(404, "Recipe not found")
+    site = await db.get(Site, recipe.site_id)
+    if not site:
+        raise HTTPException(404, "Site not found")
+    await check_project_access(site.project_id, user, db)
+    if recipe.status not in (RecipeStatus.generated, RecipeStatus.published):
+        raise HTTPException(409, "Wait for recipe generation to finish before downloading")
+
+    from ..services.pinterest_sheet import generated_image_urls, sheet_rows
+    urls = generated_image_urls(recipe.generated_images)
+    if not urls:
+        raise HTTPException(422, "This recipe has no Midjourney image links")
+    if not (recipe.pin_description or "").strip() or not (recipe.pin_tags or "").strip():
+        from ..services.credentials_loader import load_credentials_for_job
+        from ..services.openai_service import generate_pinterest_pin_description, generate_pinterest_pin_tags
+        from ..db_models import Project, Prompt
+
+        credentials = await load_credentials_for_job(db, site.project_id, user.id)
+        api_key = credentials.get("openai")
+        if not api_key:
+            raise HTTPException(400, "Configure an OpenAI API key in Settings or project credentials to generate descriptions and tags")
+        project = await db.get(Project, site.project_id)
+        prompts = {}
+        if project:
+            for project_scope in (None, site.project_id):
+                result = await db.execute(select(Prompt).where(
+                    Prompt.owner_id == project.owner_id, Prompt.project_id == project_scope))
+                prompts.update({p.key: p.value for p in result.scalars().all()})
+        content = recipe.generated_article or recipe.generated_full_recipe or recipe.recipe_text
+        # Keep the database untouched if either AI operation fails.
+        description, tags = recipe.pin_description, recipe.pin_tags
+        try:
+            if not (description or "").strip():
+                description = await asyncio.to_thread(generate_pinterest_pin_description, content, api_key, prompts)
+            if not (tags or "").strip():
+                tags = await asyncio.to_thread(generate_pinterest_pin_tags, content, api_key, prompts)
+            if not description.strip() or not tags.strip():
+                raise ValueError("Empty Pinterest metadata")
+        except Exception:
+            logger.warning("Pinterest sheet metadata generation failed for recipe %s", recipe_id)
+            raise HTTPException(502, "Could not generate the description and tags. Please try again.") from None
+        recipe.pin_description, recipe.pin_tags = description, tags
+        await db.commit()
+    return sheet_rows(recipe, urls)
+
+
 def _recipe_card_title(recipe_text: str | None) -> str:
     return (recipe_text or "").split("\n", 1)[0].strip()
 
