@@ -109,7 +109,7 @@ async def prepare_pinterest_sheet_recipe(
             raise HTTPException(502, "OpenAI could not generate the sheet metadata. Please try again shortly.") from None
         recipe.pin_description, recipe.pin_tags = description, tags
         await db.commit()
-    return sheet_rows(recipe, urls)
+    return sheet_rows(recipe, urls, site)
 
 
 def _recipe_card_title(recipe_text: str | None) -> str:

@@ -48,7 +48,12 @@ export default function PinterestSheetDownload({ recipes, loading }: { recipes: 
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, sheet, "Pinterest");
       XLSX.writeFile(workbook, `pinterest-midjourney-${new Date().toISOString().slice(0, 10)}.xlsx`);
-      toast.success(`Downloaded ${rows.length} image rows`);
+      const missingLinks = rows.filter((row) => !row.article_link.trim()).length;
+      if (missingLinks) {
+        toast.warning(`Downloaded ${rows.length} recipes. ${missingLinks} have no saved article link or WordPress post ID; publish the articles or add their links, then export again.`);
+      } else {
+        toast.success(`Downloaded ${rows.length} recipes`);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Sheet download failed. Please try again.");
     } finally {
@@ -58,7 +63,7 @@ export default function PinterestSheetDownload({ recipes, loading }: { recipes: 
 
   return <button type="button" onClick={() => void download()}
     disabled={loading || eligible.length === 0 || progress !== null}
-    title="Download an Excel sheet for the filtered Midjourney images. Missing descriptions and tags are generated with OpenAI. Status reflects recipe generation/article publishing."
+    title="Download one row per filtered recipe using its first Midjourney image. Missing descriptions and tags are generated with OpenAI. Status reflects recipe generation/article publishing."
     className="flex items-center gap-2 rounded-lg border border-emerald-700/60 bg-emerald-950/40 px-3 py-2 text-xs font-medium text-emerald-300 transition hover:bg-emerald-900/50 disabled:cursor-not-allowed disabled:opacity-40">
     {progress ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
     {progress ? `Creating sheet ${progress.done}/${progress.total}…` : "Create & download sheet"}

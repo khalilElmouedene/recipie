@@ -19,6 +19,7 @@ from app.db_models import RecipeStatus
 from app.routes.recipes import prepare_pinterest_sheet_recipe
 from app.services.pinterest_sheet import (
     generated_image_urls, generate_sheet_metadata, render_sheet_prompt, SheetMetadataError,
+    clean_sheet_description, article_link, sheet_rows,
 )
 
 
@@ -56,12 +57,12 @@ class PinterestSheetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.status_code, 403)
         self.db.commit.assert_not_awaited()
 
-    async def test_all_midjourney_images_and_existing_metadata_exported(self):
+    async def test_only_first_midjourney_image_and_existing_metadata_exported(self):
         self.user.email = " KHALIL@GMAIL.COM "
         with patch("app.services.credentials_loader.load_credentials_for_job", new_callable=AsyncMock) as credentials:
             rows = await self.prepare()
         credentials.assert_not_awaited()
-        self.assertEqual(len(rows), 2)
+        self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0], dict(title="Soup", image_url="https://cdn.example.com/one.jpg",
             description="Cozy soup.", tags="soup, dinner", article_link="https://example.com/soup",
             status="published", board="Dinner"))
@@ -220,3 +221,35 @@ class PinterestSheetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(generated_image_urls('{"url":"https://example.com/a.jpg"}'), [])
         self.assertEqual(generated_image_urls("not json"), [])
         self.assertEqual(generated_image_urls('[null, 1, "data:image/png;base64,foo", "javascript:alert(1)", "https://example.com/a.jpg", "https://example.com/a.jpg"]'), ["https://example.com/a.jpg"])
+
+    def test_four_images_produce_one_row_with_clean_saved_description(self):
+        self.recipe.pin_description = "Description : Ein himmlisches Dessert!"
+        urls = [f"https://example.com/{i}.jpg" for i in range(4)]
+        rows = sheet_rows(self.recipe, urls)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["image_url"], urls[0])
+        self.assertEqual(rows[0]["description"], "Ein himmlisches Dessert!")
+
+    def test_description_labels_removed_without_changing_body(self):
+        for value in ("Description: Soup!", " description : Soup!", "**Description:** Soup!", "**Description**: Soup!", "Pin Description: Soup!", "Beschreibung: Soup!"):
+            with self.subTest(value=value):
+                self.assertEqual(clean_sheet_description(value), "Soup!")
+        self.assertEqual(clean_sheet_description("Soup! Description: tasty."), "Soup! Description: tasty.")
+
+    def test_article_permalink_preferred_and_blank_values_do_not_mask_links(self):
+        self.recipe.pin_blog_link = "https://example.com/old-link"
+        self.assertEqual(article_link(self.recipe), "https://example.com/soup")
+        self.recipe.wp_permalink = " "
+        self.assertEqual(article_link(self.recipe), "https://example.com/old-link")
+
+    def test_article_link_recovers_from_post_id_and_wordpress_base(self):
+        self.recipe.wp_permalink = self.recipe.pin_blog_link = None
+        self.recipe.wp_post_id = "123"
+        self.site.wp_url = "https://example.com/blog/xmlrpc.php"
+        self.assertEqual(article_link(self.recipe, self.site), "https://example.com/blog/?p=123")
+        self.assertEqual(sheet_rows(self.recipe, ["https://example.com/image.jpg"], self.site)[0]["article_link"], "https://example.com/blog/?p=123")
+
+    def test_no_article_link_is_invented_without_saved_link_or_post_id(self):
+        self.recipe.wp_permalink = self.recipe.pin_blog_link = None
+        self.site.wp_url = "https://example.com"
+        self.assertEqual(article_link(self.recipe, self.site), "")

@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from openai import AsyncOpenAI
 
@@ -104,13 +104,39 @@ def generated_image_urls(raw: str | None) -> list[str]:
     return urls
 
 
-def sheet_rows(recipe, image_urls: list[str]) -> list[dict[str, str]]:
+def clean_sheet_description(value: str | None) -> str:
+    # Clean saved metadata as well as newly generated text on every export.
+    return re.sub(r"^\s*(?:\*{1,2}|#{1,6})?\s*(?:pin\s+description|description|beschreibung)\s*(?:\*{1,2})?\s*[:：]\s*(?:\*{1,2})?\s*",
+                  "", value or "", flags=re.IGNORECASE).strip()
+
+
+def article_link(recipe, site=None) -> str:
+    # Prefer the published article; a whitespace-only override must not hide it.
+    for value in (recipe.wp_permalink, recipe.pin_blog_link):
+        if isinstance(value, str) and value.strip():
+            parsed = urlsplit(value.strip())
+            if parsed.scheme in ("http", "https") and parsed.netloc:
+                return value.strip()
+    # WordPress supports ?p=ID even when the pretty permalink wasn't saved.
+    post_id = str(getattr(recipe, "wp_post_id", "") or "").strip()
+    if site is not None and post_id.isdigit() and int(post_id) > 0:
+        raw = (getattr(site, "wp_url", "") or getattr(site, "domain", "") or "").strip()
+        if raw and not raw.startswith(("https://", "http://")):
+            raw = "https://" + raw
+        parsed = urlsplit(raw)
+        if parsed.scheme in ("http", "https") and parsed.netloc:
+            path = re.sub(r"/(?:xmlrpc\.php|wp-admin(?:/.*)?|wp-json(?:/.*)?)$", "", parsed.path).rstrip("/") + "/"
+            return urlunsplit((parsed.scheme, parsed.netloc, path, f"p={post_id}", ""))
+    return ""
+
+
+def sheet_rows(recipe, image_urls: list[str], site=None) -> list[dict[str, str]]:
     return [{
         "title": recipe.pin_title or recipe.recipe_text.split("\n", 1)[0].strip(),
         "image_url": url,
-        "description": recipe.pin_description or "",
+        "description": clean_sheet_description(recipe.pin_description),
         "tags": recipe.pin_tags or "",
-        "article_link": recipe.pin_blog_link or recipe.wp_permalink or "",
+        "article_link": article_link(recipe, site),
         "status": recipe.status.value,
         "board": recipe.pin_board or "",
-    } for url in image_urls]
+    } for url in image_urls[:1]]
