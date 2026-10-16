@@ -64,7 +64,8 @@ async def prepare_pinterest_sheet_recipe(
         raise HTTPException(422, "This recipe has no Midjourney image links")
     if not (recipe.pin_description or "").strip() or not (recipe.pin_tags or "").strip():
         from ..services.credentials_loader import load_credentials_for_job
-        from ..services.openai_service import generate_pinterest_pin_description, generate_pinterest_pin_tags
+        from ..services.pinterest_sheet import generate_sheet_metadata
+        from openai import APIConnectionError, APITimeoutError, APIStatusError
         from ..db_models import Project, Prompt
 
         credentials = await load_credentials_for_job(db, site.project_id, user.id)
@@ -80,17 +81,30 @@ async def prepare_pinterest_sheet_recipe(
                 prompts.update({p.key: p.value for p in result.scalars().all()})
         content = recipe.generated_article or recipe.generated_full_recipe or recipe.recipe_text
         # Keep the database untouched if either AI operation fails.
-        description, tags = recipe.pin_description, recipe.pin_tags
         try:
-            if not (description or "").strip():
-                description = await asyncio.to_thread(generate_pinterest_pin_description, content, api_key, prompts)
-            if not (tags or "").strip():
-                tags = await asyncio.to_thread(generate_pinterest_pin_tags, content, api_key, prompts)
+            description, tags = await generate_sheet_metadata(
+                content, api_key, prompts, recipe.pin_description, recipe.pin_tags)
             if not description.strip() or not tags.strip():
                 raise ValueError("Empty Pinterest metadata")
-        except Exception:
-            logger.warning("Pinterest sheet metadata generation failed for recipe %s", recipe_id)
-            raise HTTPException(502, "Could not generate the description and tags. Please try again.") from None
+        except Exception as exc:
+            # Log correlation data, never API keys, prompts or raw provider messages.
+            logger.warning("Pinterest sheet AI failed recipe=%s type=%s status=%s request_id=%s",
+                recipe_id, type(exc).__name__, getattr(exc, "status_code", None),
+                getattr(exc, "request_id", None))
+            if isinstance(exc, (TimeoutError, APITimeoutError)):
+                raise HTTPException(504, "OpenAI took too long to generate the sheet metadata. Please try again.") from None
+            if isinstance(exc, APIStatusError):
+                if exc.status_code in (401, 403):
+                    raise HTTPException(400, "OpenAI rejected the configured API key or its permissions. Update it in Settings or project credentials.") from None
+                if exc.status_code == 429:
+                    raise HTTPException(429, "OpenAI quota or rate limit reached. Check API billing and limits, then try again.") from None
+                if exc.status_code in (400, 404, 422):
+                    raise HTTPException(422, "OpenAI rejected the metadata request. Check the project's Pinterest prompts and model access.") from None
+            if isinstance(exc, APIConnectionError):
+                raise HTTPException(503, "The server could not connect to OpenAI. Please try again shortly.") from None
+            if isinstance(exc, (ValueError, KeyError, IndexError)):
+                raise HTTPException(422, "Invalid Pinterest prompt or empty AI response. Check the description and tags prompts, then try again.") from None
+            raise HTTPException(502, "OpenAI could not generate the sheet metadata. Please try again shortly.") from None
         recipe.pin_description, recipe.pin_tags = description, tags
         await db.commit()
     return sheet_rows(recipe, urls)

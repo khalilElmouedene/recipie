@@ -90,7 +90,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (res.status === 204) return undefined as unknown as T;
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    const err = await res.json().catch(() => ({
+      detail: [502, 503, 504].includes(res.status)
+        ? `The server is temporarily unavailable or timed out (HTTP ${res.status}). Please try again shortly.`
+        : res.statusText,
+    }));
     let msg = "Request failed";
     if (typeof err.detail === "string") msg = err.detail;
     else if (Array.isArray(err.detail) && err.detail.length > 0)
