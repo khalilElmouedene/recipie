@@ -17,7 +17,9 @@ import httpx
 from openai import APIStatusError, APITimeoutError
 from app.db_models import RecipeStatus
 from app.routes.recipes import prepare_pinterest_sheet_recipe
-from app.services.pinterest_sheet import generated_image_urls, generate_sheet_metadata
+from app.services.pinterest_sheet import (
+    generated_image_urls, generate_sheet_metadata, render_sheet_prompt, SheetMetadataError,
+)
 
 
 class PinterestSheetTests(unittest.IsolatedAsyncioTestCase):
@@ -152,6 +154,60 @@ class PinterestSheetTests(unittest.IsolatedAsyncioTestCase):
                 await generate_sheet_metadata("Soup", "test-key", {}, None, None)
         self.assertEqual(len(cancelled), 2)
         client.__aexit__.assert_awaited_once()
+
+    def test_saved_prompt_json_braces_and_unknown_placeholders_are_literal(self):
+        template = 'Use this example: {"description": "text", "tags": ["soup"]}. {article} {custom_note}'
+        self.assertEqual(render_sheet_prompt(template, 'Soup {title}'),
+            'Use this example: {"description": "text", "tags": ["soup"]}. Soup {title} {custom_note}')
+
+    def test_saved_prompt_aliases_and_missing_source_placeholder(self):
+        for alias in ("article", "recipe_title", "recipe_name", "title", "recipe_text", "new_recipe", "full_recipe", "content"):
+            with self.subTest(alias=alias):
+                self.assertEqual(render_sheet_prompt("Write about {" + alias + "}", "Soup"), "Write about Soup")
+        for template in ('Write tags.', 'Example: {"tags": []}', 'Write {unknown}', 'Literal { braces', '{{article}}'):
+            with self.subTest(template=template):
+                self.assertEqual(render_sheet_prompt(template, "Soup"), template + "\n\nSource article or recipe:\nSoup")
+
+    async def test_custom_json_prompt_reaches_openai_and_preserves_existing_tags(self):
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.chat.completions.create.return_value = SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason="stop", message=SimpleNamespace(content="Cozy soup description"))])
+        prompts = {"pinterest_description": 'Example: {"description": "sample"}. Source: {new_recipe}'}
+        with patch("app.services.pinterest_sheet.AsyncOpenAI", return_value=client):
+            result = await generate_sheet_metadata("Soup", "test-key", prompts, None, "existing tags")
+        self.assertEqual(result, ("Cozy soup description", "existing tags"))
+        client.chat.completions.create.assert_awaited_once()
+        self.assertEqual(client.chat.completions.create.call_args.kwargs["messages"][0]["content"],
+            'Example: {"description": "sample"}. Source: Soup')
+
+    async def test_empty_incomplete_and_refused_responses_identify_the_field(self):
+        cases = [(SimpleNamespace(choices=[]), "no result"),
+                 (SimpleNamespace(choices=[SimpleNamespace(finish_reason="length")]), "cut off"),
+                 (SimpleNamespace(choices=[SimpleNamespace(finish_reason="content_filter")]), "declined"),
+                 (SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=None))]), "empty"),
+                 (SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="", refusal="private text"))]), "declined")]
+        for response, expected in cases:
+            with self.subTest(reason=expected):
+                client = AsyncMock()
+                client.__aenter__.return_value = client
+                client.chat.completions.create.return_value = response
+                with patch("app.services.pinterest_sheet.AsyncOpenAI", return_value=client):
+                    with self.assertRaises(SheetMetadataError) as caught:
+                        await generate_sheet_metadata("Soup", "test-key", {}, "existing description", None)
+                self.assertIn("tags", str(caught.exception))
+                self.assertIn(expected, str(caught.exception))
+                self.assertNotIn("private text", str(caught.exception))
+
+    async def test_field_specific_error_returned_without_saving(self):
+        self.recipe.pin_tags = None
+        with patch("app.services.credentials_loader.load_credentials_for_job", AsyncMock(return_value={"openai": "test-key"})), \
+             patch("app.services.pinterest_sheet.generate_sheet_metadata", AsyncMock(side_effect=SheetMetadataError("OpenAI returned empty Pinterest tags. Please try again."))):
+            with self.assertRaises(HTTPException) as caught:
+                await self.prepare()
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertEqual(caught.exception.detail, "OpenAI returned empty Pinterest tags. Please try again.")
+        self.db.commit.assert_not_awaited()
 
     async def test_original_images_are_never_used_as_midjourney_fallback(self):
         self.recipe.generated_images = None

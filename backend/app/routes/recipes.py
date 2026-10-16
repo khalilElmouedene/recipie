@@ -64,7 +64,7 @@ async def prepare_pinterest_sheet_recipe(
         raise HTTPException(422, "This recipe has no Midjourney image links")
     if not (recipe.pin_description or "").strip() or not (recipe.pin_tags or "").strip():
         from ..services.credentials_loader import load_credentials_for_job
-        from ..services.pinterest_sheet import generate_sheet_metadata
+        from ..services.pinterest_sheet import generate_sheet_metadata, SheetMetadataError
         from openai import APIConnectionError, APITimeoutError, APIStatusError
         from ..db_models import Project, Prompt
 
@@ -91,6 +91,8 @@ async def prepare_pinterest_sheet_recipe(
             logger.warning("Pinterest sheet AI failed recipe=%s type=%s status=%s request_id=%s",
                 recipe_id, type(exc).__name__, getattr(exc, "status_code", None),
                 getattr(exc, "request_id", None))
+            if isinstance(exc, SheetMetadataError):
+                raise HTTPException(422, str(exc)) from None
             if isinstance(exc, (TimeoutError, APITimeoutError)):
                 raise HTTPException(504, "OpenAI took too long to generate the sheet metadata. Please try again.") from None
             if isinstance(exc, APIStatusError):
