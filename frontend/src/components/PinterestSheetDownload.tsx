@@ -5,6 +5,17 @@ import { Download, Loader2 } from "lucide-react";
 import { api, type PinterestRecipeOut, type PinterestSheetRow } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
 
+function descriptionWithHashtags(description: string, tags: string): string {
+  const hashtags = [...new Set(
+    tags.replace(/^\s*(?:tags|keywords|hashtags)\s*:\s*/i, "")
+      .split(/[,;\n]+|(?=#)/u)
+      .map((tag) => tag.trim().replace(/[^\p{L}\p{M}\p{N}_]/gu, ""))
+      .filter(Boolean)
+      .map((tag) => `#${tag}`),
+  )].join(" ");
+  return [description.trim(), hashtags].filter(Boolean).join("\n\n");
+}
+
 function hasGeneratedImages(recipe: PinterestRecipeOut): boolean {
   try {
     const images: unknown = JSON.parse(recipe.generated_images || "[]");
@@ -40,10 +51,10 @@ export default function PinterestSheetDownload({ recipes, loading }: { recipes: 
         setProgress({ done: i + 1, total: eligible.length });
       }
       const sheet = XLSX.utils.aoa_to_sheet([
-        ["Title", "Image URL", "Description", "Tags", "Article link", "Status", "Board"],
-        ...rows.map((row) => [row.title, row.image_url, row.description, row.tags, row.article_link, row.status, row.board]),
+        ["Title", "Image URL", "Description", "Article link", "Status", "Board"],
+        ...rows.map((row) => [row.title, row.image_url, descriptionWithHashtags(row.description, row.tags), row.article_link, row.status, row.board]),
       ]);
-      sheet["!cols"] = [32, 60, 80, 45, 60, 16, 28].map((wch) => ({ wch }));
+      sheet["!cols"] = [32, 60, 80, 60, 16, 28].map((wch) => ({ wch }));
       sheet["!autofilter"] = { ref: sheet["!ref"]! };
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, sheet, "Pinterest");
