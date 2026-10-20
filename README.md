@@ -84,7 +84,7 @@ automatic cleanup; no separate service or database migration is required.
 ## Facebook project configuration
 
 Use the **Duplicate project** icon beside the delete button on a Facebook project
-card to create a new workspace with the same website, encrypted API credentials,
+card, enter a name in the popup, then confirm to create a new workspace with the same website, encrypted API credentials,
 connected Pages, prompts and generation settings. The copy starts with an empty
 Spy Sheet and no posts, delivery queues or history.
 

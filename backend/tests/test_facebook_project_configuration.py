@@ -31,7 +31,7 @@ from app.db_models import (
     Project, ProjectCredential, Prompt, Site, User,
 )
 from app.routes.facebook import (
-    FacebookProjectUpdate, duplicate_facebook_project, update_facebook_project,
+    FacebookProjectDuplicate, FacebookProjectUpdate, duplicate_facebook_project, update_facebook_project,
 )
 from app.services import article_generator, facebook_generation, openai_service
 from app.services.facebook_generation import FacebookGenerationManager, _GenerationContext
@@ -148,6 +148,20 @@ class FacebookProjectConfigurationTests(unittest.IsolatedAsyncioTestCase):
             await duplicate_facebook_project(self.source.id, SimpleNamespace(id=uuid.uuid4()), self.db)
         self.assertEqual(raised.exception.status_code, 403)
         self.assertEqual(len(self.session.scalars(select(FacebookProject)).all()), 1)
+
+    async def test_duplicate_uses_trimmed_custom_name_for_both_projects(self):
+        result = await duplicate_facebook_project(
+            self.source.id, self.user, self.db,
+            FacebookProjectDuplicate(name="  Weekend Recipes  "),
+        )
+        self.assertEqual(result.name, "Weekend Recipes")
+        self.assertEqual(self.session.get(Project, result.content_project_id).name, "Weekend Recipes - Facebook Content")
+        self.assertEqual(self.source.name, "Recipes")
+
+    def test_duplicate_name_rejects_empty_whitespace_and_overlong_values(self):
+        for name in ("", "   ", "\t\n", "X" * 256):
+            with self.subTest(name=name), self.assertRaises(ValidationError):
+                FacebookProjectDuplicate(name=name)
 
     async def test_image_project_and_maximum_length_name_duplicate(self):
         self.source.name = "X" * 255

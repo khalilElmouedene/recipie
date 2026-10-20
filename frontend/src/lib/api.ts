@@ -830,8 +830,11 @@ export const api = {
     }),
   getFacebookProject: (projectId: string) =>
     request<FacebookProjectOut>(`/api/facebook-projects/${projectId}`),
-  duplicateFacebookProject: (projectId: string) =>
-    request<FacebookProjectOut>(`/api/facebook-projects/${projectId}/duplicate`, { method: "POST" }),
+  duplicateFacebookProject: (projectId: string, name: string) =>
+    request<FacebookProjectOut>(`/api/facebook-projects/${projectId}/duplicate`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
   updateFacebookProject: (
     projectId: string,
     data: Partial<{

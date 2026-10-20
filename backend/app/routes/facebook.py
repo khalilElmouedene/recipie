@@ -83,6 +83,15 @@ class FacebookProjectCreate(BaseModel):
     use_midjourney: bool = True
 
 
+class FacebookProjectDuplicate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def trim_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
 class FacebookProjectUpdate(BaseModel):
     use_midjourney: bool | None = None
     name: str | None = Field(default=None, min_length=1, max_length=255)
@@ -555,9 +564,10 @@ async def duplicate_facebook_project(
     project_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    body: FacebookProjectDuplicate | None = None,
 ):
     source = await _project(project_id, user, db)
-    name = f"{source.name[:248]} (copy)"
+    name = body.name if body is not None else f"{source.name[:248]} (copy)"
     content_project = Project(
         name=f"{name[:181]} - Facebook Content",
         description=source.description,

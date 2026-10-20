@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, CalendarDays, Copy, FileImage, FileVideo2, Loader2, Plus, Trash2, X } from "lucide-react";
 import { api, FacebookProjectOut } from "@/lib/api";
@@ -23,6 +23,10 @@ export default function FacebookProjectsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+  const [duplicateTarget, setDuplicateTarget] = useState<FacebookProjectOut | null>(null);
+  const [duplicateName, setDuplicateName] = useState("");
+  const [duplicateError, setDuplicateError] = useState("");
+  const duplicateDialogRef = useRef<HTMLDialogElement>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [postType, setPostType] = useState<"video" | "image">("video");
@@ -41,6 +45,13 @@ export default function FacebookProjectsPage() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    if (!duplicateTarget) return;
+    const dialog = duplicateDialogRef.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, [duplicateTarget]);
 
   const createProject = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -83,15 +94,20 @@ export default function FacebookProjectsPage() {
     toast.success("Facebook project deleted");
   };
 
-  const duplicateProject = async (project: FacebookProjectOut) => {
-    if (duplicatingId) return;
+  const duplicateProject = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (duplicatingId || !duplicateTarget || !duplicateName.trim()) return;
+    const project = duplicateTarget;
     setDuplicatingId(project.id);
+    setDuplicateError("");
     try {
-      const created = await api.duplicateFacebookProject(project.id);
+      const created = await api.duplicateFacebookProject(project.id, duplicateName.trim());
       setProjects((current) => [created, ...current]);
+      setDuplicateTarget(null);
+      setDuplicateName("");
       toast.success(`“${created.name}” created with all project settings. Posts and history start empty.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not duplicate project");
+      setDuplicateError(error instanceof Error ? error.message : "Could not duplicate project");
     } finally {
       setDuplicatingId(null);
     }
@@ -166,7 +182,11 @@ export default function FacebookProjectsPage() {
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => duplicateProject(project)}
+                    onClick={() => {
+                      setDuplicateName(`${project.name.slice(0, 248)} (copy)`);
+                      setDuplicateError("");
+                      setDuplicateTarget(project);
+                    }}
                     disabled={duplicatingId !== null}
                     className="rounded-lg p-2 text-slate-400 transition hover:bg-[#1877f2]/10 hover:text-[#8bbcff] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#68a8ff] disabled:opacity-40"
                     title="Duplicate project with its configuration"
@@ -222,6 +242,62 @@ export default function FacebookProjectsPage() {
             </article>
           ))}
         </div>
+      )}
+
+      {duplicateTarget && (
+        <dialog
+          ref={duplicateDialogRef}
+          aria-labelledby="duplicate-project-title"
+          aria-describedby="duplicate-project-description"
+          onCancel={(event) => {
+            event.preventDefault();
+            if (!duplicatingId) setDuplicateTarget(null);
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !duplicatingId) setDuplicateTarget(null);
+          }}
+          className="w-full max-w-lg bg-transparent p-4 text-white backdrop:bg-black/70 backdrop:backdrop-blur-sm"
+        >
+          <form onSubmit={duplicateProject} className="overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 px-6 py-5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#68a8ff]">Copy workspace</p>
+                <h2 id="duplicate-project-title" className="mt-1 text-xl font-semibold text-white">Duplicate project</h2>
+              </div>
+              <button type="button" disabled={duplicatingId !== null} onClick={() => setDuplicateTarget(null)} aria-label="Close duplication dialog" className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white disabled:opacity-50">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-5 px-6 py-6">
+              <p id="duplicate-project-description" className="break-words text-sm leading-6 text-slate-400">
+                Copy the configuration from <span className="font-medium text-white">{duplicateTarget.name}</span> into a new project. Posts and history start empty.
+              </p>
+              <div>
+                <label htmlFor="duplicate-project-name" className="mb-2 block text-sm font-medium text-slate-300">New project name <span className="text-[#68a8ff]">*</span></label>
+                <input
+                  id="duplicate-project-name"
+                  autoFocus
+                  required
+                  maxLength={255}
+                  disabled={duplicatingId !== null}
+                  value={duplicateName}
+                  onFocus={(event) => event.target.select()}
+                  onChange={(event) => setDuplicateName(event.target.value)}
+                  className="input-field"
+                  placeholder="Enter a name for the new project"
+                />
+              </div>
+              {duplicateError && <p role="alert" className="rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-300">{duplicateError}</p>}
+            </div>
+            <div className="flex justify-end gap-3 border-t border-slate-800 bg-slate-950/30 px-6 py-4">
+              <button type="button" disabled={duplicatingId !== null} onClick={() => setDuplicateTarget(null)} className="btn-secondary">Cancel</button>
+              <button type="submit" disabled={duplicatingId !== null || !duplicateName.trim()} className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50">
+                {duplicatingId ? <Loader2 size={16} className="animate-spin" /> : <Copy size={16} />}
+                {duplicatingId ? "Duplicating…" : "Duplicate project"}
+              </button>
+            </div>
+          </form>
+        </dialog>
       )}
 
       {showCreate && (
