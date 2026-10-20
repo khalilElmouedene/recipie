@@ -830,6 +830,8 @@ export const api = {
     }),
   getFacebookProject: (projectId: string) =>
     request<FacebookProjectOut>(`/api/facebook-projects/${projectId}`),
+  duplicateFacebookProject: (projectId: string) =>
+    request<FacebookProjectOut>(`/api/facebook-projects/${projectId}/duplicate`, { method: "POST" }),
   updateFacebookProject: (
     projectId: string,
     data: Partial<{
@@ -842,6 +844,7 @@ export const api = {
       video_fps: 24 | 30 | 60;
       video_bitrate_kbps: number;
       recipe_rewrite_prompt: string;
+      use_midjourney: boolean;
     }>,
   ) =>
     request<FacebookProjectOut>(`/api/facebook-projects/${projectId}`, {
@@ -1758,6 +1761,7 @@ export interface FacebookProjectOut {
   video_intro_seconds: number;
   video_fps: 24 | 30 | 60;
   video_bitrate_kbps: number;
+  use_midjourney: boolean;
   page_count: number;
   content_count: number;
   has_website: boolean;

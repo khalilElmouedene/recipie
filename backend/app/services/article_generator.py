@@ -455,6 +455,7 @@ def generate_for_recipe(
     pinterest_url: str = "",
     generate_recipe_json: bool = True,
     focus_keyword: str = "",
+    use_midjourney: bool = True,
 ) -> dict:
     """Generate all content for a single recipe. Returns a dict of fields to update on the Recipe row."""
     _log = log or print
@@ -486,7 +487,12 @@ def generate_for_recipe(
 
         # 2. Midjourney images (required when Discord credentials are configured)
         discord_auth = credentials.get("discord_auth", "").strip()
-        if discord_auth and image_url:
+        if not use_midjourney:
+            if not image_url:
+                raise ValueError("A source image is required when Midjourney is disabled.")
+            _log("Midjourney disabled: using the source image for the article.")
+            result["generated_images"] = json.dumps([image_url])
+        elif discord_auth and image_url:
             if _stop():
                 return result
             channel_id = credentials.get("discord_channel", "")

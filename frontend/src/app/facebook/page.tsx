@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, CalendarDays, FileImage, FileVideo2, Plus, Trash2, X } from "lucide-react";
+import { ArrowRight, CalendarDays, Copy, FileImage, FileVideo2, Loader2, Plus, Trash2, X } from "lucide-react";
 import { api, FacebookProjectOut } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
@@ -22,6 +22,7 @@ export default function FacebookProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [postType, setPostType] = useState<"video" | "image">("video");
@@ -80,6 +81,20 @@ export default function FacebookProjectsPage() {
     await api.deleteFacebookProject(project.id);
     setProjects((current) => current.filter((item) => item.id !== project.id));
     toast.success("Facebook project deleted");
+  };
+
+  const duplicateProject = async (project: FacebookProjectOut) => {
+    if (duplicatingId) return;
+    setDuplicatingId(project.id);
+    try {
+      const created = await api.duplicateFacebookProject(project.id);
+      setProjects((current) => [created, ...current]);
+      toast.success(`“${created.name}” created with all project settings. Posts and history start empty.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not duplicate project");
+    } finally {
+      setDuplicatingId(null);
+    }
   };
 
   return (
@@ -148,13 +163,26 @@ export default function FacebookProjectsPage() {
                 <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[#1877f2] text-white shadow-lg shadow-[#1877f2]/20">
                   <FacebookMark className="h-5 w-5" />
                 </div>
-                <button
-                  onClick={() => deleteProject(project)}
-                  className="rounded-lg p-2 text-slate-600 transition hover:bg-red-500/10 hover:text-red-400"
-                  title="Delete project"
-                >
-                  <Trash2 size={16} />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => duplicateProject(project)}
+                    disabled={duplicatingId !== null}
+                    className="rounded-lg p-2 text-slate-400 transition hover:bg-[#1877f2]/10 hover:text-[#8bbcff] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#68a8ff] disabled:opacity-40"
+                    title="Duplicate project with its configuration"
+                    aria-label={`Duplicate ${project.name}`}
+                  >
+                    {duplicatingId === project.id ? <Loader2 size={16} className="animate-spin" /> : <Copy size={16} />}
+                  </button>
+                  <button
+                    onClick={() => deleteProject(project)}
+                    disabled={duplicatingId === project.id}
+                    className="rounded-lg p-2 text-slate-600 transition hover:bg-red-500/10 hover:text-red-400"
+                    title="Delete project"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </div>
               <Link href={`/facebook/${project.id}`} className="relative mt-5 block">
                 <span className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-[#1877f2]/25 bg-[#1877f2]/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8bbcff]">

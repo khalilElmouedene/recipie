@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from jose import JWTError, jwt
 from PIL import Image
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete as sql_delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,8 @@ from ..db_models import (
     FacebookProject,
     FacebookSpyRow,
     Project,
+    ProjectCredential,
+    Prompt,
     Recipe,
     RecipeStatus,
     Site,
@@ -78,9 +80,11 @@ class FacebookProjectCreate(BaseModel):
     video_intro_seconds: float = Field(default=5.0, ge=1.0, le=15.0)
     video_fps: Literal[24, 30, 60] = 30
     video_bitrate_kbps: int = Field(default=8000, ge=1000, le=20000)
+    use_midjourney: bool = True
 
 
 class FacebookProjectUpdate(BaseModel):
+    use_midjourney: bool | None = None
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=5000)
     app_id: str | None = Field(default=None, max_length=255)
@@ -92,6 +96,13 @@ class FacebookProjectUpdate(BaseModel):
     recipe_rewrite_prompt: str | None = Field(
         default=None, min_length=1, max_length=12000
     )
+
+    @field_validator("use_midjourney")
+    @classmethod
+    def midjourney_must_be_boolean(cls, value):
+        if value is None:
+            raise ValueError("use_midjourney must be true or false")
+        return value
 
 
 class FacebookProjectOut(BaseModel):
@@ -108,6 +119,7 @@ class FacebookProjectOut(BaseModel):
     video_intro_seconds: float
     video_fps: int
     video_bitrate_kbps: int
+    use_midjourney: bool
     page_count: int
     content_count: int
     has_website: bool
@@ -404,6 +416,7 @@ async def _project_out(project: FacebookProject, db: AsyncSession) -> FacebookPr
         video_intro_seconds=project.video_intro_seconds,
         video_fps=project.video_fps,
         video_bitrate_kbps=project.video_bitrate_kbps,
+        use_midjourney=project.use_midjourney,
         page_count=page_count,
         content_count=content_count,
         has_website=has_website,
@@ -514,11 +527,71 @@ async def create_facebook_project(
         video_intro_seconds=body.video_intro_seconds,
         video_fps=body.video_fps,
         video_bitrate_kbps=body.video_bitrate_kbps,
+        use_midjourney=body.use_midjourney,
     )
     db.add(project)
     await db.commit()
     await db.refresh(project)
     return await _project_out(project, db)
+
+
+def _copy_configuration(row, **overrides):
+    """Copy mapped configuration only, with fresh identity and timestamps."""
+    values = {
+        column.name: getattr(row, column.name)
+        for column in row.__table__.columns
+        if column.name not in {"id", "created_at", "updated_at"}
+    }
+    values.update(overrides)
+    return type(row)(**values)
+
+
+@router.post(
+    "/facebook-projects/{project_id}/duplicate",
+    response_model=FacebookProjectOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def duplicate_facebook_project(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    source = await _project(project_id, user, db)
+    name = f"{source.name[:248]} (copy)"
+    content_project = Project(
+        name=f"{name[:181]} - Facebook Content",
+        description=source.description,
+        owner_id=user.id,
+    )
+    db.add(content_project)
+    await db.flush()
+    duplicate = _copy_configuration(
+        source,
+        owner_id=user.id,
+        content_project_id=content_project.id,
+        name=name,
+        generation_paused=False,
+    )
+    db.add(duplicate)
+    await db.flush()
+
+    # Encrypted values stay encrypted. Never clone content, queues or history.
+    for model in (ProjectCredential, Site, Prompt):
+        query = select(model).where(model.project_id == source.content_project_id)
+        if model is Prompt:
+            query = query.where(Prompt.owner_id == user.id)
+        rows = await db.execute(query)
+        for row in rows.scalars().all():
+            db.add(_copy_configuration(row, project_id=content_project.id))
+    pages = await db.execute(
+        select(FacebookPage).where(FacebookPage.project_id == source.id)
+    )
+    for page in pages.scalars().all():
+        db.add(_copy_configuration(page, project_id=duplicate.id))
+
+    await db.commit()
+    await db.refresh(duplicate)
+    return await _project_out(duplicate, db)
 
 
 @router.get("/facebook-projects/{project_id}", response_model=FacebookProjectOut)

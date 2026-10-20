@@ -1742,7 +1742,7 @@ function FacebookSettings({
         {activeTab === "pages" && (
           <FacebookPagesSettings project={project} pages={pages} onRefresh={onRefresh} onProject={onProject} />
         )}
-        {activeTab === "keys" && <FacebookKeysSettings contentProjectId={project.content_project_id} projectType={project.post_type} />}
+        {activeTab === "keys" && <FacebookKeysSettings project={project} onProject={onProject} />}
         {activeTab === "ai_prompts" && <FacebookAiPromptSettings contentProjectId={project.content_project_id} />}
         {project.post_type === "image" && activeTab === "image_settings" && <FacebookImageSettings project={project} onProject={onProject} />}
         {project.post_type === "video" && activeTab === "video_prompts" && <FacebookVideoPromptSettings contentProjectId={project.content_project_id} />}
@@ -2638,7 +2638,7 @@ const KEY_GROUPS = [
   },
   {
     title: "Midjourney (Discord)",
-    description: "Existing Midjourney management is reused for generated article images.",
+    description: "Generates article images using the video screenshot as a reference.",
     icon: ImageIcon,
     fields: [
       { key: "discord_auth", label: "Discord Authorization", placeholder: "Authorization token", type: "password" },
@@ -2652,46 +2652,76 @@ const KEY_GROUPS = [
 ];
 
 function FacebookKeysSettings({
-  contentProjectId,
-  projectType,
+  project,
+  onProject,
 }: {
-  contentProjectId: string;
-  projectType: "video" | "image";
+  project: FacebookProjectOut;
+  onProject: (project: FacebookProjectOut) => void;
 }) {
   const toast = useToast();
+  const contentProjectId = project.content_project_id;
+  const projectType = project.post_type;
   const [credentials, setCredentials] = useState<CredentialOut[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [useMidjourney, setUseMidjourney] = useState(project.use_midjourney);
   const [saving, setSaving] = useState(false);
-  const visibleGroups = projectType === "image" ? KEY_GROUPS.slice(0, 1) : KEY_GROUPS;
+  const visibleGroups = projectType === "image" || !useMidjourney ? KEY_GROUPS.slice(0, 1) : KEY_GROUPS;
+  const changed = Object.entries(values).filter(([key, value]) =>
+    (key === "openai" || (projectType === "video" && useMidjourney)) && (key === "discord_guild" || value.trim()),
+  );
+  const modeChanged = projectType === "video" && useMidjourney !== project.use_midjourney;
+
+  useEffect(() => {
+    setUseMidjourney(project.use_midjourney);
+  }, [project.id, project.use_midjourney]);
 
   useEffect(() => {
     api.getCredentials(contentProjectId).then(setCredentials).catch(() => {});
   }, [contentProjectId]);
 
   const save = async () => {
-    const changed = Object.entries(values).filter(([key, value]) => key === "discord_guild" || value.trim());
-    if (!changed.length) return;
+    if (!changed.length && !modeChanged) return;
     setSaving(true);
     try {
-      const updated = await api.setCredentials(
-        contentProjectId,
-        changed.map(([key_type, value]) => ({ key_type, value })),
-      );
-      setCredentials(updated);
-      setValues({});
-      toast.success("Facebook project API keys saved");
+      if (changed.length) {
+        const updated = await api.setCredentials(
+          contentProjectId,
+          changed.map(([key_type, value]) => ({ key_type, value })),
+        );
+        setCredentials(updated);
+        setValues({});
+      }
+      if (modeChanged) {
+        onProject(await api.updateFacebookProject(project.id, { use_midjourney: useMidjourney }));
+      }
+      toast.success("Facebook project generation settings and API keys saved");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save API keys");
+      toast.error(error instanceof Error ? error.message : "Could not save generation settings and API keys");
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <SettingsSection title="API Keys" description={projectType === "image" ? "Only OpenAI is used for GPT Image 2 and optional article generation. Midjourney and Discord are not used by Image Posts." : "These credentials are stored on the linked content project and use the same encrypted implementation as the existing Projects page."}>
+    <SettingsSection title="API Keys" description={projectType === "image" ? "Only OpenAI is used for GPT Image 2 and optional article generation. Midjourney and Discord are not used by Image Posts." : "Choose the image source for your articles and manage the API keys used by this Facebook project."}>
       <div className="mb-4 rounded-xl border border-blue-900/50 bg-blue-950/20 px-4 py-3 text-sm text-blue-200">
         These API keys are specific to this project and do not affect other projects.
       </div>
+      {projectType === "video" && (
+        <fieldset disabled={saving} className="mb-5 rounded-[18px] border border-slate-800 bg-[#101827] p-5">
+          <legend className="px-2 text-sm font-semibold text-white">Use Midjourney for article images?</legend>
+          <p className="mb-4 text-sm leading-6 text-slate-400">Choose how new articles get their images. This also applies when you retry generation.</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {[{ value: true, label: "Yes, generate with Midjourney", description: "Generate new article images from the video screenshot. Configure your Midjourney / Discord keys below." },
+              { value: false, label: "No, use the video screenshot", description: "Use the image extracted from the video directly in your article. No Midjourney keys are needed." }].map((option) => (
+              <label key={String(option.value)} className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${useMidjourney === option.value ? "border-[#1877f2] bg-[#1877f2]/10" : "border-slate-700 hover:border-slate-600"}`}>
+                <input type="radio" name="article-image-generation" checked={useMidjourney === option.value} onChange={() => setUseMidjourney(option.value)} className="mt-1 accent-[#1877f2]" />
+                <span><span className="block text-sm font-medium text-white">{option.label}</span><span className="mt-1 block text-xs leading-5 text-slate-400">{option.description}</span></span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
       <div className="space-y-4">
         {visibleGroups.map((group) => (
           <div key={group.title} className="overflow-hidden rounded-[18px] border border-slate-800 bg-[#101827]">
@@ -2708,13 +2738,13 @@ function FacebookKeysSettings({
                 return (
                   <div key={field.key} className="rounded-xl border border-slate-800 p-4">
                     <div className="mb-2 flex items-center justify-between gap-3">
-                      <label className="text-sm font-medium text-slate-300">{field.label}</label>
+                      <label htmlFor={`facebook-key-${field.key}`} className="text-sm font-medium text-slate-300">{field.label}</label>
                       {field.key === "discord_guild" && (
-                        <button type="button" onClick={() => setValues({ ...values, discord_guild: "" })} className="text-xs text-blue-400">Auto detect</button>
+                        <button type="button" disabled={saving} onClick={() => setValues({ ...values, discord_guild: "" })} className="text-xs text-blue-400">Auto detect</button>
                       )}
                       <span className="font-mono text-[10px] text-slate-600">{masked}</span>
                     </div>
-                    <input type={field.type} value={values[field.key] || ""} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })} className="input-field font-mono text-xs" placeholder={field.placeholder} />
+                    <input id={`facebook-key-${field.key}`} disabled={saving} type={field.type} value={values[field.key] || ""} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })} className="input-field font-mono text-xs" placeholder={field.placeholder} />
                   </div>
                 );
               })}
@@ -2723,8 +2753,8 @@ function FacebookKeysSettings({
         ))}
       </div>
       <div className="mt-5 flex justify-end">
-        <button onClick={save} disabled={saving || !Object.entries(values).some(([key, value]) => key === "discord_guild" || value.trim())} className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
-          {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save API keys
+        <button onClick={save} disabled={saving || (!changed.length && !modeChanged)} className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
+          {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save settings
         </button>
       </div>
     </SettingsSection>

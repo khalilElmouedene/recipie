@@ -620,6 +620,7 @@ class FacebookProject(Base):
     video_intro_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=5.0)
     video_fps: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     video_bitrate_kbps: Mapped[int] = mapped_column(Integer, nullable=False, default=8000)
+    use_midjourney: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     generation_paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

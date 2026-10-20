@@ -81,6 +81,23 @@ The backend also checks on startup and every 24 hours, automatically deleting hi
 whose last Page publication was at least 24 hours ago. Keep the backend running for
 automatic cleanup; no separate service or database migration is required.
 
+## Facebook project configuration
+
+Use the **Duplicate project** icon beside the delete button on a Facebook project
+card to create a new workspace with the same website, encrypted API credentials,
+connected Pages, prompts and generation settings. The copy starts with an empty
+Spy Sheet and no posts, delivery queues or history.
+
+Under **Facebook project → Settings → API Keys**, choose whether to use Midjourney
+for article images. **Yes** shows the Midjourney/Discord credential fields.
+**No** uses the screenshot extracted from the source video for article images and
+bypasses Midjourney even when Discord credentials are saved. Save the setting
+before starting or retrying generation. Existing projects keep their current
+Midjourney behavior until this setting is changed.
+
+For an existing installation, run `alembic upgrade head` from `backend/` before
+restarting the backend. Docker startup applies this migration automatically.
+
 ## Environment Variables
 
 | Variable | Description |

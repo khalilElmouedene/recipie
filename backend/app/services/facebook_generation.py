@@ -57,6 +57,7 @@ class _GenerationContext:
     video_bitrate_kbps: int
     post_type: str
     recipe_rewrite_prompt: str
+    use_midjourney: bool = True
 
 
 class FacebookGenerationManager:
@@ -217,6 +218,7 @@ class FacebookGenerationManager:
                     getattr(project, "recipe_rewrite_prompt", None)
                     or DEFAULT_FACEBOOK_RECIPE_REWRITE_PROMPT
                 ),
+                use_midjourney=bool(getattr(project, "use_midjourney", True)),
             )
 
     async def _load_content_payloads(
@@ -948,6 +950,7 @@ class FacebookGenerationManager:
                         recipe_id=str(recipe_id),
                         recipe_text=str(payload["title"]),
                         image_url=processed.screenshot_url,
+                        use_midjourney=context.use_midjourney,
                         site_domain=context.site_domain,
                         credentials=context.credentials,
                         prompts=context.prompts,
