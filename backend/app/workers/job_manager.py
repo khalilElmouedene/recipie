@@ -149,6 +149,7 @@ from ..db_models import (
 )
 from ..database import SessionLocal
 from ..services.credentials_loader import load_credentials_for_job
+from ..services.cloudflare_ai import load_cloudflare_credentials
 from ..site_credentials import get_random_wp_credentials
 
 
@@ -519,6 +520,16 @@ class JobManager:
 
         # Use same db session as request - same pattern as Paramètres/Settings API
         credentials = await load_credentials_for_job(db, project_id, db_job.created_by)
+        if getattr(db_job, "image_provider", "midjourney") == "cloudflare":
+            try:
+                credentials.update(await load_cloudflare_credentials(db, db_job.created_by))
+                credentials["image_provider"] = "cloudflare"
+            except Exception as exc:
+                db_job.status = JobStatus.failed
+                db_job.error = str(exc)
+                db_job.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+                return
 
         if not credentials.get("openai") and db_job.job_type == JobType.articles:
             db_job.status = JobStatus.failed
@@ -924,7 +935,7 @@ class JobManager:
 
                         # Strict gate: when Midjourney is configured, images must exist
                         # before we generate any article content for this input recipe.
-                        if discord_auth:
+                        if discord_auth or credentials.get("image_provider") == "cloudflare":
                             try:
                                 if not group.get("image_url"):
                                     raise ValueError(
@@ -934,22 +945,22 @@ class JobManager:
                                     f"Input recipe {group['idx']}: generating images for {n_sites} site(s)"
                                 )
                                 shared_images = generate_images_only(
-                                    recipe_title=group["recipe_text"].splitlines()[0].strip(),
+                                    recipe_title=(group["recipe_text"] if credentials.get("image_provider") == "cloudflare" else group["recipe_text"].splitlines()[0].strip()),
                                     image_url=group["image_url"],
                                     credentials=credentials,
                                     prompts=prompts,
                                     log=rj.log,
                                     should_stop=rj.should_stop,
-                                    tracking_recipe_id=str(items[0]["id"]),
+                                    tracking_recipe_id=(f"{job_id_str}:{group['recipe_text']}:{group['image_url']}" if credentials.get("image_provider") == "cloudflare" else str(items[0]["id"])),
                                 )
                                 if not shared_images:
                                     raise ValueError(
-                                        f"Input recipe {group['idx']}: Midjourney failed to generate images"
+                                        f"Input recipe {group['idx']}: Image provider failed to generate images"
                                     )
                                 img_list: list[str] = json.loads(shared_images)
                                 if not img_list:
                                     raise ValueError(
-                                        f"Input recipe {group['idx']}: Midjourney returned no images"
+                                        f"Input recipe {group['idx']}: Image provider returned no images"
                                     )
 
                                 shuffled = list(img_list)
@@ -980,7 +991,8 @@ class JobManager:
                             rj.log(f"RECIPE {done + 1}/{total}: {item['recipe_text'].splitlines()[0]}")
                             rj.log("=" * 50)
                             run_creds = dict(credentials)
-                            # Skip Midjourney here: group images were already prepared above.
+                            run_creds.pop("image_provider", None)
+                            # Group images were already prepared; skip image generation in the article call.
                             run_creds["discord_auth"] = ""
                             run_creds["discord_app_id"] = ""
                             run_creds["discord_guild"] = ""
@@ -1165,6 +1177,16 @@ class JobManager:
                 return False
 
             credentials = await load_credentials_for_job(db, db_job.project_id, db_job.created_by)
+            if getattr(db_job, "image_provider", "midjourney") == "cloudflare":
+                try:
+                    credentials.update(await load_cloudflare_credentials(db, db_job.created_by))
+                    credentials["image_provider"] = "cloudflare"
+                except Exception as exc:
+                    db_job.status = JobStatus.failed
+                    db_job.error = str(exc)
+                    db_job.finished_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    return False
 
             prompts: dict[str, str] = {}
             prj_row = await db.execute(select(Project).where(Project.id == db_job.project_id))
@@ -1499,7 +1521,7 @@ class JobManager:
                             n_sites = len(items)
                             per_recipe_images: dict[str, str] = {}
 
-                            if discord_auth:
+                            if discord_auth or credentials.get("image_provider") == "cloudflare":
                                 try:
                                     if not group.get("image_url"):
                                         raise ValueError(
@@ -1509,22 +1531,22 @@ class JobManager:
                                         f"Input recipe {group['idx']}: generating images for {n_sites} site(s)"
                                     )
                                     shared_images = generate_images_only(
-                                        recipe_title=group["recipe_text"].splitlines()[0].strip(),
+                                        recipe_title=(group["recipe_text"] if credentials.get("image_provider") == "cloudflare" else group["recipe_text"].splitlines()[0].strip()),
                                         image_url=group["image_url"],
                                         credentials=credentials,
                                         prompts=prompts,
                                         log=rj.log,
                                         should_stop=rj.should_stop,
-                                        tracking_recipe_id=str(items[0]["id"]),
+                                        tracking_recipe_id=(f"{job_id_str}:{group['recipe_text']}:{group['image_url']}" if credentials.get("image_provider") == "cloudflare" else str(items[0]["id"])),
                                     )
                                     if not shared_images:
                                         raise ValueError(
-                                            f"Input recipe {group['idx']}: Midjourney failed to generate images"
+                                            f"Input recipe {group['idx']}: Image provider failed to generate images"
                                         )
                                     img_list: list[str] = json.loads(shared_images)
                                     if not img_list:
                                         raise ValueError(
-                                            f"Input recipe {group['idx']}: Midjourney returned no images"
+                                            f"Input recipe {group['idx']}: Image provider returned no images"
                                         )
 
                                     shuffled = list(img_list)
@@ -1551,7 +1573,8 @@ class JobManager:
                                 if rj.should_stop():
                                     break
                                 run_creds = dict(credentials)
-                                # Skip Midjourney here: group images were already prepared above.
+                                run_creds.pop("image_provider", None)
+                                # Group images were already prepared; skip image generation in the article call.
                                 run_creds["discord_auth"] = run_creds["discord_app_id"] = ""
                                 run_creds["discord_guild"] = run_creds["discord_channel"] = ""
                                 run_creds["mj_version"] = run_creds["mj_id"] = ""

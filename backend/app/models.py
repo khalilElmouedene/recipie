@@ -353,6 +353,7 @@ class SiteRecipeCardPageOut(BaseModel):
 
 class JobStart(BaseModel):
     job_type: str
+    image_provider: Literal["midjourney", "cloudflare"] = "midjourney"
     site_id: uuid.UUID | None = None
     recipe_id: uuid.UUID | None = None
     shared_recipes: list[SharedRecipeInput] | None = None
@@ -363,6 +364,7 @@ class JobOut(BaseModel):
     project_id: uuid.UUID
     created_by: uuid.UUID
     job_type: str
+    image_provider: str = "midjourney"
     status: str
     current_row: int | None = None
     total_rows: int | None = None

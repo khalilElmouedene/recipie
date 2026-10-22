@@ -487,7 +487,13 @@ def generate_for_recipe(
 
         # 2. Midjourney images (required when Discord credentials are configured)
         discord_auth = credentials.get("discord_auth", "").strip()
-        if not use_midjourney:
+        if credentials.get("image_provider") == "cloudflare":
+            from .cloudflare_ai import generate_images
+            cached_urls = generate_images(recipe_text, credentials, recipe_id=recipe_id, log=_log, should_stop=_stop)
+            if _stop():
+                return result
+            result["generated_images"] = json.dumps(cached_urls)
+        elif not use_midjourney:
             if not image_url:
                 raise ValueError("A source image is required when Midjourney is disabled.")
             _log("Midjourney disabled: using the source image for the article.")
@@ -632,9 +638,13 @@ def generate_images_only(
     should_stop: Callable[[], bool] | None = None,
     tracking_recipe_id: str | None = None,
 ) -> str | None:
-    """Generate Midjourney images only and return JSON string urls (or None)."""
+    """Generate images using the job's selected provider and return JSON URLs."""
     _log = log or print
     _stop = should_stop or (lambda: False)
+    if credentials.get("image_provider") == "cloudflare":
+        from .cloudflare_ai import generate_images
+        urls = generate_images(recipe_title, credentials, recipe_id=tracking_recipe_id, log=_log, should_stop=_stop)
+        return json.dumps(urls) if urls else None
     discord_auth = credentials.get("discord_auth", "")
     if not discord_auth or not image_url:
         _log("Skipping Midjourney (no Discord credentials configured)")

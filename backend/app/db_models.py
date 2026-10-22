@@ -382,6 +382,7 @@ class Job(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     job_type: Mapped[JobType] = mapped_column(SAEnum(JobType, name="job_type_enum"), nullable=False)
+    image_provider: Mapped[str] = mapped_column(String(32), nullable=False, default="midjourney", server_default="midjourney")
     status: Mapped[JobStatus] = mapped_column(SAEnum(JobStatus, name="job_status_enum"), default=JobStatus.pending)
     current_row: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_rows: Mapped[int | None] = mapped_column(Integer, nullable=True)
