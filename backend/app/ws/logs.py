@@ -10,7 +10,7 @@ from ..config import settings
 from ..database import SessionLocal
 from ..db_models import User, Job
 from ..dependencies import check_project_access
-from ..services.cloudflare_ai import require_cloudflare_user
+from ..services.source_image import SOURCE_PROVIDERS, require_source_image_user
 from ..workers.job_manager import job_manager
 
 router = APIRouter()
@@ -47,8 +47,8 @@ async def websocket_logs(websocket: WebSocket, job_id: str):
             return
 
         try:
-            if getattr(job, "image_provider", "midjourney") == "cloudflare":
-                require_cloudflare_user(user)
+            if getattr(job, "image_provider", "midjourney") in SOURCE_PROVIDERS:
+                require_source_image_user(user)
             await check_project_access(job.project_id, user, db)
         except Exception:
             await websocket.close(code=4003, reason="Access denied")

@@ -65,7 +65,7 @@ const statusColor: Record<string, string> = {
   failed: "bg-red-600/20 text-red-400",
 };
 
-export default function AllSitesGenerator({ projectId, imageProvider = "midjourney" }: { projectId: string; imageProvider?: "midjourney" | "cloudflare" }) {
+export default function AllSitesGenerator({ projectId, imageProvider = "midjourney" }: { projectId: string; imageProvider?: "midjourney" | "source_image" }) {
   const router = useRouter();
   const role = getUserRole();
   const canAdmin = role === "owner" || role === "admin";
@@ -667,10 +667,10 @@ export default function AllSitesGenerator({ projectId, imageProvider = "midjourn
       {/* ── Header ── */}
       <div className="flex flex-col xl:flex-row items-start justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-white">{imageProvider === "cloudflare" ? "Cloudflare Articles" : "Generate Articles For All Sites"}</h1>
+          <h1 className="text-2xl font-bold text-white">{imageProvider === "source_image" ? "Source Image Articles" : "Generate Articles For All Sites"}</h1>
           <p className="text-sm text-gray-400 mt-1">
-            {imageProvider === "cloudflare"
-              ? "Four FLUX images per recipe input, distributed across all sites. Same article and publishing workflow."
+            {imageProvider === "source_image"
+              ? "One input image per recipe: 10% center zoom and a horizontal flip, reused across all sites. Same article and publishing workflow."
               : "One Midjourney generation per recipe input, reused across all sites."}
           </p>
           <p className="text-xs text-gray-500 mt-2">
@@ -1154,7 +1154,7 @@ export default function AllSitesGenerator({ projectId, imageProvider = "midjourn
                                       {r.generated_images && (
                                         <div>
                                           <span className="text-xs font-semibold text-gray-400 uppercase mb-2 block">
-                                            Generated ({imageProvider === "cloudflare" ? "Cloudflare" : "Midjourney"})
+                                            {imageProvider === "source_image" ? "Edited source image" : "Generated (Midjourney)"}
                                           </span>
                                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                                             {(() => {

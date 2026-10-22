@@ -353,7 +353,7 @@ class SiteRecipeCardPageOut(BaseModel):
 
 class JobStart(BaseModel):
     job_type: str
-    image_provider: Literal["midjourney", "cloudflare"] = "midjourney"
+    image_provider: Literal["midjourney", "source_image", "cloudflare"] = "midjourney"
     site_id: uuid.UUID | None = None
     recipe_id: uuid.UUID | None = None
     shared_recipes: list[SharedRecipeInput] | None = None

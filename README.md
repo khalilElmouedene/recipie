@@ -98,14 +98,14 @@ Midjourney behavior until this setting is changed.
 For an existing installation, run `alembic upgrade head` from `backend/` before
 restarting the backend. Docker startup applies this migration automatically.
 
-## Cloudflare article images
+## Source image articles
 
-The **Cloudflare Articles** page (`/cloudflare`) is reserved for `khalil@gmail.com`.
-It reuses the existing all-sites article and WordPress workflow with Cloudflare
-Workers AI / FLUX images. Configure the Account ID and Workers AI token on the page.
+The **Source Image Articles** page (`/source-articles`) is reserved for `khalil@gmail.com`.
+It reuses the existing all-sites article and WordPress workflow with the input
+image, zoomed in 10% and mirrored horizontally. No image-generation API is required.
 Run `alembic upgrade head` before restarting an existing installation.
-See [Cloudflare setup and usage](CLOUDFLARE_ARTICLES.md) for the configuration
-steps, daily free allowance, retries and deployment requirements.
+See [Source image setup and usage](SOURCE_IMAGE_ARTICLES.md) for usage and deployment
+requirements. The old `/cloudflare` address redirects to the new page.
 
 ## Environment Variables
 

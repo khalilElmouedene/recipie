@@ -70,7 +70,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
     ? [...withLogs, { href: "/images", label: "Imges", icon: Images }]
     : withLogs;
   const allItems = isAuditViewer
-    ? [...withImages, { href: "/cloudflare", label: "Cloudflare Articles", icon: Images }, { href: "/analytics", label: "Analytics", icon: BarChart2 }]
+    ? [...withImages, { href: "/source-articles", label: "Source Image Articles", icon: Images }, { href: "/analytics", label: "Analytics", icon: BarChart2 }]
     : withImages;
 
   return (

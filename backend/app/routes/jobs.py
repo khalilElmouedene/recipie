@@ -14,7 +14,7 @@ from ..dependencies import get_current_user, check_project_access
 from ..models import JobStart, JobOut, JobLogOut, JobPublishSummaryOut, GeneratedJobRecipeOut, GeneratedJobSiteSummaryOut
 from ..pagination import apply_limit_offset, count_rows, set_total_count
 from ..workers.job_manager import PUBLISH_META_PREFIX, job_manager
-from ..services.cloudflare_ai import load_cloudflare_credentials, require_cloudflare_user
+from ..services.source_image import SOURCE_PROVIDERS, require_source_image_user
 
 router = APIRouter(tags=["jobs"])
 limiter = Limiter(key_func=get_remote_address)
@@ -31,14 +31,10 @@ async def start_job(
 ):
     await check_project_access(project_id, user, db)
 
-    if body.image_provider == "cloudflare":
-        require_cloudflare_user(user)
+    if body.image_provider in SOURCE_PROVIDERS:
+        require_source_image_user(user)
         if body.job_type not in ("articles", "articles_all_sites"):
-            raise HTTPException(400, "Cloudflare is only available for article generation")
-        try:
-            await load_cloudflare_credentials(db, user.id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from None
+            raise HTTPException(400, "Source images are only available for article generation")
 
     prj = await db.execute(select(Project).where(Project.id == project_id))
     if not prj.scalar_one_or_none():
@@ -57,7 +53,7 @@ async def start_job(
         project_id=project_id,
         created_by=user.id,
         job_type=JobType(body.job_type),
-        image_provider=body.image_provider,
+        image_provider="source_image" if body.image_provider in SOURCE_PROVIDERS else body.image_provider,
         status=JobStatus.pending,
     )
     db.add(job)
@@ -86,13 +82,13 @@ async def list_project_jobs(
     await check_project_access(project_id, user, db)
     stmt = select(Job).where(Job.project_id == project_id)
     if (user.email or "").strip().lower() != "khalil@gmail.com":
-        stmt = stmt.where(Job.image_provider != "cloudflare")
+        stmt = stmt.where(Job.image_provider.notin_(SOURCE_PROVIDERS))
     if image_provider is not None:
-        if image_provider not in ("midjourney", "cloudflare"):
+        if image_provider not in ("midjourney", *SOURCE_PROVIDERS):
             raise HTTPException(400, "Invalid image provider")
-        if image_provider == "cloudflare":
-            require_cloudflare_user(user)
-        stmt = stmt.where(Job.image_provider == image_provider)
+        if image_provider in SOURCE_PROVIDERS:
+            require_source_image_user(user)
+        stmt = stmt.where(Job.image_provider.in_(SOURCE_PROVIDERS) if image_provider in SOURCE_PROVIDERS else Job.image_provider == image_provider)
     if job_type:
         try:
             stmt = stmt.where(Job.job_type == JobType(job_type))
@@ -115,8 +111,8 @@ async def get_job(
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if getattr(job, "image_provider", "midjourney") == "cloudflare":
-        require_cloudflare_user(user)
+    if getattr(job, "image_provider", "midjourney") in SOURCE_PROVIDERS:
+        require_source_image_user(user)
     await check_project_access(job.project_id, user, db)
     return job
 
@@ -131,8 +127,8 @@ async def get_job_publish_summary(
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if getattr(job, "image_provider", "midjourney") == "cloudflare":
-        require_cloudflare_user(user)
+    if getattr(job, "image_provider", "midjourney") in SOURCE_PROVIDERS:
+        require_source_image_user(user)
     await check_project_access(job.project_id, user, db)
     if job.job_type != JobType.publisher:
         raise HTTPException(status_code=400, detail="Publish summary is only available for publisher jobs")
@@ -181,8 +177,8 @@ async def get_job_logs(
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if getattr(job, "image_provider", "midjourney") == "cloudflare":
-        require_cloudflare_user(user)
+    if getattr(job, "image_provider", "midjourney") in SOURCE_PROVIDERS:
+        require_source_image_user(user)
     await check_project_access(job.project_id, user, db)
 
     stmt = (
@@ -213,8 +209,8 @@ async def get_job_generated_recipes(
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if getattr(job, "image_provider", "midjourney") == "cloudflare":
-        require_cloudflare_user(user)
+    if getattr(job, "image_provider", "midjourney") in SOURCE_PROVIDERS:
+        require_source_image_user(user)
     await check_project_access(job.project_id, user, db)
 
     query = (
@@ -260,8 +256,8 @@ async def get_job_generated_sites_summary(
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if getattr(job, "image_provider", "midjourney") == "cloudflare":
-        require_cloudflare_user(user)
+    if getattr(job, "image_provider", "midjourney") in SOURCE_PROVIDERS:
+        require_source_image_user(user)
     await check_project_access(job.project_id, user, db)
 
     published_case = case(
@@ -309,8 +305,8 @@ async def delete_job_and_linked_recipes(
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if getattr(job, "image_provider", "midjourney") == "cloudflare":
-        require_cloudflare_user(user)
+    if getattr(job, "image_provider", "midjourney") in SOURCE_PROVIDERS:
+        require_source_image_user(user)
     await check_project_access(job.project_id, user, db, require_roles=[ProjectMemberRole.admin])
     if job.job_type != JobType.articles_all_sites:
         raise HTTPException(
@@ -334,8 +330,8 @@ async def resume_job_endpoint(
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if getattr(job, "image_provider", "midjourney") == "cloudflare":
-        require_cloudflare_user(user)
+    if getattr(job, "image_provider", "midjourney") in SOURCE_PROVIDERS:
+        require_source_image_user(user)
     await check_project_access(job.project_id, user, db)
 
     RESUMABLE_TYPES = {JobType.articles_all_sites, JobType.articles, JobType.publisher, JobType.auto_spy_generate}
@@ -355,9 +351,9 @@ async def resume_job_endpoint(
     if dup.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Another job of the same type is already running for this project.")
 
-    # Cloudflare quota failures can be retried after the daily reset.
+    # Retry failed source-image recipes after the source has been corrected.
     retry_statuses = [RecipeStatus.generating]
-    if getattr(job, "image_provider", "midjourney") == "cloudflare":
+    if getattr(job, "image_provider", "midjourney") in SOURCE_PROVIDERS:
         retry_statuses.append(RecipeStatus.failed)
     await db.execute(
         sql_update(Recipe)
@@ -392,8 +388,8 @@ async def stop_job(
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if getattr(job, "image_provider", "midjourney") == "cloudflare":
-        require_cloudflare_user(user)
+    if getattr(job, "image_provider", "midjourney") in SOURCE_PROVIDERS:
+        require_source_image_user(user)
     await check_project_access(job.project_id, user, db)
 
     job_manager.stop_job(str(job.id))

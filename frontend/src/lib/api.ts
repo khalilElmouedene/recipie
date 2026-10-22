@@ -705,21 +705,16 @@ export const api = {
   downloadProjectExcel: (projectId: string, projectName: string) =>
     downloadFile(`/api/projects/${projectId}/export/excel`, `${projectName.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}.xlsx`),
 
-  getCloudflareConfig: () => request<{ account_id: string; token_configured: boolean; model: string }>("/api/cloudflare/config"),
-  setCloudflareConfig: (data: { account_id: string; api_token: string }) =>
-    request<{ account_id: string; token_configured: boolean; model: string }>("/api/cloudflare/config", { method: "PUT", body: JSON.stringify(data) }),
-  testCloudflare: () => request<{ image_url: string; model: string }>("/api/cloudflare/test", { method: "POST" }),
-
   // -- Jobs -----------------------------------------------
   getProjectJobs: (projectId: string) => request<JobOut[]>(`/api/projects/${projectId}/jobs`),
-  getProjectJobsPage: (projectId: string, params?: PaginationParams & { jobType?: string; imageProvider?: "midjourney" | "cloudflare" }) =>
+  getProjectJobsPage: (projectId: string, params?: PaginationParams & { jobType?: string; imageProvider?: "midjourney" | "source_image" | "cloudflare" }) =>
     requestPage<JobOut>(`/api/projects/${projectId}/jobs`, {
       ...params,
       job_type: params?.jobType,
       image_provider: params?.imageProvider,
     }),
 
-  startJob: (projectId: string, data: { job_type: string; image_provider?: "midjourney" | "cloudflare"; site_id?: string; recipe_id?: string; shared_recipes?: SharedRecipeInput[] }) =>
+  startJob: (projectId: string, data: { job_type: string; image_provider?: "midjourney" | "source_image" | "cloudflare"; site_id?: string; recipe_id?: string; shared_recipes?: SharedRecipeInput[] }) =>
     request<JobOut>(`/api/projects/${projectId}/jobs`, { method: "POST", body: JSON.stringify(data) }),
 
   getJob: (jobId: string) => request<JobOut>(`/api/jobs/${jobId}`),
@@ -1329,7 +1324,7 @@ export interface SiteRecipeCardPageOut {
 }
 
 export interface JobOut {
-  image_provider?: "midjourney" | "cloudflare";
+  image_provider?: "midjourney" | "source_image" | "cloudflare";
   id: string;
   project_id: string;
   created_by: string;

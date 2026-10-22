@@ -149,7 +149,7 @@ from ..db_models import (
 )
 from ..database import SessionLocal
 from ..services.credentials_loader import load_credentials_for_job
-from ..services.cloudflare_ai import load_cloudflare_credentials
+from ..services.source_image import SOURCE_PROVIDERS, authorize_source_image_job
 from ..site_credentials import get_random_wp_credentials
 
 
@@ -520,10 +520,10 @@ class JobManager:
 
         # Use same db session as request - same pattern as Paramètres/Settings API
         credentials = await load_credentials_for_job(db, project_id, db_job.created_by)
-        if getattr(db_job, "image_provider", "midjourney") == "cloudflare":
+        if getattr(db_job, "image_provider", "midjourney") in SOURCE_PROVIDERS:
             try:
-                credentials.update(await load_cloudflare_credentials(db, db_job.created_by))
-                credentials["image_provider"] = "cloudflare"
+                await authorize_source_image_job(db, db_job.created_by)
+                credentials["image_provider"] = "source_image"
             except Exception as exc:
                 db_job.status = JobStatus.failed
                 db_job.error = str(exc)
@@ -933,25 +933,24 @@ class JobManager:
                         n_sites = len(items)
                         per_recipe_images: dict[str, str] = {}
 
-                        # Strict gate: when Midjourney is configured, images must exist
-                        # before we generate any article content for this input recipe.
-                        if discord_auth or credentials.get("image_provider") == "cloudflare":
+                        # Prepare images before writing article content when an image provider is active.
+                        if discord_auth or credentials.get("image_provider") in SOURCE_PROVIDERS:
                             try:
                                 if not group.get("image_url"):
                                     raise ValueError(
-                                        f"Input recipe {group['idx']}: missing source image URL for Midjourney"
+                                        f"Input recipe {group['idx']}: missing source image URL"
                                     )
                                 rj.log(
                                     f"Input recipe {group['idx']}: generating images for {n_sites} site(s)"
                                 )
                                 shared_images = generate_images_only(
-                                    recipe_title=(group["recipe_text"] if credentials.get("image_provider") == "cloudflare" else group["recipe_text"].splitlines()[0].strip()),
+                                    recipe_title=(group["recipe_text"] if credentials.get("image_provider") in SOURCE_PROVIDERS else group["recipe_text"].splitlines()[0].strip()),
                                     image_url=group["image_url"],
                                     credentials=credentials,
                                     prompts=prompts,
                                     log=rj.log,
                                     should_stop=rj.should_stop,
-                                    tracking_recipe_id=(f"{job_id_str}:{group['recipe_text']}:{group['image_url']}" if credentials.get("image_provider") == "cloudflare" else str(items[0]["id"])),
+                                    tracking_recipe_id=(f"{job_id_str}:{group['recipe_text']}:{group['image_url']}" if credentials.get("image_provider") in SOURCE_PROVIDERS else str(items[0]["id"])),
                                 )
                                 if not shared_images:
                                     raise ValueError(
@@ -1177,10 +1176,10 @@ class JobManager:
                 return False
 
             credentials = await load_credentials_for_job(db, db_job.project_id, db_job.created_by)
-            if getattr(db_job, "image_provider", "midjourney") == "cloudflare":
+            if getattr(db_job, "image_provider", "midjourney") in SOURCE_PROVIDERS:
                 try:
-                    credentials.update(await load_cloudflare_credentials(db, db_job.created_by))
-                    credentials["image_provider"] = "cloudflare"
+                    await authorize_source_image_job(db, db_job.created_by)
+                    credentials["image_provider"] = "source_image"
                 except Exception as exc:
                     db_job.status = JobStatus.failed
                     db_job.error = str(exc)
@@ -1521,23 +1520,23 @@ class JobManager:
                             n_sites = len(items)
                             per_recipe_images: dict[str, str] = {}
 
-                            if discord_auth or credentials.get("image_provider") == "cloudflare":
+                            if discord_auth or credentials.get("image_provider") in SOURCE_PROVIDERS:
                                 try:
                                     if not group.get("image_url"):
                                         raise ValueError(
-                                            f"Input recipe {group['idx']}: missing source image URL for Midjourney"
+                                            f"Input recipe {group['idx']}: missing source image URL"
                                         )
                                     rj.log(
                                         f"Input recipe {group['idx']}: generating images for {n_sites} site(s)"
                                     )
                                     shared_images = generate_images_only(
-                                        recipe_title=(group["recipe_text"] if credentials.get("image_provider") == "cloudflare" else group["recipe_text"].splitlines()[0].strip()),
+                                        recipe_title=(group["recipe_text"] if credentials.get("image_provider") in SOURCE_PROVIDERS else group["recipe_text"].splitlines()[0].strip()),
                                         image_url=group["image_url"],
                                         credentials=credentials,
                                         prompts=prompts,
                                         log=rj.log,
                                         should_stop=rj.should_stop,
-                                        tracking_recipe_id=(f"{job_id_str}:{group['recipe_text']}:{group['image_url']}" if credentials.get("image_provider") == "cloudflare" else str(items[0]["id"])),
+                                        tracking_recipe_id=(f"{job_id_str}:{group['recipe_text']}:{group['image_url']}" if credentials.get("image_provider") in SOURCE_PROVIDERS else str(items[0]["id"])),
                                     )
                                     if not shared_images:
                                         raise ValueError(
