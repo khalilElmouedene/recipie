@@ -756,6 +756,25 @@ export default function AllSitesGenerator({ projectId, imageProvider = "midjourn
                   Upload
                 </button>
               </div>
+              {imageProvider === "source_image" && (
+                <p className="text-xs text-gray-400">If the image website blocks downloads, choose Upload and select the image file or paste it from your clipboard.</p>
+              )}
+              {(rowModes[idx] ?? "url") === "upload" && (
+                <label className={`btn-secondary inline-flex items-center gap-2 w-fit ${rowUploading[idx] ? "opacity-50" : "cursor-pointer"}`}>
+                  <Upload size={14} /> Choose image file
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    disabled={rowUploading[idx] || !sites.length}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void handleRowImageFile(idx, file);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              )}
               <div className="flex items-center gap-2">
                 <input
                   value={r.image_url}

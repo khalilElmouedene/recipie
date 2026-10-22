@@ -24,6 +24,14 @@ invalid source image fails that input before articles are written. Correct the
 source or upload a valid image, then retry. The saved copy is cached so a resume
 does not repeatedly edit the already edited result.
 
+If an external image host returns HTTP 401/403, it denies the download. For example,
+the reported `img.chefkoch-cdn.de` URL returned HTTP 403 when tested. Changing the
+zoom settings cannot fix that response. Choose **Upload → Choose image file** (or
+paste the image from the clipboard), supply the recipe text, and start a new job.
+Uploaded images are read from local storage without contacting the external host.
+The logs now distinguish denied access, expired/missing links, timeouts, TLS errors
+and other HTTP failures, and show the host and status without exposing URL tokens.
+
 New jobs store `image_provider=source_image`. Older Cloudflare jobs, when resumed,
 also use the input-image edit instead of making Cloudflare requests. Their saved
 history remains visible. Finished articles are not rewritten automatically.

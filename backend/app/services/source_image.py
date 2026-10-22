@@ -67,14 +67,30 @@ def _source_bytes(url: str, root: Path) -> bytes:
     for _ in range(6):
         if not _is_public_url(current):
             raise ValueError("Use an uploaded image or a public HTTP(S) image URL")
+        host = urlparse(current).hostname or "the source website"
         try:
-            with requests.get(current, stream=True, timeout=(15, 60), allow_redirects=False) as response:
+            with requests.get(
+                current, stream=True, timeout=(15, 60), allow_redirects=False,
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5"},
+            ) as response:
                 if response.status_code in (301, 302, 303, 307, 308):
                     location = response.headers.get("Location")
                     if not location:
                         raise ValueError("Source image redirect has no destination")
                     current = urljoin(current, location)
                     continue
+                if response.status_code in (401, 403):
+                    raise ValueError(
+                        f"Source image access denied (HTTP {response.status_code}) by {host}. "
+                        "Choose Upload and select the image file, or paste it from the clipboard, then start a new job."
+                    )
+                if response.status_code in (404, 410):
+                    raise ValueError(
+                        f"Source image is missing or its link expired (HTTP {response.status_code}) on {host}. "
+                        "Use a working image URL or choose Upload and select the image file."
+                    )
+                if response.status_code >= 400:
+                    raise ValueError(f"Source image download failed (HTTP {response.status_code}) on {host}. Retry later or upload the image file.")
                 response.raise_for_status()
                 data = bytearray()
                 for chunk in response.iter_content(64 * 1024):
@@ -82,8 +98,12 @@ def _source_bytes(url: str, root: Path) -> bytes:
                     if len(data) > MAX_BYTES:
                         raise ValueError("Source image exceeds the 25 MB limit")
                 return bytes(data)
+        except requests.Timeout:
+            raise ValueError(f"Source image download timed out on {host}. Retry or upload the image file.") from None
+        except requests.exceptions.SSLError:
+            raise ValueError(f"The source image server {host} has a TLS certificate error. Upload the image file instead.") from None
         except requests.RequestException:
-            raise ValueError("Could not download the source image. Check its URL or upload the image.") from None
+            raise ValueError(f"Could not connect to the source image server {host}. Retry or upload the image file.") from None
     raise ValueError("Source image has too many redirects")
 
 

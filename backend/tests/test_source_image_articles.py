@@ -75,6 +75,37 @@ class SourceImageTests(unittest.TestCase):
             urls = source_image.prepare_image("https://example.com/input.png", log=lambda _: None)
             self.assertEqual(len(urls), 1)
             get.assert_called_once()
+            self.assertEqual(get.call_args.kwargs["headers"]["User-Agent"], "Mozilla/5.0")
+
+    def test_chefkoch_403_reports_status_and_upload_action_without_exposing_url_tokens(self):
+        reply = MagicMock(status_code=403, headers={})
+        reply.__enter__.return_value = reply
+        url = "https://img.chefkoch-cdn.de/rezepte/1244411229360664/bilder/1325491/crop-960x640/heisse-feige-mit-naturjoghurt.jpg?token=private"
+        with patch.object(source_image, "_is_public_url", return_value=True), patch.object(source_image.requests, "get", return_value=reply) as get:
+            with self.assertRaises(ValueError) as caught:
+                source_image.prepare_image(url, log=lambda _: None)
+            message = str(caught.exception)
+            self.assertIn("HTTP 403", message)
+            self.assertIn("img.chefkoch-cdn.de", message)
+            self.assertIn("Upload", message)
+            self.assertNotIn("token=private", message)
+            self.assertEqual(get.call_count, 1)
+            reply.iter_content.assert_not_called()
+        self.assertEqual(list(self.root.glob("source_*.jpg")), [])
+
+    def test_external_failures_have_distinct_actionable_errors(self):
+        for status, expected in [(404, "missing or its link expired"), (410, "missing or its link expired"), (503, "HTTP 503")]:
+            reply = MagicMock(status_code=status, headers={})
+            reply.__enter__.return_value = reply
+            with self.subTest(status=status), patch.object(source_image, "_is_public_url", return_value=True), patch.object(source_image.requests, "get", return_value=reply):
+                with self.assertRaisesRegex(ValueError, expected):
+                    source_image.prepare_image("https://example.com/input.png", log=lambda _: None)
+        for error, expected in [(source_image.requests.Timeout(), "timed out"),
+                                (source_image.requests.exceptions.SSLError(), "certificate"),
+                                (source_image.requests.ConnectionError(), "Could not connect")]:
+            with self.subTest(error=type(error).__name__), patch.object(source_image, "_is_public_url", return_value=True), patch.object(source_image.requests, "get", side_effect=error):
+                with self.assertRaisesRegex(ValueError, expected):
+                    source_image.prepare_image("https://example.com/input.png", log=lambda _: None)
 
     def test_invalid_missing_sources_and_traversal_fail_without_api_calls(self):
         (self.root / "invalid.png").write_bytes(b"not an image")
