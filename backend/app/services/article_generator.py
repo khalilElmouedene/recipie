@@ -23,6 +23,7 @@ from . import midjourney, openai_service
 from .seo import clean_focus_keyword, require_generated_text
 from .midjourney_tracking import MidjourneyTrackingStore
 from app.config import settings
+from .upload_storage import ensure_upload_capacity
 from ..midjourney_settings import (
     DEFAULT_GRID_WAIT_SECONDS,
     MAX_CONCURRENT_MJ_PER_ACCOUNT,
@@ -208,6 +209,7 @@ def _cache_image(url: str, log: Callable[[str], None] | None = None, retries: in
             UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
             filename = f"{uuid.uuid4().hex}{_image_extension_from_response(url, r)}"
             dest = UPLOADS_DIR / filename
+            ensure_upload_capacity(len(r.content), UPLOADS_DIR)
             dest.write_bytes(r.content)
             permanent_url = f"{settings.server_base_url.rstrip('/')}/uploads/{filename}"
             _log(f"Image cached locally: {filename}")

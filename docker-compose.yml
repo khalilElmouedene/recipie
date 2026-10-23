@@ -26,6 +26,7 @@ services:
       APP_ENV: ${APP_ENV:-production}
       SERVER_BASE_URL: ${SERVER_BASE_URL:-http://localhost:8000}
       UPLOADS_DIR: /app/uploads
+      UPLOAD_ORPHAN_GRACE_HOURS: ${UPLOAD_ORPHAN_GRACE_HOURS:-48}
       PINTEREST_CLIENT_ID: ${PINTEREST_CLIENT_ID:-}
       PINTEREST_CLIENT_SECRET: ${PINTEREST_CLIENT_SECRET:-}
       PINTEREST_REDIRECT_URI: ${PINTEREST_REDIRECT_URI:-https://bohssini.com/pinterest/callback}

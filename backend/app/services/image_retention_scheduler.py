@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -13,9 +15,24 @@ from app.config import settings
 from app.database import SessionLocal
 from app.db_models import CleanupConfig, MidjourneyGeneration, Project, Recipe, RecipeStatus, Site, SystemCleanupState, ThreadsPost, ThreadsPostStatus
 from app.pinterest_models import PinterestPublication, PinterestPublisher
+from app.services.upload_storage import remove_unreferenced_files, prune_orphan_uploads
 
 
-UPLOADS_DIR = Path("/app/uploads")
+logger = logging.getLogger(__name__)
+UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "/app/uploads"))
+
+
+async def delete_recipe_records(db, recipes: list[Recipe]) -> None:
+    """API deletions reclaim files after commit; a failed reclaim is retried hourly."""
+    if not recipes:
+        return
+    paths = set().union(*(_upload_paths_from_recipe(recipe) for recipe in recipes))
+    await db.execute(sql_delete(Recipe).where(Recipe.id.in_([r.id for r in recipes])))
+    await db.commit()
+    try:
+        await remove_unreferenced_files(paths)
+    except Exception:
+        logger.exception("Recipe deletion committed; orphan file cleanup will retry")
 
 
 def _pinterest_source_needed():
@@ -114,7 +131,7 @@ async def _get_due_cleanup_configs() -> list[tuple[Any, int]]:
                 elif (now - cfg.last_run_at).total_seconds() >= interval_days * 86400:
                     due.append((cfg.owner_id, interval_days))
     except Exception:
-        pass
+        logger.exception("Could not read owner cleanup schedules")
     return due
 
 
@@ -127,7 +144,8 @@ async def _update_last_run_at(owner_id: Any) -> None:
                 cfg.last_run_at = datetime.now(timezone.utc)
                 await db.commit()
     except Exception:
-        pass
+        logger.exception("Could not record owner cleanup success")
+        raise
 
 
 # ── System-level cleanup (every 7 days, all users, no config required) ────────
@@ -146,6 +164,7 @@ async def _is_system_cleanup_due() -> bool:
             elapsed = datetime.now(timezone.utc) - state.last_run_at
             return elapsed.total_seconds() >= _SYSTEM_CLEANUP_INTERVAL_DAYS * 86400
     except Exception:
+        logger.exception("Could not read system cleanup schedule")
         return False
 
 
@@ -161,7 +180,8 @@ async def _update_system_cleanup_last_run() -> None:
                 state.last_run_at = datetime.now(timezone.utc)
             await db.commit()
     except Exception:
-        pass
+        logger.exception("Could not record system cleanup success")
+        raise
 
 
 async def _system_cleanup_all_published() -> int:
@@ -177,19 +197,11 @@ async def _system_cleanup_all_published() -> int:
         files_to_delete: set[Path] = set()
         for recipe in rows:
             files_to_delete.update(_upload_paths_from_recipe(recipe))
-            try:
-                await db.delete(recipe)
-                deleted += 1
-            except Exception:
-                pass
-        for p in files_to_delete:
-            try:
-                if p.exists():
-                    p.unlink()
-            except Exception:
-                pass
+            await db.delete(recipe)
+            deleted += 1
         if rows:
             await db.commit()
+    await remove_unreferenced_files(files_to_delete)
     return deleted
 
 
@@ -214,23 +226,12 @@ async def run_full_published_cleanup(owner_id: Any) -> dict:
 
         for recipe, _ in rows:
             files_to_delete.update(_upload_paths_from_recipe(recipe))
-            try:
-                await db.delete(recipe)
-                recipes_deleted += 1
-            except Exception:
-                pass
-
-        for p in files_to_delete:
-            try:
-                if p.exists():
-                    p.unlink()
-                    files_deleted += 1
-            except Exception:
-                pass
+            await db.delete(recipe)
+            recipes_deleted += 1
 
         if rows:
             await db.commit()
-
+    files_deleted = await remove_unreferenced_files(files_to_delete)
     return {"recipes_deleted": recipes_deleted, "files_deleted": files_deleted}
 
 
@@ -298,28 +299,15 @@ async def _cleanup_once(owner_id: Any, retention_days: int) -> int:
         for recipe, project_id in cache_rows:
             consider(recipe, project_id, allow_published_delete=False)
 
-        for p in files_to_delete:
-            try:
-                if p.exists():
-                    p.unlink()
-            except Exception:
-                pass
-
         for r in to_clear:
-            try:
-                r.generated_images = None
-                if _is_local_upload_url(r.image_url):
-                    r.image_url = ""
-                recipes_updated += 1
-            except Exception:
-                pass
+            r.generated_images = None
+            if _is_local_upload_url(r.image_url):
+                r.image_url = ""
+            recipes_updated += 1
 
         for r in to_delete_rows:
-            try:
-                await db.delete(r)
-                recipes_deleted += 1
-            except Exception:
-                pass
+            await db.delete(r)
+            recipes_deleted += 1
 
         if to_clear:
             await db.execute(
@@ -330,7 +318,7 @@ async def _cleanup_once(owner_id: Any, retention_days: int) -> int:
 
         if to_clear or to_delete_rows:
             await db.commit()
-
+    await remove_unreferenced_files(files_to_delete)
     return recipes_updated + recipes_deleted
 
 
@@ -354,23 +342,21 @@ async def _cleanup_pending_stale_source_images(owner_id: Any, retention_days: in
         )
         recipes = rows.scalars().all()
 
+        files_to_delete: set[Path] = set()
         for recipe in recipes:
             if not recipe.image_url or not recipe.image_url.strip():
                 continue
             if not _is_local_upload_url(recipe.image_url):
                 continue
             p = _path_from_upload_url(recipe.image_url)
-            if p and p.exists():
-                try:
-                    p.unlink()
-                except Exception:
-                    pass
+            if p:
+                files_to_delete.add(p)
             recipe.image_url = ""
             cleared += 1
 
         if cleared:
             await db.commit()
-
+    await remove_unreferenced_files(files_to_delete)
     return cleared
 
 
@@ -422,30 +408,16 @@ async def cleanup_project_generated_images(
             files_to_delete.update(_upload_paths_from_recipe(recipe))
             to_update.append(recipe)
 
-        for p in files_to_delete:
-            try:
-                if p.exists():
-                    p.unlink()
-                    files_deleted += 1
-            except Exception:
-                pass
-
         if delete_all_published:
             for r in to_delete:
-                try:
-                    await db.delete(r)
-                    recipes_deleted += 1
-                except Exception:
-                    pass
+                await db.delete(r)
+                recipes_deleted += 1
         else:
             for r in to_update:
-                try:
-                    r.generated_images = None
-                    if _is_local_upload_url(r.image_url):
-                        r.image_url = ""
-                    recipes_updated += 1
-                except Exception:
-                    pass
+                r.generated_images = None
+                if _is_local_upload_url(r.image_url):
+                    r.image_url = ""
+                recipes_updated += 1
 
             if to_update:
                 await db.execute(
@@ -456,7 +428,7 @@ async def cleanup_project_generated_images(
 
         if to_update or to_delete:
             await db.commit()
-
+    files_deleted = await remove_unreferenced_files(files_to_delete)
     return {
         "recipes_updated": recipes_updated,
         "recipes_deleted": recipes_deleted,
@@ -510,7 +482,7 @@ async def _cleanup_threads_media_once(retention_days: int) -> int:
 
 async def run_image_retention_scheduler(stop_event: asyncio.Event) -> None:
     """
-    Background loop — two independent cleanup tracks, checked every hour:
+    Background loop — three independent cleanup tracks, checked every hour:
 
     1. SYSTEM cleanup (hardcoded, every 7 days): deletes ALL published recipes + images
        across every user automatically, no configuration required. Acts as a server
@@ -518,38 +490,56 @@ async def run_image_retention_scheduler(stop_event: asyncio.Event) -> None:
 
     2. PER-OWNER cleanup (configurable): only runs when the owner has explicitly
        enabled it; scoped strictly to that owner's projects.
+
+    3. ORPHAN cleanup: reclaim old unreferenced recipe/cache images independently
+       of recipe records or the seven-day publication cleanup timestamp.
     """
     while not stop_event.is_set():
         # ── Track 1: System-wide automatic cleanup (every 7 days, all users) ──
         try:
             if await _is_system_cleanup_due():
+                succeeded = True
                 try:
                     await _system_cleanup_all_published()
                 except Exception:
-                    pass
+                    succeeded = False
+                    logger.exception("System recipe cleanup failed; retrying next hour")
                 try:
                     await _cleanup_threads_media_once(_SYSTEM_CLEANUP_INTERVAL_DAYS)
                 except Exception:
-                    pass
-                await _update_system_cleanup_last_run()
+                    succeeded = False
+                    logger.exception("System Threads cleanup failed; retrying next hour")
+                if succeeded:
+                    await _update_system_cleanup_last_run()
         except Exception:
-            pass
+            logger.exception("System cleanup could not run")
 
         # ── Track 2: Per-owner configurable cleanup ──
         try:
             due_configs = await _get_due_cleanup_configs()
             for owner_id, interval_days in due_configs:
+                succeeded = True
                 try:
                     await _cleanup_once(owner_id, interval_days)
                 except Exception:
-                    pass
+                    succeeded = False
+                    logger.exception("Owner recipe cleanup failed for %s; retrying next hour", owner_id)
                 try:
                     await _cleanup_pending_stale_source_images(owner_id, interval_days)
                 except Exception:
-                    pass
-                await _update_last_run_at(owner_id)
+                    succeeded = False
+                    logger.exception("Owner source cleanup failed for %s; retrying next hour", owner_id)
+                if succeeded:
+                    await _update_last_run_at(owner_id)
         except Exception:
-            pass
+            logger.exception("Owner cleanup could not run")
+
+        try:
+            grace_hours = max(48, float(os.getenv("UPLOAD_ORPHAN_GRACE_HOURS", "48")))
+            result = await prune_orphan_uploads(dry_run=False, min_age_hours=grace_hours, limit=2000)
+            logger.info("Hourly orphan upload cleanup: %s", result)
+        except Exception:
+            logger.exception("Orphan upload cleanup failed; retrying next hour")
 
         # Check every hour — picks up config changes quickly
         try:

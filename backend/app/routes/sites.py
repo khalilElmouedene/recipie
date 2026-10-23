@@ -286,6 +286,11 @@ async def upload_recipe_source_image(
     recipes_dir.mkdir(parents=True, exist_ok=True)
     fname = f"{uuid.uuid4().hex}{ext}"
     dest = recipes_dir / fname
+    from ..services.upload_storage import ensure_upload_capacity
+    try:
+        ensure_upload_capacity(len(raw), UPLOADS_ROOT)
+    except OSError as exc:
+        raise HTTPException(status_code=507, detail=str(exc)) from exc
     dest.write_bytes(raw)
 
     public_url = f"{settings.server_base_url.rstrip('/')}/uploads/recipes/{fname}"

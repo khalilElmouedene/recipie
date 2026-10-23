@@ -19,6 +19,7 @@ from sqlalchemy import select
 
 from ..config import settings
 from ..db_models import User
+from .upload_storage import ensure_upload_capacity
 
 SOURCE_PROVIDERS = ("source_image", "cloudflare")  # Old jobs also resume without AI image calls.
 ZOOM = 1.10
@@ -145,6 +146,7 @@ def prepare_image(image_url: str, *, recipe_id: str | None = None,
             return []
         temporary = root / f".{filename}.{uuid.uuid4().hex}.tmp"
         try:
+            ensure_upload_capacity(output.tell(), root)
             temporary.write_bytes(output.getvalue())
             temporary.replace(target)
         finally:

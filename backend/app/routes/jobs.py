@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 import uuid
 from typing import Annotated
 
@@ -15,6 +16,10 @@ from ..models import JobStart, JobOut, JobLogOut, JobPublishSummaryOut, Generate
 from ..pagination import apply_limit_offset, count_rows, set_total_count
 from ..workers.job_manager import PUBLISH_META_PREFIX, job_manager
 from ..services.source_image import SOURCE_PROVIDERS, require_source_image_user
+from ..services.image_retention_scheduler import _upload_paths_from_recipe
+from ..services.upload_storage import remove_unreferenced_files
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["jobs"])
 limiter = Limiter(key_func=get_remote_address)
@@ -315,9 +320,17 @@ async def delete_job_and_linked_recipes(
         )
     if job.status == JobStatus.running:
         raise HTTPException(status_code=400, detail="Stop the job before deleting")
+    recipes = list((await db.execute(
+        select(Recipe).where(Recipe.created_by_job_id == job_id)
+    )).scalars())
+    paths = set().union(*(_upload_paths_from_recipe(recipe) for recipe in recipes))
     await db.execute(sql_delete(Recipe).where(Recipe.created_by_job_id == job_id))
     await db.execute(sql_delete(Job).where(Job.id == job_id))
     await db.commit()
+    try:
+        await remove_unreferenced_files(paths)
+    except Exception:
+        logger.exception("Job deletion committed; orphan file cleanup will retry")
 
 
 @router.post("/api/jobs/{job_id}/resume", response_model=JobOut)

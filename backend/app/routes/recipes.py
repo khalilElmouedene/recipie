@@ -24,6 +24,7 @@ from ..dependencies import get_current_user, get_current_user_download, check_pr
 from ..crypto import decrypt
 from ..site_credentials import get_random_wp_credentials
 from ..pagination import apply_limit_offset, count_rows, set_total_count
+from ..services.image_retention_scheduler import delete_recipe_records
 from ..models import (
     RecipeCreate, RecipeOut, RecipeUpdate,
     PinterestPinRequest, PinterestBulkResponse,
@@ -598,8 +599,7 @@ async def delete_recipe(
     if site_obj:
         await check_project_access(site_obj.project_id, user, db)
 
-    await db.execute(sql_delete(Recipe).where(Recipe.id == recipe_id))
-    await db.commit()
+    await delete_recipe_records(db, [recipe])
 
 
 @router.delete("/api/sites/{site_id}/recipes", status_code=status.HTTP_204_NO_CONTENT)
@@ -616,14 +616,14 @@ async def delete_all_site_recipes(
         raise HTTPException(status_code=404, detail="Site not found")
     await check_project_access(site_obj.project_id, user, db)
 
-    stmt = sql_delete(Recipe).where(Recipe.site_id == site_id)
+    stmt = select(Recipe).where(Recipe.site_id == site_id)
     if recipe_status:
         try:
             stmt = stmt.where(Recipe.status == RecipeStatus(recipe_status))
         except ValueError:
             raise HTTPException(status_code=422, detail=f"Invalid status: {recipe_status}")
-    await db.execute(stmt)
-    await db.commit()
+    recipes = list((await db.execute(stmt)).scalars())
+    await delete_recipe_records(db, recipes)
 
 
 @router.post("/api/recipes/{recipe_id}/publish-article", response_model=dict)
