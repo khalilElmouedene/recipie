@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import json
 import unittest
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from cryptography.fernet import Fernet
@@ -17,7 +19,8 @@ from sqlalchemy.orm import Session
 
 from app.database import Base
 from app.db_models import Job, JobLog, JobStatus, JobType, Project, Recipe, RecipeStatus, Site, User, UserRole
-from app.routes.jobs import get_job_pinterest_sheet
+from app.routes.jobs import get_job_pinterest_sheet, prepare_job_pinterest_sheet_recipe
+from app.services.pinterest_sheet import generate_publish_sheet_metadata, clean_sheet_tags, SheetMetadataError
 from app.workers.job_manager import _serialize_publish_meta
 
 
@@ -55,7 +58,7 @@ class PublishJobSheetTests(unittest.IsolatedAsyncioTestCase):
     def recipe(self, **overrides):
         values = dict(id=uuid.uuid4(), site_id=self.site.id, created_by=self.user.id,
                       created_by_job_id=self.generation.id, image_url="https://example.com/source.jpg",
-                      recipe_text="Soup", pin_title="Cozy soup", pin_description="Description: Make soup.",
+                      recipe_text="Soup", pin_title="Cozy soup", focus_keyword="easy soup", pin_description="Description: Make soup.",
                       pin_tags="soup, dinner", pin_board="Dinner", status=RecipeStatus.published,
                       pin_design_image="https://example.com/rendered.png", wp_permalink="https://example.com/soup",
                       generated_images='["https://example.com/midjourney.jpg"]')
@@ -117,7 +120,7 @@ class PublishJobSheetTests(unittest.IsolatedAsyncioTestCase):
                 self.metadata([recipe, failed], mode)
                 rows = await self.export()
                 self.assertEqual(rows, [dict(recipe_id=str(recipe.id), site_id=str(self.site.id),
-                    title="Cozy soup", image_url="https://example.com/rendered.png", description="Make soup.",
+                    title="Cozy soup", keyword="easy soup", image_url="https://example.com/rendered.png", description="Make soup.",
                     tags="soup, dinner", article_link="https://example.com/soup", status="draft", board="Dinner")])
         self.assertEqual(recipe.created_by_job_id, self.generation.id)
 
@@ -165,6 +168,86 @@ class PublishJobSheetTests(unittest.IsolatedAsyncioTestCase):
         recipe = self.recipe(pin_design_image="data:image/png;base64,abc")
         self.metadata([recipe])
         self.assertEqual((await self.export())[0]["image_url"], "data:image/png;base64,abc")
+
+    async def test_generate_from_keyword_and_title_even_with_existing_copy(self):
+        recipe = self.recipe()
+        self.metadata([recipe])
+        with patch("app.services.credentials_loader.load_credentials_for_job", AsyncMock(return_value={"openai": "test-key"})), \
+             patch("app.services.pinterest_sheet.generate_publish_sheet_metadata", AsyncMock(return_value=("Fresh description.", "easy soup, cozy dinner"))) as generate:
+            row = await prepare_job_pinterest_sheet_recipe(self.job.id, recipe.id, self.user, self.db)
+        generate.assert_awaited_once_with("Cozy soup", "easy soup", "test-key")
+        self.assertEqual(row["description"], "Fresh description.")
+        self.assertEqual(row["tags"], "easy soup, cozy dinner")
+        self.assertEqual(recipe.pin_description, "Description: Make soup.")
+
+    async def test_generation_requires_same_account_completion_and_batch_membership(self):
+        recipe = self.recipe()
+        self.metadata([])
+        with patch("app.services.credentials_loader.load_credentials_for_job", new_callable=AsyncMock) as credentials:
+            for email, status, expected in (("other@gmail.com", JobStatus.completed, 403),
+                                             ("khalil@gmail.com", JobStatus.running, 409),
+                                             ("khalil@gmail.com", JobStatus.completed, 404)):
+                self.user.email, self.job.status = email, status
+                with self.assertRaises(HTTPException) as caught:
+                    await prepare_job_pinterest_sheet_recipe(self.job.id, recipe.id, self.user, self.db)
+                self.assertEqual(caught.exception.status_code, expected)
+            credentials.assert_not_awaited()
+
+    async def test_missing_key_and_generation_errors_are_actionable(self):
+        recipe = self.recipe()
+        self.metadata([recipe])
+        with patch("app.services.credentials_loader.load_credentials_for_job", AsyncMock(return_value={})):
+            with self.assertRaises(HTTPException) as caught:
+                await prepare_job_pinterest_sheet_recipe(self.job.id, recipe.id, self.user, self.db)
+            self.assertEqual(caught.exception.status_code, 400)
+            self.assertIn("OpenAI API key", caught.exception.detail)
+        for error, status in ((TimeoutError("private"), 504), (RuntimeError("private"), 502),
+                              (SheetMetadataError("Empty description. Please try again."), 422)):
+            with patch("app.services.credentials_loader.load_credentials_for_job", AsyncMock(return_value={"openai": "test-key"})), \
+                 patch("app.services.pinterest_sheet.generate_publish_sheet_metadata", AsyncMock(side_effect=error)):
+                with self.assertRaises(HTTPException) as caught:
+                    await prepare_job_pinterest_sheet_recipe(self.job.id, recipe.id, self.user, self.db)
+                self.assertEqual(caught.exception.status_code, status)
+                self.assertNotIn("private", caught.exception.detail)
+
+
+class PublishSheetMetadataTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generation_prompts_use_only_keyword_title_and_force_fresh_copy(self):
+        with patch("app.services.pinterest_sheet.generate_sheet_metadata", AsyncMock(return_value=("Description: Cozy soup.\nTry it!", "TAGS: soup; dinner\nSoup"))) as generate:
+            result = await generate_publish_sheet_metadata("Cozy soup", "easy soup", "test-key")
+        source, key, prompts, description, tags = generate.call_args.args
+        self.assertEqual(json.loads(source), {"title": "Cozy soup", "keyword": "easy soup"})
+        self.assertEqual(key, "test-key")
+        self.assertIsNone(description)
+        self.assertIsNone(tags)
+        self.assertIn("No heading", prompts["pinterest_tags"])
+        self.assertEqual(result, ("Cozy soup. Try it!", "soup, dinner"))
+
+    async def test_openai_receives_keyword_and_title_for_both_requests(self):
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        async def complete(**kwargs):
+            prompt = kwargs["messages"][0]["content"]
+            self.assertIn('"title": "Cozy soup"', prompt)
+            self.assertIn('"keyword": "easy soup"', prompt)
+            text = "soup, dinner" if "keyword phrases" in prompt else "A cozy soup for dinner."
+            return SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=text))])
+        client.chat.completions.create.side_effect = complete
+        with patch("app.services.pinterest_sheet.AsyncOpenAI", return_value=client):
+            result = await generate_publish_sheet_metadata("Cozy soup", "easy soup", "test-key")
+        self.assertEqual(client.chat.completions.create.await_count, 2)
+        self.assertEqual(result, ("A cozy soup for dinner.", "soup, dinner"))
+
+    def test_tags_become_comma_separated_without_label_hashtags_or_duplicates(self):
+        for raw in ("TAGS: soup, dinner, Soup", "**Tags:** soup; dinner", "#soup #dinner", "Keywords:\n1. soup\n2. dinner"):
+            with self.subTest(raw=raw):
+                self.assertEqual(clean_sheet_tags(raw), "soup, dinner")
+
+    async def test_empty_generated_copy_is_not_exported(self):
+        for values in (("Description:", "soup"), ("Make soup.", "TAGS:")):
+            with patch("app.services.pinterest_sheet.generate_sheet_metadata", AsyncMock(return_value=values)):
+                with self.assertRaises(SheetMetadataError):
+                    await generate_publish_sheet_metadata("Soup", "", "test-key")
 
 
 if __name__ == "__main__":

@@ -122,11 +122,11 @@ async def get_job(
     return job
 
 
-@router.get("/api/jobs/{job_id}/pinterest-sheet")
-async def get_job_pinterest_sheet(
+async def _job_pinterest_sheet_rows(
     job_id: uuid.UUID,
-    user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db)],
+    user: User,
+    db: AsyncSession,
+    recipe_id: uuid.UUID | None = None,
 ):
     """Export the rendered pins belonging to a completed WordPress batch."""
     if (user.email or "").strip().lower() != "khalil@gmail.com":
@@ -160,9 +160,12 @@ async def get_job_pinterest_sheet(
             Site.project_id == job.project_id,
             recipe_scope,
             Recipe.status == RecipeStatus.published,
+            *([Recipe.id == recipe_id] if recipe_id is not None else []),
         ).order_by(Site.id.asc(), Recipe.created_at.asc(), Recipe.id.asc())
     )).all()
     if not pairs:
+        if recipe_id is not None:
+            raise HTTPException(404, "Published recipe not found in this job")
         raise HTTPException(422, "This job has no successfully published recipes to export")
 
     from ..services.pinterest_sheet import article_link, clean_sheet_description
@@ -177,6 +180,7 @@ async def get_job_pinterest_sheet(
             "recipe_id": str(recipe.id),
             "site_id": str(site.id),
             "title": recipe.pin_title or recipe.recipe_text.split("\n", 1)[0].strip(),
+            "keyword": recipe.focus_keyword or "",
             "image_url": image,
             "description": clean_sheet_description(recipe.pin_description),
             "tags": recipe.pin_tags or "",
@@ -185,7 +189,54 @@ async def get_job_pinterest_sheet(
             "status": "draft",
             "board": recipe.pin_board or "",
         })
+    return job, rows
+
+
+@router.get("/api/jobs/{job_id}/pinterest-sheet")
+async def get_job_pinterest_sheet(
+    job_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    _, rows = await _job_pinterest_sheet_rows(job_id, user, db)
     return rows
+
+
+@router.post("/api/jobs/{job_id}/pinterest-sheet/{recipe_id}")
+async def prepare_job_pinterest_sheet_recipe(
+    job_id: uuid.UUID,
+    recipe_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Generate export text per recipe to stay within interactive deadlines."""
+    job, rows = await _job_pinterest_sheet_rows(job_id, user, db, recipe_id)
+    from ..services.credentials_loader import load_credentials_for_job
+    from ..services.pinterest_sheet import generate_publish_sheet_metadata, SheetMetadataError
+    from openai import APIConnectionError, APITimeoutError, APIStatusError
+
+    credentials = await load_credentials_for_job(db, job.project_id, user.id)
+    if not credentials.get("openai"):
+        raise HTTPException(400, "Configure an OpenAI API key in Settings or project credentials to generate descriptions and tags")
+    row = rows[0]
+    try:
+        row["description"], row["tags"] = await generate_publish_sheet_metadata(
+            row["title"], row["keyword"], credentials["openai"])
+    except Exception as exc:
+        logger.warning("Publish sheet AI failed job=%s recipe=%s type=%s", job_id, recipe_id, type(exc).__name__)
+        if isinstance(exc, SheetMetadataError):
+            raise HTTPException(422, str(exc)) from None
+        if isinstance(exc, (TimeoutError, APITimeoutError)):
+            raise HTTPException(504, "OpenAI took too long to generate the description and tags. Please try again.") from None
+        if isinstance(exc, APIStatusError):
+            if exc.status_code in (401, 403):
+                raise HTTPException(400, "OpenAI rejected the configured API key or its permissions. Update it in Settings or project credentials.") from None
+            if exc.status_code == 429:
+                raise HTTPException(429, "OpenAI quota or rate limit reached. Check API billing and limits, then try again.") from None
+        if isinstance(exc, APIConnectionError):
+            raise HTTPException(503, "The server could not connect to OpenAI. Please try again shortly.") from None
+        raise HTTPException(502, "OpenAI could not generate the description and tags. Please try again shortly.") from None
+    return row
 
 
 @router.get("/api/jobs/{job_id}/publish-summary", response_model=JobPublishSummaryOut)

@@ -9,6 +9,7 @@ export default function PublishJobExcelDownload({ job }: { job: JobOut }) {
   const toast = useToast();
   const [allowed, setAllowed] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   useEffect(() => {
     let active = true;
     api.me().then((user) => {
@@ -26,7 +27,9 @@ export default function PublishJobExcelDownload({ job }: { job: JobOut }) {
       const rows = await api.getJobPinterestSheet(job.id);
       const XLSX = await import("xlsx");
       const values: string[][] = [];
+      setProgress({ done: 0, total: rows.length });
       for (const row of rows) {
+        const metadata = await api.prepareJobPinterestSheetRecipe(job.id, row.recipe_id);
         let imageUrl = row.image_url;
         // A failed upload in the designer can leave a data URI. Host that saved
         // render before exporting so Excel always contains usable image links.
@@ -38,9 +41,9 @@ export default function PublishJobExcelDownload({ job }: { job: JobOut }) {
         if (!["http:", "https:"].includes(image.protocol)) {
           throw new Error("Save the rendered pin image before exporting Excel.");
         }
-        const description = [row.description.trim(), row.tags.trim() ? `TAGS:\n${row.tags.trim()}` : ""]
-          .filter(Boolean).join("\n\n");
+        const description = [metadata.description.trim(), metadata.tags.trim()].filter(Boolean).join("\n");
         values.push([row.title, imageUrl, description, row.article_link, row.status, row.board]);
+        setProgress({ done: values.length, total: rows.length });
       }
       const sheet = XLSX.utils.aoa_to_sheet([
         ["Title", "Image URL", "Description", "Article link", "Status", "Board"],
@@ -56,6 +59,7 @@ export default function PublishJobExcelDownload({ job }: { job: JobOut }) {
       toast.error(error instanceof Error ? error.message : "Excel export failed. Please try again.");
     } finally {
       setExporting(false);
+      setProgress(null);
     }
   };
 
@@ -64,7 +68,7 @@ export default function PublishJobExcelDownload({ job }: { job: JobOut }) {
       title={completed ? "Export successfully published recipes with rendered pin images" : "Available when publishing completes"}
       className="btn-secondary flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-40">
       {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-      {exporting ? "Exporting…" : "Export Excel"}
+      {exporting ? (progress ? `Generating ${progress.done}/${progress.total}…` : "Exporting…") : "Export Excel"}
     </button>
   );
 }
