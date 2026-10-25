@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Square, CheckCircle, XCircle, Clock, Loader2, X, Play } from "lucide-react";
 import { api, JobOut, getWsUrl } from "@/lib/api";
 import { useJobActivity } from "@/contexts/JobActivityContext";
+import PublishJobExcelDownload from "@/components/PublishJobExcelDownload";
 
 // ── Step definitions (7 steps per recipe) ───────────────────────────────────
 const TOTAL_STEPS = 7;
@@ -294,7 +295,7 @@ export default function JobDetailPage() {
       </button>
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
         <div>
           <h1 className="text-2xl font-bold text-white capitalize">{job.job_type} Job</h1>
           <div className="flex items-center gap-3 mt-1">
@@ -302,7 +303,8 @@ export default function JobDetailPage() {
             <span className="text-sm text-gray-400">{new Date(job.created_at).toLocaleString()}</span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {job.job_type === "publisher" && <PublishJobExcelDownload key={job.id} job={job} />}
           {job.job_type === "articles_all_sites" && job.status !== "running" && (
             <button
               onClick={() => router.push(`/jobs/${id}/results`)}

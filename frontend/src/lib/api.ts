@@ -718,6 +718,8 @@ export const api = {
     request<JobOut>(`/api/projects/${projectId}/jobs`, { method: "POST", body: JSON.stringify(data) }),
 
   getJob: (jobId: string) => request<JobOut>(`/api/jobs/${jobId}`),
+  getJobPinterestSheet: (jobId: string) =>
+    request<(PinterestSheetRow & { recipe_id: string; site_id: string })[]>(`/api/jobs/${jobId}/pinterest-sheet`),
   getJobPublishSummary: (jobId: string) =>
     request<JobPublishSummaryOut>(`/api/jobs/${jobId}/publish-summary`),
 

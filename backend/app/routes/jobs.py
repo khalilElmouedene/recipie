@@ -14,7 +14,7 @@ from ..db_models import User, Job, JobLog, JobType, JobStatus, Project, Recipe, 
 from ..dependencies import get_current_user, check_project_access
 from ..models import JobStart, JobOut, JobLogOut, JobPublishSummaryOut, GeneratedJobRecipeOut, GeneratedJobSiteSummaryOut
 from ..pagination import apply_limit_offset, count_rows, set_total_count
-from ..workers.job_manager import PUBLISH_META_PREFIX, job_manager
+from ..workers.job_manager import PUBLISH_META_PREFIX, _deserialize_publish_meta, job_manager
 from ..services.source_image import SOURCE_PROVIDERS, require_source_image_user
 from ..services.image_retention_scheduler import _upload_paths_from_recipe
 from ..services.upload_storage import remove_unreferenced_files
@@ -120,6 +120,72 @@ async def get_job(
         require_source_image_user(user)
     await check_project_access(job.project_id, user, db)
     return job
+
+
+@router.get("/api/jobs/{job_id}/pinterest-sheet")
+async def get_job_pinterest_sheet(
+    job_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Export the rendered pins belonging to a completed WordPress batch."""
+    if (user.email or "").strip().lower() != "khalil@gmail.com":
+        raise HTTPException(403, "This sheet download is not available for this account")
+    job = await db.get(Job, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    await check_project_access(job.project_id, user, db)
+    if job.job_type != JobType.publisher:
+        raise HTTPException(400, "This sheet is only available for WordPress publishing jobs")
+    if job.status != JobStatus.completed:
+        raise HTTPException(409, "Wait for publishing to complete before exporting Excel")
+
+    # Generation ownership stays on the original job. The publish metadata is
+    # the authoritative list of recipes actually claimed by this batch.
+    messages = (await db.execute(
+        select(JobLog.message).where(
+            JobLog.job_id == job_id,
+            JobLog.message.like(f"{PUBLISH_META_PREFIX}%"),
+        ).order_by(JobLog.created_at.asc())
+    )).scalars().all()
+    meta = next((value for message in messages
+                 if (value := _deserialize_publish_meta(message)) is not None), None)
+    if meta is not None and "_claimed_recipe_ids" in meta:
+        recipe_scope = Recipe.id.in_([uuid.UUID(value) for value in meta["_claimed_recipe_ids"]])
+    else:
+        # Older publisher jobs assigned ownership directly to the publishing job.
+        recipe_scope = Recipe.created_by_job_id == job_id
+    pairs = (await db.execute(
+        select(Recipe, Site).join(Site, Recipe.site_id == Site.id).where(
+            Site.project_id == job.project_id,
+            recipe_scope,
+            Recipe.status == RecipeStatus.published,
+        ).order_by(Site.id.asc(), Recipe.created_at.asc(), Recipe.id.asc())
+    )).all()
+    if not pairs:
+        raise HTTPException(422, "This job has no successfully published recipes to export")
+
+    from ..services.pinterest_sheet import article_link, clean_sheet_description
+
+    rows = []
+    for recipe, site in pairs:
+        image = (recipe.pin_design_image or "").strip()
+        link = article_link(recipe, site)
+        if not image or not link:
+            raise HTTPException(422, "A published recipe is missing its rendered pin image or article link. Save its pin design and article link, then try again.")
+        rows.append({
+            "recipe_id": str(recipe.id),
+            "site_id": str(site.id),
+            "title": recipe.pin_title or recipe.recipe_text.split("\n", 1)[0].strip(),
+            "image_url": image,
+            "description": clean_sheet_description(recipe.pin_description),
+            "tags": recipe.pin_tags or "",
+            "article_link": link,
+            # WordPress publishing does not publish the corresponding Pinterest pin.
+            "status": "draft",
+            "board": recipe.pin_board or "",
+        })
+    return rows
 
 
 @router.get("/api/jobs/{job_id}/publish-summary", response_model=JobPublishSummaryOut)
