@@ -256,7 +256,7 @@ class JobManager:
                 select(Recipe, Site)
                 .join(Site, Recipe.site_id == Site.id)
                 .where(id_filter, Recipe.status == RecipeStatus.publishing)
-                .order_by(Site.id.asc(), Recipe.created_at.asc())
+                .order_by(Site.id.asc(), Recipe.created_at.asc(), Recipe.id.asc())
             )
             if limit is not None:
                 stmt = stmt.limit(limit)
@@ -617,6 +617,7 @@ class JobManager:
         if db_job.job_type == JobType.articles_all_sites:
             site_domain = ""
             created_recipe_ids: list[uuid.UUID] = []
+            seen_shared_keys: set[tuple[str, str]] = set()
             try:
                 for idx, item in enumerate(shared_recipes or []):
                     if isinstance(item, dict):
@@ -627,6 +628,19 @@ class JobManager:
                         image_url = str(getattr(item, "image_url", "")).strip()
                     if not recipe_text or not image_url:
                         continue
+                    dedup_key = (
+                        " ".join(recipe_text.lower().split()),
+                        image_url.strip(),
+                    )
+                    if dedup_key in seen_shared_keys:
+                        logger.info(
+                            "Skipping duplicate shared recipe input at row %d in job %s: %s",
+                            idx + 1,
+                            db_job.id,
+                            recipe_text[:80],
+                        )
+                        continue
+                    seen_shared_keys.add(dedup_key)
                     group_items: list[dict] = []
                     for s in sites:
                         new_recipe = Recipe(
@@ -648,11 +662,18 @@ class JobManager:
                                 "generate_recipe_json": bool(getattr(s, "generate_recipe_json", True)),
                                 "recipe_text": recipe_text,
                                 "image_url": image_url,
-                                "group_idx": idx + 1,
+                                "group_idx": len(multi_site_groups) + 1,
                             }
                         )
                     if group_items:
-                        multi_site_groups.append({"idx": idx + 1, "items": group_items, "recipe_text": recipe_text, "image_url": image_url})
+                        multi_site_groups.append(
+                            {
+                                "idx": len(multi_site_groups) + 1,
+                                "items": group_items,
+                                "recipe_text": recipe_text,
+                                "image_url": image_url,
+                            }
+                        )
                 if not multi_site_groups:
                     db_job.status = JobStatus.failed
                     db_job.error = "No valid shared recipes to process"
@@ -1231,12 +1252,17 @@ class JobManager:
                     await db.commit()
                     return False
 
-                # Group by (recipe_text, image_url)
+                # Group by (recipe_text, image_url), deduplicating per site
                 groups: dict[tuple, list[dict]] = {}
+                seen_group_sites: dict[tuple, set[uuid.UUID]] = {}
                 for recipe, site in pending:
                     key = (recipe.recipe_text, recipe.image_url)
                     if key not in groups:
                         groups[key] = []
+                        seen_group_sites[key] = set()
+                    if site.id in seen_group_sites[key]:
+                        continue
+                    seen_group_sites[key].add(site.id)
                     groups[key].append({
                         "id": str(recipe.id),
                         "site_domain": site.domain,

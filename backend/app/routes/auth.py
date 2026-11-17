@@ -4,6 +4,7 @@ import secrets
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Annotated
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -29,10 +30,23 @@ _GOOGLE_STATES: dict[str, float] = {}
 _STATE_TTL = 600  # 10 minutes
 
 
-def _cookie_base_kwargs() -> dict:
+def _cookie_base_kwargs(request: Request | None = None) -> dict:
+    secure = settings.auth_cookie_secure
+    samesite = settings.auth_cookie_samesite
+    if request is not None:
+        forwarded_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+        is_https = request.url.scheme == "https" or forwarded_proto == "https"
+        origin = (request.headers.get("origin") or "").strip()
+        if is_https:
+            secure = True
+            if origin:
+                origin_host = (urlparse(origin).hostname or "").lower()
+                req_host = (request.url.hostname or "").lower()
+                if origin_host and req_host and origin_host != req_host:
+                    samesite = "none"
     kwargs = {
-        "secure": settings.auth_cookie_secure,
-        "samesite": settings.auth_cookie_samesite,
+        "secure": secure,
+        "samesite": samesite,
         "max_age": settings.jwt_expire_minutes * 60,
         "path": "/",
     }
@@ -42,8 +56,8 @@ def _cookie_base_kwargs() -> dict:
     return kwargs
 
 
-def _set_auth_cookies(response: Response, access_token: str) -> None:
-    base_kwargs = _cookie_base_kwargs()
+def _set_auth_cookies(response: Response, access_token: str, request: Request | None = None) -> None:
+    base_kwargs = _cookie_base_kwargs(request)
     response.set_cookie(
         settings.auth_cookie_name,
         access_token,
@@ -118,7 +132,7 @@ async def register(
     await db.refresh(user)
 
     token = create_access_token(str(user.id), user.role.value, user.email)
-    _set_auth_cookies(response, token)
+    _set_auth_cookies(response, token, request)
     return TokenResponse(access_token=token)
 
 
@@ -136,7 +150,7 @@ async def login(
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     token = create_access_token(str(user.id), user.role.value, user.email)
-    _set_auth_cookies(response, token)
+    _set_auth_cookies(response, token, request)
     return TokenResponse(access_token=token)
 
 
@@ -171,6 +185,7 @@ async def update_me(
 
 @router.post("/setup-password", response_model=TokenResponse)
 async def setup_password(
+    request: Request,
     response: Response,
     body: SetupPasswordRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -198,7 +213,7 @@ async def setup_password(
     await db.commit()
 
     token = create_access_token(str(user.id), user.role.value, user.email)
-    _set_auth_cookies(response, token)
+    _set_auth_cookies(response, token, request)
     return TokenResponse(access_token=token)
 
 
@@ -247,6 +262,7 @@ async def forgot_password(
 
 @router.post("/reset-password", response_model=TokenResponse)
 async def reset_password(
+    request: Request,
     response: Response,
     body: ResetPasswordRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -274,7 +290,7 @@ async def reset_password(
     await db.commit()
 
     token = create_access_token(str(user.id), user.role.value, user.email)
-    _set_auth_cookies(response, token)
+    _set_auth_cookies(response, token, request)
     return TokenResponse(access_token=token)
 
 
@@ -304,6 +320,7 @@ async def google_auth_url():
 
 @router.post("/google/callback", response_model=TokenResponse)
 async def google_callback(
+    request: Request,
     response: Response,
     body: GoogleCallbackRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -375,7 +392,7 @@ async def google_callback(
     await db.refresh(user)
 
     token = create_access_token(str(user.id), user.role.value, user.email)
-    _set_auth_cookies(response, token)
+    _set_auth_cookies(response, token, request)
     return TokenResponse(access_token=token)
 
 

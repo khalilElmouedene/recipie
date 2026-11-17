@@ -599,3 +599,137 @@ def publish_page_photo(
     if not post_id:
         raise ValueError("Facebook published the image but returned no post ID.")
     return post_id
+
+
+def build_facebook_post_url(
+    *,
+    facebook_page_id: str,
+    facebook_post_id: str | None,
+    post_type: str = "video",
+) -> str | None:
+    raw_post_id = (facebook_post_id or "").strip()
+    if not raw_post_id:
+        return None
+    if raw_post_id.startswith("http://") or raw_post_id.startswith("https://"):
+        return raw_post_id
+    if "_" in raw_post_id:
+        page_part, post_part = raw_post_id.split("_", 1)
+        return f"https://www.facebook.com/{page_part}/posts/{post_part}"
+    if post_type == "video":
+        return f"https://www.facebook.com/reel/{raw_post_id}"
+    if facebook_page_id:
+        return f"https://www.facebook.com/{facebook_page_id}/posts/{raw_post_id}"
+    return f"https://www.facebook.com/{raw_post_id}"
+
+
+def fetch_post_metrics(
+    *,
+    facebook_post_id: str,
+    page_id: str,
+    page_access_token: str,
+    post_type: str = "video",
+) -> dict[str, int]:
+    """Fetch views, likes, comments, and shares for a published Facebook Reel or Page post."""
+    raw_id = (facebook_post_id or "").strip()
+    if not raw_id or not page_access_token:
+        return {"views": 0, "likes": 0, "comments": 0, "shares": 0}
+
+    views = 0
+    likes = 0
+    comments = 0
+    shares = 0
+
+    def _extract_counts(payload: dict) -> None:
+        nonlocal views, likes, comments, shares
+        if not isinstance(payload, dict):
+            return
+        if isinstance(payload.get("views"), (int, float)):
+            views = max(views, int(payload["views"]))
+        likes_summary = ((payload.get("likes") or {}).get("summary") or {})
+        if isinstance(likes_summary.get("total_count"), (int, float)):
+            likes = max(likes, int(likes_summary["total_count"]))
+        reactions_summary = ((payload.get("reactions") or {}).get("summary") or {})
+        if isinstance(reactions_summary.get("total_count"), (int, float)):
+            likes = max(likes, int(reactions_summary["total_count"]))
+        comments_summary = ((payload.get("comments") or {}).get("summary") or {})
+        if isinstance(comments_summary.get("total_count"), (int, float)):
+            comments = max(comments, int(comments_summary["total_count"]))
+        shares_obj = payload.get("shares")
+        if isinstance(shares_obj, dict) and isinstance(shares_obj.get("count"), (int, float)):
+            shares = max(shares, int(shares_obj["count"]))
+
+    # 1. Query the primary node (Video or Post)
+    primary_fields = (
+        "views,likes.summary(true).limit(0),comments.summary(true).limit(0)"
+        if post_type == "video" and "_" not in raw_id
+        else "shares,likes.summary(true).limit(0),comments.summary(true).limit(0)"
+    )
+    try:
+        resp = requests.get(
+            _graph(raw_id),
+            params={"fields": primary_fields, "access_token": page_access_token},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.ok:
+            _extract_counts(resp.json())
+        else:
+            # Fallback to minimal universal summary fields
+            resp2 = requests.get(
+                _graph(raw_id),
+                params={
+                    "fields": "likes.summary(true).limit(0),comments.summary(true).limit(0)",
+                    "access_token": page_access_token,
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+            if resp2.ok:
+                _extract_counts(resp2.json())
+    except Exception:
+        logger.debug("Could not fetch primary metrics for %s", raw_id, exc_info=True)
+
+    # 2. Try Page Post composite ID ({page_id}_{post_id}) for shares & reactions
+    composite_id = raw_id if "_" in raw_id else (f"{page_id}_{raw_id}" if page_id else "")
+    if composite_id and composite_id != raw_id:
+        try:
+            resp_post = requests.get(
+                _graph(composite_id),
+                params={
+                    "fields": "shares,likes.summary(true).limit(0),comments.summary(true).limit(0)",
+                    "access_token": page_access_token,
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+            if resp_post.ok:
+                _extract_counts(resp_post.json())
+        except Exception:
+            logger.debug("Could not fetch composite post metrics for %s", composite_id, exc_info=True)
+
+    # 3. For Reels/videos, also check video_insights if views is still 0
+    if post_type == "video" and views == 0 and "_" not in raw_id:
+        for metric_name in ("fb_reels_total_plays", "total_video_views"):
+            try:
+                ins_resp = requests.get(
+                    _graph(f"{raw_id}/video_insights"),
+                    params={"metric": metric_name, "access_token": page_access_token},
+                    timeout=REQUEST_TIMEOUT,
+                )
+                if not ins_resp.ok:
+                    continue
+                data_items = ins_resp.json().get("data") or []
+                for item in data_items:
+                    values = item.get("values") or []
+                    if values and isinstance(values[0], dict):
+                        val = values[0].get("value")
+                        if isinstance(val, (int, float)):
+                            views = max(views, int(val))
+                if views > 0:
+                    break
+            except Exception:
+                continue
+
+    return {
+        "views": max(0, int(views)),
+        "likes": max(0, int(likes)),
+        "comments": max(0, int(comments)),
+        "shares": max(0, int(shares)),
+    }

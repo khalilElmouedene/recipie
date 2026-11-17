@@ -263,11 +263,36 @@ def publish_recipe(
                 "rank_math_focus_keyword": focus_kw,
             }
 
-        rp = wp_session.post(f"{base_url}/posts", json=post_payload, timeout=30)
+        existing_post_id = str(recipe.get("wp_post_id") or "").strip()
+        existing_permalink = ""
+        if not existing_post_id and slug:
+            try:
+                check_resp = wp_session.get(
+                    f"{base_url}/posts",
+                    params={
+                        "slug": slug,
+                        "status": "publish,future,draft,pending,private",
+                        "per_page": 1,
+                    },
+                    timeout=15,
+                )
+                if check_resp.ok:
+                    existing_items = check_resp.json()
+                    if isinstance(existing_items, list) and existing_items:
+                        existing_post_id = str(existing_items[0].get("id") or "").strip()
+                        existing_permalink = str(existing_items[0].get("link") or "").strip()
+            except Exception:
+                pass
+
+        if existing_post_id:
+            _log(f"Existing WordPress post found for slug '{slug}' (ID: {existing_post_id}); updating instead of creating duplicate.")
+            rp = wp_session.post(f"{base_url}/posts/{existing_post_id}", json=post_payload, timeout=60)
+        else:
+            rp = wp_session.post(f"{base_url}/posts", json=post_payload, timeout=60)
         rp.raise_for_status()
         rp_body = rp.json()
         post_id = rp_body["id"]
-        permalink = rp_body.get("link") or f"{domain}/{slug}/"
+        permalink = rp_body.get("link") or existing_permalink or f"{domain}/{slug}/"
 
         _log(f"Post created (ID: {post_id}) - {permalink}")
         result["wp_post_id"] = str(post_id)

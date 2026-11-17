@@ -61,6 +61,22 @@ async def _migrate_cleanup_config() -> None:
         has_owner_id = result.fetchone() is not None
         if not has_owner_id:
             await conn.execute(text("DROP TABLE IF EXISTS cleanup_config"))
+        for stmt in (
+            "ALTER TABLE IF EXISTS facebook_projects ADD COLUMN IF NOT EXISTS voice_recipe_mode VARCHAR(32) NOT NULL DEFAULT 'per_page'",
+            "ALTER TABLE IF EXISTS facebook_projects ADD COLUMN IF NOT EXISTS shared_tts_voice VARCHAR(32) NOT NULL DEFAULT 'nova'",
+            "ALTER TABLE IF EXISTS facebook_projects ADD COLUMN IF NOT EXISTS shared_recipe_card_prompt TEXT",
+            "ALTER TABLE IF EXISTS facebook_projects ADD COLUMN IF NOT EXISTS shared_recipe_card_model VARCHAR(64) NOT NULL DEFAULT 'gpt-image-2'",
+            "ALTER TABLE IF EXISTS facebook_projects ADD COLUMN IF NOT EXISTS shared_recipe_card_quality VARCHAR(16) NOT NULL DEFAULT 'low'",
+            "ALTER TABLE IF EXISTS facebook_deliveries ADD COLUMN IF NOT EXISTS views_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE IF EXISTS facebook_deliveries ADD COLUMN IF NOT EXISTS likes_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE IF EXISTS facebook_deliveries ADD COLUMN IF NOT EXISTS comments_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE IF EXISTS facebook_deliveries ADD COLUMN IF NOT EXISTS shares_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE IF EXISTS facebook_deliveries ADD COLUMN IF NOT EXISTS stats_checked_at TIMESTAMPTZ",
+        ):
+            try:
+                await conn.execute(text(stmt))
+            except Exception:
+                pass
 
 
 @asynccontextmanager
@@ -156,7 +172,21 @@ class AuditContextMiddleware(BaseHTTPMiddleware):
             clear_audit_context()
 
 
-origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+_raw_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+if settings.frontend_url and settings.frontend_url.strip():
+    _raw_origins.append(settings.frontend_url.strip().rstrip("/"))
+origins: list[str] = []
+for _origin in _raw_origins:
+    if _origin not in origins:
+        origins.append(_origin)
+    if "localhost" in _origin:
+        _alt = _origin.replace("localhost", "127.0.0.1")
+        if _alt not in origins:
+            origins.append(_alt)
+    elif "127.0.0.1" in _origin:
+        _alt = _origin.replace("127.0.0.1", "localhost")
+        if _alt not in origins:
+            origins.append(_alt)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(AuditContextMiddleware)
 app.add_middleware(

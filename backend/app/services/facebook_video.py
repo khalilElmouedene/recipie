@@ -701,6 +701,8 @@ class FacebookVideoProcessor:
         intro_seconds: float = 5.0,
         fps: int = 30,
         bitrate_kbps: int = 8000,
+        reuse_shared_voice: bool = False,
+        reuse_shared_recipe_card: bool = False,
         log: Callable[[str], None] | None = None,
     ) -> ProcessedFacebookVideo:
         emit = log or (lambda _message: None)
@@ -740,9 +742,15 @@ class FacebookVideoProcessor:
         audio_path = work_dir / f"voice-over{variant_suffix}.mp3"
         recipe_card_path = work_dir / f"recipe-card{variant_suffix}.png"
         output_path = work_dir / f"processed-video{variant_suffix}.mp4"
+        shared_audio_path = work_dir / "voice-over-shared.mp3"
+        shared_script_path = work_dir / "voice-over-shared.txt"
+        shared_recipe_card_path = work_dir / "recipe-card-shared.png"
 
-        emit("Preparing source video.")
-        _download_source(source_url, source_path, log=emit)
+        if not source_path.is_file() or source_path.stat().st_size == 0:
+            emit("Preparing source video.")
+            _download_source(source_url, source_path, log=emit)
+        else:
+            emit("Reusing prepared source video.")
         duration = validate_video_file(source_path)
         emit(f"Video validated ({duration:.1f} seconds).")
         client = OpenAI(api_key=openai_api_key)
@@ -777,43 +785,65 @@ class FacebookVideoProcessor:
         finally:
             clip.close()
 
-        script_response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": _prompt(script_prompt, recipe_title)}],
-            temperature=1,
-        )
-        voice_over = (script_response.choices[0].message.content or "").strip()
-        if not voice_over:
-            raise ValueError("OpenAI returned an empty Facebook voice-over.")
-        emit("Generated the voice-over script.")
-
-        with client.audio.speech.with_streaming_response.create(
-            model="gpt-4o-mini-tts",
-            voice=tts_voice,
-            input=voice_over,
-        ) as response:
-            response.stream_to_file(audio_path)
-        emit(f"Generated the voice-over audio with {tts_voice.title()}.")
-
-        with screenshot_path.open("rb") as screenshot:
-            image_result = client.images.edit(
-                model=recipe_card_model,
-                image=screenshot,
-                prompt=_prompt(recipe_card_prompt, recipe_title),
-                quality=recipe_card_quality,
-                size=_recipe_card_size(video_width, video_height),
+        if reuse_shared_voice and shared_audio_path.is_file() and shared_audio_path.stat().st_size > 0:
+            shutil.copyfile(shared_audio_path, audio_path)
+            voice_over = (
+                shared_script_path.read_text(encoding="utf-8").strip()
+                if shared_script_path.is_file()
+                else recipe_title
             )
-        image_base64 = image_result.data[0].b64_json
-        if not image_base64:
-            raise ValueError("OpenAI returned an empty Facebook recipe card.")
-        image_bytes = base64.b64decode(image_base64)
-        card = Image.open(BytesIO(image_bytes)).convert("RGB")
-        card = _prepare_recipe_card(card, video_width, video_height)
-        card.save(recipe_card_path, format="PNG", quality=100)
-        emit(
-            f"Generated the recipe card with {recipe_card_model} "
-            f"({recipe_card_quality} quality) at {video_width}x{video_height}."
-        )
+            emit("Reused the shared voice-over audio across videos.")
+        else:
+            script_response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": _prompt(script_prompt, recipe_title)}],
+                temperature=1,
+            )
+            voice_over = (script_response.choices[0].message.content or "").strip()
+            if not voice_over:
+                raise ValueError("OpenAI returned an empty Facebook voice-over.")
+            emit("Generated the voice-over script.")
+
+            with client.audio.speech.with_streaming_response.create(
+                model="gpt-4o-mini-tts",
+                voice=tts_voice,
+                input=voice_over,
+            ) as response:
+                response.stream_to_file(audio_path)
+            if reuse_shared_voice:
+                shutil.copyfile(audio_path, shared_audio_path)
+                shared_script_path.write_text(voice_over, encoding="utf-8")
+            emit(f"Generated the voice-over audio with {tts_voice.title()}.")
+
+        if (
+            reuse_shared_recipe_card
+            and shared_recipe_card_path.is_file()
+            and shared_recipe_card_path.stat().st_size > 0
+        ):
+            shutil.copyfile(shared_recipe_card_path, recipe_card_path)
+            emit("Reused the shared recipe card template across videos.")
+        else:
+            with screenshot_path.open("rb") as screenshot:
+                image_result = client.images.edit(
+                    model=recipe_card_model,
+                    image=screenshot,
+                    prompt=_prompt(recipe_card_prompt, recipe_title),
+                    quality=recipe_card_quality,
+                    size=_recipe_card_size(video_width, video_height),
+                )
+            image_base64 = image_result.data[0].b64_json
+            if not image_base64:
+                raise ValueError("OpenAI returned an empty Facebook recipe card.")
+            image_bytes = base64.b64decode(image_base64)
+            card = Image.open(BytesIO(image_bytes)).convert("RGB")
+            card = _prepare_recipe_card(card, video_width, video_height)
+            card.save(recipe_card_path, format="PNG", quality=100)
+            if reuse_shared_recipe_card:
+                shutil.copyfile(recipe_card_path, shared_recipe_card_path)
+            emit(
+                f"Generated the recipe card with {recipe_card_model} "
+                f"({recipe_card_quality} quality) at {video_width}x{video_height}."
+            )
 
         audio = AudioFileClip(str(audio_path))
         source = VideoFileClip(str(silent_path))
@@ -878,3 +908,25 @@ class FacebookVideoProcessor:
             processed_video_url=_public_upload_url(output_path),
             voice_over=voice_over,
         )
+
+    def clone_processed_video(
+        self,
+        *,
+        content_id: uuid.UUID,
+        base_video: ProcessedFacebookVideo,
+        variant_id: uuid.UUID,
+    ) -> ProcessedFacebookVideo:
+        """Clone an already-rendered video file for another Page delivery when both voice & card are shared."""
+        work_dir = FACEBOOK_UPLOADS / str(content_id)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        src_path = _safe_workspace_path(base_video.processed_video_url)
+        if src_path is not None and src_path.is_file():
+            dst_path = work_dir / f"processed-video-{variant_id}.mp4"
+            if src_path.resolve() != dst_path.resolve():
+                shutil.copyfile(src_path, dst_path)
+            return ProcessedFacebookVideo(
+                screenshot_url=base_video.screenshot_url,
+                processed_video_url=_public_upload_url(dst_path),
+                voice_over=base_video.voice_over,
+            )
+        return base_video

@@ -1,8 +1,8 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
-import { clearToken, setAuthUser } from "@/lib/auth";
+import { clearToken, isLoggedIn, setAuthUser } from "@/lib/auth";
 import { api } from "@/lib/api";
 import Sidebar from "./Sidebar";
 import { ToastProvider } from "@/contexts/ToastContext";
@@ -30,12 +30,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [ready, setReady] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const verifiedRef = useRef(false);
 
   const isMobileViewport = () =>
     typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
 
   useEffect(() => {
     if (PUBLIC.includes(pathname)) {
+      verifiedRef.current = false;
+      setReady(true);
+      return;
+    }
+    if (verifiedRef.current && isLoggedIn()) {
       setReady(true);
       return;
     }
@@ -43,19 +49,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     api.me()
       .then((me) => {
         if (!mounted) return;
+        verifiedRef.current = true;
         setAuthUser({ id: me.id, email: me.email, role: me.role });
         setReady(true);
       })
       .catch(() => {
         if (!mounted) return;
+        verifiedRef.current = false;
         clearToken();
         router.replace("/login");
       });
     return () => {
       mounted = false;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pathname, router]);
 
   // Close sidebar only on mobile route changes.
   useEffect(() => {

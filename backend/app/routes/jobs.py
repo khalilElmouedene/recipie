@@ -324,7 +324,7 @@ async def get_job_generated_recipes(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     site_id: uuid.UUID | None = None,
-    limit: int | None = Query(default=None, ge=1, le=200),
+    limit: int | None = Query(default=None, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
 ):
     result = await db.execute(select(Job).where(Job.id == job_id))
@@ -342,7 +342,7 @@ async def get_job_generated_recipes(
     )
     if site_id is not None:
         query = query.where(Recipe.site_id == site_id)
-    stmt = query.order_by(Site.domain.asc(), Recipe.created_at.asc())
+    stmt = query.order_by(Site.domain.asc(), Recipe.created_at.asc(), Recipe.id.asc())
     total = await count_rows(db, stmt)
     set_total_count(response, total)
     rows = await db.execute(apply_limit_offset(stmt, limit, offset))

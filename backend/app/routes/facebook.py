@@ -72,6 +72,22 @@ ALLOWED_IMAGE_TYPES = {
 }
 
 
+FacebookVoiceRecipeModeLiteral = Literal[
+    "per_page",
+    "shared_voice_per_page_card",
+    "shared_card_per_page_voice",
+    "shared_voice_and_card",
+]
+FacebookTtsVoiceLiteral = Literal[
+    "alloy", "ash", "ballad", "coral", "echo", "fable", "onyx",
+    "nova", "sage", "shimmer", "verse", "marin", "cedar",
+]
+FacebookRecipeCardModelLiteral = Literal[
+    "gpt-image-2", "gpt-image-2-2026-04-21"
+]
+FacebookRecipeCardQualityLiteral = Literal["auto", "low", "medium", "high"]
+
+
 class FacebookProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str = Field(default="", max_length=5000)
@@ -81,6 +97,11 @@ class FacebookProjectCreate(BaseModel):
     video_fps: Literal[24, 30, 60] = 30
     video_bitrate_kbps: int = Field(default=8000, ge=1000, le=20000)
     use_midjourney: bool = True
+    voice_recipe_mode: FacebookVoiceRecipeModeLiteral = "per_page"
+    shared_tts_voice: FacebookTtsVoiceLiteral = "nova"
+    shared_recipe_card_prompt: str | None = Field(default=None, max_length=12000)
+    shared_recipe_card_model: FacebookRecipeCardModelLiteral = "gpt-image-2"
+    shared_recipe_card_quality: FacebookRecipeCardQualityLiteral = "low"
 
 
 class FacebookProjectDuplicate(BaseModel):
@@ -105,6 +126,13 @@ class FacebookProjectUpdate(BaseModel):
     recipe_rewrite_prompt: str | None = Field(
         default=None, min_length=1, max_length=12000
     )
+    voice_recipe_mode: FacebookVoiceRecipeModeLiteral | None = None
+    shared_tts_voice: FacebookTtsVoiceLiteral | None = None
+    shared_recipe_card_prompt: str | None = Field(
+        default=None, min_length=1, max_length=12000
+    )
+    shared_recipe_card_model: FacebookRecipeCardModelLiteral | None = None
+    shared_recipe_card_quality: FacebookRecipeCardQualityLiteral | None = None
 
     @field_validator("use_midjourney")
     @classmethod
@@ -129,6 +157,11 @@ class FacebookProjectOut(BaseModel):
     video_fps: int
     video_bitrate_kbps: int
     use_midjourney: bool
+    voice_recipe_mode: str
+    shared_tts_voice: str
+    shared_recipe_card_prompt: str
+    shared_recipe_card_model: str
+    shared_recipe_card_quality: str
     page_count: int
     content_count: int
     has_website: bool
@@ -310,6 +343,41 @@ class FacebookDeliveryOut(BaseModel):
     processed_video_url: str | None
     generated_image_url: str | None
     error_message: str | None
+    views_count: int = 0
+    likes_count: int = 0
+    comments_count: int = 0
+    shares_count: int = 0
+    stats_checked_at: datetime | None = None
+
+
+class FacebookTrackedPostOut(BaseModel):
+    delivery_id: uuid.UUID
+    content_id: uuid.UUID
+    page_id: uuid.UUID
+    page_name: str
+    page_picture_url: str | None
+    facebook_page_id: str
+    facebook_post_id: str | None
+    facebook_post_url: str | None
+    title: str
+    recipe_title: str | None
+    post_type: str
+    thumbnail_url: str | None
+    published_at: datetime
+    tracking_starts_at: datetime
+    tracking_expires_at: datetime
+    tracking_status: Literal["waiting_24h", "watching"]
+    views_count: int
+    likes_count: int
+    comments_count: int
+    shares_count: int
+    stats_checked_at: datetime | None
+
+
+class FacebookTrackedPostsRefreshOut(BaseModel):
+    refreshed: int
+    expired_deleted: int
+    items: list[FacebookTrackedPostOut]
 
 
 class FacebookContentOut(BaseModel):
@@ -426,6 +494,18 @@ async def _project_out(project: FacebookProject, db: AsyncSession) -> FacebookPr
         video_fps=project.video_fps,
         video_bitrate_kbps=project.video_bitrate_kbps,
         use_midjourney=project.use_midjourney,
+        voice_recipe_mode=getattr(project, "voice_recipe_mode", None) or "per_page",
+        shared_tts_voice=getattr(project, "shared_tts_voice", None) or "nova",
+        shared_recipe_card_prompt=(
+            getattr(project, "shared_recipe_card_prompt", None)
+            or DEFAULT_PROMPTS["facebook_recipe_card"]["value"]
+        ),
+        shared_recipe_card_model=(
+            getattr(project, "shared_recipe_card_model", None) or "gpt-image-2"
+        ),
+        shared_recipe_card_quality=(
+            getattr(project, "shared_recipe_card_quality", None) or "low"
+        ),
         page_count=page_count,
         content_count=content_count,
         has_website=has_website,
@@ -537,6 +617,15 @@ async def create_facebook_project(
         video_fps=body.video_fps,
         video_bitrate_kbps=body.video_bitrate_kbps,
         use_midjourney=body.use_midjourney,
+        voice_recipe_mode=body.voice_recipe_mode,
+        shared_tts_voice=body.shared_tts_voice,
+        shared_recipe_card_prompt=(
+            body.shared_recipe_card_prompt.strip()
+            if body.shared_recipe_card_prompt
+            else None
+        ),
+        shared_recipe_card_model=body.shared_recipe_card_model,
+        shared_recipe_card_quality=body.shared_recipe_card_quality,
     )
     db.add(project)
     await db.commit()
@@ -1664,6 +1753,11 @@ async def list_facebook_contents(
                 processed_video_url=delivery.processed_video_url,
                 generated_image_url=delivery.generated_image_url,
                 error_message=delivery.error_message,
+                views_count=int(getattr(delivery, "views_count", 0) or 0),
+                likes_count=int(getattr(delivery, "likes_count", 0) or 0),
+                comments_count=int(getattr(delivery, "comments_count", 0) or 0),
+                shares_count=int(getattr(delivery, "shares_count", 0) or 0),
+                stats_checked_at=getattr(delivery, "stats_checked_at", None),
             )
         )
     output: list[FacebookContentOut] = []
@@ -1714,6 +1808,158 @@ async def delete_facebook_history(
     from ..services.facebook_history_cleanup import cleanup_published_facebook_history
 
     return await cleanup_published_facebook_history(project_id)
+
+
+def _content_thumbnail(content: FacebookContent, delivery: FacebookDelivery) -> str | None:
+    if delivery.generated_image_url:
+        return delivery.generated_image_url
+    if content.screenshot_url:
+        return content.screenshot_url
+    if content.source_image_url:
+        return content.source_image_url
+    try:
+        imgs = json.loads(content.generated_images or "[]")
+        if isinstance(imgs, list) and imgs:
+            return str(imgs[0])
+    except Exception:
+        pass
+    if content.template_image_url:
+        return content.template_image_url
+    return None
+
+
+async def _collect_tracked_posts(
+    project_id: uuid.UUID,
+    db: AsyncSession,
+    *,
+    include_waiting: bool = False,
+) -> list[FacebookTrackedPostOut]:
+    from ..services.facebook_history_cleanup import (
+        HISTORY_RETENTION_WINDOW,
+        TRACKING_START_DELAY,
+    )
+
+    now = datetime.now(timezone.utc)
+    tracking_start_cutoff = now - TRACKING_START_DELAY
+    tracking_end_cutoff = now - HISTORY_RETENTION_WINDOW
+
+    query = (
+        select(FacebookDelivery, FacebookContent, FacebookPage)
+        .join(FacebookContent, FacebookContent.id == FacebookDelivery.content_id)
+        .join(FacebookPage, FacebookPage.id == FacebookDelivery.page_id)
+        .where(
+            FacebookContent.project_id == project_id,
+            FacebookContent.generation_cancelled.is_(False),
+            FacebookDelivery.status == FacebookDeliveryStatus.published,
+            FacebookDelivery.published_at.is_not(None),
+            FacebookDelivery.published_at > tracking_end_cutoff,
+        )
+    )
+    if not include_waiting:
+        query = query.where(FacebookDelivery.published_at <= tracking_start_cutoff)
+
+    rows = (
+        await db.execute(
+            query.order_by(FacebookDelivery.published_at.desc(), FacebookDelivery.id.desc())
+        )
+    ).all()
+
+    items: list[FacebookTrackedPostOut] = []
+    for delivery, content, page in rows:
+        pub_at = delivery.published_at or now
+        if pub_at.tzinfo is None:
+            pub_at = pub_at.replace(tzinfo=timezone.utc)
+        starts_at = pub_at + TRACKING_START_DELAY
+        expires_at = pub_at + HISTORY_RETENTION_WINDOW
+        tracking_status: Literal["waiting_24h", "watching"] = (
+            "watching" if pub_at <= tracking_start_cutoff else "waiting_24h"
+        )
+        post_type = getattr(content, "post_type", "video") or "video"
+        items.append(
+            FacebookTrackedPostOut(
+                delivery_id=delivery.id,
+                content_id=content.id,
+                page_id=page.id,
+                page_name=page.name,
+                page_picture_url=page.picture_url,
+                facebook_page_id=page.facebook_page_id,
+                facebook_post_id=delivery.facebook_post_id,
+                facebook_post_url=facebook_api.build_facebook_post_url(
+                    facebook_page_id=page.facebook_page_id,
+                    facebook_post_id=delivery.facebook_post_id,
+                    post_type=post_type,
+                ),
+                title=content.title,
+                recipe_title=getattr(content, "recipe_title", None) or content.title,
+                post_type=post_type,
+                thumbnail_url=_content_thumbnail(content, delivery),
+                published_at=pub_at,
+                tracking_starts_at=starts_at,
+                tracking_expires_at=expires_at,
+                tracking_status=tracking_status,
+                views_count=int(getattr(delivery, "views_count", 0) or 0),
+                likes_count=int(getattr(delivery, "likes_count", 0) or 0),
+                comments_count=int(getattr(delivery, "comments_count", 0) or 0),
+                shares_count=int(getattr(delivery, "shares_count", 0) or 0),
+                stats_checked_at=getattr(delivery, "stats_checked_at", None),
+            )
+        )
+    return items
+
+
+@router.get(
+    "/facebook-projects/{project_id}/tracked-posts",
+    response_model=list[FacebookTrackedPostOut],
+)
+async def list_facebook_tracked_posts(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    include_waiting: bool = Query(default=False),
+):
+    await _project(project_id, user, db)
+    from ..services.facebook_history_cleanup import (
+        HISTORY_RETENTION_WINDOW,
+        cleanup_expired_tracked_deliveries,
+        cleanup_published_facebook_history,
+        refresh_tracked_facebook_stats,
+    )
+
+    cutoff = datetime.now(timezone.utc) - HISTORY_RETENTION_WINDOW
+    await cleanup_published_facebook_history(project_id, before=cutoff)
+    await cleanup_expired_tracked_deliveries(project_id, before=cutoff)
+    await refresh_tracked_facebook_stats(project_id, force=False)
+    return await _collect_tracked_posts(project_id, db, include_waiting=include_waiting)
+
+
+@router.post(
+    "/facebook-projects/{project_id}/tracked-posts/refresh",
+    response_model=FacebookTrackedPostsRefreshOut,
+)
+async def refresh_facebook_tracked_posts(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    include_waiting: bool = Query(default=False),
+):
+    await _project(project_id, user, db)
+    from ..services.facebook_history_cleanup import (
+        HISTORY_RETENTION_WINDOW,
+        cleanup_expired_tracked_deliveries,
+        cleanup_published_facebook_history,
+        refresh_tracked_facebook_stats,
+    )
+
+    cutoff = datetime.now(timezone.utc) - HISTORY_RETENTION_WINDOW
+    hist_result = await cleanup_published_facebook_history(project_id, before=cutoff)
+    deliv_deleted = await cleanup_expired_tracked_deliveries(project_id, before=cutoff)
+    refreshed = await refresh_tracked_facebook_stats(project_id, force=True)
+    items = await _collect_tracked_posts(project_id, db, include_waiting=include_waiting)
+    return FacebookTrackedPostsRefreshOut(
+        refreshed=refreshed,
+        expired_deleted=int(hist_result.get("deleted", 0)) + deliv_deleted,
+        items=items,
+    )
 
 
 @router.delete(

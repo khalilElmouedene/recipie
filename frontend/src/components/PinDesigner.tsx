@@ -52,6 +52,9 @@ const DESIGNER_CUSTOM_KEYS = [
   "__designerBorder",
   "__forPinId",
   "__imageSource",
+  "__maxHeight",
+  "__baseFontSize",
+  "__userEditedText",
 ];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -588,12 +591,109 @@ function restoreSerializedCanvasCustomProperties(canvas: any, serialized: string
   }
 }
 
+function fitTextboxToCanvasArea(canvas: any, obj: any): void {
+  if (!obj || (obj.__pinType !== "text" && obj.type !== "textbox")) return;
+  if (typeof obj.initDimensions !== "function") return;
+
+  const canvasW = Number(canvas?.width || PIN_W);
+  const canvasH = Number(canvas?.height || PIN_H);
+  const centerX = Number(obj.left ?? canvasW / 2);
+  const centerY = Number(obj.top ?? canvasH / 2);
+
+  // Ensure the textbox width itself never overflows the canvas horizontally
+  const maxAllowedWidth = Math.max(
+    120,
+    obj.originX === "center"
+      ? Math.min(centerX, canvasW - centerX) * 2 - 16
+      : canvasW - Number(obj.left ?? 0) - 16,
+  );
+  if (Number(obj.width || 0) > maxAllowedWidth) {
+    obj.set("width", maxAllowedWidth);
+  }
+
+  // Determine vertical container bounds (band or frame behind this text, if any)
+  const objects = (canvas?.getObjects?.() || []) as any[];
+  let containerTop: number | null = null;
+  let containerBottom: number | null = null;
+
+  for (const candidate of objects) {
+    if (!candidate || candidate === obj || candidate.__isLabel || candidate.__designerBorder) continue;
+    const cType = candidate.__pinType;
+    if (cType !== "band" && cType !== "frame") continue;
+    const cScaleY = Number(candidate.scaleY ?? 1);
+    const cHeight = Number(candidate.height ?? (candidate.radius ? candidate.radius * 2 : 0)) * cScaleY;
+    if (cHeight <= 20) continue;
+    const cTop =
+      candidate.originY === "center"
+        ? Number(candidate.top ?? 0) - cHeight / 2
+        : Number(candidate.top ?? 0);
+    const cBottom = cTop + cHeight;
+    if (centerY >= cTop && centerY <= cBottom) {
+      if (
+        containerTop === null ||
+        containerBottom === null ||
+        cBottom - cTop < containerBottom - containerTop
+      ) {
+        containerTop = cTop;
+        containerBottom = cBottom;
+      }
+    }
+  }
+
+  let maxAllowedHeight = 0;
+  if (containerTop !== null && containerBottom !== null) {
+    // Keep text strictly inside its band/frame container with a small margin
+    const distToTop = centerY - containerTop;
+    const distToBottom = containerBottom - centerY;
+    const symmetricLimit =
+      obj.originY === "center"
+        ? Math.min(distToTop, distToBottom) * 2 - 10
+        : containerBottom - Number(obj.top ?? containerTop) - 10;
+    maxAllowedHeight = Math.max(24, symmetricLimit);
+  } else if (Number(obj.__maxHeight || 0) > 0) {
+    maxAllowedHeight = Number(obj.__maxHeight) * 1.15;
+  } else {
+    maxAllowedHeight =
+      obj.originY === "center"
+        ? Math.min(centerY, canvasH - centerY) * 2 - 12
+        : canvasH - Number(obj.top ?? 0) - 12;
+  }
+
+  obj.dirty = true;
+  obj.initDimensions();
+
+  const targetWidth = Number(obj.width || 940);
+  const minFontSize = 14;
+  let currentSize = Math.round(Number(obj.fontSize || 32));
+  let guard = 0;
+
+  while (
+    currentSize > minFontSize &&
+    guard < 60 &&
+    ((maxAllowedHeight > 0 && Number(obj.height || 0) > maxAllowedHeight) ||
+      (typeof obj.calcTextWidth === "function" && obj.calcTextWidth() > targetWidth + 2))
+  ) {
+    currentSize = Math.max(minFontSize, currentSize - 2);
+    obj.set("fontSize", currentSize);
+    obj.dirty = true;
+    obj.initDimensions();
+    guard += 1;
+  }
+
+  if (typeof obj.setCoords === "function") obj.setCoords();
+}
+
 function syncCanvasTextBindings(
   canvas: any,
   context: { title: string; pinTitle: string; website: string }
 ): void {
   (canvas.getObjects() as any[]).forEach((obj) => {
     if (obj?.__pinType !== "text") return;
+
+    if (obj.__userEditedText) {
+      fitTextboxToCanvasArea(canvas, obj);
+      return;
+    }
 
     const textVariable = ((obj.__textVariable ?? "") as TextVariable);
     const pinId = String(obj.__pinId ?? "");
@@ -605,7 +705,10 @@ function syncCanvasTextBindings(
       pinId === "title3" ||
       pinId === "website";
 
-    if (!hasDynamicBinding) return;
+    if (!hasDynamicBinding) {
+      fitTextboxToCanvasArea(canvas, obj);
+      return;
+    }
 
     const rawText = resolveTemplateTextContent(
       {
@@ -622,11 +725,14 @@ function syncCanvasTextBindings(
       context
     );
 
+    if (typeof obj.__baseFontSize === "number" && obj.__baseFontSize > 0) {
+      obj.set("fontSize", obj.__baseFontSize);
+    }
+
     const textTransform = obj.__textTransform ?? "none";
     obj.set("text", applyTextTransform(rawText, textTransform));
     obj.__rawText = rawText;
-    if (typeof obj.initDimensions === "function") obj.initDimensions();
-    if (typeof obj.setCoords === "function") obj.setCoords();
+    fitTextboxToCanvasArea(canvas, obj);
   });
 }
 
@@ -844,10 +950,14 @@ export async function buildTemplateOnCanvas(
       (tb as any).__pinId = el.id;
       (tb as any).__pinLabel = el.label;
       (tb as any).__pinType = "text";
+      (tb as any).__textVariable = tv;
       (tb as any).__textTransform = tt;
       (tb as any).__rawText = text;
+      (tb as any).__maxHeight = Number(el.height || 0);
+      (tb as any).__baseFontSize = (isTitle && oSize) ? oSize : (el.fontSize || 32);
       _applyTemplateLock(tb, el.locked);
       canvas.add(tb);
+      fitTextboxToCanvasArea(canvas, tb);
     } else if (el.type === "frame") {
       const strokeStyle = (el.strokeStyle as string) ?? ((el as any).__strokeStyle as string) ?? "solid";
       let dashArray: number[] | null = null;
@@ -1047,6 +1157,17 @@ async function settleCanvasTextForExport(canvas: any): Promise<void> {
     obj?.__pinType === "text" || obj?.type === "textbox" || obj?.type === "text"
   );
 
+  const uniqueFamilies: string[] = Array.from(
+    new Set<string>(
+      textObjects
+        .map((obj: any) => String(obj?.fontFamily || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  if (uniqueFamilies.length > 0) {
+    await Promise.allSettled(uniqueFamilies.map((family: string) => ensureGoogleFontLoaded(family)));
+  }
+
   const fontSet = typeof document !== "undefined" ? (document as any).fonts : null;
   if (fontSet?.load) {
     await Promise.allSettled(
@@ -1067,11 +1188,21 @@ async function settleCanvasTextForExport(canvas: any): Promise<void> {
     }
   }
 
+  try {
+    const fabricMod = await import("fabric");
+    const util = (fabricMod as any).util || (fabricMod as any).default?.util;
+    if (typeof util?.clearFabricFontCache === "function") {
+      util.clearFabricFontCache();
+    }
+  } catch {
+    // Ignore cache clear failure
+  }
+
   for (const obj of textObjects) {
     if (obj.isEditing && typeof obj.exitEditing === "function") obj.exitEditing();
+    if (typeof obj._clearCache === "function") obj._clearCache();
     obj.dirty = true;
-    if (typeof obj.initDimensions === "function") obj.initDimensions();
-    if (typeof obj.setCoords === "function") obj.setCoords();
+    fitTextboxToCanvasArea(canvas, obj);
   }
 
   canvas.renderAll?.();
@@ -1538,6 +1669,7 @@ export default function PinDesigner({
 
       fc.getObjects().filter((o: any) => o.__isLabel || o.__designerBorder).forEach((o: any) => o.set("visible", false));
       fc.renderAll();
+      await settleCanvasTextForExport(fc);
       const preview = fc.toDataURL({ format: "png", multiplier: PREVIEW_MULTIPLIER });
       touchPreviewCacheEntry(previewCacheRef.current, cacheKey, preview);
       if (runId === previewGenerationRunRef.current) {
@@ -2117,6 +2249,8 @@ export default function PinDesigner({
           textBorderColor: normalizeImageBorderColor((o as any).stroke, "#000000"),
           textBorderWidth: typeof o.strokeWidth === "number" ? o.strokeWidth : 0,
           textAlign: o.textAlign != null ? String(o.textAlign) : undefined,
+          textVariable: (o as any).__textVariable || undefined,
+          textTransform: (o as any).__textTransform || undefined,
         });
       } else if (pinType === "band") {
         const isCircle = o.type === "circle";
@@ -2695,7 +2829,7 @@ export default function PinDesigner({
     ));
     if (templateFonts.length > 0) {
       setTemplateLoading(true);
-      await Promise.all(templateFonts.map(injectFontStylesheet));
+      await Promise.all(templateFonts.map(ensureGoogleFontLoaded));
     }
 
     const imgs = imagesOverride ?? effectiveImages;
@@ -2959,7 +3093,10 @@ export default function PinDesigner({
         (textbox as any).__rawText = textContent;
         (textbox as any).__pinLocked = !!(el as any).locked;
         applyLockState(textbox);
+        (textbox as any).__maxHeight = Number(el.height || 0);
+        (textbox as any).__baseFontSize = Number(el.fontSize || 32);
         canvas.add(textbox);
+        fitTextboxToCanvasArea(canvas, textbox);
         addDesignerBorder(fabric, canvas, el.x - (el.width || 940) / 2, el.y - (el.height || 50) / 2, el.width || 940, el.height || 50, el.id);
       } else if (el.type === "frame") {
         const strokeStyle = (el.strokeStyle as string) ?? (el as any).__strokeStyle ?? "solid";
@@ -3107,7 +3244,11 @@ export default function PinDesigner({
         // ── Text events ───────────────────────────────────────────────────
         canvas.on("text:changed", (e: any) => {
           const t = e.target;
-          if (t?.__pinType === "text") setTextProps({ editText: t.text ?? "" });
+          if (t?.__pinType === "text") {
+            t.__userEditedText = true;
+            t.__rawText = t.text ?? "";
+            setTextProps({ editText: t.text ?? "" });
+          }
         });
 
         canvas.on("mouse:dblclick", (e: any) => {
@@ -3641,6 +3782,7 @@ export default function PinDesigner({
     if (!canvas || !obj || obj.__pinType !== "text") return;
     saveUndoState();
     const raw = textProps.editText;
+    obj.__userEditedText = true;
     const tt = (obj.__textTransform as string) ?? "none";
     obj.__rawText = raw;
     obj.set("text", applyTextTransform(raw, tt));

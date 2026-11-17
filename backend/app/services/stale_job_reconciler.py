@@ -12,10 +12,10 @@ from app.db_models import Job, JobStatus, Recipe, RecipeStatus
 logger = logging.getLogger(__name__)
 
 # Jobs running longer than this are considered truly stuck (not just a restart)
-STALE_RUNNING_JOB_HOURS = 8
+STALE_RUNNING_JOB_HOURS = 48
 
 # Old rows stuck "generating" with no job link (legacy / race)
-ORPHAN_GENERATING_HOURS = 2
+ORPHAN_GENERATING_HOURS = 12
 
 
 async def resume_interrupted_jobs() -> None:

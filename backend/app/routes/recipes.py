@@ -260,7 +260,7 @@ async def list_recipe_cards(
             Recipe.error_message,
         )
         .where(Recipe.site_id == site_id)
-        .order_by(Recipe.created_at.desc())
+        .order_by(Recipe.created_at.desc(), Recipe.id.desc())
     )
     rows = await db.execute(apply_limit_offset(items_stmt, limit, offset))
 
@@ -299,7 +299,7 @@ async def list_recipes(
     db: Annotated[AsyncSession, Depends(get_db)],
     summary: bool = Query(default=False, description="Return lightweight rows without heavy generated text fields"),
     pin_designer: bool = Query(default=False, description="Return only the 8 fields needed by the pin designer"),
-    limit: int | None = Query(default=None, ge=1, le=200),
+    limit: int | None = Query(default=None, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
 ):
     result = await db.execute(select(Site).where(Site.id == site_id))
@@ -401,7 +401,7 @@ async def list_recipes(
             })
         return out
 
-    stmt = select(Recipe).where(Recipe.site_id == site_id).order_by(Recipe.created_at.desc())
+    stmt = select(Recipe).where(Recipe.site_id == site_id).order_by(Recipe.created_at.desc(), Recipe.id.desc())
     total = await count_rows(db, stmt)
     set_total_count(response, total)
     result = await db.execute(apply_limit_offset(stmt, limit, offset))

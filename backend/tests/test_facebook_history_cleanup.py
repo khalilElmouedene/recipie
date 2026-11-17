@@ -184,7 +184,11 @@ class FacebookHistoryTests(unittest.IsolatedAsyncioTestCase):
         stop = asyncio.Event()
 
         async def run_pass(**kwargs):
-            self.assertAlmostEqual((datetime.now(timezone.utc) - kwargs["before"]).total_seconds(), 86400, delta=2)
+            self.assertAlmostEqual(
+                (datetime.now(timezone.utc) - kwargs["before"]).total_seconds(),
+                cleanup.HISTORY_RETENTION_WINDOW.total_seconds(),
+                delta=2,
+            )
             stop.set()
             return {"deleted": 0, "skipped": 0, "failed": 0}
 

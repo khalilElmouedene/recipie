@@ -1,4 +1,6 @@
-﻿/** In browser: use NEXT_PUBLIC_API_URL if set, otherwise same-origin (relative URLs) for reverse-proxy setups. */
+﻿import { getAuthHeaders, getSessionToken } from "@/lib/auth";
+
+/** In browser: use NEXT_PUBLIC_API_URL if set, otherwise same-origin (relative URLs) for reverse-proxy setups. */
 export function getApiBaseUrl(): string {
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;
@@ -6,7 +8,7 @@ export function getApiBaseUrl(): string {
   if (typeof window !== "undefined") {
     const origin = window.location.origin;
     if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
-      return "http://localhost:8000";
+      return `${window.location.protocol}//${window.location.hostname}:8000`;
     }
     return ""; // Same origin - relative URLs (reverse proxy setup)
   }
@@ -28,7 +30,10 @@ function buildPathWithQuery(
 }
 
 async function downloadFile(path: string, filename: string): Promise<void> {
-  const res = await fetch(`${API_URL}${path}`, { credentials: "include" });
+  const res = await fetch(`${API_URL}${path}`, {
+    credentials: "include",
+    headers: { ...getAuthHeaders() },
+  });
   if (res.status === 401) {
     if (typeof window !== "undefined") {
       localStorage.removeItem("auth_user");
@@ -54,6 +59,7 @@ async function downloadFile(path: string, filename: string): Promise<void> {
 async function requestRaw(path: string, options: RequestInit = {}): Promise<Response> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...getAuthHeaders(),
     ...(options.headers as Record<string, string>),
   };
   const res = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
@@ -74,6 +80,7 @@ async function requestRaw(path: string, options: RequestInit = {}): Promise<Resp
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...getAuthHeaders(),
     ...(options.headers as Record<string, string>),
   };
 
@@ -119,6 +126,7 @@ async function requestPage<T>(
   });
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...getAuthHeaders(),
     ...(options.headers as Record<string, string>),
   };
 
@@ -404,6 +412,7 @@ export const api = {
       method: "POST",
       body: formData,
       credentials: "include",
+      headers: { ...getAuthHeaders() },
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -415,6 +424,7 @@ export const api = {
   downloadBoardsTemplate: async (): Promise<void> => {
     const res = await fetch(`${API_URL}/api/settings/boards/template`, {
       credentials: "include",
+      headers: { ...getAuthHeaders() },
     });
     if (!res.ok) throw new Error("Failed to download template");
     const blob = await res.blob();
@@ -454,6 +464,7 @@ export const api = {
       method: "POST",
       body: form,
       credentials: "include",
+      headers: { ...getAuthHeaders() },
     });
     if (res.status === 401) {
       if (typeof window !== "undefined") {
@@ -490,6 +501,7 @@ export const api = {
       method: "POST",
       body: formData,
       credentials: "include",
+      headers: { ...getAuthHeaders() },
     });
     if (!resp.ok) throw new Error(`Pin image upload failed: ${resp.status}`);
     const data = await resp.json();
@@ -798,6 +810,7 @@ export const api = {
       method: "POST",
       body: formData,
       credentials: "include",
+      headers: { ...getAuthHeaders() },
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -853,6 +866,11 @@ export const api = {
       video_bitrate_kbps: number;
       recipe_rewrite_prompt: string;
       use_midjourney: boolean;
+      voice_recipe_mode: FacebookVoiceRecipeMode;
+      shared_tts_voice: FacebookTtsVoice;
+      shared_recipe_card_prompt: string;
+      shared_recipe_card_model: FacebookRecipeCardModel;
+      shared_recipe_card_quality: FacebookRecipeCardQuality;
     }>,
   ) =>
     request<FacebookProjectOut>(`/api/facebook-projects/${projectId}`, {
@@ -956,6 +974,7 @@ export const api = {
       method: "POST",
       body: formData,
       credentials: "include",
+      headers: { ...getAuthHeaders() },
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -970,6 +989,7 @@ export const api = {
       method: "POST",
       body: formData,
       credentials: "include",
+      headers: { ...getAuthHeaders() },
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -993,6 +1013,15 @@ export const api = {
     }),
   getFacebookContents: (projectId: string) =>
     request<FacebookContentOut[]>(`/api/facebook-projects/${projectId}/contents`),
+  getFacebookTrackedPosts: (projectId: string, includeWaiting = false) =>
+    request<FacebookTrackedPostOut[]>(
+      `/api/facebook-projects/${projectId}/tracked-posts${includeWaiting ? "?include_waiting=true" : ""}`,
+    ),
+  refreshFacebookTrackedPosts: (projectId: string, includeWaiting = false) =>
+    request<FacebookTrackedPostsRefreshOut>(
+      `/api/facebook-projects/${projectId}/tracked-posts/refresh${includeWaiting ? "?include_waiting=true" : ""}`,
+      { method: "POST" },
+    ),
   deleteFacebookContent: (contentId: string) =>
     request<void>(`/api/facebook-contents/${contentId}`, { method: "DELETE" }),
   deleteFacebookHistory: (projectId: string) =>
@@ -1016,6 +1045,7 @@ export const api = {
         method: "POST",
         body: formData,
         credentials: "include",
+        headers: { ...getAuthHeaders() },
       },
     );
     if (!res.ok) {
@@ -1084,7 +1114,8 @@ export const api = {
 
 export function getWsUrl(jobId: string): string {
   const base = API_URL.replace("http", "ws");
-  return `${base}/ws/logs/${jobId}`;
+  const tok = getSessionToken();
+  return tok ? `${base}/ws/logs/${jobId}?access_token=${encodeURIComponent(tok)}` : `${base}/ws/logs/${jobId}`;
 }
 
 // -- Types ------------------------------------------------
@@ -1756,6 +1787,12 @@ export type FacebookDeliveryStatus =
   | "published"
   | "failed";
 
+export type FacebookVoiceRecipeMode =
+  | "per_page"
+  | "shared_voice_per_page_card"
+  | "shared_card_per_page_voice"
+  | "shared_voice_and_card";
+
 export interface FacebookProjectOut {
   id: string;
   owner_id: string;
@@ -1771,6 +1808,11 @@ export interface FacebookProjectOut {
   video_fps: 24 | 30 | 60;
   video_bitrate_kbps: number;
   use_midjourney: boolean;
+  voice_recipe_mode: FacebookVoiceRecipeMode;
+  shared_tts_voice: FacebookTtsVoice;
+  shared_recipe_card_prompt: string;
+  shared_recipe_card_model: FacebookRecipeCardModel;
+  shared_recipe_card_quality: FacebookRecipeCardQuality;
   page_count: number;
   content_count: number;
   has_website: boolean;
@@ -1833,6 +1875,41 @@ export interface FacebookDeliveryOut {
   processed_video_url: string | null;
   generated_image_url: string | null;
   error_message: string | null;
+  views_count?: number;
+  likes_count?: number;
+  comments_count?: number;
+  shares_count?: number;
+  stats_checked_at?: string | null;
+}
+
+export interface FacebookTrackedPostOut {
+  delivery_id: string;
+  content_id: string;
+  page_id: string;
+  page_name: string;
+  page_picture_url: string | null;
+  facebook_page_id: string;
+  facebook_post_id: string | null;
+  facebook_post_url: string | null;
+  title: string;
+  recipe_title: string | null;
+  post_type: "video" | "image";
+  thumbnail_url: string | null;
+  published_at: string;
+  tracking_starts_at: string;
+  tracking_expires_at: string;
+  tracking_status: "waiting_24h" | "watching";
+  views_count: number;
+  likes_count: number;
+  comments_count: number;
+  shares_count: number;
+  stats_checked_at: string | null;
+}
+
+export interface FacebookTrackedPostsRefreshOut {
+  refreshed: number;
+  expired_deleted: number;
+  items: FacebookTrackedPostOut[];
 }
 
 export interface FacebookDeliveryBulkPublishOut {

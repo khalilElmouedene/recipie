@@ -1515,6 +1515,7 @@ async def start_auto_spy_generate_job(
     from ..database import SessionLocal as _SL
     async with _SL() as db:
         try:
+            seen_shared_keys: set[tuple[str, str]] = set()
             for idx, item in enumerate(shared_recipes):
                 if isinstance(item, dict):
                     recipe_text = str(item.get("recipe_text", "")).strip()
@@ -1525,6 +1526,14 @@ async def start_auto_spy_generate_job(
 
                 if not recipe_text or not image_url:
                     continue
+
+                dedup_key = (
+                    " ".join(recipe_text.lower().split()),
+                    image_url.strip(),
+                )
+                if dedup_key in seen_shared_keys:
+                    continue
+                seen_shared_keys.add(dedup_key)
 
                 group_items: list[dict] = []
                 for s in sites:
@@ -1548,11 +1557,11 @@ async def start_auto_spy_generate_job(
                         "pin_template_id": s.pin_template_id,
                         "recipe_text": recipe_text,
                         "image_url": image_url,
-                        "group_idx": idx + 1,
+                        "group_idx": len(multi_site_groups) + 1,
                     })
                 if group_items:
                     multi_site_groups.append({
-                        "idx": idx + 1,
+                        "idx": len(multi_site_groups) + 1,
                         "items": group_items,
                         "recipe_text": recipe_text,
                         "image_url": image_url,

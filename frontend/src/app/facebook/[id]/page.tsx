@@ -57,8 +57,10 @@ import {
   FacebookProjectOut,
   FacebookRecipeCardModel,
   FacebookRecipeCardQuality,
+  FacebookTrackedPostOut,
   FacebookTtsVoice,
   FacebookVideoFormat,
+  FacebookVoiceRecipeMode,
   PromptOut,
 } from "@/lib/api";
 import { facebookPublicationUrl } from "@/lib/facebook-publication";
@@ -67,9 +69,17 @@ import { useConfirm } from "@/components/ConfirmModal";
 import FacebookWebsiteSettings from "@/components/facebook/FacebookWebsiteSettings";
 import FacebookAiPromptSettings from "@/components/facebook/FacebookAiPromptSettings";
 
-type MainTab = "calendar" | "posts" | "settings";
+type MainTab = "calendar" | "posts" | "settings" | "stats";
 type PostFilter = "all" | "ready" | "processing" | "failed" | "published";
-type SettingsTab = "website" | "pages" | "keys" | "ai_prompts" | "video_prompts" | "video_settings" | "image_settings";
+type SettingsTab =
+  | "website"
+  | "pages"
+  | "voice_recipe_template"
+  | "keys"
+  | "ai_prompts"
+  | "video_prompts"
+  | "video_settings"
+  | "image_settings";
 
 const FACEBOOK_TTS_VOICES: { value: FacebookTtsVoice; name: string }[] = [
   { value: "alloy", name: "Alloy" },
@@ -202,6 +212,10 @@ export default function FacebookProjectPage() {
   const [tab, setTab] = useState<MainTab>("posts");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("website");
   const [loading, setLoading] = useState(true);
+  const [showEditProject, setShowEditProject] = useState(false);
+  const [editProjectName, setEditProjectName] = useState("");
+  const [editProjectDescription, setEditProjectDescription] = useState("");
+  const [savingProjectInfo, setSavingProjectInfo] = useState(false);
 
   const load = useCallback(async (quiet = false) => {
     try {
@@ -247,6 +261,25 @@ export default function FacebookProjectPage() {
     router.push("/facebook");
   };
 
+  const saveProjectInfo = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!project || !editProjectName.trim() || savingProjectInfo) return;
+    setSavingProjectInfo(true);
+    try {
+      const updated = await api.updateFacebookProject(project.id, {
+        name: editProjectName.trim(),
+        description: editProjectDescription.trim(),
+      });
+      setProject(updated);
+      setShowEditProject(false);
+      toast.success("Project name & description updated");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update project");
+    } finally {
+      setSavingProjectInfo(false);
+    }
+  };
+
   if (loading || !project) {
     return (
       <div className="grid h-80 place-items-center">
@@ -281,7 +314,22 @@ export default function FacebookProjectPage() {
               <FacebookMark className="h-4 w-4" />
               Facebook workspace
             </div>
-            <h1 className="text-3xl font-semibold tracking-[-0.035em] text-white">{project.name}</h1>
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-3xl font-semibold tracking-[-0.035em] text-white">{project.name}</h1>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditProjectName(project.name);
+                  setEditProjectDescription(project.description || "");
+                  setShowEditProject(true);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-[#1877f2]/50 hover:bg-[#1877f2]/10 hover:text-[#8bbcff]"
+                title="Edit project name"
+              >
+                <Pencil size={13} />
+                Edit Name
+              </button>
+            </div>
             {project.description && <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">{project.description}</p>}
             <div className="mt-4 flex flex-wrap gap-2">
               {setupSteps.map((step) => (
@@ -329,11 +377,12 @@ export default function FacebookProjectPage() {
         </div>
       </header>
 
-      <div className="mt-5 flex gap-1 border-b border-slate-800">
+      <div className="mt-5 flex flex-wrap gap-1 border-b border-slate-800">
         {[
           { key: "posts" as MainTab, label: "Posts", icon: ListVideo },
           { key: "calendar" as MainTab, label: "Calendar", icon: CalendarDays },
           { key: "settings" as MainTab, label: "Settings", icon: Settings2 },
+          { key: "stats" as MainTab, label: "Tracked Posts (Stats)", icon: MonitorPlay },
         ].map((item) => (
           <button
             key={item.key}
@@ -361,6 +410,8 @@ export default function FacebookProjectPage() {
               setSettingsTab(next);
             }}
           />
+        ) : tab === "stats" ? (
+          <FacebookTrackedPostsTab project={project} pages={pages} />
         ) : (
           <FacebookSettings
             project={project}
@@ -372,6 +423,78 @@ export default function FacebookProjectPage() {
           />
         )}
       </div>
+
+      {showEditProject && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/75 p-4 backdrop-blur-sm">
+          <form
+            onSubmit={saveProjectInfo}
+            className="w-full max-w-lg overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 px-6 py-5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#68a8ff]">Edit workspace</p>
+                <h2 className="mt-1 text-xl font-semibold text-white">Edit project name & description</h2>
+              </div>
+              <button
+                type="button"
+                disabled={savingProjectInfo}
+                onClick={() => setShowEditProject(false)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-5 px-6 py-6">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">
+                  Project Name <span className="text-[#68a8ff]">*</span>
+                </label>
+                <input
+                  autoFocus
+                  required
+                  maxLength={255}
+                  disabled={savingProjectInfo}
+                  value={editProjectName}
+                  onChange={(event) => setEditProjectName(event.target.value)}
+                  className="input-field"
+                  placeholder="Enter project name"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">
+                  Description <span className="text-slate-600">(optional)</span>
+                </label>
+                <textarea
+                  rows={4}
+                  disabled={savingProjectInfo}
+                  value={editProjectDescription}
+                  onChange={(event) => setEditProjectDescription(event.target.value)}
+                  className="input-field resize-none"
+                  placeholder="Project description…"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 border-t border-slate-800 bg-slate-950/30 px-6 py-4">
+              <button
+                type="button"
+                disabled={savingProjectInfo}
+                onClick={() => setShowEditProject(false)}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingProjectInfo || !editProjectName.trim()}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50"
+              >
+                {savingProjectInfo ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                {savingProjectInfo ? "Saving…" : "Save changes"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
@@ -406,6 +529,7 @@ function FacebookCalendar({
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [postQuery, setPostQuery] = useState("");
   const [postFilter, setPostFilter] = useState<PostFilter>("all");
+  const [selectedPageFilter, setSelectedPageFilter] = useState<string>("all_by_page");
   const [selectedPostIds, setSelectedPostIds] = useState<Set<string>>(new Set());
   const [bulkPublishing, setBulkPublishing] = useState(false);
   const [deletingHistory, setDeletingHistory] = useState(false);
@@ -457,6 +581,15 @@ function FacebookCalendar({
   const visibleContents = useMemo(() => {
     const query = postQuery.trim().toLowerCase();
     return contents.filter((content) => {
+      if (
+        selectedPageFilter !== "all_by_page" &&
+        selectedPageFilter !== "all_combined"
+      ) {
+        const hasPage = content.deliveries.some(
+          (delivery) => delivery.page_id === selectedPageFilter,
+        );
+        if (!hasPage) return false;
+      }
       const matchesQuery = !query
         || content.title.toLowerCase().includes(query)
         || content.deliveries.some((delivery) => delivery.page_name.toLowerCase().includes(query));
@@ -471,7 +604,27 @@ function FacebookCalendar({
       }
       return true;
     });
-  }, [contents, postFilter, postQuery]);
+  }, [contents, postFilter, postQuery, selectedPageFilter]);
+
+  const pageGroups = useMemo(() => {
+    const targetPages =
+      selectedPageFilter !== "all_by_page" && selectedPageFilter !== "all_combined"
+        ? pages.filter((p) => p.id === selectedPageFilter)
+        : pages;
+    return targetPages.map((page) => {
+      const items = visibleContents
+        .map((content) => {
+          const delivery =
+            content.deliveries.find((d) => d.page_id === page.id) || null;
+          return delivery ? { content, delivery } : null;
+        })
+        .filter(
+          (item): item is { content: FacebookContentOut; delivery: FacebookDeliveryOut } =>
+            item !== null,
+        );
+      return { page, items };
+    });
+  }, [pages, selectedPageFilter, visibleContents]);
 
   const selectableVisibleIds = useMemo(
     () => visibleContents
@@ -816,6 +969,70 @@ function FacebookCalendar({
 
       {viewMode === "list" && contents.length > 0 && (
         <div className="mt-5 space-y-3 rounded-[18px] border border-slate-800 bg-[#101827] p-3 sm:p-4">
+          <div className="border-b border-slate-800 pb-3">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#68a8ff]">
+              Display Posts & Videos by Facebook Page
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedPageFilter("all_by_page")}
+                className={`inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition ${
+                  selectedPageFilter === "all_by_page"
+                    ? "border-[#1877f2] bg-[#1877f2] text-white shadow-[0_6px_18px_rgba(24,119,242,0.25)]"
+                    : "border-slate-800 bg-slate-900/80 text-slate-300 hover:border-slate-700 hover:text-white"
+                }`}
+              >
+                <Users size={14} />
+                All Pages (Grouped by Page Name)
+              </button>
+              {pages.map((page) => {
+                const pageDeliveryCount = contents.filter((c) =>
+                  c.deliveries.some((d) => d.page_id === page.id),
+                ).length;
+                const active = selectedPageFilter === page.id;
+                return (
+                  <button
+                    key={page.id}
+                    type="button"
+                    onClick={() => setSelectedPageFilter(page.id)}
+                    className={`inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition ${
+                      active
+                        ? "border-[#1877f2] bg-[#1877f2] text-white shadow-[0_6px_18px_rgba(24,119,242,0.25)]"
+                        : "border-slate-800 bg-slate-900/80 text-slate-300 hover:border-slate-700 hover:text-white"
+                    }`}
+                  >
+                    {page.picture_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={page.picture_url}
+                        alt=""
+                        className="h-4 w-4 rounded-full object-cover"
+                      />
+                    ) : (
+                      <FacebookMark className="h-3.5 w-3.5" />
+                    )}
+                    <span>{page.name}</span>
+                    <span className="rounded-full bg-black/25 px-1.5 py-0.5 text-[10px]">
+                      {pageDeliveryCount}
+                    </span>
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setSelectedPageFilter("all_combined")}
+                className={`inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition ${
+                  selectedPageFilter === "all_combined"
+                    ? "border-[#1877f2] bg-[#1877f2] text-white"
+                    : "border-slate-800 bg-slate-900/80 text-slate-400 hover:border-slate-700 hover:text-white"
+                }`}
+              >
+                <ListVideo size={14} />
+                Combined List
+              </button>
+            </div>
+          </div>
           <div className="relative">
             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
             <input
@@ -897,7 +1114,7 @@ function FacebookCalendar({
               </button>
             </div>
           </div>
-          <p className="text-[11px] text-slate-500">Published history is automatically deleted every 24 hours once all Page deliveries have been published for at least 24 hours.</p>
+          <p className="text-[11px] text-slate-500">Published posts begin tracking 24 hours after publication, stay tracked for 4 days in Tracked Posts (Stats), and are automatically removed after 5 days to keep server storage free.</p>
         </div>
       )}
 
@@ -912,44 +1129,259 @@ function FacebookCalendar({
         </Link>
       ) : viewMode === "list" ? (
         visibleContents.length > 0 ? (
-          <div className="mt-4 overflow-hidden rounded-[18px] border border-slate-800 bg-[#101827]">
-            <div className="hidden grid-cols-[32px_72px_minmax(220px,1fr)_120px_190px_280px] gap-4 border-b border-slate-800 bg-slate-950/25 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600 lg:grid">
-              <span>Select</span>
-              <span>Media</span>
-              <span>Post</span>
-              <span>Generation</span>
-              <span>Page delivery</span>
-              <span className="text-right">Actions</span>
+          selectedPageFilter !== "all_combined" ? (
+            <div className="mt-4 space-y-6">
+              {pageGroups.map(({ page, items }) => {
+                const publishedCount = items.filter(
+                  (i) => i.delivery.status === "published",
+                ).length;
+                const scheduledCount = items.filter(
+                  (i) => i.delivery.status === "scheduled",
+                ).length;
+                const readyDraftCount = items.filter(
+                  (i) => i.delivery.status === "draft",
+                ).length;
+                return (
+                  <section
+                    key={page.id}
+                    className="overflow-hidden rounded-[20px] border border-slate-800 bg-[#101827]"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 bg-[#0d1422] px-5 py-4">
+                      <div className="flex items-center gap-3.5">
+                        {page.picture_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={page.picture_url}
+                            alt=""
+                            className="h-11 w-11 rounded-full object-cover ring-2 ring-[#1877f2]/35"
+                          />
+                        ) : (
+                          <span className="grid h-11 w-11 place-items-center rounded-full bg-[#1877f2] text-white">
+                            <FacebookMark className="h-5 w-5" />
+                          </span>
+                        )}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-base font-semibold text-white">
+                              {page.name}
+                            </h3>
+                            <span className="rounded-full border border-[#1877f2]/30 bg-[#1877f2]/10 px-2.5 py-0.5 text-[11px] font-semibold text-[#8bbcff]">
+                              {items.length} {items.length === 1 ? "post" : "posts"}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-xs text-slate-500">
+                            Voice: {page.tts_voice.toUpperCase()} · Window{" "}
+                            {page.publish_start_time}–{page.publish_end_time} ({page.timezone})
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="rounded-lg border border-emerald-900/60 bg-emerald-950/25 px-2.5 py-1 font-medium text-emerald-300">
+                          {publishedCount} published
+                        </span>
+                        <span className="rounded-lg border border-amber-900/60 bg-amber-950/25 px-2.5 py-1 font-medium text-amber-300">
+                          {scheduledCount} scheduled
+                        </span>
+                        <span className="rounded-lg border border-slate-700 bg-slate-800/60 px-2.5 py-1 font-medium text-slate-300">
+                          {readyDraftCount} draft
+                        </span>
+                      </div>
+                    </div>
+
+                    {items.length === 0 ? (
+                      <div className="px-5 py-8 text-center text-sm text-slate-500">
+                        No posts or videos assigned to {page.name} for the current filter.
+                      </div>
+                    ) : (
+                      <div className="grid gap-4 p-4 sm:grid-cols-2 xl:grid-cols-3">
+                        {items.map(({ content, delivery }) => {
+                          const canPublish =
+                            ["draft", "scheduled", "failed"].includes(
+                              delivery.status,
+                            ) && canPublishFacebookDelivery(content, delivery);
+                          const videoUrl =
+                            delivery.processed_video_url ||
+                            content.processed_video_url;
+                          const imageUrl =
+                            delivery.generated_image_url ||
+                            content.screenshot_url ||
+                            content.source_image_url;
+                          return (
+                            <article
+                              key={delivery.id}
+                              className="flex flex-col overflow-hidden rounded-2xl border border-slate-800 bg-[#0d1422] transition hover:border-[#1877f2]/45"
+                            >
+                              <div className="flex items-center justify-between border-b border-slate-800/80 bg-slate-950/50 px-3.5 py-2.5">
+                                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#8bbcff]">
+                                  <FacebookMark className="h-3.5 w-3.5" />
+                                  {page.name}
+                                </span>
+                                <span
+                                  className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${STATUS_STYLE[delivery.status]}`}
+                                >
+                                  {delivery.status}
+                                </span>
+                              </div>
+                              <div className="relative aspect-[16/10] bg-slate-950">
+                                {content.post_type === "video" && videoUrl ? (
+                                  <video
+                                    src={videoUrl}
+                                    controls
+                                    preload="metadata"
+                                    className="h-full w-full object-contain"
+                                  />
+                                ) : imageUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={imageUrl}
+                                    alt={content.title}
+                                    className="h-full w-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="grid h-full place-items-center text-slate-600">
+                                    {content.status === "processing" ? (
+                                      <Loader2 className="animate-spin text-[#68a8ff]" />
+                                    ) : (
+                                      <Video size={24} />
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex flex-1 flex-col justify-between p-4">
+                                <div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedContent(content)}
+                                    className="text-left text-sm font-semibold text-white transition hover:text-[#8bbcff] line-clamp-2"
+                                  >
+                                    {content.title}
+                                  </button>
+                                  <p className="mt-1.5 text-xs text-slate-500">
+                                    {delivery.published_at
+                                      ? `Published: ${formatDate(delivery.published_at)}`
+                                      : delivery.scheduled_at
+                                        ? `Scheduled: ${formatDate(delivery.scheduled_at)}`
+                                        : `Created: ${formatDate(content.created_at)}`}
+                                  </p>
+                                  {(delivery.error_message || content.error_message) && (
+                                    <p className="mt-2 line-clamp-2 rounded-lg border border-red-900/40 bg-red-950/25 px-2.5 py-1.5 text-[11px] text-red-300">
+                                      {delivery.error_message || content.error_message}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/80 pt-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedContent(content)}
+                                    className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-white"
+                                  >
+                                    <MonitorPlay size={13} /> Details
+                                  </button>
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    {delivery.status === "published" &&
+                                      delivery.facebook_post_id && (
+                                        <a
+                                          href={facebookPublicationUrl(
+                                            content.post_type,
+                                            delivery.facebook_post_id,
+                                          )}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 rounded-lg border border-emerald-900/60 bg-emerald-950/25 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-950/40"
+                                        >
+                                          Facebook <ExternalLink size={11} />
+                                        </a>
+                                      )}
+                                    {canPublish && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setScheduleDelivery(delivery);
+                                            setScheduleAt(
+                                              delivery.scheduled_at
+                                                ? localDateTimeInput(
+                                                    delivery.scheduled_at,
+                                                  )
+                                                : "",
+                                            );
+                                          }}
+                                          className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 hover:border-amber-700/60 hover:text-amber-300"
+                                        >
+                                          <Clock3 size={12} /> Schedule
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => void publish(delivery)}
+                                          disabled={publishingId === delivery.id}
+                                          className="inline-flex items-center gap-1 rounded-lg bg-[#1877f2] px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-[#2f86f6] disabled:opacity-50"
+                                        >
+                                          {publishingId === delivery.id ? (
+                                            <Loader2
+                                              size={12}
+                                              className="animate-spin"
+                                            />
+                                          ) : (
+                                            <Send size={12} />
+                                          )}
+                                          {delivery.status === "failed"
+                                            ? "Retry"
+                                            : "Publish"}
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
             </div>
-            <div className="divide-y divide-slate-800">
-              {visibleContents.map((content) => (
-                <FacebookPostListRow
-                  key={content.id}
-                  content={content}
-                  selected={selectedPostIds.has(content.id)}
-                  selectable={publishableFacebookDeliveries(content).length > 0}
-                  publishing={publishingContentId === content.id}
-                  publishingDeliveryId={publishingId}
-                  retrying={retryingId === content.id}
-                  replacing={replacingId === content.id}
-                  deleting={deletingId === content.id}
-                  onSelect={(selected) => setSelectedPostIds((current) => {
-                    const next = new Set(current);
-                    if (selected) next.add(content.id);
-                    else next.delete(content.id);
-                    return next;
-                  })}
-                  onPublishAll={() => void publishContent(content)}
-                  onPublishDelivery={(delivery) => void publish(delivery)}
-                  onScheduleDelivery={scheduleInline}
-                  onRetry={() => void retryGeneration(content)}
-                  onReplace={(file) => void replaceVideoAndRetry(content, file)}
-                  onDelete={() => void deleteGeneration(content)}
-                  onOpen={() => setSelectedContent(content)}
-                />
-              ))}
+          ) : (
+            <div className="mt-4 overflow-hidden rounded-[18px] border border-slate-800 bg-[#101827]">
+              <div className="hidden grid-cols-[32px_72px_minmax(220px,1fr)_120px_190px_280px] gap-4 border-b border-slate-800 bg-slate-950/25 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600 lg:grid">
+                <span>Select</span>
+                <span>Media</span>
+                <span>Post</span>
+                <span>Generation</span>
+                <span>Page delivery</span>
+                <span className="text-right">Actions</span>
+              </div>
+              <div className="divide-y divide-slate-800">
+                {visibleContents.map((content) => (
+                  <FacebookPostListRow
+                    key={content.id}
+                    content={content}
+                    selected={selectedPostIds.has(content.id)}
+                    selectable={publishableFacebookDeliveries(content).length > 0}
+                    publishing={publishingContentId === content.id}
+                    publishingDeliveryId={publishingId}
+                    retrying={retryingId === content.id}
+                    replacing={replacingId === content.id}
+                    deleting={deletingId === content.id}
+                    onSelect={(selected) => setSelectedPostIds((current) => {
+                      const next = new Set(current);
+                      if (selected) next.add(content.id);
+                      else next.delete(content.id);
+                      return next;
+                    })}
+                    onPublishAll={() => void publishContent(content)}
+                    onPublishDelivery={(delivery) => void publish(delivery)}
+                    onScheduleDelivery={scheduleInline}
+                    onRetry={() => void retryGeneration(content)}
+                    onReplace={(file) => void replaceVideoAndRetry(content, file)}
+                    onDelete={() => void deleteGeneration(content)}
+                    onOpen={() => setSelectedContent(content)}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
+          )
         ) : (
           <div className="mt-4 grid min-h-44 place-items-center rounded-[18px] border border-dashed border-slate-700 bg-[#101827] px-6 text-center">
             <div>
@@ -1707,6 +2139,7 @@ function FacebookSettings({
   const tabs = [
     { key: "website" as SettingsTab, label: "Website", icon: Globe2 },
     { key: "pages" as SettingsTab, label: "Facebook Pages", icon: Users },
+    { key: "voice_recipe_template" as SettingsTab, label: "Voice & Recipe Template", icon: AudioLines },
     { key: "keys" as SettingsTab, label: "API Keys", icon: KeyRound },
     { key: "ai_prompts" as SettingsTab, label: "AI Prompts", icon: MessageSquare },
     ...(project.post_type === "image" ? [
@@ -1741,6 +2174,9 @@ function FacebookSettings({
         )}
         {activeTab === "pages" && (
           <FacebookPagesSettings project={project} pages={pages} onRefresh={onRefresh} onProject={onProject} />
+        )}
+        {activeTab === "voice_recipe_template" && (
+          <FacebookVoiceRecipeTemplateSettings project={project} pages={pages} onProject={onProject} />
         )}
         {activeTab === "keys" && <FacebookKeysSettings project={project} onProject={onProject} />}
         {activeTab === "ai_prompts" && <FacebookAiPromptSettings contentProjectId={project.content_project_id} />}
@@ -2860,5 +3296,547 @@ function FacebookVideoPromptSettings({ contentProjectId }: { contentProjectId: s
         </button>
       </div>
     </SettingsSection>
+  );
+}
+
+const VOICE_RECIPE_MODE_OPTIONS: Array<{
+  value: FacebookVoiceRecipeMode;
+  title: string;
+  badge: string;
+  description: string;
+}> = [
+  {
+    value: "shared_voice_per_page_card",
+    title: "1 Voice-Over for All Videos + Different Recipe Card per Video",
+    badge: "Shared Voice · Per-Page Card",
+    description:
+      "Generate 1 voice-over shared across all Page videos (whether 4 or more videos), while each video generates its own unique recipe card from its Page template.",
+  },
+  {
+    value: "shared_card_per_page_voice",
+    title: "1 Recipe Card for All Videos + Different Voice-Over per Video",
+    badge: "Shared Card · Per-Page Voice",
+    description:
+      "Generate 1 recipe card shared across all Page videos (whether 4 or more videos), while each video uses a different voice-over from its Page configuration.",
+  },
+  {
+    value: "shared_voice_and_card",
+    title: "1 Recipe Card & 1 Voice-Over for All Videos",
+    badge: "Shared Voice & Shared Card",
+    description:
+      "Generate 1 recipe card and 1 voice-over once and reuse the rendered video across all selected Pages (4 or more videos).",
+  },
+  {
+    value: "per_page",
+    title: "Different Voice-Over & Different Recipe Card for Each Video",
+    badge: "Per-Page Voice & Card",
+    description:
+      "Each connected Facebook Page uses its own configured voice-over and its own recipe card prompt.",
+  },
+];
+
+function FacebookVoiceRecipeTemplateSettings({
+  project,
+  pages,
+  onProject,
+}: {
+  project: FacebookProjectOut;
+  pages: FacebookPageOut[];
+  onProject: (project: FacebookProjectOut) => void;
+}) {
+  const toast = useToast();
+  const [mode, setMode] = useState<FacebookVoiceRecipeMode>(
+    project.voice_recipe_mode || "per_page",
+  );
+  const [sharedVoice, setSharedVoice] = useState<FacebookTtsVoice>(
+    project.shared_tts_voice || "nova",
+  );
+  const [sharedCardPrompt, setSharedCardPrompt] = useState(
+    project.shared_recipe_card_prompt || "",
+  );
+  const [sharedCardModel, setSharedCardModel] =
+    useState<FacebookRecipeCardModel>(
+      project.shared_recipe_card_model || "gpt-image-2",
+    );
+  const [sharedCardQuality, setSharedCardQuality] =
+    useState<FacebookRecipeCardQuality>(
+      project.shared_recipe_card_quality || "low",
+    );
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setMode(project.voice_recipe_mode || "per_page");
+    setSharedVoice(project.shared_tts_voice || "nova");
+    setSharedCardPrompt(project.shared_recipe_card_prompt || "");
+    setSharedCardModel(project.shared_recipe_card_model || "gpt-image-2");
+    setSharedCardQuality(project.shared_recipe_card_quality || "low");
+  }, [project]);
+
+  const usesSharedVoice =
+    mode === "shared_voice_per_page_card" || mode === "shared_voice_and_card";
+  const usesSharedCard =
+    mode === "shared_card_per_page_voice" || mode === "shared_voice_and_card";
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const updated = await api.updateFacebookProject(project.id, {
+        voice_recipe_mode: mode,
+        shared_tts_voice: sharedVoice,
+        ...(sharedCardPrompt.trim()
+          ? { shared_recipe_card_prompt: sharedCardPrompt.trim() }
+          : {}),
+        shared_recipe_card_model: sharedCardModel,
+        shared_recipe_card_quality: sharedCardQuality,
+      });
+      onProject(updated);
+      toast.success("Voice & Recipe Template settings saved");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not save Voice & Recipe Template settings",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SettingsSection
+      title="Voice & Recipe Template"
+      description={`Choose how voice-overs and recipe cards are generated across your ${pages.length || 4}+ connected Facebook Page videos.`}
+    >
+      <div className="space-y-5">
+        <div className="grid gap-3 md:grid-cols-2">
+          {VOICE_RECIPE_MODE_OPTIONS.map((option) => {
+            const active = mode === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setMode(option.value)}
+                className={`flex flex-col justify-between rounded-2xl border p-5 text-left transition ${
+                  active
+                    ? "border-[#1877f2] bg-[#1877f2]/12 shadow-[0_0_0_1px_rgba(24,119,242,.2)]"
+                    : "border-slate-800 bg-[#101827] hover:border-slate-700"
+                }`}
+              >
+                <div>
+                  <span className="inline-flex items-center rounded-full border border-[#1877f2]/30 bg-[#1877f2]/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#8bbcff]">
+                    {option.badge}
+                  </span>
+                  <h3 className="mt-3 text-sm font-semibold text-white">
+                    {option.title}
+                  </h3>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">
+                    {option.description}
+                  </p>
+                </div>
+                <div className="mt-4 flex items-center gap-2 text-xs font-medium text-[#68a8ff]">
+                  <span
+                    className={`h-3.5 w-3.5 rounded-full border ${
+                      active
+                        ? "border-[#1877f2] bg-[#1877f2]"
+                        : "border-slate-600"
+                    }`}
+                  />
+                  {active ? "Selected mode" : "Select this mode"}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {usesSharedVoice && (
+          <div className="overflow-hidden rounded-[20px] border border-slate-800 bg-[#101827] p-5">
+            <h3 className="text-sm font-semibold text-white">
+              Shared Voice-Over Configuration (1 Voice for All Videos)
+            </h3>
+            <p className="mt-1 text-xs text-slate-500">
+              This voice-over will be generated once per recipe and shared across all {pages.length || 4}+ Page videos.
+            </p>
+            <div className="mt-4 max-w-sm">
+              <label className="mb-2 block text-xs font-medium text-slate-400">
+                Shared TTS Voice
+              </label>
+              <select
+                value={sharedVoice}
+                onChange={(e) =>
+                  setSharedVoice(e.target.value as FacebookTtsVoice)
+                }
+                className="input-field"
+              >
+                {FACEBOOK_TTS_VOICES.map((voice) => (
+                  <option key={voice.value} value={voice.value}>
+                    {voice.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {usesSharedCard && (
+          <div className="overflow-hidden rounded-[20px] border border-slate-800 bg-[#101827] p-5">
+            <h3 className="text-sm font-semibold text-white">
+              Shared Recipe Card Template (1 Recipe Card for All Videos)
+            </h3>
+            <p className="mt-1 text-xs text-slate-500">
+              This recipe card will be generated once per recipe and used across all {pages.length || 4}+ Page videos.
+            </p>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-400">
+                  Shared Image Model
+                </label>
+                <select
+                  value={sharedCardModel}
+                  onChange={(e) =>
+                    setSharedCardModel(
+                      e.target.value as FacebookRecipeCardModel,
+                    )
+                  }
+                  className="input-field text-xs"
+                >
+                  {FACEBOOK_RECIPE_CARD_MODELS.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-400">
+                  Shared Image Quality
+                </label>
+                <select
+                  value={sharedCardQuality}
+                  onChange={(e) =>
+                    setSharedCardQuality(
+                      e.target.value as FacebookRecipeCardQuality,
+                    )
+                  }
+                  className="input-field text-xs"
+                >
+                  {FACEBOOK_RECIPE_CARD_QUALITIES.map((q) => (
+                    <option key={q.value} value={q.value}>
+                      {q.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="mt-4">
+              <label className="mb-1.5 block text-xs font-medium text-slate-400">
+                Shared Recipe Card Prompt
+              </label>
+              <textarea
+                value={sharedCardPrompt}
+                onChange={(e) => setSharedCardPrompt(e.target.value)}
+                rows={10}
+                maxLength={12000}
+                className="input-field resize-y font-mono text-xs leading-5"
+                placeholder="Shared recipe card prompt…"
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={saving}
+            className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50"
+          >
+            {saving ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : (
+              <Save size={15} />
+            )}
+            Save Voice & Recipe Template
+          </button>
+        </div>
+      </div>
+    </SettingsSection>
+  );
+}
+
+function FacebookTrackedPostsTab({
+  project,
+  pages,
+}: {
+  project: FacebookProjectOut;
+  pages: FacebookPageOut[];
+}) {
+  const toast = useToast();
+  const [items, setItems] = useState<FacebookTrackedPostOut[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [includeWaiting, setIncludeWaiting] = useState(false);
+  const [selectedPageId, setSelectedPageId] = useState<string>("all");
+
+  const loadTracked = useCallback(
+    async (quiet = false) => {
+      if (!quiet) setLoading(true);
+      try {
+        const data = await api.getFacebookTrackedPosts(
+          project.id,
+          includeWaiting,
+        );
+        setItems(data);
+      } catch (error) {
+        if (!quiet) {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Could not load tracked Facebook posts",
+          );
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [includeWaiting, project.id, toast],
+  );
+
+  useEffect(() => {
+    void loadTracked();
+  }, [loadTracked]);
+
+  const handleRefreshLiveStats = async () => {
+    setRefreshing(true);
+    try {
+      const res = await api.refreshFacebookTrackedPosts(
+        project.id,
+        includeWaiting,
+      );
+      setItems(res.items);
+      toast.success(
+        `Refreshed live stats for ${res.refreshed} post${res.refreshed === 1 ? "" : "s"}${
+          res.expired_deleted
+            ? ` and removed ${res.expired_deleted} expired post(s)`
+            : ""
+        }.`,
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not refresh live stats",
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const filteredItems = useMemo(() => {
+    if (selectedPageId === "all") return items;
+    return items.filter((item) => item.page_id === selectedPageId);
+  }, [items, selectedPageId]);
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col gap-4 rounded-[20px] border border-slate-800 bg-[#101827] p-5 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#68a8ff]">
+            Post performance tracker (Day 1 to Day 5)
+          </p>
+          <h2 className="mt-1 text-xl font-semibold text-white">
+            Tracked Facebook Posts
+          </h2>
+          <p className="mt-1 text-xs leading-5 text-slate-400">
+            Posts begin tracking <strong className="text-white">1 day (24h)</strong> after publication, stay tracked for{" "}
+            <strong className="text-white">4 days</strong> with real Facebook stats, and are then automatically removed to keep server storage free.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3.5 py-2 text-xs text-slate-300">
+            <input
+              type="checkbox"
+              checked={includeWaiting}
+              onChange={(e) => setIncludeWaiting(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-600 bg-slate-950 accent-[#1877f2]"
+            />
+            Show posts published &lt; 24h ago
+          </label>
+          <button
+            type="button"
+            onClick={() => void handleRefreshLiveStats()}
+            disabled={refreshing}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#1877f2] px-4 py-2.5 text-xs font-semibold text-white shadow-[0_8px_24px_rgba(24,119,242,0.2)] transition hover:bg-[#2f86f6] disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
+            {refreshing ? "Checking Facebook…" : "Refresh Live Stats"}
+          </button>
+        </div>
+      </div>
+
+      {pages.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setSelectedPageId("all")}
+            className={`inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition ${
+              selectedPageId === "all"
+                ? "border-[#1877f2] bg-[#1877f2] text-white"
+                : "border-slate-800 bg-[#101827] text-slate-300 hover:border-slate-700 hover:text-white"
+            }`}
+          >
+            All Pages ({items.length})
+          </button>
+          {pages.map((page) => {
+            const count = items.filter((i) => i.page_id === page.id).length;
+            return (
+              <button
+                key={page.id}
+                type="button"
+                onClick={() => setSelectedPageId(page.id)}
+                className={`inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition ${
+                  selectedPageId === page.id
+                    ? "border-[#1877f2] bg-[#1877f2] text-white"
+                    : "border-slate-800 bg-[#101827] text-slate-300 hover:border-slate-700 hover:text-white"
+                }`}
+              >
+                {page.name} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="grid h-64 place-items-center rounded-[20px] border border-slate-800 bg-[#101827]">
+          <Loader2 className="animate-spin text-[#68a8ff]" />
+        </div>
+      ) : filteredItems.length === 0 ? (
+        <div className="flex min-h-60 flex-col items-center justify-center rounded-[20px] border border-dashed border-slate-700 bg-[#101827] p-8 text-center">
+          <MonitorPlay size={28} className="text-[#68a8ff]" />
+          <p className="mt-3 text-base font-semibold text-white">
+            No posts currently in the 1–5 day tracking window
+          </p>
+          <p className="mt-1 max-w-md text-xs leading-5 text-slate-400">
+            Published posts appear here automatically 24 hours after publication and remain tracked for 4 days before automatic cleanup.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {filteredItems.map((post) => {
+            const fbUrl =
+              post.facebook_post_url ||
+              (post.facebook_post_id
+                ? facebookPublicationUrl(post.post_type, post.facebook_post_id)
+                : null);
+            return (
+              <article
+                key={post.delivery_id}
+                className="flex flex-col overflow-hidden rounded-[20px] border border-slate-200/90 bg-white text-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.18)]"
+              >
+                <div className="relative aspect-[4/3] w-full overflow-hidden bg-slate-100">
+                  {post.thumbnail_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={post.thumbnail_url}
+                      alt={post.title}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="grid h-full place-items-center text-slate-400">
+                      <Video size={28} />
+                    </div>
+                  )}
+                  <span className="absolute left-3 top-3 rounded-md bg-white/85 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-700 shadow-sm backdrop-blur-sm">
+                    {post.tracking_status === "watching"
+                      ? "WATCHING"
+                      : "WAITING 24H"}
+                  </span>
+                </div>
+
+                <div className="flex flex-1 flex-col justify-between p-4">
+                  <div>
+                    <h3
+                      className="min-h-[2.75rem] line-clamp-2 text-[15px] font-bold leading-snug text-slate-900"
+                      title={post.title}
+                    >
+                      {post.title}
+                    </h3>
+
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                      <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-2 py-2.5 text-center">
+                        <p className="text-sm font-bold text-slate-900">
+                          {post.views_count}
+                        </p>
+                        <p className="mt-0.5 text-[9px] font-semibold uppercase tracking-wider text-slate-400">
+                          VIEWS
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-rose-200/80 bg-rose-50/90 px-2 py-2.5 text-center">
+                        <p className="text-sm font-bold text-slate-900">
+                          {post.likes_count}
+                        </p>
+                        <p className="mt-0.5 text-[9px] font-semibold uppercase tracking-wider text-rose-400">
+                          LIKES
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-sky-200/80 bg-sky-50/90 px-2 py-2.5 text-center">
+                        <p className="text-sm font-bold text-slate-900">
+                          {post.comments_count}
+                        </p>
+                        <p className="mt-0.5 text-[9px] font-semibold uppercase tracking-wider text-sky-500">
+                          COMMENTS
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-3 gap-2">
+                      <div className="rounded-xl border border-purple-200/80 bg-purple-50/90 px-2 py-2.5 text-center">
+                        <p className="text-sm font-bold text-slate-900">
+                          {post.shares_count}
+                        </p>
+                        <p className="mt-0.5 text-[9px] font-semibold uppercase tracking-wider text-purple-400">
+                          SHARES
+                        </p>
+                      </div>
+                    </div>
+
+                    <p
+                      className="mt-3 truncate text-xs text-slate-500"
+                      title={post.recipe_title || post.title}
+                    >
+                      {post.recipe_title || post.title}
+                    </p>
+                    <p className="mt-1.5 text-[11px] text-slate-400">
+                      <span className="font-medium text-slate-500">
+                        {post.page_name}
+                      </span>{" "}
+                      - Checked{" "}
+                      <span className="text-sky-600">
+                        {formatDate(post.stats_checked_at || post.published_at)}
+                      </span>
+                    </p>
+                  </div>
+
+                  <div className="mt-3.5 pt-1">
+                    {fbUrl ? (
+                      <a
+                        href={fbUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-800 underline transition hover:bg-slate-200"
+                      >
+                        Facebook
+                      </a>
+                    ) : (
+                      <span className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-400">
+                        Facebook
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }

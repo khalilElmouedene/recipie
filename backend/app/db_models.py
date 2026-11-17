@@ -622,6 +622,11 @@ class FacebookProject(Base):
     video_fps: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     video_bitrate_kbps: Mapped[int] = mapped_column(Integer, nullable=False, default=8000)
     use_midjourney: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    voice_recipe_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="per_page", server_default="per_page")
+    shared_tts_voice: Mapped[str] = mapped_column(String(32), nullable=False, default="nova", server_default="nova")
+    shared_recipe_card_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shared_recipe_card_model: Mapped[str] = mapped_column(String(64), nullable=False, default="gpt-image-2", server_default="gpt-image-2")
+    shared_recipe_card_quality: Mapped[str] = mapped_column(String(16), nullable=False, default="low", server_default="low")
     generation_paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
@@ -750,6 +755,11 @@ class FacebookDelivery(Base):
     allow_without_article_url: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
+    views_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    likes_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    comments_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    shares_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    stats_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

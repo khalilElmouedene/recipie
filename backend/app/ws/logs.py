@@ -20,6 +20,12 @@ router = APIRouter()
 async def websocket_logs(websocket: WebSocket, job_id: str):
     token = websocket.cookies.get(settings.auth_cookie_name)
     if not token:
+        auth_header = websocket.headers.get("authorization") or ""
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        token = websocket.query_params.get("access_token")
+    if not token:
         await websocket.close(code=4001, reason="Missing auth cookie")
         return
 

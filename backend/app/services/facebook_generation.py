@@ -58,6 +58,11 @@ class _GenerationContext:
     post_type: str
     recipe_rewrite_prompt: str
     use_midjourney: bool = True
+    voice_recipe_mode: str = "per_page"
+    shared_tts_voice: str = "nova"
+    shared_recipe_card_prompt: str = ""
+    shared_recipe_card_model: str = "gpt-image-2"
+    shared_recipe_card_quality: str = "low"
 
 
 class FacebookGenerationManager:
@@ -219,6 +224,27 @@ class FacebookGenerationManager:
                     or DEFAULT_FACEBOOK_RECIPE_REWRITE_PROMPT
                 ),
                 use_midjourney=bool(getattr(project, "use_midjourney", True)),
+                voice_recipe_mode=(
+                    getattr(project, "voice_recipe_mode", None) or "per_page"
+                ),
+                shared_tts_voice=(
+                    getattr(project, "shared_tts_voice", None) or "nova"
+                ),
+                shared_recipe_card_prompt=(
+                    getattr(project, "shared_recipe_card_prompt", None)
+                    or prompts.get(
+                        "facebook_recipe_card",
+                        DEFAULT_PROMPTS["facebook_recipe_card"]["value"],
+                    )
+                ),
+                shared_recipe_card_model=(
+                    getattr(project, "shared_recipe_card_model", None)
+                    or "gpt-image-2"
+                ),
+                shared_recipe_card_quality=(
+                    getattr(project, "shared_recipe_card_quality", None)
+                    or "low"
+                ),
             )
 
     async def _load_content_payloads(
@@ -885,41 +911,80 @@ class FacebookGenerationManager:
                         raise ValueError(
                             "Configure the project website before starting generation."
                         )
+                    mode = context.voice_recipe_mode or "per_page"
+                    share_voice = mode in {
+                        "shared_voice_per_page_card",
+                        "shared_voice_and_card",
+                    }
+                    share_card = mode in {
+                        "shared_card_per_page_voice",
+                        "shared_voice_and_card",
+                    }
                     processed = None
                     for delivery_payload in delivery_payloads:
                         delivery_id = uuid.UUID(str(delivery_payload["id"]))
                         page_name = str(delivery_payload["page_name"])
-                        voice = str(delivery_payload["tts_voice"])
-                        emit(
-                            content_id,
-                            f"Generating the video for {page_name} with {voice.title()} voice.",
-                            stage="video",
+                        voice = (
+                            context.shared_tts_voice
+                            if share_voice
+                            else str(delivery_payload["tts_voice"])
                         )
-                        page_video = self._video.process(
-                            content_id=content_id,
-                            variant_id=delivery_id,
-                            source_url=str(payload["source_url"]),
-                            recipe_title=str(payload["title"]),
-                            openai_api_key=context.credentials["openai"],
-                            script_prompt=context.prompts["facebook_video_script"],
-                            recipe_card_prompt=str(
-                                delivery_payload["recipe_card_prompt"]
-                            ),
-                            recipe_card_model=str(
-                                delivery_payload["recipe_card_model"]
-                            ),
-                            recipe_card_quality=str(
-                                delivery_payload["recipe_card_quality"]
-                            ),
-                            tts_voice=voice,
-                            video_format=context.video_format,
-                            intro_seconds=context.video_intro_seconds,
-                            fps=context.video_fps,
-                            bitrate_kbps=context.video_bitrate_kbps,
-                            log=lambda message, name=page_name: progress(
-                                f"{name}: {message}", stage="video"
-                            ),
+                        card_prompt = (
+                            context.shared_recipe_card_prompt
+                            if share_card and context.shared_recipe_card_prompt
+                            else str(delivery_payload["recipe_card_prompt"])
                         )
+                        card_model = (
+                            context.shared_recipe_card_model
+                            if share_card and context.shared_recipe_card_model
+                            else str(delivery_payload["recipe_card_model"])
+                        )
+                        card_quality = (
+                            context.shared_recipe_card_quality
+                            if share_card and context.shared_recipe_card_quality
+                            else str(delivery_payload["recipe_card_quality"])
+                        )
+                        if (
+                            mode == "shared_voice_and_card"
+                            and processed is not None
+                        ):
+                            emit(
+                                content_id,
+                                f"Reusing the shared voice-over & recipe card video for {page_name}.",
+                                stage="video",
+                            )
+                            page_video = self._video.clone_processed_video(
+                                content_id=content_id,
+                                base_video=processed,
+                                variant_id=delivery_id,
+                            )
+                        else:
+                            emit(
+                                content_id,
+                                f"Generating the video for {page_name} with {voice.title()} voice ({mode}).",
+                                stage="video",
+                            )
+                            page_video = self._video.process(
+                                content_id=content_id,
+                                variant_id=delivery_id,
+                                source_url=str(payload["source_url"]),
+                                recipe_title=str(payload["title"]),
+                                openai_api_key=context.credentials["openai"],
+                                script_prompt=context.prompts["facebook_video_script"],
+                                recipe_card_prompt=card_prompt,
+                                recipe_card_model=card_model,
+                                recipe_card_quality=card_quality,
+                                tts_voice=voice,
+                                video_format=context.video_format,
+                                intro_seconds=context.video_intro_seconds,
+                                fps=context.video_fps,
+                                bitrate_kbps=context.video_bitrate_kbps,
+                                reuse_shared_voice=share_voice,
+                                reuse_shared_recipe_card=share_card,
+                                log=lambda message, name=page_name: progress(
+                                    f"{name}: {message}", stage="video"
+                                ),
+                            )
                         asyncio.run_coroutine_threadsafe(
                             self._store_delivery_video(
                                 content_id,

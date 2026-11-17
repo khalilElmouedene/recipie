@@ -4,6 +4,7 @@ type AuthUser = {
   id?: string;
   email?: string;
   role?: string;
+  accessToken?: string;
 };
 
 function readAuthUser(): AuthUser | null {
@@ -37,6 +38,7 @@ export function setToken(token: string) {
       id: payload.sub || undefined,
       email: payload.email || undefined,
       role: payload.role || undefined,
+      accessToken: token || undefined,
     });
   } catch {
     writeAuthUser(null);
@@ -44,7 +46,23 @@ export function setToken(token: string) {
 }
 
 export function setAuthUser(user: { id: string; email: string; role: string }) {
-  writeAuthUser({ id: user.id, email: user.email, role: user.role });
+  const existing = readAuthUser();
+  writeAuthUser({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    accessToken: existing?.accessToken,
+  });
+}
+
+export function getAuthHeaders(): Record<string, string> {
+  const accessToken = readAuthUser()?.accessToken;
+  if (!accessToken) return {};
+  return { Authorization: ["Bearer", accessToken].join(" ") };
+}
+
+export function getSessionToken(): string | null {
+  return readAuthUser()?.accessToken || null;
 }
 
 export function clearToken() {

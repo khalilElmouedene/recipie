@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, CalendarDays, Copy, FileImage, FileVideo2, Loader2, Plus, Trash2, X } from "lucide-react";
+import { ArrowRight, CalendarDays, Copy, FileImage, FileVideo2, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api, FacebookProjectOut } from "@/lib/api";
 import { useToast } from "@/contexts/ToastContext";
 import { useConfirm } from "@/components/ConfirmModal";
@@ -30,6 +30,10 @@ export default function FacebookProjectsPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [postType, setPostType] = useState<"video" | "image">("video");
+  const [editTarget, setEditTarget] = useState<FacebookProjectOut | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const load = async () => {
     try {
@@ -113,6 +117,27 @@ export default function FacebookProjectsPage() {
     }
   };
 
+  const saveEditProject = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editTarget || !editName.trim() || savingEdit) return;
+    setSavingEdit(true);
+    try {
+      const updated = await api.updateFacebookProject(editTarget.id, {
+        name: editName.trim(),
+        description: editDescription.trim(),
+      });
+      setProjects((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item)),
+      );
+      setEditTarget(null);
+      toast.success("Facebook project updated");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update project");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   return (
     <div className="relative mx-auto max-w-7xl">
       <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-[#1877f2]/10 blur-3xl" />
@@ -180,6 +205,19 @@ export default function FacebookProjectsPage() {
                   <FacebookMark className="h-5 w-5" />
                 </div>
                 <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditTarget(project);
+                      setEditName(project.name);
+                      setEditDescription(project.description || "");
+                    }}
+                    className="rounded-lg p-2 text-slate-400 transition hover:bg-[#1877f2]/10 hover:text-[#8bbcff] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#68a8ff]"
+                    title="Edit project name & description"
+                    aria-label={`Edit ${project.name}`}
+                  >
+                    <Pencil size={16} />
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
@@ -298,6 +336,78 @@ export default function FacebookProjectsPage() {
             </div>
           </form>
         </dialog>
+      )}
+
+      {editTarget && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm">
+          <form
+            onSubmit={saveEditProject}
+            className="w-full max-w-lg overflow-hidden rounded-[24px] border border-slate-700 bg-[#101827] shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 px-6 py-5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#68a8ff]">Edit workspace</p>
+                <h2 className="mt-1 text-xl font-semibold text-white">Edit Facebook project</h2>
+              </div>
+              <button
+                type="button"
+                disabled={savingEdit}
+                onClick={() => setEditTarget(null)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-white disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-5 px-6 py-6">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">
+                  Project Name <span className="text-[#68a8ff]">*</span>
+                </label>
+                <input
+                  autoFocus
+                  value={editName}
+                  onChange={(event) => setEditName(event.target.value)}
+                  required
+                  maxLength={255}
+                  disabled={savingEdit}
+                  className="input-field"
+                  placeholder="Project name"
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">
+                  Description <span className="text-slate-600">(optional)</span>
+                </label>
+                <textarea
+                  value={editDescription}
+                  onChange={(event) => setEditDescription(event.target.value)}
+                  rows={4}
+                  disabled={savingEdit}
+                  className="input-field resize-none"
+                  placeholder="What this publishing pipeline is for…"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 border-t border-slate-800 bg-slate-950/30 px-6 py-4">
+              <button
+                type="button"
+                disabled={savingEdit}
+                onClick={() => setEditTarget(null)}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingEdit || !editName.trim()}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#1877f2] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#2f86f6] disabled:opacity-50"
+              >
+                {savingEdit && <Loader2 size={16} className="animate-spin" />}
+                {savingEdit ? "Saving…" : "Save changes"}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {showCreate && (
